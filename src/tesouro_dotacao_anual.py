@@ -1,11 +1,10 @@
 """Reconhecimento e normalização de bases de Dotação Anual (BI CPOC - Por Ano).
 
-Esta base é estruturalmente diferente da Dotação mensal do Tesouro Gerencial
-(``tesouro_dotacao.py``): é organizada por ano (não por mês) e usa células
-mescladas de verdade para representar a hierarquia de dimensões, em vez de
-repetir o valor em cada linha. Por isso o reconhecimento e a normalização
-partem de ``openpyxl`` diretamente (para enxergar ``merged_cells``), e não do
-``pandas.read_excel`` usado pelo importador genérico e pela Dotação mensal.
+Esta base é organizada por ano (não por mês) e usa células mescladas de
+verdade para representar a hierarquia de dimensões, em vez de repetir o
+valor em cada linha. Por isso o reconhecimento e a normalização partem de
+``openpyxl`` diretamente (para enxergar ``merged_cells``), e não do
+``pandas.read_excel`` usado pelo importador genérico.
 
 A detecção da estrutura é dinâmica: em vez de assumir letras de coluna fixas,
 ela localiza a coluna-âncora rotulada "Item Informação" na linha 1 (que

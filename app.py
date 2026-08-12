@@ -1,6 +1,5 @@
 import streamlit as st
 
-from src.dotacao_analysis import DOTACAO_ANALYSIS_SESSION_KEY
 from src.dotacao_anual_analysis import DOTACAO_ANUAL_ANALYSIS_SESSION_KEY
 from src.execucao_analysis import EXECUCAO_ANALYSIS_SESSION_KEY
 from src.ui_theme import apply_theme
@@ -13,7 +12,6 @@ st.set_page_config(
 
 apply_theme()
 
-st.session_state.setdefault(DOTACAO_ANALYSIS_SESSION_KEY, None)
 st.session_state.setdefault(DOTACAO_ANUAL_ANALYSIS_SESSION_KEY, None)
 st.session_state.setdefault(EXECUCAO_ANALYSIS_SESSION_KEY, None)
 
@@ -39,11 +37,6 @@ page = st.navigation(
             "app_pages/execucao_orcamentaria.py",
             title="Execução Orçamentária",
             icon=":material/payments:",
-        ),
-        st.Page(
-            "app_pages/visao_orcamentaria.py",
-            title="Visão Orçamentária",
-            icon=":material/account_balance:",
         ),
     ],
     position="top",

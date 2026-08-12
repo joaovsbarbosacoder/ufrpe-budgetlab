@@ -4,10 +4,6 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src.dotacao_analysis import (
-    DOTACAO_ANALYSIS_SESSION_KEY,
-    prepare_validated_dataset,
-)
 from src.dotacao_anual_analysis import (
     DOTACAO_ANUAL_ANALYSIS_SESSION_KEY,
     prepare_validated_dotacao_anual_dataset,
@@ -21,7 +17,6 @@ from src.tesouro_dotacao_anual_workbook import (
     DotacaoAnualWorkbookResult,
     process_dotacao_anual_workbook,
 )
-from src.tesouro_dotacao_workbook import DotacaoWorkbookResult, process_dotacao_workbook
 from src.tesouro_execucao_workbook import ExecucaoWorkbookResult, process_execucao_workbook
 from src.ui_theme import render_alert, render_page_header
 
@@ -29,11 +24,6 @@ from src.ui_theme import render_alert, render_page_header
 @st.cache_data(show_spinner=False, max_entries=10)
 def _cached_sheet_names(file_content: bytes, filename: str) -> list[str]:
     return list_excel_sheets(file_content, filename)
-
-
-@st.cache_data(show_spinner=False, max_entries=3)
-def _cached_dotacao_workbook(file_content: bytes, filename: str) -> DotacaoWorkbookResult:
-    return process_dotacao_workbook(file_content, filename)
 
 
 @st.cache_data(show_spinner=False, max_entries=3)
@@ -84,35 +74,6 @@ with st.container(border=True):
     st.write(f"**Nome:** {uploaded_file.name}")
     st.write(f"**Tamanho:** {_format_file_size(uploaded_file.size)}")
     st.write(f"**Abas disponíveis:** {', '.join(sheet_names)}")
-
-try:
-    with st.spinner("Reconhecendo a estrutura de Dotação..."):
-        dotacao_workbook_result = _cached_dotacao_workbook(file_content, uploaded_file.name)
-except Exception as error:
-    st.session_state.pop(DOTACAO_ANALYSIS_SESSION_KEY, None)
-    st.warning(f"Não foi possível processar a base de Dotação: {error}")
-else:
-    if dotacao_workbook_result.recognized_sheets:
-        render_alert("Base de Dotação reconhecida.", "success")
-        if dotacao_workbook_result.integrity_approved:
-            try:
-                analysis_dataset = prepare_validated_dataset(dotacao_workbook_result, file_content)
-            except ValueError as error:
-                st.session_state.pop(DOTACAO_ANALYSIS_SESSION_KEY, None)
-                st.error(f"A base não pôde ser disponibilizada para análise: {error}")
-            else:
-                st.session_state[DOTACAO_ANALYSIS_SESSION_KEY] = analysis_dataset
-                render_alert("Validação aprovada.", "success")
-                exercises = sorted(
-                    str(int(value))
-                    for value in analysis_dataset.normalized_data["ano_exercicio"].dropna().unique()
-                )
-                st.caption(f"Exercícios: {', '.join(exercises) or 'não informado'}")
-        else:
-            st.session_state.pop(DOTACAO_ANALYSIS_SESSION_KEY, None)
-            render_alert("A validação da Dotação encontrou inconsistências.", "error")
-    else:
-        st.info("Nenhuma informação corresponde à estrutura confirmada de Dotação.")
 
 try:
     with st.spinner("Reconhecendo a estrutura de Execução..."):

@@ -22,8 +22,7 @@ with st.container(border=True):
     st.markdown(
         "- Importação de bases em memória\n"
         "- Dotação Orçamentária validada\n"
-        "- Execução da Despesa validada\n"
-        "- Visão Orçamentária integrada"
+        "- Execução da Despesa validada"
     )
 
 st.caption("As funcionalidades futuras serão habilitadas conforme suas regras de negócio forem confirmadas.")

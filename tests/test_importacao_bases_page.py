@@ -43,7 +43,7 @@ class ImportacaoBasesPageTests(unittest.TestCase):
 
         self.assertEqual(len(app.exception), 0)
         self.assertIn(
-            "Nenhuma informação corresponde à estrutura confirmada de Dotação.",
+            "Nenhuma informação corresponde à estrutura confirmada de Dotação Anual.",
             [item.value for item in app.info],
         )
 
