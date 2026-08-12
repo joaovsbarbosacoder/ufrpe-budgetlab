@@ -1,7 +1,6 @@
 import streamlit as st
 
 from src.dotacao_anual_analysis import DOTACAO_ANUAL_ANALYSIS_SESSION_KEY
-from src.execucao_analysis import EXECUCAO_ANALYSIS_SESSION_KEY
 from src.ui_theme import apply_theme
 
 st.set_page_config(
@@ -13,7 +12,6 @@ st.set_page_config(
 apply_theme()
 
 st.session_state.setdefault(DOTACAO_ANUAL_ANALYSIS_SESSION_KEY, None)
-st.session_state.setdefault(EXECUCAO_ANALYSIS_SESSION_KEY, None)
 
 page = st.navigation(
     [

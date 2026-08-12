@@ -8,27 +8,17 @@ from src.dotacao_anual_analysis import (
     DOTACAO_ANUAL_ANALYSIS_SESSION_KEY,
     prepare_validated_dotacao_anual_dataset,
 )
-from src.execucao_analysis import (
-    EXECUCAO_ANALYSIS_SESSION_KEY,
-    prepare_validated_execucao_dataset,
-)
 from src.excel_importer import list_excel_sheets
 from src.tesouro_dotacao_anual_workbook import (
     DotacaoAnualWorkbookResult,
     process_dotacao_anual_workbook,
 )
-from src.tesouro_execucao_workbook import ExecucaoWorkbookResult, process_execucao_workbook
 from src.ui_theme import render_alert, render_page_header
 
 
 @st.cache_data(show_spinner=False, max_entries=10)
 def _cached_sheet_names(file_content: bytes, filename: str) -> list[str]:
     return list_excel_sheets(file_content, filename)
-
-
-@st.cache_data(show_spinner=False, max_entries=3)
-def _cached_execucao_workbook(file_content: bytes, filename: str) -> ExecucaoWorkbookResult:
-    return process_execucao_workbook(file_content, filename)
 
 
 @st.cache_data(show_spinner=False, max_entries=3)
@@ -74,30 +64,6 @@ with st.container(border=True):
     st.write(f"**Nome:** {uploaded_file.name}")
     st.write(f"**Tamanho:** {_format_file_size(uploaded_file.size)}")
     st.write(f"**Abas disponíveis:** {', '.join(sheet_names)}")
-
-try:
-    with st.spinner("Reconhecendo a estrutura de Execução..."):
-        execucao_workbook_result = _cached_execucao_workbook(file_content, uploaded_file.name)
-except Exception as error:
-    st.session_state.pop(EXECUCAO_ANALYSIS_SESSION_KEY, None)
-    st.warning(f"Não foi possível processar a base de Execução: {error}")
-else:
-    if execucao_workbook_result.recognized_sheets:
-        render_alert("Base de Execução reconhecida.", "success")
-        if execucao_workbook_result.integrity_approved:
-            try:
-                execucao_dataset = prepare_validated_execucao_dataset(execucao_workbook_result, file_content)
-            except ValueError as error:
-                st.session_state.pop(EXECUCAO_ANALYSIS_SESSION_KEY, None)
-                st.error(f"A base de Execução não pôde ser disponibilizada para análise: {error}")
-            else:
-                st.session_state[EXECUCAO_ANALYSIS_SESSION_KEY] = execucao_dataset
-                render_alert("Validação aprovada.", "success")
-        else:
-            st.session_state.pop(EXECUCAO_ANALYSIS_SESSION_KEY, None)
-            render_alert("A validação da Execução encontrou inconsistências.", "error")
-    else:
-        st.info("Nenhuma informação corresponde à estrutura confirmada de Execução.")
 
 try:
     with st.spinner("Reconhecendo a estrutura de Dotação Anual..."):
