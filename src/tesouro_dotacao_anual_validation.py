@@ -10,10 +10,9 @@ from openpyxl.worksheet.worksheet import Worksheet
 from src.tesouro_dotacao_anual import FIRST_DATA_ROW, detect_dotacao_anual_structure
 
 
-# A Dotação mensal usa tolerância de 0.000001 porque suas somas ficam na casa
-# dos milhões. A Dotação Anual soma dezenas de milhares de células na casa dos
-# bilhões: nessa magnitude, o próprio float64 acumula ruído de representação
-# de ~0.000002 mesmo sem nenhuma divergência real de dado (verificado com a
+# A Dotação Anual soma dezenas de milhares de células na casa dos bilhões:
+# nessa magnitude, o próprio float64 acumula ruído de representação de
+# ~0.000002 mesmo sem nenhuma divergência real de dado (verificado com a
 # base real: contagens de nulos/zeros/negativos idênticas, soma por item e
 # por ano idênticas). Por isso a tolerância aqui é em centavos, não em
 # milionésimos — abaixo de um centavo não é uma diferença monetária real.

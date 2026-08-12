@@ -219,8 +219,7 @@ etapa posterior já sequenciada no projeto.
 
 ### Por que a aba lê `Manifesto.atual()` direto, sem passar pela Importação de Bases
 
-Todas as demais bases do projeto (Dotação mensal, Execução mensal do Tesouro Gerencial, Dotação
-Anual) seguem o mesmo fluxo: o usuário sobe o arquivo na página **Importação de Bases**, que
+A outra base do projeto (Dotação Anual) segue o mesmo fluxo: o usuário sobe o arquivo na página **Importação de Bases**, que
 reconhece a estrutura, valida e guarda o resultado em `st.session_state`; as páginas de análise
 só leem essa sessão. A Execução Anual não existia no projeto quando esse fluxo foi criado, e não
 foi encaixada nele — ela já chegou com um sistema de importação versionada próprio (substituição
