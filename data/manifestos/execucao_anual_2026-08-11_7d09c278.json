@@ -1,0 +1,44 @@
+{
+  "base": "execucao_anual",
+  "arquivo": "BI PROPLAD - EXEC. DESPESAS - Por Ano (9).xlsx",
+  "sha256": "7d09c2783667d6ad38b7c34832d0ef823ec08c7e047d0ecfdb97c88edf6f9ec9",
+  "data_extracao": "2026-08-11T21:32:07",
+  "importado_em": "2026-08-12T09:15:26-03:00",
+  "linhas": 7779,
+  "linhas_empenho": 4092,
+  "linhas_item_execucao": 3687,
+  "notas_empenho_distintas": 3700,
+  "anos": [
+    2023,
+    2024,
+    2025,
+    2026
+  ],
+  "totais": {
+    "empenhada": 3232327499.34,
+    "liquidada": 2864970004.16,
+    "paga": 2616012762.14
+  },
+  "totais_por_ano": {
+    "2023": {
+      "empenhada": 762455916.88,
+      "liquidada": 723987833.09,
+      "paga": 651361558.65
+    },
+    "2024": {
+      "empenhada": 784086352.51,
+      "liquidada": 759877180.18,
+      "paga": 687779472.58
+    },
+    "2025": {
+      "empenhada": 931345340.39,
+      "liquidada": 882774236.76,
+      "paga": 790633667.1
+    },
+    "2026": {
+      "empenhada": 754439889.56,
+      "liquidada": 498330754.13,
+      "paga": 486238063.81
+    }
+  }
+}

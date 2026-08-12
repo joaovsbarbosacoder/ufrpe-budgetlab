@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/industry-544524d1-ceb3-483b-aa85-15183e074c72/styles.css">
+<script src="_ds/industry-544524d1-ceb3-483b-aa85-15183e074c72/_ds_bundle.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap">
+<style>
+  body { margin: 0; background: #f2f2f3; }
+  a { color: var(--color-accent-700); text-decoration: none; }
+  a:hover { color: var(--color-accent-900); }
+  select.input { font-family: var(--font-body); }
+</style>
+</helmet>
+<div style="min-height: 100vh; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); padding: 0 0 56px 0">
+
+  <div class="nav" style="display: flex; align-items: baseline; justify-content: space-between; gap: 24px; padding: 18px 32px; border-bottom: 1px solid var(--color-divider)">
+    <div style="display: flex; align-items: baseline; gap: 14px">
+      <span class="nav-brand" style="font-family: var(--font-heading); font-weight: 700; font-size: 21px; letter-spacing: 0.06em; text-transform: uppercase">Painel Orçamentário</span>
+      <span style="font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-neutral-600)">Dotação por ação de governo e subdivisões</span>
+    </div>
+    <span style="font-family: var(--font-heading); font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--color-accent-700)">Exercício {{ ano }}</span>
+  </div>
+
+  <div style="padding: 18px 32px 20px 32px; border-bottom: 1px solid var(--color-divider)">
+    <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 10px">
+      <span style="font-family: var(--font-heading); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--color-neutral-600)">Refinar busca</span>
+      <button class="btn btn-ghost" onClick="{{ limpar }}" style="font-family: var(--font-heading); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase">Limpar filtros</button>
+    </div>
+    <div style="display: grid; grid-template-columns: 84px repeat(7, minmax(0, 1fr)); gap: 12px; align-items: end">
+      <label class="field" style="display: grid; gap: 5px">
+        <span style="font-family: var(--font-heading); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-neutral-600)">Ano</span>
+        <select class="input" value="{{ ano }}" onChange="{{ setAno }}" style="width: 100%">
+          <sc-for list="{{ anos }}" as="a" hint-placeholder-count="7"><option value="{{ a }}">{{ a }}</option></sc-for>
+        </select>
+      </label>
+      <sc-for list="{{ filtros }}" as="f" hint-placeholder-count="6">
+        <label class="field" style="display: grid; gap: 5px; min-width: 0">
+          <span style="font-family: var(--font-heading); font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-neutral-600)">{{ f.rotulo }}</span>
+          <select class="input" value="{{ f.valor }}" onChange="{{ f.alterar }}" style="width: 100%">
+            <sc-for list="{{ f.opcoes }}" as="o" hint-placeholder-count="5"><option value="{{ o.valor }}">{{ o.rotulo }}</option></sc-for>
+          </select>
+        </label>
+      </sc-for>
+    </div>
+  </div>
+
+  <div style="display: flex; align-items: baseline; gap: 26px; flex-wrap: wrap; padding: 20px 32px 0 32px">
+    <sc-for list="{{ totais }}" as="t" hint-placeholder-count="4">
+      <div style="min-width: 190px">
+        <div style="font-family: var(--font-heading); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-neutral-600)">{{ t.rotulo }}</div>
+        <div style="font-family: var(--font-heading); font-size: 30px; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--color-accent-900)">{{ t.valor }}</div>
+      </div>
+    </sc-for>
+    <div style="margin-left: auto; text-align: right; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-neutral-600); max-width: 460px; text-wrap: pretty">{{ resumoFiltro }}</div>
+  </div>
+
+  <div style="display: grid; gap: 22px; padding: 22px 32px">
+    <sc-for list="{{ grupos }}" as="g" hint-placeholder-count="3">
+      <article class="card blueprint" style="position: relative; border: 1px solid var(--color-divider); background: transparent; padding: 18px 20px 16px 20px; display: flex; flex-direction: column; gap: 14px">
+        <i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+
+        <header style="display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: start">
+          <div style="min-width: 0">
+            <div style="font-family: var(--font-heading); font-size: 13px; letter-spacing: 0.16em; color: var(--color-accent-700)">AÇÃO DE GOVERNO {{ g.codigo }}</div>
+            <h2 style="margin: 3px 0 8px 0; font-family: var(--font-heading); font-weight: 600; font-size: 23px; line-height: 1.12; text-transform: uppercase; text-wrap: pretty">{{ g.nome }}</h2>
+            <div style="display: flex; flex-wrap: wrap; gap: 6px">
+              <sc-for list="{{ g.atributos }}" as="a" hint-placeholder-count="5">
+                <span class="tag tag-outline" style="font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase">{{ a.rotulo }} {{ a.valor }}</span>
+              </sc-for>
+            </div>
+          </div>
+          <div style="text-align: right">
+            <div style="font-family: var(--font-heading); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-neutral-600)">Dotação atualizada</div>
+            <div style="font-family: var(--font-heading); font-size: 29px; line-height: 1.1; font-variant-numeric: tabular-nums; color: var(--color-accent-900)">{{ g.total }}</div>
+            <div style="margin-top: 4px; font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-neutral-600)">{{ g.contagem }}</div>
+          </div>
+        </header>
+
+        <div style="overflow-x: auto; padding-bottom: 2px">
+          <div style="display: grid; grid-template-columns: minmax(220px, 1.6fr) minmax(150px, 1.1fr) 92px 88px 74px 66px 104px 96px 104px 116px; gap: 10px; min-width: 1200px; padding: 0 0 6px 0; border-bottom: 1px solid var(--color-divider); font-family: var(--font-heading); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-neutral-600)">
+            <span>Plano orçamentário</span>
+            <span>Fonte de recursos detalhada</span>
+            <span>Grupo de despesa</span>
+            <span>Res. prim. lei</span>
+            <span>Iduso</span>
+            <span>PTRES</span>
+            <span style="text-align: right">Inicial</span>
+            <span style="text-align: right">Suplem.</span>
+            <span style="text-align: right">Canc./remanej.</span>
+            <span style="text-align: right">Atualizada</span>
+          </div>
+          <sc-for list="{{ g.linhas }}" as="l" hint-placeholder-count="4">
+            <div style="display: grid; grid-template-columns: minmax(220px, 1.6fr) minmax(150px, 1.1fr) 92px 88px 74px 66px 104px 96px 104px 116px; gap: 10px; min-width: 1200px; padding: 9px 0; border-bottom: 1px solid color-mix(in srgb, var(--color-text) 7%, transparent); align-items: baseline">
+              <div style="min-width: 0">
+                <div style="font-size: 13.5px; line-height: 1.25; text-wrap: pretty">{{ l.poNome }}</div>
+                <div style="font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.12em; color: var(--color-neutral-600)">PO {{ l.poCodigo }}</div>
+              </div>
+              <div style="min-width: 0">
+                <div style="font-size: 12.5px; line-height: 1.25; text-wrap: pretty">{{ l.fonteNome }}</div>
+                <div style="font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.12em; color: var(--color-neutral-600)">{{ l.fonteCodigo }}</div>
+              </div>
+              <div style="min-width: 0">
+                <div style="font-size: 12.5px; line-height: 1.25">{{ l.gndNome }}</div>
+                <div style="font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.12em; color: var(--color-neutral-600)">GND {{ l.gndCodigo }}</div>
+              </div>
+              <div style="min-width: 0">
+                <div style="font-size: 12.5px; line-height: 1.25">{{ l.rpNome }}</div>
+                <div style="font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.12em; color: var(--color-neutral-600)">RP {{ l.rpCodigo }}</div>
+              </div>
+              <span style="font-family: var(--font-heading); font-size: 12.5px; letter-spacing: 0.08em; color: var(--color-neutral-700)">{{ l.iduso }}</span>
+              <span style="font-family: var(--font-heading); font-size: 12.5px; letter-spacing: 0.08em; color: var(--color-neutral-700)">{{ l.ptres }}</span>
+              <span style="text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--color-neutral-700)">{{ l.ini }}</span>
+              <span style="text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--color-neutral-700)">{{ l.sup }}</span>
+              <span style="text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; color: var(--color-neutral-700)">{{ l.can }}</span>
+              <span style="text-align: right; font-size: 14px; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--color-accent-900)">{{ l.atu }}</span>
+            </div>
+          </sc-for>
+          <div style="display: grid; grid-template-columns: minmax(220px, 1.6fr) minmax(150px, 1.1fr) 92px 88px 74px 66px 104px 96px 104px 116px; gap: 10px; min-width: 1200px; padding: 9px 0 0 0; align-items: baseline; font-family: var(--font-heading)">
+            <span style="grid-column: span 6; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-neutral-600)">Total da ação</span>
+            <span style="text-align: right; font-size: 13.5px; font-variant-numeric: tabular-nums">{{ g.somaIni }}</span>
+            <span style="text-align: right; font-size: 13.5px; font-variant-numeric: tabular-nums">{{ g.somaSup }}</span>
+            <span style="text-align: right; font-size: 13.5px; font-variant-numeric: tabular-nums">{{ g.somaCan }}</span>
+            <span style="text-align: right; font-size: 15px; font-variant-numeric: tabular-nums; color: var(--color-accent-900)">{{ g.somaAtu }}</span>
+          </div>
+          <sc-if value="{{ g.temMais }}" hint-placeholder-val="{{ false }}">
+            <button class="btn btn-ghost" onClick="{{ g.alternar }}" style="margin-top: 12px; font-family: var(--font-heading); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase">{{ g.rotuloMais }}</button>
+          </sc-if>
+        </div>
+      </article>
+    </sc-for>
+  </div>
+
+  <sc-if value="{{ vazio }}" hint-placeholder-val="{{ false }}">
+    <div style="padding: 40px 32px; font-family: var(--font-heading); font-size: 16px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--color-neutral-600)">Nenhuma ação com dotação para os filtros selecionados.</div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;anoPadrao&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;2020&quot;,&quot;2021&quot;,&quot;2022&quot;,&quot;2023&quot;,&quot;2024&quot;,&quot;2025&quot;,&quot;2026&quot;],&quot;default&quot;:&quot;2026&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Painel&quot;},&quot;ordenacao&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;Maior dotação&quot;,&quot;Código da ação&quot;],&quot;default&quot;:&quot;Maior dotação&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Painel&quot;},&quot;linhasVisiveis&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:6,&quot;min&quot;:3,&quot;max&quot;:30,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Painel&quot;}}">
+class Component extends DCLogic {
+  state = { dados: null, ano: null, iduso: '', rp: '', gnd: '', acao: '', ptres: '', fonte: '', po: '', expandidos: {} };
+
+  componentDidMount() {
+    fetch('data.json').then(r => r.json()).then(dados => this.setState({ dados }));
+  }
+
+  get ano() { return this.state.ano ?? String(this.props.anoPadrao ?? '2026'); }
+
+  fmt(v) { return v ? new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 }).format(v) : '—'; }
+  moeda(v) { return 'R$ ' + new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 }).format(v || 0); }
+
+  campos() {
+    return [
+      { chave: 'iduso', rotulo: 'Iduso', get: r => r.iduso },
+      { chave: 'rp', rotulo: 'Res. prim. lei', get: r => r.rp },
+      { chave: 'gnd', rotulo: 'Grupo de despesa', get: r => r.gnd },
+      { chave: 'acao', rotulo: 'Ação de governo', get: r => r.acao },
+      { chave: 'ptres', rotulo: 'PTRES', get: r => [r.ptres, r.ptres] },
+      { chave: 'fonte', rotulo: 'Fonte detalhada', get: r => r.fonte },
+      { chave: 'po', rotulo: 'Plano orçamentário', get: r => r.po }
+    ];
+  }
+
+  renderVals() {
+    const dados = this.state.dados || [];
+    const ano = this.ano, s = this.state, campos = this.campos();
+    const comAno = dados.filter(r => r.v[ano]);
+    const passa = (r, ignorar) => campos.every(c => {
+      if (c.chave === ignorar || !s[c.chave]) return true;
+      return c.get(r)[0] === s[c.chave];
+    });
+    const filtrados = comAno.filter(r => passa(r));
+
+    const filtros = campos.map(c => {
+      const base = comAno.filter(r => passa(r, c.chave));
+      const mapa = new Map();
+      base.forEach(r => {
+        const [cod, nome] = c.get(r);
+        if (cod) mapa.set(cod, c.chave === 'ptres' ? cod : cod + ' — ' + nome);
+      });
+      const lista = [...mapa.entries()].sort((a, b) => a[1].localeCompare(b[1], 'pt-BR'));
+      return {
+        rotulo: c.rotulo,
+        valor: s[c.chave],
+        opcoes: [{ valor: '', rotulo: 'Todos' }].concat(lista.map(([v, r]) => ({ valor: v, rotulo: r }))),
+        alterar: e => this.setState({ [c.chave]: e.target.value })
+      };
+    });
+
+    const acoes = new Map();
+    filtrados.forEach(r => {
+      const k = r.acao[0];
+      if (!acoes.has(k)) acoes.set(k, { codigo: k, nome: r.acao[1], linhas: [], ini: 0, sup: 0, can: 0, atu: 0, iduso: new Set(), rp: new Set(), gnd: new Set(), ptres: new Set(), fonte: new Set(), po: new Set() });
+      const g = acoes.get(k), val = r.v[ano];
+      g.ini += val.ini; g.sup += val.sup; g.can += val.can; g.atu += val.atu;
+      g.iduso.add(r.iduso[0]); g.rp.add(r.rp[0]); g.gnd.add(r.gnd[0]);
+      g.ptres.add(r.ptres); g.fonte.add(r.fonte[0]); g.po.add(r.po[0]);
+      g.linhas.push({ r, val });
+    });
+
+    const ordem = (this.props.ordenacao ?? 'Maior dotação') === 'Código da ação'
+      ? (a, b) => a.codigo.localeCompare(b.codigo)
+      : (a, b) => b.atu - a.atu;
+    const limite = Number(this.props.linhasVisiveis ?? 6);
+
+    const resumo = (conj, sing, plural) => {
+      const v = [...conj].filter(Boolean);
+      return v.length === 1 ? v[0] : v.length + ' ' + (v.length === 1 ? sing : plural);
+    };
+
+    const grupos = [...acoes.values()].sort(ordem).map(g => {
+      const todas = g.linhas.sort((a, b) => b.val.atu - a.val.atu);
+      const aberto = !!s.expandidos[g.codigo];
+      const visiveis = aberto ? todas : todas.slice(0, limite);
+      return {
+        codigo: g.codigo,
+        nome: g.nome,
+        total: this.moeda(g.atu),
+        contagem: todas.length + (todas.length === 1 ? ' subdivisão' : ' subdivisões'),
+        somaIni: this.fmt(g.ini), somaSup: this.fmt(g.sup), somaCan: this.fmt(g.can), somaAtu: this.fmt(g.atu),
+        atributos: [
+          { rotulo: 'PTRES', valor: resumo(g.ptres, 'código', 'códigos') },
+          { rotulo: 'Iduso', valor: resumo(g.iduso, 'código', 'códigos') },
+          { rotulo: 'RP', valor: resumo(g.rp, 'código', 'códigos') },
+          { rotulo: 'GND', valor: resumo(g.gnd, 'grupo', 'grupos') },
+          { rotulo: 'Fontes', valor: resumo(g.fonte, 'fonte', 'fontes') },
+          { rotulo: 'PO', valor: resumo(g.po, 'plano', 'planos') }
+        ],
+        temMais: todas.length > limite,
+        rotuloMais: aberto ? 'Recolher subdivisões' : 'Ver todas as ' + todas.length + ' subdivisões',
+        alternar: () => this.setState(st => ({ expandidos: Object.assign({}, st.expandidos, { [g.codigo]: !st.expandidos[g.codigo] }) })),
+        linhas: visiveis.map(({ r, val }) => ({
+          poCodigo: r.po[0] || '—', poNome: r.po[1] || '(não informado)',
+          fonteCodigo: r.fonte[0] || '—', fonteNome: r.fonte[1] || '(não informado)',
+          gndCodigo: r.gnd[0] || '—', gndNome: r.gnd[1] || '(não informado)',
+          rpCodigo: r.rp[0] || '—', rpNome: r.rp[1] || '(não informado)',
+          iduso: r.iduso[0] || '—', ptres: r.ptres || '—',
+          ini: this.fmt(val.ini), sup: this.fmt(val.sup), can: this.fmt(val.can), atu: this.fmt(val.atu)
+        }))
+      };
+    });
+
+    const soma = campo => filtrados.reduce((t, r) => t + r.v[ano][campo], 0);
+    const ativos = campos.filter(c => s[c.chave]).map(c => c.rotulo + ' ' + s[c.chave]);
+
+    return {
+      ano, anos: ['2020', '2021', '2022', '2023', '2024', '2025', '2026'],
+      setAno: e => this.setState({ ano: e.target.value, expandidos: {} }),
+      limpar: () => this.setState({ iduso: '', rp: '', gnd: '', acao: '', ptres: '', fonte: '', po: '' }),
+      filtros,
+      totais: [
+        { rotulo: 'Dotação inicial', valor: this.moeda(soma('ini')) },
+        { rotulo: 'Suplementar', valor: this.moeda(soma('sup')) },
+        { rotulo: 'Cancelada / remanejada', valor: this.moeda(soma('can')) },
+        { rotulo: 'Dotação atualizada', valor: this.moeda(soma('atu')) }
+      ],
+      resumoFiltro: grupos.length + ' ações · ' + filtrados.length + ' lançamentos' + (ativos.length ? '  ·  ' + ativos.join('  ·  ') : '  ·  sem filtros aplicados'),
+      grupos,
+      vazio: !!s.dados && grupos.length === 0
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+# Ambientes virtuais
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Ferramentas e editores
+.idea/
+.vscode/
+.ruff_cache/
+.mypy_cache/
+
+# Configuracoes e segredos locais
+.env
+.env.*
+.streamlit/secrets.toml
+
+# Dados locais: preservar somente a estrutura de diretorios
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+
+# Logs soltos (ex.: saída de smoke test)
+*.log
