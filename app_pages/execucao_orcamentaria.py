@@ -15,7 +15,6 @@ e rastreabilidade — mais a reimportação pela interface.
 
 from __future__ import annotations
 
-import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -31,12 +30,8 @@ from src.execucao_anual import (
     detalhar_nota_empenho,
     ler_execucao_anual,
 )
-from src.importacao_execucao import (
-    DIRETORIO_MANIFESTOS_PADRAO,
-    Manifesto,
-    ResultadoImportacao,
-    importar,
-)
+from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, Manifesto, importar
+from src.ui_reimportacao import EspecificacaoReimportacao, render_reimportacao
 from src.ui_theme import (
     format_brl_compact,
     format_brl_full,
@@ -47,9 +42,6 @@ from src.ui_theme import (
 
 
 DIRETORIO_DADOS_BRUTOS = Path("data/raw")
-# Pouso temporário do upload até a confirmação — nunca sobrescreve o arquivo
-# da extração ativa antes de validar e (se necessário) confirmar.
-DIRETORIO_STAGING = DIRETORIO_DADOS_BRUTOS / "_staging"
 
 # nome do filtro -> (rótulo, coluna código, coluna descrição | None)
 FILTER_FIELDS = (
@@ -427,142 +419,23 @@ def _render_rastreabilidade(dataframe: pd.DataFrame, filtered: pd.DataFrame, sou
     )
 
 
-def _preview_reimportacao(file_content: bytes, filename: str) -> ResultadoImportacao:
-    """Grava o upload em staging e roda leitura + validação + delta, sem gravar manifesto.
-
-    Não é cacheado: o arquivo de staging precisa existir sempre que esta
-    função rodar (inclusive de novo após um `st.checkbox`/`st.button` disparar
-    um rerender), porque uma confirmação anterior pode ter movido o staging
-    de uma extração já efetivada para `data/raw/` — cachear o resultado sem
-    recriar o arquivo deixaria `_efetivar_reimportacao` sem o que mover.
-    """
-
-    DIRETORIO_STAGING.mkdir(parents=True, exist_ok=True)
-    staging_path = DIRETORIO_STAGING / filename
-    staging_path.write_bytes(file_content)
-    return importar(staging_path, registrar=False)
-
-
-def _formatar_diferenca(valor: float) -> str:
-    sinal = "+" if valor >= 0 else "-"
-    return sinal + format_brl_full(abs(valor)).removeprefix("R$ ")
-
-
-def _formatar_variacoes_retroativas(delta) -> list[str]:
-    linhas = []
-    for ano, medidas in sorted(delta.anos_alterados.items()):
-        partes = ", ".join(
-            f"{medida}: {format_brl_full(info['antes'])} → {format_brl_full(info['depois'])} "
-            f"({_formatar_diferenca(info['diferenca'])})"
-            for medida, info in medidas.items()
-        )
-        linhas.append(f"**{ano}** — {partes}")
-    return linhas
-
-
-def _efetivar_reimportacao(staging_path: Path, manifesto_novo: Manifesto, geracao_key: str) -> None:
-    DIRETORIO_DADOS_BRUTOS.mkdir(parents=True, exist_ok=True)
-    destino = DIRETORIO_DADOS_BRUTOS / manifesto_novo.arquivo
-    shutil.move(str(staging_path), str(destino))
-    manifesto_novo.salvar(DIRETORIO_MANIFESTOS_PADRAO)
-    st.session_state[geracao_key] = st.session_state.get(geracao_key, 0) + 1
-    st.success("Importação concluída — a página vai recarregar com a nova extração.")
-    st.rerun()
-
-
-def _render_reimportacao() -> None:
-    geracao_key = "execucao_anual_reimport_geracao"
-    geracao = st.session_state.setdefault(geracao_key, 0)
-
-    st.caption(
-        "Substituição total: a extração enviada passa a valer para a base inteira. "
-        "Nada é gravado até você confirmar — o arquivo fica em uma área temporária "
-        "enquanto você revisa a prévia abaixo."
-    )
-    uploaded_file = st.file_uploader(
-        "Nova extração (.xlsx)",
-        type=["xlsx", "xls"],
-        key=f"execucao_anual_reimport_uploader_{geracao}",
-    )
-    if uploaded_file is None:
-        return
-
-    try:
-        with st.spinner("Lendo e validando o arquivo enviado..."):
-            resultado = _preview_reimportacao(uploaded_file.getvalue(), uploaded_file.name)
-    except Exception as error:
-        st.error(f"Não foi possível ler o arquivo enviado: {error}")
-        return
-
-    manifesto_novo = resultado.manifesto
-    validacao = resultado.validacao
-    delta = resultado.delta
-
-    st.write("**Contagens**")
-    st.write(
-        f"{manifesto_novo.linhas} linhas · {manifesto_novo.linhas_empenho} de empenho · "
-        f"{manifesto_novo.linhas_item_execucao} de item de execução · "
-        f"{manifesto_novo.notas_empenho_distintas} NEs distintas · "
-        f"exercícios {', '.join(map(str, manifesto_novo.anos))}"
+def _linhas_resumo_execucao(manifesto: Manifesto) -> str:
+    return (
+        f"{manifesto.linhas} linhas · {manifesto.linhas_empenho} de empenho · "
+        f"{manifesto.linhas_item_execucao} de item de execução · "
+        f"{manifesto.notas_empenho_distintas} NEs distintas · "
+        f"exercícios {', '.join(map(str, manifesto.anos))}"
     )
 
-    st.write("**Totais**")
-    st.write(
-        " · ".join(
-            f"{medida.capitalize()}: {format_brl_full(manifesto_novo.totais[medida])}"
-            for medida in MEDIDAS
-        )
-    )
 
-    if validacao.erros:
-        st.error("Validação encontrou erro(s) — a importação está bloqueada:")
-        for erro in validacao.erros:
-            st.write(f"- {erro}")
-        return
-
-    render_alert("Validação aprovada.", "success")
-    for alerta in validacao.alertas:
-        st.warning(alerta)
-
-    st.write("**Comparação com a extração atual**")
-    for linha in delta.resumo_texto():
-        st.write(f"- {linha}")
-
-    if delta.mesma_extracao:
-        st.info("Arquivo idêntico à extração atual — nada a gravar.")
-        return
-
-    tem_retroatividade = any("retroativ" in alerta for alerta in delta.alertas)
-    tem_remocao = bool(delta.anos_removidos)
-    exige_confirmacao_explicita = tem_retroatividade or tem_remocao
-
-    staging_path = DIRETORIO_STAGING / uploaded_file.name
-
-    if not exige_confirmacao_explicita:
-        if st.button("Confirmar importação", type="primary"):
-            _efetivar_reimportacao(staging_path, manifesto_novo, geracao_key)
-        return
-
-    st.error(
-        "Esta substituição altera dados já divulgados — confira com atenção antes de confirmar."
-    )
-    if tem_retroatividade:
-        st.write("**Exercícios com valores alterados retroativamente:**")
-        for linha in _formatar_variacoes_retroativas(delta):
-            st.write(f"- {linha}")
-    if tem_remocao:
-        st.write(
-            "**Exercícios que somem do painel** (substituição total — deixam de existir): "
-            + ", ".join(map(str, delta.anos_removidos))
-        )
-
-    confirmado = st.checkbox(
-        "Entendo o impacto acima e confirmo a substituição, incluindo os exercícios "
-        "fechados/removidos listados.",
-        key=f"execucao_anual_reimport_confirma_{geracao}",
-    )
-    if st.button("Confirmar substituição", type="primary", disabled=not confirmado):
-        _efetivar_reimportacao(staging_path, manifesto_novo, geracao_key)
+ESPECIFICACAO_REIMPORTACAO = EspecificacaoReimportacao(
+    prefixo_estado="execucao_anual_reimport",
+    diretorio_dados_brutos=DIRETORIO_DADOS_BRUTOS,
+    diretorio_manifestos=DIRETORIO_MANIFESTOS_PADRAO,
+    medidas=MEDIDAS,
+    importar=importar,
+    linhas_resumo=_linhas_resumo_execucao,
+)
 
 
 # ---------------------------------------------------------------------- página
@@ -637,4 +510,4 @@ data_extracao_texto = datetime.fromisoformat(manifesto.data_extracao).strftime("
 st.caption(f"Procedência: extração de {data_extracao_texto} · hash {manifesto.sha256[:8]}")
 
 with st.expander("Reimportar base", expanded=False):
-    _render_reimportacao()
+    render_reimportacao(ESPECIFICACAO_REIMPORTACAO)
