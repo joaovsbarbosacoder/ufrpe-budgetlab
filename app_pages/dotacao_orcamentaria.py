@@ -2,9 +2,10 @@
 
 Lê o arquivo apontado pelo manifesto atual (`data/manifestos/dotacao_anual_atual.json`),
 gerado por `src/importacao_dotacao.py` — mesmo padrão de importação versionada da Execução
-Anual (ver `docs/base_execucao_anual.md`), aplicado aqui pela primeira vez. Reimportação pela
-interface ainda não existe nesta página (fica para um passo seguinte); por enquanto a
-substituição só acontece rodando `python -m src.importacao_dotacao <arquivo>`.
+Anual (ver `docs/base_execucao_anual.md`). A reimportação pela interface (seção "Reimportar
+base", no final da página) reaproveita o mesmo componente `src/ui_reimportacao.py` que a
+Execução Anual usa — upload, prévia com validação e delta, gravação só após confirmação
+explícita quando há retroatividade ou exercício removido.
 """
 
 from __future__ import annotations
@@ -22,7 +23,15 @@ from src.dotacao_anual_analysis import (
     build_dotacao_anual_year_analysis,
     build_item_indicators,
 )
-from src.importacao_dotacao import Manifesto, ler_dotacao_anual
+from src.importacao_dotacao import (
+    DIRETORIO_MANIFESTOS_PADRAO,
+    MEDIDAS,
+    Manifesto,
+    ROTULOS_MEDIDAS,
+    importar,
+    ler_dotacao_anual,
+)
+from src.ui_reimportacao import EspecificacaoReimportacao, render_reimportacao
 from src.ui_theme import (
     format_brl_compact,
     format_brl_full,
@@ -236,6 +245,28 @@ def _render_year_chart(filtered: pd.DataFrame, source_key: str, ano_extracao: in
     st.plotly_chart(figure, width="stretch", config={"displayModeBar": False})
 
 
+def _linhas_resumo_dotacao(manifesto: Manifesto) -> str:
+    contagens = manifesto.contagens
+    return (
+        f"{contagens.get('abas_reconhecidas')} aba(s) reconhecida(s) · "
+        f"{contagens.get('linhas_normalizadas')} linhas normalizadas · "
+        f"{contagens.get('nulos')} nulos · {contagens.get('zeros')} zeros · "
+        f"{contagens.get('negativos')} negativos · "
+        f"exercícios {', '.join(map(str, manifesto.anos))}"
+    )
+
+
+ESPECIFICACAO_REIMPORTACAO = EspecificacaoReimportacao(
+    prefixo_estado="dotacao_anual_reimport",
+    diretorio_dados_brutos=DIRETORIO_DADOS_BRUTOS,
+    diretorio_manifestos=DIRETORIO_MANIFESTOS_PADRAO,
+    medidas=MEDIDAS,
+    importar=importar,
+    linhas_resumo=_linhas_resumo_dotacao,
+    formatar_medida=lambda medida: ROTULOS_MEDIDAS[medida],
+)
+
+
 render_page_header(
     "Dotação Orçamentária",
     "Visão gerencial da Dotação Anual validada, por ano de lançamento.",
@@ -318,3 +349,6 @@ with st.container(border=True):
 
 data_extracao_texto = datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y")
 st.caption(f"Procedência: extração de {data_extracao_texto} · hash {manifesto.sha256[:8]}")
+
+with st.expander("Reimportar base", expanded=False):
+    render_reimportacao(ESPECIFICACAO_REIMPORTACAO)
