@@ -11,11 +11,12 @@ genérico), a lógica de normalização e as regras de integridade não.
 
 Medidas: os quatro indicadores conhecidos da Dotação Anual — `dotacao_inicial`,
 `dotacao_suplementar`, `dotacao_atualizada`, `dotacao_cancelada_remanejada` — vêm de
-`KNOWN_ITEM_INDICATORS` em `dotacao_anual_analysis.py`, a mesma fonte que a análise em sessão
-já usa. Não têm nenhuma relação com empenhada/liquidada/paga da Execução.
+`KNOWN_ITEM_INDICATORS` em `dotacao_anual_analysis.py`. Não têm nenhuma relação com
+empenhada/liquidada/paga da Execução.
 
-Ainda sem UI (isso é o passo seguinte) e sem migrar `dotacao_orcamentaria.py`/
-`painel_acoes.py`, que continuam lendo `st.session_state` normalmente por enquanto.
+`app_pages/dotacao_orcamentaria.py` e `app_pages/painel_acoes.py` leem `Manifesto.atual()`
+direto (não `st.session_state`); a reimportação pela interface vive na seção "Reimportar
+base" de `dotacao_orcamentaria.py`, via `src/ui_reimportacao.py`. Ver `docs/base_dotacao_anual.md`.
 """
 
 from __future__ import annotations
@@ -123,8 +124,8 @@ def ler_dotacao_anual(caminho: str | Path) -> LeituraDotacaoAnual:
     """Lê e normaliza todas as abas reconhecidas do arquivo.
 
     Só adapta "caminho em disco" para "bytes" — `process_dotacao_anual_workbook` (leitura,
-    reconhecimento dinâmico de blocos mesclados, normalização multiaba) é o mesmo já usado
-    pelo fluxo de Importação de Bases, sem nenhuma alteração.
+    reconhecimento dinâmico de blocos mesclados, normalização multiaba) é reaproveitado sem
+    nenhuma alteração.
     """
 
     caminho = Path(caminho)

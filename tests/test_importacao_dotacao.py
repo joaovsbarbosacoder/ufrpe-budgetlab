@@ -24,8 +24,12 @@ from src.importacao_dotacao import (
     reconciliar_dotacao_anual,
     validar_dotacao_anual,
 )
-from tests.test_dotacao_session_flow import write_invalid_sheet, write_recognized_sheet_2025
-from tests.test_tesouro_dotacao_anual import workbook_bytes, write_recognized_sheet
+from tests.test_tesouro_dotacao_anual import (
+    workbook_bytes,
+    write_invalid_sheet,
+    write_recognized_sheet,
+    write_recognized_sheet_2025,
+)
 
 
 def _escrever_workbook(diretorio: Path, nome: str, builder) -> Path:

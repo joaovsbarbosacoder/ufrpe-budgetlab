@@ -1,12 +1,10 @@
 """Execução Orçamentária — base Anual (BI PROPLAD), filtros e indicadores.
 
-Diferente das demais páginas, esta base não passa pelo fluxo de upload da
-página Importação de Bases (que é só em memória): ela tem importação
-versionada própria (`src/importacao_execucao.py`), rastreada pelo manifesto
-em `data/manifestos/execucao_anual_atual.json`. Esta página lê o arquivo
-apontado pelo manifesto atual e também oferece a reimportação (seção
-"Reimportar base", no final da página) — upload, prévia com validação e
-delta, e gravação só após confirmação explícita.
+Lê o arquivo apontado pelo manifesto atual (`data/manifestos/execucao_anual_atual.json`),
+gerado por `src/importacao_execucao.py` — importação versionada própria, o padrão adotado por
+toda base do projeto (ver também Dotação Anual, `src/importacao_dotacao.py`). Esta página
+também oferece a reimportação (seção "Reimportar base", no final da página) — upload, prévia
+com validação e delta, e gravação só após confirmação explícita.
 
 Implementa os cinco blocos da seção 8 de `docs/base_execucao_anual.md`:
 filtros no topo, faixa de cards, série histórica, composição por dimensão

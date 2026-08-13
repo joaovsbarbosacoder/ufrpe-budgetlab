@@ -9,22 +9,18 @@ seus movimentos sem presumir identidades contábeis entre itens.
 
 ## Funcionalidades
 
-### Importação de Bases
-
-A página **Importação de Bases** aceita arquivos `.xlsx` e `.xls`, lê o
-arquivo somente em memória e reconhece a Dotação Anual (BI CPOC - Por Ano).
-Ela não é identificada pelo nome do arquivo ou da aba — o reconhecimento
-depende exclusivamente da assinatura estrutural da base. O arquivo enviado
-não é alterado nem gravado localmente.
-
-A Execução Anual (BI PROPLAD - Por Ano) não passa por este fluxo — tem
-importação própria, versionada em disco (ver "Execução Anual" abaixo).
-
-Para cada base reconhecida, a página mostra o status de reconhecimento, o
-resultado da validação de integridade e, quando aprovada, disponibiliza o
-conjunto normalizado para as páginas de análise através da sessão do
-Streamlit. Bases não reconhecidas ou com inconsistências não ficam
-disponíveis para análise.
+Toda base do projeto usa o mesmo padrão de **importação versionada**: um
+manifesto (`data/manifestos/`) com hash SHA-256, data de extração e totais
+por exercício — é o manifesto, não o arquivo bruto, que fica versionado.
+Cada página de análise lê o manifesto atual da sua base direto (nunca
+`st.session_state`) e oferece sua própria seção "Reimportar base", com
+prévia (contagens, totais, validação, comparação com a extração anterior) e
+gravação só após confirmação explícita quando a mudança altera um exercício
+já fechado ou faz um exercício desaparecer. A mecânica comum (manifesto,
+delta entre extrações, política de confirmação) vive em
+`src/importacao_versionada.py` e `src/ui_reimportacao.py`, compartilhada
+pelas duas bases; cada uma só define sua própria leitura, validação e
+medidas (`src/importacao_execucao.py`, `src/importacao_dotacao.py`).
 
 ### Dotação Anual (BI CPOC - Por Ano)
 
@@ -52,24 +48,15 @@ casa dos bilhões, a tolerância é de centavos (`0,01`), não de milionésimos:
 nessa magnitude o próprio `float64` acumula ruído de representação bem acima
 de `0,000001` mesmo sem nenhuma divergência real de dado.
 
-Esta é hoje a base que alimenta a página **Dotação Orçamentária**.
+Esta é a base que alimenta as páginas **Dotação Orçamentária** e **Painel
+por Ação de Governo**, ambas lendo `Manifesto.atual()` de
+`src/importacao_dotacao.py`.
 
 ### Execução Anual (BI PROPLAD - Por Ano)
 
-Diferente da Dotação Anual, a Execução Anual não passa pelo fluxo de upload
-em memória da Importação de Bases: tem importação própria e versionada
-(`src/importacao_execucao.py`), acionada pela seção "Reimportar base" da
-própria página **Execução Orçamentária**. Cada importação gera um manifesto
-(`data/manifestos/`) com hash SHA-256, data de extração (do `mtime` do
-arquivo) e totais por exercício — é o manifesto, não o arquivo bruto, que
-fica versionado; a política é de substituição total, sem merge entre
-extrações.
-
-Se a nova extração altera um exercício já fechado ou faz um exercício
-desaparecer, a interface exige confirmação explícita antes de gravar,
-mostrando exatamente o que mudou; nos demais casos (exercício novo, avanço
-do exercício corrente), a substituição é gravada direto, só com o resumo.
-Validação com erro sempre bloqueia a importação.
+Tem importação própria e versionada (`src/importacao_execucao.py`),
+acionada pela seção "Reimportar base" da própria página **Execução
+Orçamentária**.
 
 A página **Execução Orçamentária** mostra, sobre o recorte filtrado
 (Exercício, GND, Fonte, Resultado Primário, UGR): cartões de Empenhado,
@@ -86,8 +73,8 @@ em `docs/base_execucao_anual.md`.
 
 ### Dotação Orçamentária
 
-A página **Dotação Orçamentária** usa exclusivamente a base de **Dotação
-Anual** validada na sessão. Ela mostra:
+A página **Dotação Orçamentária** lê `Manifesto.atual()` de
+`src/importacao_dotacao.py` (não `st.session_state`). Ela mostra:
 
 - filtros por Ano de lançamento, Ação Governo, PTRES, Plano Orçamentário,
   Grupo de Despesa, Fonte de Recursos Detalhada, IDUSO e Resultado Primário;
@@ -95,33 +82,38 @@ Anual** validada na sessão. Ela mostra:
   Suplementar, Atualizada, Cancelada/Remanejada), cada um somado
   isoladamente, sem identidade algébrica presumida entre eles;
 - um gráfico interativo (Plotly) de evolução por ano — curva suave
-  preenchida, com seletor para trocar o indicador exibido.
+  preenchida, com seletor para trocar o indicador exibido; o exercício em
+  andamento (derivado da data de extração do manifesto) aparece com
+  marcador diferenciado e "⏳" no rótulo;
+- a seção "Reimportar base", mesmo componente (`src/ui_reimportacao.py`) e
+  mesma política de confirmação que a Execução Anual usa.
 
 Não há tabela bruta linha a linha nesta página; a granularidade de origem
-(arquivo/aba/linha/coluna) continua preservada na base normalizada em
-memória, só não é exposta diretamente na interface.
+(arquivo/aba/linha/coluna) continua preservada na base normalizada, só não
+é exposta diretamente na interface.
 
 ### Painel por Ação de Governo
 
-A página **Painel por Ação de Governo** também usa a base de Dotação Anual
-validada na sessão. Apresenta um cartão por Ação de Governo, com as
-subdivisões (combinação de Plano Orçamentário, Fonte, Grupo de Despesa,
-Resultado Primário, IDUSO e PTRES) em uma tabela compacta dentro do cartão,
-ordenadas pela Dotação Atualizada. Os quatro indicadores conhecidos
-aparecem nas colunas da tabela e nos totais de rodapé de cada cartão, todos
-somados isoladamente. Valor nulo (célula ausente na origem) aparece como
-"—"; valor zero aparece como `0` — os dois estados nunca são confundidos.
+A página **Painel por Ação de Governo** também lê o manifesto atual da
+Dotação Anual. Apresenta um cartão por Ação de Governo, com as subdivisões
+(combinação de Plano Orçamentário, Fonte, Grupo de Despesa, Resultado
+Primário, IDUSO e PTRES) em uma tabela compacta dentro do cartão, ordenadas
+pela Dotação Atualizada. Os quatro indicadores conhecidos aparecem nas
+colunas da tabela e nos totais de rodapé de cada cartão, todos somados
+isoladamente. Valor nulo (célula ausente na origem) aparece como "—"; valor
+zero aparece como `0` — os dois estados nunca são confundidos. O seletor de
+Ano marca o exercício em andamento com "⏳".
 
 ### Limitações atuais
 
 - não há soma, reconciliação ou identidade rígida entre itens de dotação;
 - nenhuma página cruza Dotação com Execução hoje — a integração está
   suspensa pela ambiguidade temporal entre as bases (granularidade mês x
-  ano, ausência de marcador de exercício parcial na Dotação, sem data de
-  extração registrada); ver `docs/base_execucao_anual.md`;
-- persistência em disco hoje se limita aos manifestos versionados da
-  Execução Anual (`data/manifestos/`); não há banco de dados nem
-  versionamento para as demais bases.
+  ano nas exportações mensais do Tesouro Gerencial, hoje fora do projeto;
+  ausência de um "as of" comum entre extrações de bases diferentes); ver
+  `docs/base_execucao_anual.md`;
+- cada base tem seu próprio manifesto versionado (`data/manifestos/`); não
+  há banco de dados nem view unificada entre bases.
 
 ## Visual e tema
 
@@ -157,8 +149,7 @@ ufrpe-budgetlab/
 |-- app.py                          # Ponto de entrada da interface Streamlit
 |-- app_pages/                      # Páginas da interface
 |   |-- home.py
-|   |-- importacao_bases.py
-|   |-- dotacao_orcamentaria.py     # Fonte: Dotação Anual
+|   |-- dotacao_orcamentaria.py     # Fonte: Dotação Anual; inclui reimportação
 |   |-- painel_acoes.py             # Cartões por Ação de Governo (Dotação Anual)
 |   `-- execucao_orcamentaria.py    # Fonte: Execução Anual (BI PROPLAD); inclui reimportação
 |-- design_handoff_streamlit/       # Material de referência do handoff visual
@@ -167,15 +158,17 @@ ufrpe-budgetlab/
 |-- src/
 |   |-- design_tokens.py            # Tokens de cor/tipografia/espaçamento
 |   |-- dotacao_anual_analysis.py   # Filtros e agregações da Dotação Anual
-|   |-- excel_importer.py           # Leitura e diagnóstico inicial de Excel
 |   |-- execucao_anual.py           # Leitura, validação e agregação da Execução Anual (BI PROPLAD)
-|   |-- importacao_execucao.py      # Manifesto versionado, substituição total, delta entre extrações
+|   |-- importacao_dotacao.py       # Especificação da Dotação Anual sobre o núcleo genérico
+|   |-- importacao_execucao.py      # Especificação da Execução Anual sobre o núcleo genérico
+|   |-- importacao_versionada.py    # Núcleo genérico: manifesto, delta, política de confirmação
 |   |-- tesouro_dotacao_anual.py    # Reconhecimento e normalização da Dotação Anual
 |   |-- tesouro_dotacao_anual_validation.py
 |   |-- tesouro_dotacao_anual_workbook.py
+|   |-- ui_reimportacao.py          # Componente "Reimportar base", reutilizado pelas duas bases
 |   `-- ui_theme.py                 # Componentes visuais reutilizáveis
 |-- data/
-|   |-- manifestos/                 # Manifestos versionados da Execução Anual (hash, extração, totais)
+|   |-- manifestos/                 # Manifestos versionados de cada base (hash, extração, totais)
 |   |-- processed/                  # Dados tratados e padronizados
 |   `-- raw/                        # Dados originais, sem transformação
 `-- tests/
@@ -184,7 +177,7 @@ ufrpe-budgetlab/
 Os arquivos brutos em `data/raw/` e `data/processed/` não são versionados
 (`.gitkeep` mantém só a estrutura das pastas vazias); os manifestos em
 `data/manifestos/` são pequenos e versionados normalmente — são o registro
-de procedência da Execução Anual, não dado bruto.
+de procedência de cada base, não dado bruto.
 
 ## Testes
 

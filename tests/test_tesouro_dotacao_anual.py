@@ -96,6 +96,51 @@ def write_recognized_sheet(ws) -> None:
 
 
 
+def write_recognized_sheet_2025(ws) -> None:
+    """Variante da base válida, com ano e valores diferentes do fixture padrão."""
+
+    ws["A1"] = "Iduso"
+    merge_cells(ws, 1, 1, 3, 2)
+    ws["C1"] = "Resultado Primário Lei"
+    merge_cells(ws, 1, 3, 3, 4)
+    ws["E1"] = "Ação Governo"
+    merge_cells(ws, 1, 5, 3, 6)
+    ws["G1"] = "PTRES"
+    merge_cells(ws, 1, 7, 3, 7)
+    ws["H1"] = "Fonte Recursos Detalhada"
+    merge_cells(ws, 1, 8, 3, 9)
+    ws["J1"] = "Item Informação"
+    merge_cells(ws, 1, 10, 1, 11)
+    ws["J2"] = "Ano Lançamento"
+    merge_cells(ws, 2, 10, 2, 11)
+    ws["J3"] = "Plano Orçamentário"
+    merge_cells(ws, 3, 10, 3, 11)
+
+    ws["L1"] = "DOTACAO ATUALIZADA"
+    ws["L2"] = 2025
+    ws["L3"] = METRIC
+
+    ws["A4"] = 1
+    ws["B4"] = "Iduso A"
+    ws["C4"] = 10
+    ws["D4"] = "RP A"
+    ws["E4"] = "ACAO9"
+    ws["F4"] = "Acao desc Z"
+    ws["G4"] = "PTRES9"
+    ws["H4"] = "FONTE9"
+    ws["I4"] = "Fonte Z"
+    ws["J4"] = "PO9"
+    ws["K4"] = "PO Z"
+    ws["L4"] = 5000
+
+
+def write_invalid_sheet(ws) -> None:
+    """Estrutura reconhecida, mas com valor monetário não numérico."""
+
+    write_recognized_sheet(ws)
+    ws["L4"] = "não é número"
+
+
 def workbook_bytes(builder) -> bytes:
     workbook = Workbook()
     worksheet = workbook.active

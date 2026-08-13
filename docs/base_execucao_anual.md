@@ -217,26 +217,26 @@ O que **não** fazer nesta aba: cruzar com Dotação (a integração segue suspe
 temporal), inferir mês, calcular saldo ou insuficiência, e persistir em DuckDB — tudo isso é
 etapa posterior já sequenciada no projeto.
 
-### Por que a aba lê `Manifesto.atual()` direto, sem passar pela Importação de Bases
+### Por que a aba lê `Manifesto.atual()` direto, sem depender de sessão
 
-A outra base do projeto (Dotação Anual) segue o mesmo fluxo: o usuário sobe o arquivo na página **Importação de Bases**, que
-reconhece a estrutura, valida e guarda o resultado em `st.session_state`; as páginas de análise
-só leem essa sessão. A Execução Anual não existia no projeto quando esse fluxo foi criado, e não
-foi encaixada nele — ela já chegou com um sistema de importação versionada próprio (substituição
-total, manifesto com hash, delta entre extrações), pensado para reextrações periódicas do BI
-PROPLAD, e não para um upload manual por sessão de navegador. Adaptar essa base ao fluxo de
-sessão jogaria fora justamente o que o manifesto resolve: saber de qual extração vieram os
-números exibidos e comparar com a extração anterior, mesmo entre sessões e reinícios do servidor.
+A Execução Anual foi a primeira base do projeto a ganhar um sistema de importação versionada
+próprio (substituição total, manifesto com hash, delta entre extrações), pensado para
+reextrações periódicas do BI PROPLAD — bem diferente de um upload manual por sessão de
+navegador, que perderia justamente o que o manifesto resolve: saber de qual extração vieram os
+números exibidos e comparar com a extração anterior, mesmo entre sessões e reinícios do
+servidor.
 
-Por isso a aba **Execução Orçamentária** lê `Manifesto.atual()` (o ponteiro em
+A aba **Execução Orçamentária** lê `Manifesto.atual()` (o ponteiro em
 `data/manifestos/execucao_anual_atual.json`) e carrega o arquivo em `data/raw/` que ele aponta,
-com `st.cache_data` chaveado por caminho e `mtime` do arquivo — não por `st.session_state`. A
-página **não** chama `importar()`: ela só lê o estado já registrado por uma importação anterior
-(rodada manualmente ou, no futuro, pelo item 6 desta seção, quando a reimportação ganhar botão na
-interface). Isso mantém a leitura de uma página sem efeito colateral — abrir a aba nunca grava um
-manifesto novo nem substitui a extração vigente.
+com `st.cache_data` chaveado por caminho e `mtime` do arquivo. A leitura da página em si não tem
+efeito colateral — abrir a aba nunca grava um manifesto novo. A gravação só acontece pela seção
+"Reimportar base" (upload → prévia com validação e delta → confirmação explícita quando há
+retroatividade ou exercício removido → `importar()`).
 
-Essa é uma exceção deliberada ao padrão do projeto, não um precedente para as bases futuras: cada
-base decide seu fluxo de importação de acordo com como ela realmente chega até o projeto (upload
-manual pontual vs. reextração periódica rastreável), e isso deve continuar sendo avaliado caso a
-caso.
+Esse deixou de ser um caso isolado da Execução Anual: é o padrão do projeto. A Dotação Anual
+(`src/importacao_dotacao.py`, `docs/base_dotacao_anual.md`) adotou o mesmo modelo depois, e a
+mecânica comum entre as duas — manifesto, delta, política de confirmação — foi extraída para
+`src/importacao_versionada.py` e `src/ui_reimportacao.py`, reutilizados por ambas. Não existe
+mais no projeto uma página de upload genérico que reconhece bases em memória via
+`st.session_state`; cada base tem sua própria importação versionada, acionada dentro da própria
+página de análise.
