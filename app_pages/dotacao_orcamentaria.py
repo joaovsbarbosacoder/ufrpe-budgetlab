@@ -1,19 +1,28 @@
-"""Visão gerencial em memória da Dotação Anual validada, por ano de lançamento."""
+"""Visão gerencial da Dotação Anual, por ano de lançamento.
+
+Lê o arquivo apontado pelo manifesto atual (`data/manifestos/dotacao_anual_atual.json`),
+gerado por `src/importacao_dotacao.py` — mesmo padrão de importação versionada da Execução
+Anual (ver `docs/base_execucao_anual.md`), aplicado aqui pela primeira vez. Reimportação pela
+interface ainda não existe nesta página (fica para um passo seguinte); por enquanto a
+substituição só acontece rodando `python -m src.importacao_dotacao <arquivo>`.
+"""
 
 from __future__ import annotations
+
+from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
 from src.dotacao_anual_analysis import (
-    DOTACAO_ANUAL_ANALYSIS_SESSION_KEY,
     KNOWN_ITEM_INDICATORS,
-    ValidatedDotacaoAnualDataset,
     apply_dotacao_anual_filters,
     build_dotacao_anual_year_analysis,
     build_item_indicators,
 )
+from src.importacao_dotacao import Manifesto, ler_dotacao_anual
 from src.ui_theme import (
     format_brl_compact,
     format_brl_full,
@@ -21,6 +30,16 @@ from src.ui_theme import (
     render_metric_grid,
     render_page_header,
 )
+
+
+DIRETORIO_DADOS_BRUTOS = Path("data/raw")
+
+
+@st.cache_data(show_spinner="Lendo a base de Dotação Anual...")
+def _cached_leitura(caminho: str, mtime: float) -> pd.DataFrame:
+    """`mtime` só participa da chave de cache — força reler se o arquivo mudar."""
+
+    return ler_dotacao_anual(caminho).workbook.consolidated_data
 
 
 FILTERS = (
@@ -141,7 +160,7 @@ def _with_alpha(hex_color: str, alpha: float) -> str:
     return f"rgba({red},{green},{blue},{alpha})"
 
 
-def _render_year_chart(filtered: pd.DataFrame, source_key: str) -> None:
+def _render_year_chart(filtered: pd.DataFrame, source_key: str, ano_extracao: int) -> None:
     year_analysis = build_dotacao_anual_year_analysis(filtered)
     year_analysis = year_analysis.dropna(subset=["ano_lancamento"])
 
@@ -162,7 +181,11 @@ def _render_year_chart(filtered: pd.DataFrame, source_key: str) -> None:
 
     color = INDICATOR_COLORS[indicator_code]
     years = [str(int(ano)) for ano in chart_data["ano_lancamento"]]
+    em_andamento = [int(ano) == ano_extracao for ano in chart_data["ano_lancamento"]]
     values = [float(value) for value in chart_data[indicator_code]]
+    rotulos_eixo = [
+        f"{ano} ⏳" if andamento else ano for ano, andamento in zip(years, em_andamento)
+    ]
 
     figure = go.Figure(
         go.Scatter(
@@ -170,12 +193,20 @@ def _render_year_chart(filtered: pd.DataFrame, source_key: str) -> None:
             y=values,
             mode="lines+markers",
             line=dict(shape="spline", smoothing=1.1, width=4, color=color),
-            marker=dict(size=13, color=color, line=dict(width=2, color="#0B1220")),
+            marker=dict(
+                size=[17 if andamento else 13 for andamento in em_andamento],
+                symbol=["diamond" if andamento else "circle" for andamento in em_andamento],
+                color=color,
+                line=dict(width=2, color="#0B1220"),
+            ),
             fill="tozeroy",
             fillcolor=_with_alpha(color, 0.16),
             hovertemplate=f"%{{x}}<br>{KNOWN_ITEM_INDICATORS[indicator_code]}: "
             "%{customdata}<extra></extra>",
-            customdata=[format_brl_full(value) for value in values],
+            customdata=[
+                format_brl_full(value) + (" — exercício em andamento" if andamento else "")
+                for value, andamento in zip(values, em_andamento)
+            ],
         )
     )
     figure.update_layout(
@@ -183,7 +214,14 @@ def _render_year_chart(filtered: pd.DataFrame, source_key: str) -> None:
         plot_bgcolor="rgba(0,0,0,0)",
         margin=dict(t=30, b=10, l=10, r=10),
         font=dict(color="#E7ECF5", family="sans-serif"),
-        xaxis=dict(showgrid=False, zeroline=False, color="#93A1B8", type="category"),
+        xaxis=dict(
+            showgrid=False,
+            zeroline=False,
+            color="#93A1B8",
+            type="category",
+            tickvals=years,
+            ticktext=rotulos_eixo,
+        ),
         yaxis=dict(
             showgrid=True,
             gridcolor="#1B2536",
@@ -204,19 +242,34 @@ render_page_header(
     "Dotação",
 )
 
-dataset = st.session_state.get(DOTACAO_ANUAL_ANALYSIS_SESSION_KEY)
-if not isinstance(dataset, ValidatedDotacaoAnualDataset) or dataset.validation_status != "Aprovada":
+manifesto = Manifesto.atual()
+if manifesto is None:
     st.info(
-        "Nenhuma base de Dotação Anual validada está carregada. Importe uma base na "
-        "página Importação de Bases."
+        "Nenhuma base de Dotação Anual foi importada ainda. Rode a importação "
+        "inicial (`python -m src.importacao_dotacao <arquivo>`) antes de usar "
+        "esta página."
     )
     st.stop()
 
-dataframe = dataset.normalized_data
-source_key = dataset.source_sha256[:12]
-anos = sorted(str(int(value)) for value in dataframe["ano_lancamento"].dropna().unique())
+caminho_base = DIRETORIO_DADOS_BRUTOS / manifesto.arquivo
+if not caminho_base.exists():
+    st.error(
+        f"O arquivo da extração atual do manifesto não foi encontrado em "
+        f"'{caminho_base}'."
+    )
+    st.stop()
 
-render_alert("Base de Dotação Anual validada e disponível para análise.", "success")
+try:
+    dataframe = _cached_leitura(str(caminho_base), caminho_base.stat().st_mtime)
+except Exception as error:
+    st.error(f"Não foi possível ler a base de Dotação Anual: {error}")
+    st.stop()
+
+render_alert("Base de Dotação Anual carregada a partir do manifesto atual.", "success")
+
+source_key = manifesto.sha256[:12]
+ano_extracao = datetime.fromisoformat(manifesto.data_extracao).year
+anos = sorted(str(int(value)) for value in dataframe["ano_lancamento"].dropna().unique())
 st.caption(f"Anos: {', '.join(anos) or 'não informado'}")
 
 selections = _build_selections(dataframe, source_key)
@@ -246,11 +299,22 @@ for item_code in INDICATOR_DISPLAY_ORDER:
     )
 render_metric_grid(metric_cards, columns=4)
 
+anos_no_recorte = sorted(int(valor) for valor in filtered["ano_lancamento"].dropna().unique())
+if ano_extracao in anos_no_recorte:
+    st.caption(
+        f"⚠ O recorte inclui {ano_extracao}, exercício em andamento na data da "
+        "extração — não compare diretamente com exercícios fechados."
+    )
+
 with st.container(border=True):
     st.subheader("Evolução por ano")
     st.caption(
         "Cada indicador é somado isoladamente por ano de lançamento, sem relação "
         "algébrica entre eles. Os filtros à esquerda atualizam o gráfico "
-        "automaticamente."
+        "automaticamente. O exercício em andamento aparece com marcador "
+        "diferenciado e ⏳ no rótulo."
     )
-    _render_year_chart(filtered, source_key)
+    _render_year_chart(filtered, source_key, ano_extracao)
+
+data_extracao_texto = datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y")
+st.caption(f"Procedência: extração de {data_extracao_texto} · hash {manifesto.sha256[:8]}")

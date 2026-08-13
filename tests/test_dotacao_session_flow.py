@@ -1,4 +1,11 @@
-"""Testes do compartilhamento em sessão da base validada de Dotação Anual."""
+"""Testes do reconhecimento/validação de Dotação Anual em Importação de Bases.
+
+`app_pages/dotacao_orcamentaria.py` migrou para ler o manifesto versionado
+(`src/importacao_dotacao.py`), não mais este session_state — a escrita aqui
+testada ficou órfã, sem consumidor, até `importacao_bases.py` ser removido
+(passo já planejado). Os testes que restam cobrem só o que ainda é real: o
+próprio fluxo de reconhecimento e validação da Dotação Anual em memória.
+"""
 
 import unittest
 import ast
@@ -113,7 +120,13 @@ class DotacaoSessionFlowTests(unittest.TestCase):
         app.run()
         self._open_analysis_page(app)
 
-    def test_transfers_validated_base_to_session_and_analysis_page(self) -> None:
+    def test_transfers_validated_base_to_session(self) -> None:
+        # A página de análise NÃO lê mais este session_state (migrou para o
+        # manifesto, ver src/importacao_dotacao.py) — este teste cobre só o
+        # que ainda é real: Importação de Bases continua populando a sessão
+        # corretamente. Nada consome esse valor hoje; é escrita órfã, que
+        # desaparece quando importacao_bases.py for removido (próximo passo
+        # já planejado, não desta etapa).
         app = self._open_import_page()
         self._upload(app, "dotacao_anual.xlsx", workbook_bytes(write_recognized_sheet))
 
@@ -123,36 +136,11 @@ class DotacaoSessionFlowTests(unittest.TestCase):
         self.assertEqual(dataset.row_count, 6)
         self.assertEqual(dataset.validation_status, "Aprovada")
 
-        analysis = self._open_analysis_page(app)
-        self.assertEqual(analysis.title[0].value, "Dotação Orçamentária")
-        self.assertTrue(any("Anos: 2024" in item.value for item in analysis.caption))
-        self.assertTrue(analysis.metric)
-
-    def test_analysis_page_explains_when_no_validated_base_is_loaded(self) -> None:
-        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
-        app.run()
-
-        analysis = self._open_analysis_page(app)
-
-        self.assertTrue(
-            any(
-                "Nenhuma base de Dotação Anual validada está carregada." in item.value
-                for item in analysis.info
-            )
-        )
-
-    def test_does_not_make_invalid_validation_available_to_analysis(self) -> None:
+    def test_does_not_populate_session_for_invalid_upload(self) -> None:
         app = self._open_import_page()
         self._upload(app, "dotacao_anual_invalida.xlsx", workbook_bytes(write_invalid_sheet))
 
         self.assertNotIn(DOTACAO_ANUAL_ANALYSIS_SESSION_KEY, app.session_state)
-        analysis = self._open_analysis_page(app)
-        self.assertTrue(
-            any(
-                "Nenhuma base de Dotação Anual validada está carregada." in item.value
-                for item in analysis.info
-            )
-        )
 
     def test_replaces_session_dataset_when_a_new_validated_base_is_uploaded(self) -> None:
         app = self._open_import_page()
@@ -173,9 +161,6 @@ class DotacaoSessionFlowTests(unittest.TestCase):
             replacement_dataset.source_sha256,
         )
         self.assertEqual(replacement_dataset.row_count, 1)
-
-        analysis = self._open_analysis_page(app)
-        self.assertTrue(analysis.metric)
 
 
 if __name__ == "__main__":

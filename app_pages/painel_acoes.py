@@ -1,10 +1,12 @@
 """Painel por Ação de Governo — um cartão por ação, subdivisões dentro do cartão.
 
-Adaptação do protótipo em `design_handoff_streamlit/painel_acoes.py` para a
-base de Dotação Anual já validada na sessão (em vez do `data_loader.py` do
-pacote, que lê um caminho fixo em disco com forward fill e descarta linhas
-sem valor — ambos incompatíveis com as regras deste projeto). Ver decisão
-registrada no histórico da conversa.
+Adaptação do protótipo em `design_handoff_streamlit/painel_acoes.py` (em vez do
+`data_loader.py` do pacote, que lê um caminho fixo em disco com forward fill e descarta
+linhas sem valor — ambos incompatíveis com as regras deste projeto). Ver decisão registrada
+no histórico da conversa.
+
+Lê o arquivo apontado pelo manifesto atual de Dotação Anual (`src/importacao_dotacao.py`,
+mesmo padrão da Execução Anual), não mais `st.session_state`.
 
 Sem gráficos: só valores tabulares dentro de cada cartão, com todas as
 subdivisões visíveis de uma vez (sem truncar nem exigir um clique extra).
@@ -17,6 +19,8 @@ são nativos.
 from __future__ import annotations
 
 import html as html_lib
+from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -43,14 +47,23 @@ from src.design_tokens import (
     TRACK,
 )
 from src.dotacao_anual_analysis import (
-    DOTACAO_ANUAL_ANALYSIS_SESSION_KEY,
     KNOWN_ITEM_INDICATORS,
-    ValidatedDotacaoAnualDataset,
     apply_dotacao_anual_filters,
     build_dotacao_anual_subdivision_analysis,
     build_item_indicators,
 )
+from src.importacao_dotacao import Manifesto, ler_dotacao_anual
 from src.ui_theme import format_brl_compact, render_alert, render_metric_grid, render_page_header
+
+
+DIRETORIO_DADOS_BRUTOS = Path("data/raw")
+
+
+@st.cache_data(show_spinner="Lendo a base de Dotação Anual...")
+def _cached_leitura(caminho: str, mtime: float) -> pd.DataFrame:
+    """`mtime` só participa da chave de cache — força reler se o arquivo mudar."""
+
+    return ler_dotacao_anual(caminho).workbook.consolidated_data
 
 
 INDICATOR_DISPLAY_ORDER = (
@@ -144,7 +157,9 @@ def _selected_values(label: str, mapping: dict[str, object], key: str) -> list[o
     return [mapping[selected_label] for selected_label in labels]
 
 
-def _render_filters(dataframe: pd.DataFrame, source_key: str) -> tuple[int, dict[str, list[object]]]:
+def _render_filters(
+    dataframe: pd.DataFrame, source_key: str, ano_extracao: int
+) -> tuple[int, dict[str, list[object]]]:
     """Dois filtros por linha (4 colunas), não oito espremidos numa só.
 
     Com sete filtros de dimensão em uma única linha, cada caixa ficava
@@ -161,7 +176,11 @@ def _render_filters(dataframe: pd.DataFrame, source_key: str) -> tuple[int, dict
 
     with row1[0]:
         ano = st.selectbox(
-            "Ano", anos, index=len(anos) - 1, key=f"painel_acoes_ano_{source_key}"
+            "Ano",
+            anos,
+            index=len(anos) - 1,
+            key=f"painel_acoes_ano_{source_key}",
+            format_func=lambda valor: f"{valor} ⏳" if valor == ano_extracao else str(valor),
         )
 
     selections: dict[str, list[object]] = {"ano": [ano]}
@@ -374,21 +393,36 @@ render_page_header(
     "Dotação",
 )
 
-dataset = st.session_state.get(DOTACAO_ANUAL_ANALYSIS_SESSION_KEY)
-if not isinstance(dataset, ValidatedDotacaoAnualDataset) or dataset.validation_status != "Aprovada":
+manifesto = Manifesto.atual()
+if manifesto is None:
     st.info(
-        "Nenhuma base de Dotação Anual validada está carregada. Importe uma base na "
-        "página Importação de Bases."
+        "Nenhuma base de Dotação Anual foi importada ainda. Rode a importação "
+        "inicial (`python -m src.importacao_dotacao <arquivo>`) antes de usar "
+        "esta página."
     )
     st.stop()
 
-dataframe = dataset.normalized_data
-source_key = dataset.source_sha256[:12]
+caminho_base = DIRETORIO_DADOS_BRUTOS / manifesto.arquivo
+if not caminho_base.exists():
+    st.error(
+        f"O arquivo da extração atual do manifesto não foi encontrado em "
+        f"'{caminho_base}'."
+    )
+    st.stop()
+
+try:
+    dataframe = _cached_leitura(str(caminho_base), caminho_base.stat().st_mtime)
+except Exception as error:
+    st.error(f"Não foi possível ler a base de Dotação Anual: {error}")
+    st.stop()
+
+source_key = manifesto.sha256[:12]
+ano_extracao = datetime.fromisoformat(manifesto.data_extracao).year
 _inject_css()
 
-render_alert("Base de Dotação Anual validada e disponível para análise.", "success")
+render_alert("Base de Dotação Anual carregada a partir do manifesto atual.", "success")
 
-ano, selections = _render_filters(dataframe, source_key)
+ano, selections = _render_filters(dataframe, source_key, ano_extracao)
 filtered = apply_dotacao_anual_filters(dataframe, selections)
 
 if filtered.empty:
@@ -428,6 +462,11 @@ acao_groups = subdivisions.groupby(["acao_codigo", "acao_descricao"], dropna=Fal
 st.caption(
     f"{acao_groups.ngroups} ações · {len(subdivisions)} subdivisões · ano {ano}"
 )
+if ano == ano_extracao:
+    st.caption(
+        f"⚠ {ano_extracao} é o exercício em andamento na data da extração — não "
+        "compare diretamente com exercícios fechados."
+    )
 
 if acao_groups.ngroups == 0:
     st.markdown(
@@ -446,3 +485,6 @@ ordem = (
 for codigo, nome in ordem:
     grupo = subdivisions[subdivisions["acao_codigo"] == codigo]
     _render_card(codigo, nome, grupo, source_key)
+
+data_extracao_texto = datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y")
+st.caption(f"Procedência: extração de {data_extracao_texto} · hash {manifesto.sha256[:8]}")
