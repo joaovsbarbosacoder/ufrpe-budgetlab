@@ -1,10 +1,13 @@
-"""Execução Orçamentária — base Anual (BI PROPLAD), filtros e indicadores.
+"""Execução Orçamentária — base Anual (BI CPOC), filtros e indicadores.
 
 Lê o arquivo apontado pelo manifesto atual (`data/manifestos/execucao_anual_atual.json`),
 gerado por `src/importacao_execucao.py` — importação versionada própria, o padrão adotado por
 toda base do projeto (ver também Dotação Anual, `src/importacao_dotacao.py`). Esta página
-também oferece a reimportação (seção "Reimportar base", no final da página) — upload, prévia
-com validação e delta, e gravação só após confirmação explícita.
+também oferece a reimportação (seção "Reimportar base", no final da página) — upload manual OU
+uma pasta de entrada (`data/raw/_entrada/`, compartilhada por todas as bases, ver
+`src/ui_reimportacao.py`) verificada a cada carregamento da página: um arquivo solto lá é
+validado sozinho e, se seguro (sem retroatividade nem exercício removido), aplicado sem
+precisar de clique nenhum; do contrário, pede a mesma confirmação explícita de sempre.
 
 Implementa os cinco blocos da seção 8 de `docs/base_execucao_anual.md`:
 filtros no topo, faixa de cards, série histórica, composição por dimensão
@@ -439,7 +442,7 @@ ESPECIFICACAO_REIMPORTACAO = EspecificacaoReimportacao(
 # ---------------------------------------------------------------------- página
 render_page_header(
     "Execução Orçamentária",
-    "Execução Anual da Despesa (BI PROPLAD), por exercício.",
+    "Execução Anual da Despesa (BI CPOC), por exercício.",
     "Execução",
 )
 

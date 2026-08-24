@@ -239,5 +239,68 @@ class DotacaoReimportacaoPageTests(unittest.TestCase):
         self.assertEqual(MANIFESTO_ATUAL.read_bytes(), self._manifesto_backup)
 
 
+@unittest.skipUnless(MANIFESTO_ATUAL.exists(), f"Manifesto ausente em {MANIFESTO_ATUAL}")
+class PastaDeEntradaDotacaoTests(unittest.TestCase):
+    """Confirma que a Dotação Anual também reconhece a pasta de entrada compartilhada
+    (`data/raw/_entrada/`, mesma pasta da Execução Anual — ver
+    `tests/test_execucao_orcamentaria_reimportacao.py::PastaDeEntradaTests`, que já cobre o
+    mecanismo em detalhe). Só um caso aqui: o essencial é confirmar a fiação, não repetir
+    a bateria inteira de gate/ambiguidade já testada do outro lado."""
+
+    DIRETORIO_ENTRADA = DIRETORIO_RAW / "_entrada"
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.baseline = _workbook_bytes(_two_years(1000, 2000))
+
+    def _importar_baseline(self) -> None:
+        from src.importacao_dotacao import importar
+
+        caminho = DIRETORIO_RAW / "dotacao_baseline.xlsx"
+        caminho.write_bytes(self.baseline)
+        resultado = importar(caminho)
+        assert resultado.ok, resultado.validacao.erros
+
+    def setUp(self) -> None:
+        self._manifesto_backup = MANIFESTO_ATUAL.read_bytes()
+        self._raw_antes = set(DIRETORIO_RAW.glob("*.xlsx"))
+        self._manifestos_antes = set(DIRETORIO_MANIFESTOS.glob("dotacao_anual_*.json"))
+        if self.DIRETORIO_ENTRADA.exists():
+            shutil.rmtree(self.DIRETORIO_ENTRADA)
+
+    def tearDown(self) -> None:
+        MANIFESTO_ATUAL.write_bytes(self._manifesto_backup)
+        for novo in set(DIRETORIO_RAW.glob("*.xlsx")) - self._raw_antes:
+            novo.unlink(missing_ok=True)
+        for novo in set(DIRETORIO_MANIFESTOS.glob("dotacao_anual_*.json")) - self._manifestos_antes:
+            novo.unlink(missing_ok=True)
+        for pasta in (DIRETORIO_RAW / "_staging", self.DIRETORIO_ENTRADA):
+            if pasta.exists():
+                shutil.rmtree(pasta)
+
+    def _open_page(self) -> AppTest:
+        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+        app.run()
+        app.switch_page("app_pages/dotacao_orcamentaria.py")
+        app.run(timeout=30)
+        return app
+
+    def test_arquivo_seguro_na_pasta_compartilhada_e_aplicado_automaticamente(self) -> None:
+        self._importar_baseline()
+        self.DIRETORIO_ENTRADA.mkdir(parents=True, exist_ok=True)
+        (self.DIRETORIO_ENTRADA / "dotacao_avanco.xlsx").write_bytes(_workbook_bytes(_two_years(1000, 2500)))
+
+        app = self._open_page()
+
+        self.assertEqual(len(app.exception), 0)
+        self.assertFalse(any(b.label == "Confirmar importação" for b in app.button))
+        self.assertFalse(any(b.label == "Confirmar substituição" for b in app.button))
+        self.assertNotEqual(MANIFESTO_ATUAL.read_bytes(), self._manifesto_backup)
+        manifesto_novo = Manifesto.atual()
+        self.assertEqual(manifesto_novo.arquivo, "dotacao_avanco.xlsx")
+        self.assertEqual(manifesto_novo.totais_por_ano["2024"]["dotacao_atualizada"], 2500.0)
+        self.assertFalse((self.DIRETORIO_ENTRADA / "dotacao_avanco.xlsx").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

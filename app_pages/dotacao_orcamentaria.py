@@ -4,8 +4,10 @@ Lê o arquivo apontado pelo manifesto atual (`data/manifestos/dotacao_anual_atua
 gerado por `src/importacao_dotacao.py` — mesmo padrão de importação versionada da Execução
 Anual (ver `docs/base_execucao_anual.md`). A reimportação pela interface (seção "Reimportar
 base", no final da página) reaproveita o mesmo componente `src/ui_reimportacao.py` que a
-Execução Anual usa — upload, prévia com validação e delta, gravação só após confirmação
-explícita quando há retroatividade ou exercício removido.
+Execução Anual usa — upload manual OU pasta de entrada (`data/raw/_entrada/`, compartilhada
+por todas as bases, ver `src/ui_reimportacao.py`), verificada a cada carregamento; um arquivo
+lá é aplicado sozinho quando seguro (sem retroatividade/exercício removido), ou pede a
+confirmação explícita de sempre quando não é.
 """
 
 from __future__ import annotations
