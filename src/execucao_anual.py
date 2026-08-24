@@ -4,8 +4,9 @@ Leitura e normalização da base ANUAL de Execução da Despesa (BI PROPLAD / Te
 Camada: regra específica de base (não é leitor genérico, não é analítica, não é interface).
 Depende apenas de pandas/openpyxl. Não importa Streamlit.
 
-Origem esperada: "BI PROPLAD - EXEC. DESPESAS - Por Ano.xlsx" (aba única).
-Layout: cabeçalho em 2 linhas + 39 colunas posicionais. Ver docs/base_execucao_anual.md.
+Origem esperada: "BI CPOC - EXEC. DESPESAS - Por Ano.xlsx" (aba única, sucessora da extração
+"BI PROPLAD" de mesmo layout, com a coluna "NE - Núm. Processo" adicionada na posição 33).
+Layout: cabeçalho em 2 linhas + 40 colunas posicionais. Ver docs/base_execucao_anual.md.
 
 Contrato público:
     ler_execucao_anual(caminho) -> pd.DataFrame  (normalizado, com rastreabilidade)
@@ -50,6 +51,7 @@ COLUNAS = [
     "ug_executora_cod", "ug_executora_desc",
     "ug_responsavel_cod", "ug_responsavel_desc",
     "ugr_cod", "ugr_desc",
+    "processo_ne",
     "ne_descricao", "ne_ccor", "ne_favorecido",
     "ano",
     "empenhada", "liquidada", "paga",
@@ -57,14 +59,19 @@ COLUNAS = [
 
 MEDIDAS = ["empenhada", "liquidada", "paga"]
 
+#: Sentinelas do BI para "sem processo vinculado" na coluna "NE - Núm. Processo" — não um
+#: número real, por isso viram nulo em vez de ficarem como texto na base normalizada.
+_SENTINELAS_PROCESSO = {"'-9", "'-8"}
+
 #: Assinatura mínima do cabeçalho (linha 1 da planilha) usada para detectar troca de layout.
 ASSINATURA_CABECALHO = {
     0: "Iduso",
     12: "Grupo Despesa",
     25: "PTRES",
-    36: "DESPESAS EMPENHADAS",
-    37: "DESPESAS LIQUIDADAS",
-    38: "DESPESAS PAGAS",
+    32: "NE - N",
+    37: "DESPESAS EMPENHADAS",
+    38: "DESPESAS LIQUIDADAS",
+    39: "DESPESAS PAGAS",
 }
 
 #: Marcador do Tesouro Gerencial para linhas que NÃO são a linha do empenho.
@@ -135,6 +142,7 @@ def ler_execucao_anual(caminho: str | Path) -> pd.DataFrame:
         df[col] = _para_numero(df[col])
 
     df["ano"] = pd.to_numeric(df["ano"], errors="raise").astype("int16")
+    df["processo_ne"] = df["processo_ne"].mask(df["processo_ne"].isin(_SENTINELAS_PROCESSO))
 
     # Tipo de linha: a base mistura linha de EMPENHO com linha de ITEM DE EXECUÇÃO.
     eh_item = df["ne_descricao"].fillna("").str.upper().eq(MARCADOR_ITEM_EXECUCAO)
@@ -195,6 +203,13 @@ def validar(df: pd.DataFrame, esperado: dict | None = None) -> RelatorioValidaca
         )
     if df.duplicated(subset=[c for c in COLUNAS if c not in MEDIDAS]).any():
         alertas.append("Há linhas duplicadas na chave dimensional completa.")
+    ne_com_empenho = set(df.loc[df["tipo_linha"] == "empenho", "ne_ccor"])
+    ne_sem_linha_empenho = set(df["ne_ccor"]) - ne_com_empenho
+    if ne_sem_linha_empenho:
+        alertas.append(
+            f"{len(ne_sem_linha_empenho)} NE sem nenhuma linha do tipo 'empenho' — "
+            "agregar_por_ne() deixará ne_descricao/processo_ne nulos para essas NEs."
+        )
 
     # Regra específica desta base
     soma_emp_itens = float(df.loc[df["tipo_linha"] == "item_execucao", "empenhada"].sum())
@@ -268,6 +283,158 @@ def serie_anual(df: pd.DataFrame) -> pd.DataFrame:
 def detalhar_nota_empenho(df: pd.DataFrame, ne_ccor: str) -> pd.DataFrame:
     """Todas as linhas de uma NE (empenho + itens de execução), para rastreabilidade."""
     return df.loc[df["ne_ccor"] == ne_ccor].sort_values("linha_origem")
+
+
+#: Dimensões confirmadas constantes dentro de uma mesma NE na base real (nenhuma delas varia
+#: entre a linha de empenho e as linhas de item de execução, nem entre linhas de empenho quando
+#: há mais de uma). `natureza_detalhada`/`subitem` ficam de fora de propósito — são as duas
+#: exceções: uma NE pode ser lançada em mais de uma classificação orçamentária.
+_DIMENSOES_CONSTANTES_POR_NE = [
+    "ano",
+    "iduso_cod", "iduso_desc",
+    "resultado_primario_cod", "resultado_primario_desc",
+    "categoria_economica_cod", "categoria_economica_desc",
+    "acao_cod", "acao_desc",
+    "elemento_cod", "elemento_desc",
+    "fonte_cod", "fonte_desc",
+    "gnd_cod", "gnd_desc",
+    "natureza_despesa_cod", "natureza_despesa_desc",
+    "pi_cod", "pi_desc",
+    "po_acao_cod", "po_cod", "po_desc",
+    "ptres",
+    "ug_executora_cod", "ug_executora_desc",
+    "ug_responsavel_cod", "ug_responsavel_desc",
+    "ugr_cod", "ugr_desc",
+    "ne_favorecido",
+]
+
+
+def _resumo_classificacao(valores: pd.Series) -> str:
+    """Valor único se a NE tem só uma classificação; contagem, caso contrário."""
+    unicos = valores.dropna().unique()
+    if len(unicos) == 0:
+        return "—"
+    if len(unicos) == 1:
+        return str(unicos[0])
+    return f"{len(unicos)} classificações"
+
+
+def _soma_preservando_nulo(valores: pd.Series) -> float:
+    return valores.sum(min_count=1)
+
+
+def agregar_por_ne(df: pd.DataFrame) -> pd.DataFrame:
+    """Uma linha por NE (nota de empenho) — para consulta/navegação, não para reconciliação
+    financeira (para isso, `agregar()`, que nunca perde a granularidade por linha).
+
+    `ne_descricao` e `processo_ne` vêm só das linhas de tipo "empenho": linhas de item de
+    execução sempre trazem o marcador "NAO SE APLICA"/uma sentinela de "sem processo" no
+    lugar do valor real (ver `_SENTINELAS_PROCESSO`), não o dado verdadeiro da NE. As demais
+    dimensões são constantes por NE, exceto Natureza Detalhada e Subitem (ver
+    `_DIMENSOES_CONSTANTES_POR_NE`), resumidas como "N classificações" quando a NE tem mais
+    de uma.
+    """
+    agregacoes: dict[str, object] = {coluna: "first" for coluna in _DIMENSOES_CONSTANTES_POR_NE}
+    agregacoes["natureza_detalhada_label"] = _resumo_classificacao
+    agregacoes["subitem_cod"] = _resumo_classificacao
+    for medida in MEDIDAS:
+        agregacoes[medida] = _soma_preservando_nulo
+
+    resultado = df.groupby("ne_ccor", dropna=False).agg(agregacoes)
+    so_empenho = df.loc[df["tipo_linha"] == "empenho"].groupby("ne_ccor")
+    resultado["ne_descricao"] = so_empenho["ne_descricao"].first()
+    resultado["processo_ne"] = so_empenho["processo_ne"].first()
+    resultado = resultado.reset_index().rename(columns={"subitem_cod": "subitem_resumo"})
+    return resultado.sort_values("ne_ccor").reset_index(drop=True)
+
+
+# --------------------------------------------------------------------------------------
+# 5. Ligação com outras bases que citam a NE sem o prefixo de órgão/UG
+# --------------------------------------------------------------------------------------
+#
+# Várias planilhas fora desta base (ex.: Contratos Contínuos, Bolsas — mantidas manualmente,
+# não por uma extração versionada como esta) citam a nota de empenho na forma curta usual
+# ("2026NE000100"), não no `ne_ccor` completo de 23 caracteres. As três funções abaixo
+# resolvem essa ligação uma única vez, para não reimplementar o casamento em cada base nova.
+
+def ne_curta(ne_ccor: str) -> str:
+    """Forma curta da NE (ex. "2026NE000100"), a partir do `ne_ccor` completo.
+
+    O ano usado no marcador de busca vem do próprio `ne_ccor` (posições 11-14, ver `ne_ano`
+    em `ler_execucao_anual`) — NÃO do Ano Lançamento (`ano`), que pode divergir em NE de
+    resto a pagar (ver alerta em `validar`). Usar o Ano Lançamento aqui fazia a busca falhar
+    exatamente nesse caso e devolver o `ne_ccor` completo em vez da forma curta.
+
+    O prefixo de órgão/UG antes do ano tem tamanho fixo nesta base (11 dígitos), mas a busca
+    pelo marcador "{ano}NE" é mais robusta que uma fatia posicional fixa caso esse prefixo
+    varie em alguma UG diferente no futuro.
+    """
+    marcador = f"{ne_ccor[11:15]}NE"
+    posicao = ne_ccor.find(marcador)
+    return ne_ccor[posicao:] if posicao != -1 else ne_ccor
+
+
+def saldo_por_ne(por_ne: pd.DataFrame) -> pd.DataFrame:
+    """Acrescenta a coluna `saldo` (empenhado − liquidado) a um DataFrame já agregado por NE
+    (`agregar_por_ne`).
+
+    `liquidada` nula vira 0 só nesta conta — não em geral (ver `agregar_por_ne`/`agregar`, que
+    preservam nulo ≠ zero) — porque saldo de empenho é por definição um saldo corrente: uma NE
+    ainda não liquidada tem, por definição, R$ 0,00 liquidados até agora, não um valor
+    desconhecido. Mesma regra usada em `app_pages/consulta_empenhos.py::_saldo_e_a_pagar`.
+    """
+    resultado = por_ne.copy()
+    resultado["saldo"] = resultado["empenhada"] - resultado["liquidada"].fillna(0.0)
+    return resultado
+
+
+def _indice_por_ne_curta(por_ne: pd.DataFrame, coluna: str) -> pd.Series:
+    indice = [ne_curta(ne_ccor) for ne_ccor in por_ne["ne_ccor"]]
+    return pd.Series(por_ne[coluna].to_numpy(), index=indice)
+
+
+def indice_saldo_por_ne_curta(por_ne_com_saldo: pd.DataFrame) -> pd.Series:
+    """Série `saldo`, indexada pela forma curta da NE — pronta para `.map()` a partir de
+    qualquer base externa que cite a NE sem o prefixo de órgão/UG (ver `ne_curta`).
+
+    Recebe o resultado de `saldo_por_ne`, não `agregar_por_ne` puro — é preciso já ter a
+    coluna `saldo`.
+    """
+    return _indice_por_ne_curta(por_ne_com_saldo, "saldo")
+
+
+def indice_valor_empenhado_por_ne_curta(por_ne: pd.DataFrame) -> pd.Series:
+    """Série `empenhada` (valor empenhado autoritativo por NE), indexada pela forma curta da
+    NE — mesmo padrão de `indice_saldo_por_ne_curta`, para bases externas que precisem
+    validar/atualizar o valor empenhado que colam manualmente contra a Execução Anual.
+
+    Recebe o resultado de `agregar_por_ne` (a coluna `empenhada` já existe ali; não precisa
+    ter passado por `saldo_por_ne`, mas aceita o resultado dela também, já que só lê
+    `empenhada`).
+    """
+    return _indice_por_ne_curta(por_ne, "empenhada")
+
+
+def indice_liquidado_por_ne_curta(por_ne: pd.DataFrame) -> pd.Series:
+    """Série `liquidada` (valor liquidado autoritativo, por NE), indexada pela forma curta da
+    NE — mesmo padrão de `indice_valor_empenhado_por_ne_curta`, para bases externas
+    compararem empenhado × liquidado por NE (ex. quadro "Empenhado × Liquidado" em
+    `app_pages/contratos_continuos.py`).
+
+    Recebe o resultado de `agregar_por_ne` (a coluna `liquidada` já existe ali).
+    """
+    return _indice_por_ne_curta(por_ne, "liquidada")
+
+
+def indice_valor_pago_por_ne_curta(por_ne: pd.DataFrame) -> pd.Series:
+    """Série `paga` (valor efetivamente pago, autoritativo, por NE), indexada pela forma
+    curta da NE — mesmo padrão de `indice_valor_empenhado_por_ne_curta`, para bases externas
+    (ex. `src/contratos_pagamentos.py`) reconciliarem o total que registram para uma NE contra
+    o valor oficial pago segundo a Execução Anual.
+
+    Recebe o resultado de `agregar_por_ne` (a coluna `paga` já existe ali).
+    """
+    return _indice_por_ne_curta(por_ne, "paga")
 
 
 if __name__ == "__main__":  # inspeção rápida

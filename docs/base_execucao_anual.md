@@ -1,17 +1,21 @@
 # Base ANUAL de Execução da Despesa — especificação e regras
 
 > Documento de contrato da base. Ler antes de qualquer alteração no leitor, na validação ou na
-> aba **Execução Orçamentária**. Extração analisada: 11/08/2026, 7.779 linhas, exercícios 2023–2026.
+> aba **Execução Orçamentária**. Extração analisada: 13/08/2026, 7.800 linhas, exercícios 2023–2026.
+>
+> A extração passou de "BI PROPLAD" para "BI CPOC" e ganhou a coluna "NE - Núm. Processo"
+> (posição 33) nesta revisão — mesmo layout no restante, mas arquivos antigos (39 colunas, sem
+> a coluna de processo) não passam mais em `_validar_assinatura` e precisam ser reimportados.
 
 ## 1. Identificação
 
 | Item | Valor |
 |---|---|
-| Origem | BI PROPLAD / Tesouro Gerencial — "EXEC. DESPESAS - Por Ano" |
-| Arquivo recebido | `BI_PROPLAD_-_EXEC__DESPESAS_-_Por_Ano__9_.xlsx` |
+| Origem | BI CPOC / Tesouro Gerencial — "EXEC. DESPESAS - Por Ano" (sucessora do "BI PROPLAD", mesmo layout + coluna de processo) |
+| Arquivo recebido | `BI_CPOC_-_EXEC__DESPESAS_-_Por_Ano_-_com_processo.xlsx` |
 | Abas | 1 (única) |
-| Colunas | 39, posicionais |
-| Linhas de dados | 7.779 (a partir da linha 3 da planilha) |
+| Colunas | 40, posicionais |
+| Linhas de dados | 7.800 (a partir da linha 3 da planilha) |
 | Granularidade temporal | **anual** (`Ano Lançamento`) — não há mês |
 | UG Executora | constante: 153165 — UFRPE |
 
@@ -26,8 +30,8 @@ O cabeçalho ocupa **duas linhas** e não é utilizável direto pelo pandas:
   repetido 3×). O rótulo `Item Informação` da linha 1 está deslocado sobre a coluna de ano.
 - **Linha 3 em diante**: dados. Tudo em texto, inclusive valores.
 
-Por isso: ler com `header=None, skiprows=2, dtype=str` e nomear as 39 colunas **por posição**.
-Nunca inferir nomes do cabeçalho. A função `_validar_assinatura` confere 6 posições-âncora e
+Por isso: ler com `header=None, skiprows=2, dtype=str` e nomear as 40 colunas **por posição**.
+Nunca inferir nomes do cabeçalho. A função `_validar_assinatura` confere 7 posições-âncora e
 levanta `ErroLayoutBase` se a extração mudar — falhar cedo, não adivinhar.
 
 ### Mapa posicional
@@ -40,11 +44,18 @@ levanta `ErroLayoutBase` se a extração mudar — falhar cedo, não adivinhar.
 | 7–8 | Ação de Governo | 27–28 | UG Executora |
 | 9–10 | Elemento de Despesa | 29–30 | UG Responsável |
 | 11–12 | Fonte de Recursos | 31–32 | UGR – Gestão |
-| 13–14 | Grupo de Despesa (GND) | 33 | NE – Descrição |
-| 15–16 | Natureza de Despesa | 34 | NE CCor |
-| 17–18 | Natureza de Despesa Detalhada | 35 | NE CCor – Favorecido |
-| 19–20 | Subitem | 36 | Ano Lançamento |
-| | | 37–39 | Empenhada, Liquidada, Paga |
+| 13–14 | Grupo de Despesa (GND) | 33 | NE – Núm. Processo |
+| 15–16 | Natureza de Despesa | 34 | NE – Descrição |
+| 17–18 | Natureza de Despesa Detalhada | 35 | NE CCor |
+| 19–20 | Subitem | 36 | NE CCor – Favorecido |
+| | | 37 | Ano Lançamento |
+| | | 38–40 | Empenhada, Liquidada, Paga |
+
+`NE – Núm. Processo` traz o número SEI do processo administrativo vinculado à NE (às vezes em
+formato alternativo, sem pontuação). Duas sentinelas do BI (`'-9`, `'-8`) marcam "sem processo
+vinculado" e viram nulo na leitura (`_SENTINELAS_PROCESSO`) — não são números de processo reais.
+Só é confiável nas linhas de empenho (ver seção 3); nas de item de execução, vem vazio/sentinela
+mesmo quando a NE tem processo.
 
 ## 3. A regra que muda tudo: dois tipos de linha
 
@@ -52,13 +63,13 @@ A base **mistura duas naturezas de registro** na mesma tabela:
 
 | Tipo | Identificação | Traz | Linhas |
 |---|---|---|---|
-| **Linha de empenho** | `NE - Descrição` ≠ `"NAO SE APLICA"` | apenas `DESPESAS EMPENHADAS` | 4.092 |
-| **Linha de item de execução** | `NE - Descrição` = `"NAO SE APLICA"` | `LIQUIDADAS` e `PAGAS` | 3.687 |
+| **Linha de empenho** | `NE - Descrição` ≠ `"NAO SE APLICA"` | apenas `DESPESAS EMPENHADAS` | 4.109 |
+| **Linha de item de execução** | `NE - Descrição` = `"NAO SE APLICA"` | `LIQUIDADAS` e `PAGAS` | 3.691 |
 
 Consequências obrigatórias:
 
-1. **Nunca conte linhas como "quantidade de despesas".** 7.779 linhas ≠ 7.779 despesas. As NEs
-   distintas são 3.700.
+1. **Nunca conte linhas como "quantidade de despesas".** 7.800 linhas ≠ 7.800 despesas. As NEs
+   distintas são 3.716.
 2. **Some cada medida sobre TODAS as linhas.** Como os campos não se sobrepõem, a soma simples
    por dimensão está correta e reconcilia com a origem. Não filtre por tipo de linha antes de somar.
 3. **`NE - Descrição` não é dimensão analítica de liquidado/pago** — ela só existe nas linhas de

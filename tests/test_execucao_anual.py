@@ -23,8 +23,12 @@ from src.execucao_anual import (
     COLUNAS,
     MEDIDAS,
     ErroLayoutBase,
+    _SENTINELAS_PROCESSO,
     agregar,
+    agregar_por_ne,
+    indice_valor_pago_por_ne_curta,
     ler_execucao_anual,
+    ne_curta,
     reconciliar,
     validar,
 )
@@ -37,14 +41,15 @@ from src.importacao_execucao import (
     importar,
 )
 
-CAMINHO_BASE = Path("data/raw/BI PROPLAD - EXEC. DESPESAS - Por Ano (9).xlsx")
+CAMINHO_BASE = Path("data/raw/BI CPOC - EXEC. DESPESAS - Por Ano - com processo.xlsx")
 
 # Extração de referência recebida em 11/08/2026. Ao substituir a base por uma extração mais
 # recente, NÃO edite estes números: registre a nova referência acrescentando outra entrada
 # (o hash é que decide qual se aplica).
 REFERENCIAS = {
     "7d09c278": {
-        "descricao": "Extração recebida em 11/08/2026, exercícios 2023-2026",
+        "descricao": "Extração recebida em 11/08/2026, exercícios 2023-2026 (layout antigo, "
+        "39 colunas, sem Núm. Processo — arquivo mantido só como registro histórico)",
         "linhas": 7779,
         "linhas_empenho": 4092,
         "linhas_item_execucao": 3687,
@@ -60,6 +65,26 @@ REFERENCIAS = {
             2024: {"empenhada": 784086352.51, "liquidada": 759877180.18, "paga": 687779472.58},
             2025: {"empenhada": 931345340.39, "liquidada": 882774236.76, "paga": 790633667.10},
             2026: {"empenhada": 754439889.56, "liquidada": 498330754.13, "paga": 486238063.81},
+        },
+    },
+    # Extração recebida em 13/08/2026: mesmo layout + coluna "NE - Núm. Processo" (posição 33).
+    "0a60d0a4": {
+        "descricao": "Extração recebida em 13/08/2026, exercícios 2023-2026, com Núm. Processo",
+        "linhas": 7800,
+        "linhas_empenho": 4109,
+        "linhas_item_execucao": 3691,
+        "notas_empenho_distintas": 3716,
+        "anos": [2023, 2024, 2025, 2026],
+        "totais": {
+            "empenhada": 3232578961.58,
+            "liquidada": 2865398089.09,
+            "paga": 2616648887.32,
+        },
+        "totais_por_ano": {
+            2023: {"empenhada": 762455916.88, "liquidada": 723987833.09, "paga": 651361558.65},
+            2024: {"empenhada": 784086352.51, "liquidada": 759877180.18, "paga": 687779472.58},
+            2025: {"empenhada": 931345340.39, "liquidada": 882774236.76, "paga": 790633667.10},
+            2026: {"empenhada": 754691351.80, "liquidada": 498758839.06, "paga": 486874188.99},
         },
     },
 }
@@ -96,6 +121,9 @@ class TestInvariantesDaBase(unittest.TestCase):
     def test_ano_lancamento_igual_ao_ano_da_ne(self):
         self.assertTrue(self.df["ne_ano"].eq(self.df["ano"].astype(str)).all())
 
+    def test_sentinelas_de_processo_viram_nulo(self):
+        self.assertFalse(self.df["processo_ne"].isin(["'-9", "'-8"]).any())
+
     def test_coerencia_financeira_por_ano(self):
         por_ano = self.df.groupby("ano")[MEDIDAS].sum()
         for ano, linha in por_ano.iterrows():
@@ -119,6 +147,147 @@ class TestInvariantesDaBase(unittest.TestCase):
         rel = validar(self.df)
         self.assertTrue(rel.ok, rel.erros)
         self.assertEqual(rel.alertas, [])
+
+
+@unittest.skipUnless(CAMINHO_BASE.exists(), f"Base ausente em {CAMINHO_BASE}")
+class TestAgregacaoPorNE(unittest.TestCase):
+    """`agregar_por_ne` — base da futura Consulta de Empenhos: uma linha por NE."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.df = ler_execucao_anual(CAMINHO_BASE)
+        cls.por_ne = agregar_por_ne(cls.df)
+
+    def test_uma_linha_por_ne_distinta(self):
+        self.assertEqual(len(self.por_ne), self.df["ne_ccor"].nunique())
+        self.assertEqual(self.por_ne["ne_ccor"].nunique(), len(self.por_ne))
+
+    def test_soma_por_ne_preserva_o_total_da_base(self):
+        for m in MEDIDAS:
+            self.assertAlmostEqual(
+                float(self.por_ne[m].sum(min_count=1)), float(self.df[m].sum(min_count=1)), places=2, msg=m
+            )
+
+    def test_ne_descricao_vem_da_linha_de_empenho_no_marcador_de_item(self):
+        # Nenhuma NE deve carregar o marcador de item de execução como descrição.
+        self.assertFalse(self.por_ne["ne_descricao"].eq("NAO SE APLICA").any())
+
+    def test_ne_com_classificacao_unica_mostra_o_valor_direto(self):
+        unica = self.por_ne[~self.por_ne["subitem_resumo"].str.contains("classifica", na=False)]
+        self.assertFalse(unica.empty)
+        # não deve sobrar o marcador de resumo em quem tem só uma classificação
+        self.assertTrue((unica["subitem_resumo"] != "").all())
+
+    def test_ne_com_classificacoes_multiplas_mostra_contagem(self):
+        multipla = self.por_ne[self.por_ne["subitem_resumo"].str.contains("classifica", na=False)]
+        self.assertFalse(multipla.empty)
+        for texto in multipla["subitem_resumo"]:
+            self.assertRegex(texto, r"^\d+ classifica")
+
+    def test_dimensoes_constantes_nao_variam_dentro_da_ne(self):
+        # amostra: Ação e Fonte não podem divergir de uma NE para a raw dela.
+        amostra = self.por_ne["ne_ccor"].iloc[0]
+        linhas = self.df[self.df["ne_ccor"] == amostra]
+        agregado = self.por_ne[self.por_ne["ne_ccor"] == amostra].iloc[0]
+        self.assertEqual(linhas["acao_cod"].nunique(), 1)
+        self.assertEqual(agregado["acao_cod"], linhas["acao_cod"].iloc[0])
+
+
+@unittest.skipUnless(CAMINHO_BASE.exists(), f"Base ausente em {CAMINHO_BASE}")
+class TestIndiceValorPagoPorNeCurta(unittest.TestCase):
+    """`indice_valor_pago_por_ne_curta` — base da reconciliação em
+    `app_pages/contratos_pagamentos.py` contra o valor oficial pago por NE."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.df = ler_execucao_anual(CAMINHO_BASE)
+        cls.por_ne = agregar_por_ne(cls.df)
+        cls.indice = indice_valor_pago_por_ne_curta(cls.por_ne)
+
+    def test_mesma_quantidade_de_nes_que_agregar_por_ne(self):
+        self.assertEqual(len(self.indice), len(self.por_ne))
+
+    def test_indexado_pela_ne_curta_nao_pelo_ne_ccor_completo(self):
+        amostra = self.por_ne.iloc[0]
+        esperado = ne_curta(amostra["ne_ccor"])
+        self.assertIn(esperado, self.indice.index)
+
+    def test_valor_bate_com_a_coluna_paga_da_linha_correspondente(self):
+        amostra = self.por_ne.iloc[0]
+        chave = ne_curta(amostra["ne_ccor"])
+        valor_esperado = amostra["paga"]
+        if pd.isna(valor_esperado):
+            self.assertTrue(pd.isna(self.indice[chave]))
+        else:
+            self.assertAlmostEqual(float(self.indice[chave]), float(valor_esperado), places=2)
+
+
+class TestNeCurta(unittest.TestCase):
+    """`ne_curta` usa o ano embutido no próprio `ne_ccor` (posições 11-14), não o Ano
+    Lançamento — os dois podem divergir em NE de resto a pagar (ver alerta em `validar`)."""
+
+    def test_forma_curta_a_partir_do_ne_ccor_completo(self):
+        self.assertEqual(ne_curta("153165152392025NE000709"), "2025NE000709")
+
+    def test_resto_a_pagar_usa_o_ano_do_proprio_ne_ccor(self):
+        # NE do exercício de 2024, ainda em execução (Ano Lançamento) em 2026: o ano do
+        # ne_ccor (2024) é o que importa para achar o marcador "NE", não o Ano Lançamento.
+        self.assertEqual(ne_curta("153165152392024NE000500"), "2024NE000500")
+
+
+def _linha_execucao_anual_sintetica(**overrides) -> dict:
+    """Uma linha mínima e válida de Execução Anual (todas as colunas de `COLUNAS`, mais
+    `tipo_linha`/`ne_ano`), para testar `validar()` sem depender da base real."""
+    base = {coluna: f"valor_{coluna}" for coluna in COLUNAS}
+    base.update(
+        ano=2026,
+        empenhada=100.0,
+        liquidada=None,
+        paga=None,
+        ne_ccor="153165152392026NE000001",
+        ne_ano="2026",
+        tipo_linha="empenho",
+    )
+    base.update(overrides)
+    return base
+
+
+class TestValidarSinalizaNeSemLinhaDeEmpenho(unittest.TestCase):
+    """`validar()` deve alertar (não falhar silenciosamente) quando uma NE não tem nenhuma
+    linha do tipo "empenho" — cenário em que `agregar_por_ne` deixaria `ne_descricao`/
+    `processo_ne` nulos sem explicação (ver `agregar_por_ne`)."""
+
+    def test_ne_so_com_item_de_execucao_gera_alerta(self):
+        df = pd.DataFrame(
+            [
+                _linha_execucao_anual_sintetica(
+                    ne_ccor="153165152392026NE000002",
+                    ne_ano="2026",
+                    tipo_linha="item_execucao",
+                    empenhada=0.0,
+                ),
+            ]
+        )
+        rel = validar(df)
+        self.assertTrue(any("sem nenhuma linha do tipo 'empenho'" in a for a in rel.alertas))
+
+    def test_ne_com_linha_de_empenho_nao_gera_o_alerta(self):
+        df = pd.DataFrame([_linha_execucao_anual_sintetica()])
+        rel = validar(df)
+        self.assertFalse(any("sem nenhuma linha do tipo 'empenho'" in a for a in rel.alertas))
+
+
+class TestSentinelasDeProcesso(unittest.TestCase):
+    """`_SENTINELAS_PROCESSO` — valores do BI para "sem processo vinculado" na coluna
+    "NE - Núm. Processo", mascarados para nulo (ver `ler_execucao_anual`)."""
+
+    def test_sentinelas_viram_nulo_valor_real_passa_incolume(self):
+        serie = pd.Series(["'-9", "'-8", "23083.012345/2026-11", None])
+        mascarada = serie.mask(serie.isin(_SENTINELAS_PROCESSO))
+        self.assertTrue(pd.isna(mascarada.iloc[0]))
+        self.assertTrue(pd.isna(mascarada.iloc[1]))
+        self.assertEqual(mascarada.iloc[2], "23083.012345/2026-11")
+        self.assertTrue(pd.isna(mascarada.iloc[3]))
 
 
 @unittest.skipUnless(CAMINHO_BASE.exists(), f"Base ausente em {CAMINHO_BASE}")

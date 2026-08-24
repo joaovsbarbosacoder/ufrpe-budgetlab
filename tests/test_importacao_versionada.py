@@ -25,6 +25,11 @@ from src.importacao_versionada import (
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MANIFESTO_REAL_COMMITADO = PROJECT_ROOT / "data" / "manifestos" / "execucao_anual_atual.json"
+# Cópia congelada do manifesto real como estava no formato antigo (campos de contagem soltos),
+# antes da reimportação que trocou o ponteiro atual para a extração com "Núm. Processo" — o
+# ponteiro atual não serve mais como fixture do formato antigo porque toda gravação nova
+# (inclusive reimportações de rotina) já usa o formato novo (`contagens` aninhado).
+MANIFESTO_FORMATO_ANTIGO = PROJECT_ROOT / "tests" / "fixtures" / "execucao_anual_manifesto_formato_antigo.json"
 
 
 def _manifesto(sha: str, medidas_por_ano: dict, base: str = "teste") -> Manifesto:
@@ -51,10 +56,10 @@ class ManifestoFormatoAntigoTests(unittest.TestCase):
     """O ponto mais frágil do plano: carregar manifesto real já commitado, sem editá-lo."""
 
     @unittest.skipUnless(
-        MANIFESTO_REAL_COMMITADO.exists(), f"Manifesto ausente em {MANIFESTO_REAL_COMMITADO}"
+        MANIFESTO_FORMATO_ANTIGO.exists(), f"Fixture ausente em {MANIFESTO_FORMATO_ANTIGO}"
     )
     def test_carrega_manifesto_real_commitado_no_formato_antigo(self) -> None:
-        manifesto = Manifesto.carregar(MANIFESTO_REAL_COMMITADO)
+        manifesto = Manifesto.carregar(MANIFESTO_FORMATO_ANTIGO)
 
         self.assertEqual(manifesto.base, "execucao_anual")
         self.assertEqual(manifesto.sha256[:8], "7d09c278")
@@ -80,13 +85,15 @@ class ManifestoFormatoAntigoTests(unittest.TestCase):
         MANIFESTO_REAL_COMMITADO.exists(), f"Manifesto ausente em {MANIFESTO_REAL_COMMITADO}"
     )
     def test_manifesto_atual_da_execucao_le_o_mesmo_arquivo_sem_erro(self) -> None:
-        # A mesma leitura tolerante, mas pelo caminho real que a página usa:
-        # ManifestoExecucao.atual() -> Manifesto.atual(base="execucao_anual") -> carregar().
+        # A mesma leitura, mas pelo caminho real que a página usa: ManifestoExecucao.atual()
+        # -> Manifesto.atual(base="execucao_anual") -> carregar(). O ponteiro atual já está no
+        # formato novo (ver MANIFESTO_FORMATO_ANTIGO acima para o teste de formato legado);
+        # aqui só confere que a leitura do ponteiro real não quebra e traz dados plausíveis.
         manifesto = ManifestoExecucao.atual()
 
         self.assertIsNotNone(manifesto)
-        self.assertEqual(manifesto.sha256[:8], "7d09c278")
-        self.assertEqual(manifesto.linhas, 7779)
+        self.assertIsNotNone(manifesto.linhas)
+        self.assertGreater(manifesto.linhas, 0)
 
     def test_construcao_direta_com_campos_soltos_continua_funcionando(self) -> None:
         # Mesmo estilo de chamada que TestDelta._manifesto() usa em test_execucao_anual.py —
@@ -159,7 +166,7 @@ class ManifestoRoundTripTests(unittest.TestCase):
         # gerar_manifesto() -> Manifesto.salvar() -> disco -> Manifesto.atual() -> .linhas.
         from src.importacao_execucao import importar
 
-        caminho_base = Path("data/raw/BI PROPLAD - EXEC. DESPESAS - Por Ano (9).xlsx")
+        caminho_base = Path("data/raw/BI CPOC - EXEC. DESPESAS - Por Ano - com processo.xlsx")
         if not caminho_base.exists():
             self.skipTest(f"Base ausente em {caminho_base}")
 

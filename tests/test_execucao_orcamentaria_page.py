@@ -40,8 +40,9 @@ class ExecucaoOrcamentariaPageTests(unittest.TestCase):
 
     def test_shows_procedencia_footer_with_manifest_hash(self) -> None:
         app = self._open_page()
+        manifesto = Manifesto.atual()
 
-        self.assertTrue(any("hash 7d09c278" in item.value for item in app.caption))
+        self.assertTrue(any(f"hash {manifesto.sha256[:8]}" in item.value for item in app.caption))
 
     def test_marks_ongoing_exercise_when_in_scope(self) -> None:
         # A legenda fixa da série histórica sempre explica a convenção ("O
