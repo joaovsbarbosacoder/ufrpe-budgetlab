@@ -49,6 +49,8 @@ Contrato público:
     serie_por_contrato(pagamentos, contrato) -> tuple[pd.DataFrame, float]
     anos_do_empenho(valor) -> set[int]
     nes_do_empenho(valor) -> set[str]
+    normalizar_numero_contrato(valor) -> str | None
+    meses_pagos_por_contrato(pagamentos) -> pd.DataFrame
 """
 
 from __future__ import annotations
@@ -362,6 +364,73 @@ def serie_por_contrato(pagamentos: pd.DataFrame, contrato: str) -> tuple[pd.Data
     )
     media = float(por_mes.mean()) if len(por_mes) else 0.0
     return por_mes.reset_index(name="pago"), media
+
+
+#: número (dígitos ou "SN" de "sem número") + separador "/" + ano (2 ou 4 dígitos) — o que
+#: vem depois (sufixo de unidade, ex. " - SEDE", " -UAST- DEA") é ignorado de propósito: serve
+#: só para casar com o número de contrato de Contratos Contínuos (`contrato_numero`, que não
+#: carrega esse sufixo), não para preservar o texto original (ver `normalizar_numero_contrato`
+#: e a decisão de tratar contratos com o mesmo número base + sufixos diferentes como o MESMO
+#: contrato, aprovada antes desta implementação — casa com o padrão já conhecido de contrato
+#: faturado por mais de uma unidade, ver `docs`/histórico da conversa).
+_CONTRATO_NORMALIZADO_RE = re.compile(r"^\s*(\d+|SN)\s*/\s*(\d{4}|\d{2})\b", re.IGNORECASE)
+
+
+def normalizar_numero_contrato(valor: object) -> str | None:
+    """Número de contrato numa forma canônica para casar Pagamentos com Contratos Contínuos
+    (`contrato_numero`) — mesma função aplicada aos dois lados do casamento, para não
+    depender de qual base "já está no formato certo". `None` quando o texto não segue o
+    padrão "<número ou SN>/<ano>" reconhecível (não é erro: contrato sem esse padrão fica sem
+    correspondência, mais seguro que casar errado).
+
+    Regras (aprovadas antes da implementação, ver histórico da conversa):
+      * zero à esquerda no número removido ("023" -> "23"; "SN" não é numérico, fica "SN").
+      * ano de 2 dígitos expandido para 4 assumindo o século 2000 (só há contratos entre 2017
+        e 2026 nos dados conferidos — sem ambiguidade de século nesse intervalo).
+      * qualquer texto depois do ano (sufixo de unidade, ex. " - SEDE") é descartado — contratos
+        com o mesmo número base e sufixos diferentes viram o MESMO contrato normalizado
+        (pedido explícito: são o mesmo contrato faturado por mais de uma unidade).
+    """
+    if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+        return None
+    encontrado = _CONTRATO_NORMALIZADO_RE.match(str(valor))
+    if not encontrado:
+        return None
+    numero_texto, ano_texto = encontrado.groups()
+    numero = "SN" if numero_texto.upper() == "SN" else str(int(numero_texto))
+    ano = int(ano_texto)
+    if ano < 100:
+        ano += 2000
+    return f"{numero}/{ano}"
+
+
+def meses_pagos_por_contrato(pagamentos: pd.DataFrame) -> pd.DataFrame:
+    """Uma linha por número de contrato NORMALIZADO (`normalizar_numero_contrato`), com a
+    quantidade de meses distintos em que houve pagamento (`meses_pagos`, a partir de
+    `mes_pagamento` — o mês da ABA em que o lançamento está, não `mes_competencia`: é o dado
+    mais seguro de "quando o pagamento foi feito", sem depender do texto livre de COMPETENCIA,
+    que pode ficar em branco/não reconhecível) e o mês do pagamento mais recente
+    (`ultimo_mes_pago`).
+
+    Contratos com o mesmo número normalizado mas sufixos de unidade diferentes na origem (ex.
+    "22/2023 - UAST" e outra ocorrência de "22/2023") ficam automaticamente unidos aqui, pois
+    `normalizar_numero_contrato` já descarta o sufixo (pedido explícito — mesmo contrato,
+    faturado por mais de uma unidade).
+
+    Lançamentos marcados `duplicado` (ver `ler_pagamentos`) ficam de fora, mesmo critério de
+    `serie_por_contrato` — uma duplicidade não é um mês novo de pagamento, é o mesmo
+    lançamento repetido.
+    """
+    reais = pagamentos[~pagamentos["duplicado"]].copy()
+    reais["contrato_normalizado"] = reais["contrato"].apply(normalizar_numero_contrato)
+    reais = reais[reais["contrato_normalizado"].notna()]
+    if reais.empty:
+        return pd.DataFrame(columns=["contrato_normalizado", "meses_pagos", "ultimo_mes_pago"])
+
+    agregado = reais.groupby("contrato_normalizado")["mes_pagamento"].agg(
+        meses_pagos="nunique", ultimo_mes_pago="max"
+    )
+    return agregado.reset_index()
 
 
 def soma_por_ne(pagamentos: pd.DataFrame) -> pd.Series:

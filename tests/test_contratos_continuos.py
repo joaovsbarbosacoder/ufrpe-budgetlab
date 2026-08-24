@@ -24,7 +24,7 @@ from pathlib import Path
 import openpyxl
 import pandas as pd
 
-from src.contratos_continuos import ErroLayoutBase, NOME_ABA, com_saldo_execucao, ler_contratos_continuos
+from src.contratos_continuos import ErroLayoutBase, NOME_ABA, com_meses_pagos, com_saldo_execucao, ler_contratos_continuos
 from src.execucao_anual import agregar_por_ne, ler_execucao_anual, saldo_por_ne
 from src.importacao_execucao import Manifesto
 
@@ -187,6 +187,50 @@ class TestSaldoViaExecucaoAnual(unittest.TestCase):
     def test_quantidade_total_de_divergencias_de_valor_empenhado_bate_com_o_levantamento(self):
         unicos = self.df.dropna(subset=["ne_curta"]).drop_duplicates("ne_curta")
         self.assertEqual(int(unicos["diverge_valor_empenhado"].sum()), 2)
+
+
+class TestComMesesPagos(unittest.TestCase):
+    """`com_meses_pagos` — indicador independente vindo da planilha de Pagamentos, casado por
+    número de contrato normalizado (não pela NE). Dados sintéticos (não depende de fixture de
+    Pagamentos): cobre casamento exato, casamento por normalização (zero à esquerda/sufixo de
+    unidade), e contrato sem correspondência."""
+
+    def _contratos(self, numeros: list[str]) -> pd.DataFrame:
+        return pd.DataFrame({"contrato_numero": numeros})
+
+    def _meses_pagos(self, linhas: list[tuple[str, int, str]]) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {"contrato_normalizado": normalizado, "meses_pagos": meses, "ultimo_mes_pago": pd.Timestamp(mes)}
+                for normalizado, meses, mes in linhas
+            ],
+            columns=["contrato_normalizado", "meses_pagos", "ultimo_mes_pago"],
+        )
+
+    def test_casamento_exato(self):
+        df = com_meses_pagos(self._contratos(["23/2025"]), self._meses_pagos([("23/2025", 7, "2026-08-01")]))
+        self.assertEqual(df.loc[0, "meses_pagos"], 7)
+        self.assertEqual(df.loc[0, "ultimo_mes_pago"], pd.Timestamp("2026-08-01"))
+
+    def test_casamento_por_normalizacao_zero_a_esquerda(self):
+        # Contínuos "08/2023" precisa casar com o mesmo contrato já normalizado como "8/2023"
+        # na planilha de Pagamentos (ver `normalizar_numero_contrato`).
+        df = com_meses_pagos(self._contratos(["08/2023"]), self._meses_pagos([("8/2023", 8, "2026-08-01")]))
+        self.assertEqual(df.loc[0, "meses_pagos"], 8)
+
+    def test_contrato_sem_correspondencia_fica_nulo_nao_zero(self):
+        df = com_meses_pagos(self._contratos(["99/2099"]), self._meses_pagos([("23/2025", 7, "2026-08-01")]))
+        self.assertTrue(pd.isna(df.loc[0, "meses_pagos"]))
+        self.assertTrue(pd.isna(df.loc[0, "ultimo_mes_pago"]))
+
+    def test_contrato_sem_numero_reconhecivel_fica_nulo(self):
+        df = com_meses_pagos(self._contratos([None]), self._meses_pagos([("23/2025", 7, "2026-08-01")]))
+        self.assertTrue(pd.isna(df.loc[0, "meses_pagos"]))
+
+    def test_planilha_de_pagamentos_vazia_nao_quebra(self):
+        vazio = pd.DataFrame(columns=["contrato_normalizado", "meses_pagos", "ultimo_mes_pago"])
+        df = com_meses_pagos(self._contratos(["23/2025"]), vazio)
+        self.assertTrue(pd.isna(df.loc[0, "meses_pagos"]))
 
 
 if __name__ == "__main__":

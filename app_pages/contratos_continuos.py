@@ -91,7 +91,8 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from src.contratos_continuos import com_saldo_execucao, ler_contratos_continuos
+from src.contratos_continuos import com_meses_pagos, com_saldo_execucao, ler_contratos_continuos
+from src.contratos_pagamentos import MESES_ORDEM, meses_pagos_por_contrato, ler_pagamentos
 from src.design_tokens import (
     ACCENT,
     ACCENT_STRONG,
@@ -119,6 +120,7 @@ from src.ui_theme import format_brl_compact, render_metric_grid, render_page_hea
 
 DIRETORIO_DADOS_BRUTOS = Path("data/raw")
 CAMINHO_PLANILHA = DIRETORIO_DADOS_BRUTOS / "SERVIÇOS CONTÍNUOS - 2026 - AGO A DEZ.xlsm"
+CAMINHO_PAGAMENTOS = DIRETORIO_DADOS_BRUTOS / "CONTRATOS - CONTROLE 2020 - Pagamentos.xlsx"
 
 COLUNAS_BUSCA = [
     "contrato_numero", "fornecedor", "tipo_despesa", "tipo_contrato", "acao_cod",
@@ -138,6 +140,15 @@ def _cached_leitura(caminho: str, mtime: float) -> pd.DataFrame:
 @st.cache_data(show_spinner="Lendo a base de Execução Anual...")
 def _cached_por_ne_execucao(caminho: str, mtime: float) -> pd.DataFrame:
     return saldo_por_ne(agregar_por_ne(ler_execucao_anual(caminho)))
+
+
+@st.cache_data(show_spinner="Lendo a planilha de Pagamentos de Contratos...")
+def _cached_meses_pagos_por_contrato(caminho: str, mtime: float) -> pd.DataFrame:
+    """Meses pagos + último mês pago por contrato (número normalizado), a partir da planilha
+    de Pagamentos — complemento opcional (mesmo padrão de `_cached_dotacao_por_ptres`): sem
+    ela, os campos ficam nulos e o resto da tela continua funcionando normal."""
+
+    return meses_pagos_por_contrato(ler_pagamentos(caminho))
 
 
 @st.cache_data(show_spinner="Lendo a base de Dotação Anual...")
@@ -175,6 +186,15 @@ def _esc(value: object) -> str:
 
 def _dash(value: object) -> str:
     return "—" if pd.isna(value) else _esc(value)
+
+
+def _fmt_mes(valor: object) -> str:
+    """"mmm/aa" a partir de um Timestamp truncado ao mês (`ultimo_mes_pago`) — mesmo padrão de
+    `app_pages/contratos_pagamentos.py::_fmt_mes` (abreviação em português, não `strftime`)."""
+
+    if valor is None or pd.isna(valor):
+        return "—"
+    return f"{MESES_ORDEM[valor.month - 1][:3]}/{valor.year % 100:02d}"
 
 
 def _meses_restantes_no_ano(hoje: date | None = None) -> int:
@@ -474,6 +494,21 @@ def _render_card(linha: pd.Series, source_key: str, removidos: set) -> None:
         diverge_valor_empenhado = bool(linha["diverge_valor_empenhado"]) if pd.notna(linha["diverge_valor_empenhado"]) else False
         r5[2].markdown("<div class='cc-label'>Empenhado (Execução Anual) · NE</div>", unsafe_allow_html=True)
         r5[2].markdown(f"<div class='cc-calc'>{_brl(valor_empenhado_execucao) if pd.notna(valor_empenhado_execucao) else 'sem NE'}</div>", unsafe_allow_html=True)
+
+        # Indicador INDEPENDENTE de meses_liquidados (campo manual acima, r4): quantos meses
+        # distintos tiveram pagamento efetivamente registrado na planilha de Pagamentos e qual
+        # foi o mais recente — casado pelo número de contrato normalizado (ver
+        # `com_meses_pagos`), não pela NE. Liquidação e pagamento são estágios orçamentários
+        # diferentes; este campo não corrige nem substitui "Meses Liquidados", é só mais um
+        # dado para cruzar. "sem dado" quando o contrato não tem correspondência confiável na
+        # planilha de Pagamentos (não é erro, ver docstring de `com_meses_pagos`).
+        meses_pagos = linha["meses_pagos"]
+        ultimo_mes_pago = linha["ultimo_mes_pago"]
+        r5[3].markdown("<div class='cc-label'>Meses Pagos (Pagamentos) · último mês</div>", unsafe_allow_html=True)
+        texto_meses_pagos = (
+            f"{_num(meses_pagos)} · {_fmt_mes(ultimo_mes_pago)}" if pd.notna(meses_pagos) else "sem dado"
+        )
+        r5[3].markdown(f"<div class='cc-calc'>{texto_meses_pagos}</div>", unsafe_allow_html=True)
 
         eh_ativo = status == "ATIVO"
         tag_status_txt, tag_status_cls = ("Ativo", "ok") if eh_ativo else ("Vencido", "bad")
@@ -1009,9 +1044,27 @@ if manifesto_dotacao is not None:
         except Exception:
             dotacao_dimensoes = None
 
+# Pagamentos de Contratos, para "Meses Pagos"/"Último Mês Pago" nos cartões — mesmo padrão
+# de complemento opcional da Dotação Anual acima: sem ela, os dois campos ficam nulos e o
+# resto da tela continua funcionando normal.
+if CAMINHO_PAGAMENTOS.exists():
+    try:
+        meses_pagos_por_contrato_df = _cached_meses_pagos_por_contrato(
+            str(CAMINHO_PAGAMENTOS), CAMINHO_PAGAMENTOS.stat().st_mtime
+        )
+    except Exception:
+        meses_pagos_por_contrato_df = pd.DataFrame(
+            columns=["contrato_normalizado", "meses_pagos", "ultimo_mes_pago"]
+        )
+else:
+    meses_pagos_por_contrato_df = pd.DataFrame(
+        columns=["contrato_normalizado", "meses_pagos", "ultimo_mes_pago"]
+    )
+
 dataframe = _com_contratos_extra(dataframe, source_key)
 dataframe = _aplicar_edicoes_da_sessao(dataframe, source_key)
 dataframe = com_saldo_execucao(dataframe, por_ne_execucao)
+dataframe = com_meses_pagos(dataframe, meses_pagos_por_contrato_df)
 
 busca = st.text_input(
     "Buscar",

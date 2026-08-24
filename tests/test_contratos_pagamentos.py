@@ -31,7 +31,9 @@ from src.contratos_pagamentos import (
     anos_do_empenho,
     ler_pagamentos,
     mes_competencia_de,
+    meses_pagos_por_contrato,
     nes_do_empenho,
+    normalizar_numero_contrato,
     serie_por_contrato,
     soma_por_ne,
 )
@@ -285,6 +287,83 @@ class TestSeriePorContrato(unittest.TestCase):
         serie, media = serie_por_contrato(self.df, "000/0000")
         self.assertTrue(serie.empty)
         self.assertEqual(media, 0.0)
+
+
+class TestNormalizarNumeroContrato(unittest.TestCase):
+    """Casamento com o número de contrato de Contratos Contínuos (`contrato_numero`) — regras
+    aprovadas antes da implementação (ver histórico da conversa)."""
+
+    def test_remove_zero_a_esquerda(self):
+        self.assertEqual(normalizar_numero_contrato("023/2025"), "23/2025")
+
+    def test_expande_ano_de_2_digitos(self):
+        self.assertEqual(normalizar_numero_contrato("01/26"), "1/2026")
+
+    def test_ignora_sufixo_de_unidade(self):
+        self.assertEqual(normalizar_numero_contrato("12/2025 - SEDE"), "12/2025")
+        self.assertEqual(normalizar_numero_contrato("22/23 -UAST- DEA"), "22/2023")
+
+    def test_sem_numero_fica_sn_maiusculo(self):
+        self.assertEqual(normalizar_numero_contrato("sn/2026"), "SN/2026")
+
+    def test_ja_normalizado_passa_sem_alteracao(self):
+        self.assertEqual(normalizar_numero_contrato("10/2022"), "10/2022")
+
+    def test_texto_sem_o_padrao_numero_barra_ano_devolve_none(self):
+        self.assertIsNone(normalizar_numero_contrato("lixo"))
+        self.assertIsNone(normalizar_numero_contrato(None))
+
+    def test_dois_sufixos_diferentes_do_mesmo_numero_normalizam_igual(self):
+        # mesmo contrato faturado por mais de uma unidade (pedido explícito: unir, não
+        # fragmentar) — as duas formas vistas na origem colapsam na mesma chave.
+        self.assertEqual(
+            normalizar_numero_contrato("22/2023 - UAST"), normalizar_numero_contrato("22/23 -UAST- DEA")
+        )
+
+
+@unittest.skipUnless(CAMINHO_BASE.exists(), f"Planilha ausente em {CAMINHO_BASE}")
+class TestMesesPagosPorContrato(unittest.TestCase):
+    """Valores conferidos contra a fixture de 15/08/2026 (ver docstring do módulo)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.df = _pagamentos_compartilhado()
+        cls.resultado = meses_pagos_por_contrato(cls.df)
+
+    def test_colunas_esperadas(self):
+        self.assertEqual(
+            set(self.resultado.columns), {"contrato_normalizado", "meses_pagos", "ultimo_mes_pago"}
+        )
+
+    def test_uma_linha_por_contrato_normalizado(self):
+        self.assertEqual(
+            self.resultado["contrato_normalizado"].nunique(), len(self.resultado)
+        )
+
+    def test_contrato_21_2017_pago_nos_8_meses_da_fixture(self):
+        linha = self.resultado.set_index("contrato_normalizado").loc["21/2017"]
+        self.assertEqual(linha["meses_pagos"], 8)
+        self.assertEqual(linha["ultimo_mes_pago"], datetime(2026, 8, 1))
+
+    def test_contrato_20_2024_pago_em_1_mes_so(self):
+        linha = self.resultado.set_index("contrato_normalizado").loc["20/2024"]
+        self.assertEqual(linha["meses_pagos"], 1)
+        self.assertEqual(linha["ultimo_mes_pago"], datetime(2026, 5, 1))
+
+    def test_pagamento_duplicado_nao_conta_como_mes_novo(self):
+        # o mesmo lançamento (contrato+NF+valor) repetido numa aba mensal diferente não deve
+        # inflar a contagem de meses pagos — mesmo critério de `serie_por_contrato`.
+        contrato = self.df[self.df["duplicado"]]["contrato"].iloc[0]
+        normalizado = normalizar_numero_contrato(contrato)
+        meses_sem_duplicados = self.df[
+            (self.df["contrato"] == contrato) & (~self.df["duplicado"])
+        ]["mes_pagamento"].nunique()
+        linha = self.resultado.set_index("contrato_normalizado").loc[normalizado]
+        self.assertEqual(linha["meses_pagos"], meses_sem_duplicados)
+
+    def test_contrato_sem_numero_reconhecivel_fica_fora(self):
+        # nenhum contrato_normalizado da fixture é None/NaN
+        self.assertFalse(self.resultado["contrato_normalizado"].isna().any())
 
 
 if __name__ == "__main__":

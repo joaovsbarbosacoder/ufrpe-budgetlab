@@ -27,6 +27,7 @@ Execução Anual já validada do projeto.
 Contrato público:
     ler_contratos_continuos(caminho) -> pd.DataFrame
     com_saldo_execucao(df, por_ne_execucao) -> pd.DataFrame
+    com_meses_pagos(df, meses_pagos) -> pd.DataFrame
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.contratos_pagamentos import normalizar_numero_contrato
 from src.execucao_anual import indice_saldo_por_ne_curta, indice_valor_empenhado_por_ne_curta
 from src.necessidade_empenho import calcular_necessidade_empenho
 
@@ -198,4 +200,26 @@ def com_saldo_execucao(df: pd.DataFrame, por_ne_execucao: pd.DataFrame) -> pd.Da
         resultado["valor_empenhado_execucao"], resultado["valor_empenhado_planilha_total_ne"]
     )
 
+    return resultado
+
+
+def com_meses_pagos(df: pd.DataFrame, meses_pagos: pd.DataFrame) -> pd.DataFrame:
+    """Acrescenta `meses_pagos`/`ultimo_mes_pago`, buscados na planilha de Pagamentos de
+    Contratos (`src.contratos_pagamentos.meses_pagos_por_contrato`) via `contrato_numero`
+    normalizado (`normalizar_numero_contrato`, aplicada aqui também para casar com o mesmo
+    formato canônico) — indicador INDEPENDENTE de quantos meses tiveram pagamento
+    efetivamente registrado e qual foi o mais recente, não uma correção de `meses_liquidados`
+    (campo manual desta planilha): liquidação e pagamento são estágios orçamentários
+    diferentes, este campo não substitui aquele.
+
+    Contrato sem número reconhecível (`contrato_numero` vazio/fora do padrão "<número ou
+    SN>/<ano>") ou sem correspondência na planilha de Pagamentos fica com os dois campos
+    nulos — não é erro, é ausência de dado para comparar (mesmo critério de
+    `com_saldo_execucao`).
+    """
+    resultado = df.copy()
+    resultado["contrato_normalizado"] = resultado["contrato_numero"].apply(normalizar_numero_contrato)
+    indexado = meses_pagos.set_index("contrato_normalizado")
+    resultado["meses_pagos"] = resultado["contrato_normalizado"].map(indexado["meses_pagos"])
+    resultado["ultimo_mes_pago"] = resultado["contrato_normalizado"].map(indexado["ultimo_mes_pago"])
     return resultado
