@@ -282,8 +282,8 @@ def _inject_css() -> None:
         }}
         .cc-resumo-scroll {{ overflow-x: auto; padding-bottom: 2px; }}
         .cc-resumo-row, .cc-resumo-head-row, .cc-resumo-foot {{
-            display: grid; grid-template-columns: minmax(200px,2fr) 120px 120px 150px;
-            gap: 10px; min-width: 560px;
+            display: grid; grid-template-columns: minmax(200px,2fr) 120px 120px 150px 120px;
+            gap: 10px; min-width: 680px;
         }}
         .cc-resumo-head-row {{
             padding-bottom: {SPACE['xs']}; border-bottom: 1px solid {BORDER};
@@ -586,7 +586,20 @@ def _render_novo_contrato(source_key: str) -> None:
                     st.rerun()
 
 
-def _html_linha_resumo(principal: object, secundario: object, valor_empenhado: float, saldo: object, necessidade: float) -> str:
+def _texto_meses_pagos(meses_pagos: object, ultimo_mes_pago: object) -> str:
+    """"7 · ago/26" a partir de `meses_pagos`/`ultimo_mes_pago` (`com_meses_pagos`) — "sem
+    dado" quando o contrato não tem correspondência confiável na planilha de Pagamentos
+    (não é "0 meses": ausência de dado, não pagamento zero — ver `com_meses_pagos`)."""
+
+    if pd.isna(meses_pagos):
+        return "sem dado"
+    return f"{_num(meses_pagos)} · {_fmt_mes(ultimo_mes_pago)}"
+
+
+def _html_linha_resumo(
+    principal: object, secundario: object, valor_empenhado: float, saldo: object, necessidade: float,
+    meses_pagos: object = pd.NA, ultimo_mes_pago: object = pd.NA,
+) -> str:
     saldo_texto = "sem NE" if pd.isna(saldo) else _brl(saldo)
     return (
         '<div class="cc-resumo-row">'
@@ -594,6 +607,7 @@ def _html_linha_resumo(principal: object, secundario: object, valor_empenhado: f
         f'<span class="cc-resumo-val">{_brl(valor_empenhado)}</span>'
         f'<span class="cc-resumo-val">{saldo_texto}</span>'
         f'<span class="cc-resumo-val-strong">{_brl(necessidade)}</span>'
+        f'<span class="cc-resumo-val">{_texto_meses_pagos(meses_pagos, ultimo_mes_pago)}</span>'
         "</div>"
     )
 
@@ -628,6 +642,8 @@ def _render_resumo_consolidado(filtrado: pd.DataFrame, meses_restantes: int, sou
         valor_empenhado_planilha_total_ne=("valor_empenhado_planilha_total_ne", "first"),
         saldo_execucao=("saldo_execucao", "first"),
         saldo_colado_planilha=("saldo_colado_planilha", "first"),
+        meses_pagos=("meses_pagos", "first"),
+        ultimo_mes_pago=("ultimo_mes_pago", "first"),
     ).reset_index()
     por_ne["valor_empenhado_exibido"] = por_ne["valor_empenhado_execucao"].fillna(por_ne["valor_empenhado_planilha_total_ne"])
     saldo_por_ne_fallback = por_ne["saldo_execucao"].fillna(por_ne["saldo_colado_planilha"]).fillna(0.0)
@@ -637,10 +653,16 @@ def _render_resumo_consolidado(filtrado: pd.DataFrame, meses_restantes: int, sou
     sem_ne["necessidade"] = (sem_ne["despesa_mensal"] * meses_restantes).clip(lower=0)
 
     linhas = [
-        (row["fornecedor"], row["contrato_numero"], row["valor_empenhado_exibido"], row["saldo_execucao"], row["necessidade"])
+        (
+            row["fornecedor"], row["contrato_numero"], row["valor_empenhado_exibido"], row["saldo_execucao"],
+            row["necessidade"], row["meses_pagos"], row["ultimo_mes_pago"],
+        )
         for _, row in por_ne.sort_values("necessidade", ascending=False).iterrows()
     ] + [
-        (row["fornecedor"], row["contrato_numero"], row["valor_empenhado_exibido"], pd.NA, row["necessidade"])
+        (
+            row["fornecedor"], row["contrato_numero"], row["valor_empenhado_exibido"], pd.NA,
+            row["necessidade"], row["meses_pagos"], row["ultimo_mes_pago"],
+        )
         for _, row in sem_ne.sort_values("necessidade", ascending=False).iterrows()
     ]
 
@@ -675,6 +697,7 @@ def _render_resumo_consolidado(filtrado: pd.DataFrame, meses_restantes: int, sou
               <span style="text-align:right">Valor Empenhado</span>
               <span style="text-align:right">Saldo</span>
               <span style="text-align:right">Necessidade até Dez.</span>
+              <span style="text-align:right">Meses Pagos</span>
             </div>
             {linhas_html}
             <div class="cc-resumo-foot">
@@ -682,6 +705,7 @@ def _render_resumo_consolidado(filtrado: pd.DataFrame, meses_restantes: int, sou
               <span class="cc-resumo-val">{_brl(valor_empenhado_total)}</span>
               <span class="cc-resumo-val">{_brl(_somar_unico_por_ne(filtrado, 'saldo_execucao'))}</span>
               <span class="cc-resumo-val-strong">{_brl(necessidade_total)}</span>
+              <span class="cc-resumo-val"></span>
             </div>
           </div>
         </div>
@@ -698,7 +722,10 @@ def _render_resumo_consolidado(filtrado: pd.DataFrame, meses_restantes: int, sou
         st.caption(f"Mostrando todas as {total_linhas} linhas no resumo")
 
 
-def _html_linha_empenhado_liquidado(principal: object, secundario: object, empenhado: object, liquidado: object, saldo: object) -> str:
+def _html_linha_empenhado_liquidado(
+    principal: object, secundario: object, empenhado: object, liquidado: object, saldo: object,
+    meses_pagos: object = pd.NA, ultimo_mes_pago: object = pd.NA,
+) -> str:
     empenhado_texto = "sem NE" if pd.isna(empenhado) else _brl(empenhado)
     if pd.isna(saldo):
         saldo_html = f'<span class="cc-resumo-val-strong">sem NE</span>'
@@ -714,6 +741,7 @@ def _html_linha_empenhado_liquidado(principal: object, secundario: object, empen
         f'<span class="cc-resumo-val">{empenhado_texto}</span>'
         f'<span class="cc-resumo-val">{liquidado_texto}</span>'
         f"{saldo_html}"
+        f'<span class="cc-resumo-val">{_texto_meses_pagos(meses_pagos, ultimo_mes_pago)}</span>'
         "</div>"
     )
 
@@ -738,15 +766,20 @@ def _render_empenhado_liquidado(filtrado: pd.DataFrame, indice_liquidado: pd.Ser
         valor_empenhado_execucao=("valor_empenhado_execucao", "first"),
         valor_empenhado_planilha_total_ne=("valor_empenhado_planilha_total_ne", "first"),
         saldo_execucao=("saldo_execucao", "first"),
+        meses_pagos=("meses_pagos", "first"),
+        ultimo_mes_pago=("ultimo_mes_pago", "first"),
     ).reset_index()
     por_ne["empenhado_exibido"] = por_ne["valor_empenhado_execucao"].fillna(por_ne["valor_empenhado_planilha_total_ne"])
     por_ne["liquidado"] = por_ne["ne_curta"].map(indice_liquidado)
 
     linhas = [
-        (row["fornecedor"], row["contrato_numero"], row["empenhado_exibido"], row["liquidado"], row["saldo_execucao"])
+        (
+            row["fornecedor"], row["contrato_numero"], row["empenhado_exibido"], row["liquidado"],
+            row["saldo_execucao"], row["meses_pagos"], row["ultimo_mes_pago"],
+        )
         for _, row in por_ne.sort_values("saldo_execucao", na_position="last").iterrows()
     ] + [
-        (row["fornecedor"], row["contrato_numero"], row["valor_empenhado"], pd.NA, pd.NA)
+        (row["fornecedor"], row["contrato_numero"], row["valor_empenhado"], pd.NA, pd.NA, row["meses_pagos"], row["ultimo_mes_pago"])
         for _, row in sem_ne.iterrows()
     ]
 
@@ -785,6 +818,7 @@ def _render_empenhado_liquidado(filtrado: pd.DataFrame, indice_liquidado: pd.Ser
               <span style="text-align:right">Empenhado</span>
               <span style="text-align:right">Liquidado</span>
               <span style="text-align:right">Saldo</span>
+              <span style="text-align:right">Meses Pagos</span>
             </div>
             {linhas_html}
             <div class="cc-resumo-foot">
@@ -792,6 +826,7 @@ def _render_empenhado_liquidado(filtrado: pd.DataFrame, indice_liquidado: pd.Ser
               <span class="cc-resumo-val">{_brl(empenhado_total)}</span>
               <span class="cc-resumo-val">{_brl(liquidado_total)}</span>
               <span class="cc-resumo-val-strong" style="color:{cor_total}">{_brl(saldo_total)}</span>
+              <span class="cc-resumo-val"></span>
             </div>
           </div>
         </div>
