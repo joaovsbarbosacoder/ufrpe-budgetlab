@@ -68,3 +68,35 @@ informado à proposta mais recente antes de implementar.
   corrigida.
 - Priorize rastreabilidade e possibilidade de reconciliação com a base
   original.
+
+## Fixtures de teste vs. dados de trabalho (Contratos Contínuos, Bolsas, Contratos — Vigência/Pagamentos)
+
+`data/raw/SERVIÇOS CONTÍNUOS - 2026 - AGO A DEZ.xlsm`,
+`data/raw/BOLSAS E AUXÍLIOS 2026 - AGO A DEZ.xlsx`,
+`data/raw/CONTRATOS UFRPE - BASE_CONTRATOS.xlsx` e
+`data/raw/CONTRATOS - CONTROLE 2020 - Pagamentos.xlsx` são planilhas de
+trabalho mantidas manualmente (sem manifesto versionado como
+Dotação/Execução Anual) — serão substituídas em atualizações futuras, sem
+aviso prévio de layout.
+
+Os testes de `src/contratos_continuos.py`, `src/bolsas_auxilios.py`,
+`src/contratos_vigencia.py` e `src/contratos_pagamentos.py` **não** leem de
+`data/raw/`: leem de fixtures congeladas em `tests/fixtures/`
+(`contratos_continuos_2026-08-13.xlsm`, `bolsas_auxilios_2026-08-13.xlsx`,
+`contratos_vigencia_2026-08-15.xlsx`, `contratos_pagamentos_2026-08-15.xlsx`),
+desacopladas de propósito. A fixture de pagamentos é *reduzida* às 8 abas
+mensais de 2026 realmente lidas (a planilha de origem tem ~90 abas e 7,8 MB —
+a maioria fora de escopo; ver docstring de `src/contratos_pagamentos.py` e de
+`tests/test_contratos_pagamentos.py`), não uma cópia integral como as demais.
+Ao atualizar as planilhas de trabalho em `data/raw/`:
+
+- **Não sobrescreva a fixture automaticamente.** Ela é a referência congelada
+  contra a qual os valores esperados dos testes (`tests/test_contratos_continuos.py`,
+  `tests/test_bolsas_auxilios.py`) foram calculados manualmente.
+- Se decidir atualizar a fixture, faça isso deliberadamente: copie a nova
+  planilha para `tests/fixtures/` com um nome novo incluindo a data de
+  referência, recalcule à mão os valores esperados nos testes (contagens,
+  saldos, divergências) contra a nova extração, e só então aponte
+  `CAMINHO_BASE` para o arquivo novo.
+- O mesmo raciocínio vale para `tests/fixtures/execucao_anual_manifesto_formato_antigo.json`,
+  fixture equivalente para o formato antigo do manifesto de Execução Anual.
