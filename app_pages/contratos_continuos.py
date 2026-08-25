@@ -70,9 +70,11 @@ Diferenças deliberadas em relação aos handoffs anteriores:
     (`QTD_INICIAL_CARTEIRA`) de início, com "Ver mais" revelando o resto de uma vez, não em
     lotes como o padrão incremental de `app_pages/contratos_vigencia.py`
     (`QTD_INCREMENTO_LISTA`) — aqui o pedido foi "se eu quiser ver todos os outros, eu clico",
-    um clique único para tudo. Mesmo padrão estendido ao "Resumo Consolidado" (pedido
-    explícito em seguida): só as linhas visíveis (`QTD_INICIAL_RESUMO`) são limitadas — os
-    totais do card (cabeçalho e rodapé) sempre somam o conjunto inteiro, nunca só o exibido.
+    um clique único para tudo. "Ver menos" (pedido explícito) devolve ao estado minimizado —
+    o mesmo toggle de `mostrar_todos_key`, só invertido. Mesmo padrão estendido ao "Resumo
+    Consolidado" (pedido explícito em seguida): só as linhas visíveis (`QTD_INICIAL_RESUMO`)
+    são limitadas — os totais do card (cabeçalho e rodapé) sempre somam o conjunto inteiro,
+    nunca só o exibido.
   * Quadro "Empenhado × Liquidado" (pedido explícito) — mesmo layout HTML do Resumo
     Consolidado (`.cc-resumo-*`, mesma minimização "Ver mais"), comparando por NE o valor
     empenhado total contra o liquidado (`indice_liquidado_por_ne_curta`, novo em
@@ -722,6 +724,9 @@ def _render_resumo_consolidado(filtrado: pd.DataFrame, meses_restantes: int, sou
             st.rerun()
     elif total_linhas:
         st.caption(f"Mostrando todas as {total_linhas} linhas no resumo")
+        if total_linhas > QTD_INICIAL_RESUMO and st.button("Ver menos", key=f"cc_resumo_ver_menos_{source_key}"):
+            st.session_state[mostrar_todos_key] = False
+            st.rerun()
 
 
 def _html_linha_empenhado_liquidado(
@@ -843,6 +848,9 @@ def _render_empenhado_liquidado(filtrado: pd.DataFrame, indice_liquidado: pd.Ser
             st.rerun()
     elif total_linhas:
         st.caption(f"Mostrando todas as {total_linhas} linhas")
+        if total_linhas > QTD_INICIAL_RESUMO and st.button("Ver menos", key=f"cc_empliq_ver_menos_{source_key}"):
+            st.session_state[mostrar_todos_key] = False
+            st.rerun()
 
 
 _CABECALHO_DOTACAO = [
@@ -1167,6 +1175,9 @@ if not mostrar_todos and len(filtrado) > QTD_INICIAL_CARTEIRA:
         st.rerun()
 elif len(filtrado):
     st.caption(f"Mostrando todos os {len(filtrado)} contratos")
+    if len(filtrado) > QTD_INICIAL_CARTEIRA and st.button("Ver menos", key=f"cc_carteira_ver_menos_{source_key}"):
+        st.session_state[mostrar_todos_key] = False
+        st.rerun()
 
 st.caption(
     "Base de Contratos Contínuos consolidada manualmente (não é uma extração única e "
