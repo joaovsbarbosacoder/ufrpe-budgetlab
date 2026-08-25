@@ -65,6 +65,11 @@ page = st.navigation(
                 title="Contratos — Vigência",
                 icon=":material/event_upcoming:",
             ),
+            st.Page(
+                "app_pages/relatorio_reforco_empenho.py",
+                title="Relatório de Reforço de Empenho",
+                icon=":material/picture_as_pdf:",
+            ),
         ],
     },
     position="top",

@@ -4,3 +4,4 @@ openpyxl==3.1.5
 duckdb==1.5.5
 plotly==6.9.0
 xlrd==2.0.2
+reportlab==5.0.1
