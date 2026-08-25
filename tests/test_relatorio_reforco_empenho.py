@@ -13,7 +13,8 @@ import pandas as pd
 from src.relatorio_reforco_empenho import (
     BOLSAS_AUXILIOS,
     CONTRATOS_CONTINUOS,
-    gerar_pdf,
+    gerar_pdf_detalhado,
+    gerar_pdf_resumido,
     linhas_para_processo,
     processos_disponiveis,
 )
@@ -101,12 +102,12 @@ class TestLinhasParaProcessoContinuos(unittest.TestCase):
         self.assertEqual(linhas.iloc[0]["valor_mensal"], 5000.0)
 
 
-class TestGerarPdf(unittest.TestCase):
+class TestGerarPdfDetalhado(unittest.TestCase):
     def test_pdf_valido_com_total_correto(self):
         linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
         linhas = linhas.assign(empenhar=linhas["meses_sugeridos"] * linhas["valor_mensal"])
 
-        pdf_bytes = gerar_pdf(BOLSAS_AUXILIOS, "001167/2026-78", linhas)
+        pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, "001167/2026-78", linhas)
 
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
         self.assertGreater(len(pdf_bytes), 500)
@@ -117,7 +118,7 @@ class TestGerarPdf(unittest.TestCase):
         linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
         linhas = linhas.assign(empenhar=[float("nan"), 5000.0])
 
-        pdf_bytes = gerar_pdf(BOLSAS_AUXILIOS, "001167/2026-78", linhas)
+        pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, "001167/2026-78", linhas)
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
 
     def test_pdf_de_relatorio_vazio_nao_quebra(self):
@@ -127,7 +128,35 @@ class TestGerarPdf(unittest.TestCase):
                 "natureza_despesa_cod", "ugr_cod", "pi_cod", "ne_curta", "empenhar",
             ]
         )
-        pdf_bytes = gerar_pdf(BOLSAS_AUXILIOS, "000000/0000-00", vazio)
+        pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, "000000/0000-00", vazio)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
+
+class TestGerarPdfResumido(unittest.TestCase):
+    def test_pdf_valido_com_total_correto(self):
+        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
+        linhas = linhas.assign(empenhar=linhas["meses_sugeridos"] * linhas["valor_mensal"])
+
+        pdf_bytes = gerar_pdf_resumido(BOLSAS_AUXILIOS, "001167/2026-78", linhas)
+
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+        self.assertGreater(len(pdf_bytes), 500)
+
+    def test_linha_com_empenhar_nulo_nao_quebra_o_pdf(self):
+        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
+        linhas = linhas.assign(empenhar=[float("nan"), 5000.0])
+
+        pdf_bytes = gerar_pdf_resumido(BOLSAS_AUXILIOS, "001167/2026-78", linhas)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
+    def test_pdf_de_relatorio_vazio_nao_quebra(self):
+        vazio = pd.DataFrame(
+            columns=[
+                "processo", "item_despesa", "unidade_cod", "acao_cod", "ptres", "fonte_cod",
+                "natureza_despesa_cod", "ugr_cod", "pi_cod", "ne_curta", "empenhar",
+            ]
+        )
+        pdf_bytes = gerar_pdf_resumido(BOLSAS_AUXILIOS, "000000/0000-00", vazio)
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
 
 

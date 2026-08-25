@@ -41,7 +41,8 @@ class TestBotaoRelatorioEmBolsasAuxilios(unittest.TestCase):
 
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any(s.label == "Processo" for s in app.selectbox))
-        self.assertTrue(any(b.label == "Baixar PDF" for b in app.download_button))
+        self.assertTrue(any("Modelo Detalhado" in b.label for b in app.download_button))
+        self.assertTrue(any("Modelo Resumido" in b.label for b in app.download_button))
 
 
 @unittest.skipUnless(
@@ -54,7 +55,8 @@ class TestBotaoRelatorioEmContratosContinuos(unittest.TestCase):
 
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any(s.label == "Processo" for s in app.selectbox))
-        self.assertTrue(any(b.label == "Baixar PDF" for b in app.download_button))
+        self.assertTrue(any("Modelo Detalhado" in b.label for b in app.download_button))
+        self.assertTrue(any("Modelo Resumido" in b.label for b in app.download_button))
 
 
 if __name__ == "__main__":

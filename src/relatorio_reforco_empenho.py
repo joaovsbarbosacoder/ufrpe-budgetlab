@@ -2,11 +2,20 @@
 Relatório de Reforço de Empenho (Bolsas e Auxílios / Contratos Contínuos).
 
 Camada: regra de negócio de relatório — monta a tabela no formato usado pela PROPLAD para
-pedidos de reforço de empenho (Processo, Item de Despesa, Unidade, Ação, PTRES, Fonte, ND,
-UGR, PI, Empenho, Empenhar (R$), ver histórico da conversa para os PDFs de referência) e
-gera o PDF correspondente. Não lê planilha, não é interface — recebe o DataFrame já
-normalizado de `ler_bolsas_auxilios`/`ler_contratos_continuos` (com `meses_a_empenhar` já
-calculado por `necessidade_empenho.py`).
+pedidos de reforço de empenho e gera os DOIS modelos de PDF em uso (ver histórico da
+conversa para os PDFs de referência — dois modelos distintos, os dois precisam ser emitidos):
+
+  * "Detalhado" (`gerar_pdf_detalhado`) — Processo, Item de Despesa, Unidade, Ação, PTRES,
+    Fonte, ND, UGR, PI, Empenho, Empenhar (R$); Processo/Unidade/Empenho repetidos em toda
+    linha.
+  * "Resumido" (`gerar_pdf_resumido`) — Item de Despesa, Ação, PTRES, Fonte, ND, PI, UGR,
+    Empenhar (R$); sem Unidade/Empenho, Processo aparece uma vez só no cabeçalho da página
+    (não repetido linha a linha) — layout de Tabela Dinâmica do Excel impresso, PI antes de
+    UGR (ordem invertida em relação ao modelo detalhado).
+
+Não lê planilha, não é interface — recebe o DataFrame já normalizado de
+`ler_bolsas_auxilios`/`ler_contratos_continuos` (com `meses_a_empenhar` já calculado por
+`necessidade_empenho.py`).
 
 "Meses a empenhar" é editável por linha (personalizado por empenho, pedido explícito) — o
 valor sugerido inicial vem de `meses_a_empenhar`, mas cada linha pode ser ajustada livremente
@@ -17,7 +26,8 @@ diretamente — um único controle por linha evita os dois campos saírem de sin
 Contrato público:
     EspecificacaoRelatorio (dataclass) — BOLSAS_AUXILIOS / CONTRATOS_CONTINUOS, prontas
     linhas_para_processo(df, spec, processo) -> pd.DataFrame
-    gerar_pdf(spec, processo, linhas) -> bytes
+    gerar_pdf_detalhado(spec, processo, linhas) -> bytes
+    gerar_pdf_resumido(spec, processo, linhas) -> bytes
 """
 
 from __future__ import annotations
@@ -125,17 +135,22 @@ def _formatar_valor(valor: float) -> str:
 #: bem mais longa que as demais colunas), empurrando "EMPENHAR (R$)" para fora da página —
 #: por isso "Item de Despesa" (e "Processo", mais curto mas por segurança) usam `Paragraph`
 #: em vez de string simples, para quebrar linha dentro da largura fixa, não estourá-la.
-_LARGURAS_COLUNA = [66, 199, 42, 38, 42, 34, 38, 38, 62, 62, 62]
+_LARGURAS_COLUNA_DETALHADO = [66, 199, 42, 38, 42, 34, 38, 38, 62, 62, 62]
+
+#: Modelo "resumido" (ver `gerar_pdf_resumido`): sem Unidade/Empenho, Item de Despesa ganha o
+#: espaço que sobra.
+_CABECALHO_RESUMIDO = ["ITEM DE DESPESA", "AÇÃO", "PTRES", "FONTE", "ND", "PI", "UGR", "EMPENHAR (R$)"]
+_LARGURAS_COLUNA_RESUMIDO = [300, 42, 46, 38, 46, 62, 46, 70]
 
 
 def _celula_texto(texto: str, estilo) -> Paragraph:
     return Paragraph(str(texto), estilo)
 
 
-def gerar_pdf(spec: EspecificacaoRelatorio, processo: str, linhas: pd.DataFrame) -> bytes:
-    """PDF no layout do modelo da PROPLAD — cabeçalho com título/base, tabela paisagem com
-    uma linha por item e o total ao final. `linhas` já traz a coluna `empenhar` final (após
-    edição por linha na página) — esta função só formata e desenha, não recalcula nada."""
+def _novo_documento(spec: EspecificacaoRelatorio, processo: str) -> tuple[BytesIO, SimpleDocTemplate, list, object]:
+    """Base comum aos dois modelos de PDF — página paisagem, cabeçalho com título/base, e o
+    estilo de célula usado nas colunas de texto livre (quebra de linha dentro da largura fixa
+    da coluna, ver `_LARGURAS_COLUNA_*`)."""
 
     buffer = BytesIO()
     documento = SimpleDocTemplate(
@@ -153,6 +168,30 @@ def gerar_pdf(spec: EspecificacaoRelatorio, processo: str, linhas: pd.DataFrame)
         Paragraph(f"Processo: {processo}", estilos["Normal"]),
         Spacer(1, 8),
     ]
+    return buffer, documento, elementos, estilo_celula
+
+
+def _estilo_tabela(indice_inicio_alinhamento_direita: int) -> TableStyle:
+    return TableStyle(
+        [
+            ("FONTSIZE", (0, 0), (-1, -1), 7),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#DDDDDD")),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+            ("ALIGN", (indice_inicio_alinhamento_direita, 0), (-1, -1), "RIGHT"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F5F5F5")]),
+        ]
+    )
+
+
+def gerar_pdf_detalhado(spec: EspecificacaoRelatorio, processo: str, linhas: pd.DataFrame) -> bytes:
+    """PDF "modelo detalhado" da PROPLAD — uma linha por item, com Processo/Unidade/Empenho
+    repetidos em cada linha. `linhas` já traz a coluna `empenhar` final (após edição por
+    linha na página) — esta função só formata e desenha, não recalcula nada."""
+
+    buffer, documento, elementos, estilo_celula = _novo_documento(spec, processo)
 
     dados = [_CABECALHO]
     for linha in linhas.itertuples():
@@ -168,21 +207,36 @@ def gerar_pdf(spec: EspecificacaoRelatorio, processo: str, linhas: pd.DataFrame)
     total = float(linhas["empenhar"].sum())
     dados.append(["", "", "", "", "", "", "", "", "", "TOTAL", _formatar_valor(total)])
 
-    tabela = Table(dados, colWidths=_LARGURAS_COLUNA, repeatRows=1)
-    tabela.setStyle(
-        TableStyle(
+    tabela = Table(dados, colWidths=_LARGURAS_COLUNA_DETALHADO, repeatRows=1)
+    tabela.setStyle(_estilo_tabela(indice_inicio_alinhamento_direita=2))
+    elementos.append(tabela)
+    documento.build(elementos)
+    return buffer.getvalue()
+
+
+def gerar_pdf_resumido(spec: EspecificacaoRelatorio, processo: str, linhas: pd.DataFrame) -> bytes:
+    """PDF "modelo resumido" da PROPLAD — Processo aparece uma vez só (no cabeçalho da
+    página, não repetido linha a linha) e as colunas Unidade/Empenho (NE) ficam de fora
+    (pedido explícito, layout de referência sem essas duas colunas). `linhas` já traz a
+    coluna `empenhar` final — esta função só formata e desenha, não recalcula nada."""
+
+    buffer, documento, elementos, estilo_celula = _novo_documento(spec, processo)
+
+    dados = [_CABECALHO_RESUMIDO]
+    for linha in linhas.itertuples():
+        dados.append(
             [
-                ("FONTSIZE", (0, 0), (-1, -1), 7),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#DDDDDD")),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                ("ALIGN", (2, 0), (-1, -1), "RIGHT"),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F5F5F5")]),
+                _celula_texto(linha.item_despesa, estilo_celula),
+                str(linha.acao_cod), str(linha.ptres), str(linha.fonte_cod),
+                str(linha.natureza_despesa_cod), str(linha.pi_cod), str(linha.ugr_cod),
+                _formatar_valor(float(linha.empenhar)),
             ]
         )
-    )
+    total = float(linhas["empenhar"].sum())
+    dados.append(["", "", "", "", "", "", "TOTAL", _formatar_valor(total)])
+
+    tabela = Table(dados, colWidths=_LARGURAS_COLUNA_RESUMIDO, repeatRows=1)
+    tabela.setStyle(_estilo_tabela(indice_inicio_alinhamento_direita=1))
     elementos.append(tabela)
     documento.build(elementos)
     return buffer.getvalue()

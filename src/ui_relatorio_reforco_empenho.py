@@ -26,7 +26,8 @@ import streamlit as st
 
 from src.relatorio_reforco_empenho import (
     EspecificacaoRelatorio,
-    gerar_pdf,
+    gerar_pdf_detalhado,
+    gerar_pdf_resumido,
     linhas_para_processo,
     processos_disponiveis,
 )
@@ -97,16 +98,29 @@ def _abrir_relatorio(df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str)
     total = float(linhas_finais["empenhar"].sum())
     st.metric("Total a Empenhar", format_brl_full(total))
 
-    pdf_bytes = gerar_pdf(spec, processo, linhas_finais)
-    nome_arquivo = f"reforco_empenho_{processo.replace('/', '-')}.pdf"
-    st.download_button(
-        "Baixar PDF",
-        data=pdf_bytes,
-        file_name=nome_arquivo,
-        mime="application/pdf",
-        type="primary",
-        key=f"reforco_download_{chave}_{processo}",
-    )
+    # dois modelos em uso pela PROPLAD (ver docstring de src/relatorio_reforco_empenho.py) —
+    # os dois precisam ser emitidos, não é escolha de um ou outro.
+    nome_arquivo = processo.replace("/", "-")
+    col_detalhado, col_resumido = st.columns(2)
+    with col_detalhado:
+        st.download_button(
+            "Baixar PDF — Modelo Detalhado",
+            data=gerar_pdf_detalhado(spec, processo, linhas_finais),
+            file_name=f"reforco_empenho_detalhado_{nome_arquivo}.pdf",
+            mime="application/pdf",
+            type="primary",
+            width="stretch",
+            key=f"reforco_download_detalhado_{chave}_{processo}",
+        )
+    with col_resumido:
+        st.download_button(
+            "Baixar PDF — Modelo Resumido",
+            data=gerar_pdf_resumido(spec, processo, linhas_finais),
+            file_name=f"reforco_empenho_resumido_{nome_arquivo}.pdf",
+            mime="application/pdf",
+            width="stretch",
+            key=f"reforco_download_resumido_{chave}_{processo}",
+        )
 
 
 def render_botao_relatorio(df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str) -> None:
