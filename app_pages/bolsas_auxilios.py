@@ -119,6 +119,8 @@ from src.importacao_dotacao import Manifesto as ManifestoDotacao
 from src.importacao_dotacao import ler_dotacao_anual
 from src.importacao_execucao import Manifesto
 from src.necessidade_empenho import calcular_necessidade_empenho
+from src.relatorio_reforco_empenho import BOLSAS_AUXILIOS as RELATORIO_BOLSAS_AUXILIOS
+from src.ui_relatorio_reforco_empenho import render_botao_relatorio
 from src.ui_theme import format_brl_compact, render_metric_grid, render_page_header
 
 DIRETORIO_DADOS_BRUTOS = Path("data/raw")
@@ -884,6 +886,8 @@ if manifesto_dotacao is not None:
 dataframe = _com_programas_extra(dataframe, source_key)
 dataframe = _aplicar_edicoes_da_sessao(dataframe, source_key)
 dataframe = com_saldo_execucao(dataframe, por_ne_execucao)
+
+render_botao_relatorio(dataframe, RELATORIO_BOLSAS_AUXILIOS, "bolsas")
 
 busca = st.text_input(
     "Buscar",

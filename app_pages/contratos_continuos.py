@@ -116,6 +116,8 @@ from src.importacao_dotacao import Manifesto as ManifestoDotacao
 from src.importacao_dotacao import ler_dotacao_anual
 from src.importacao_execucao import Manifesto
 from src.necessidade_empenho import calcular_necessidade_empenho
+from src.relatorio_reforco_empenho import CONTRATOS_CONTINUOS as RELATORIO_CONTRATOS_CONTINUOS
+from src.ui_relatorio_reforco_empenho import render_botao_relatorio
 from src.ui_theme import format_brl_compact, render_metric_grid, render_page_header
 
 DIRETORIO_DADOS_BRUTOS = Path("data/raw")
@@ -1100,6 +1102,8 @@ dataframe = _com_contratos_extra(dataframe, source_key)
 dataframe = _aplicar_edicoes_da_sessao(dataframe, source_key)
 dataframe = com_saldo_execucao(dataframe, por_ne_execucao)
 dataframe = com_meses_pagos(dataframe, meses_pagos_por_contrato_df)
+
+render_botao_relatorio(dataframe, RELATORIO_CONTRATOS_CONTINUOS, "continuos")
 
 busca = st.text_input(
     "Buscar",
