@@ -95,6 +95,22 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
         self.assertTrue(any("Nenhum empenho encontrado" in item.value for item in app.warning))
         self.assertNotEqual(empenhos_no_escopo_antes, "0")
 
+    def test_busca_livre_restringe_opcoes_dos_filtros_rapidos(self) -> None:
+        # mesmo bug relatado e corrigido em consulta_empenhos.py (mesmo mecanismo de filtro
+        # aqui, ver src/ui_filtros_execucao.py) — os filtros ofereciam atributos de NEs fora
+        # da busca. "informatica", dentro do exercício vigente pré-selecionado (2026, ver
+        # `ano_extracao`), bate numa única "Ação de Governo" (conferido contra a extração
+        # real, 15/08/2026): "FUNCIONAMENTO DE INSTITUICOES FEDERAIS DE ENSINO SUPERIOR".
+        app = self._open_page()
+        busca = next(t for t in app.text_input if t.label == "Busca livre")
+        busca.set_value("informatica")
+        app.run(timeout=60)
+
+        self.assertEqual(len(app.exception), 0)
+        acao_filter = next(m for m in app.multiselect if m.label == "Ação de Governo")
+        self.assertEqual(len(acao_filter.options), 1)
+        self.assertTrue(any("FUNCIONAMENTO DE INSTITUICOES FEDERAIS DE ENSINO SUPERIOR" in o for o in acao_filter.options))
+
 
 if __name__ == "__main__":
     unittest.main()

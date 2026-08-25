@@ -241,6 +241,22 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
             any("Nenhum empenho encontrado com os filtros informados." in item.value for item in app.warning)
         )
 
+    def test_busca_livre_restringe_opcoes_dos_filtros_rapidos(self) -> None:
+        # bug relatado: os filtros ofereciam atributos de NEs fora da busca (opções do
+        # dataset inteiro, não do recorte já reduzido pela busca livre). "informatica" bate
+        # em 34 NEs com só 7 "Ação de Governo" distintas (conferido contra a extração real,
+        # 15/08/2026) — bem menos que as 54 do dataset inteiro; "ADMINISTRACAO DA UNIDADE"
+        # (ação 2000) não é uma delas.
+        app = self._open_page()
+        busca = next(t for t in app.text_input if t.label == "Busca livre")
+        busca.set_value("informatica")
+        app.run(timeout=60)
+
+        self.assertEqual(len(app.exception), 0)
+        acao_filter = next(m for m in app.multiselect if m.label == "Ação de Governo")
+        self.assertEqual(len(acao_filter.options), 7)
+        self.assertFalse(any("ADMINISTRACAO DA UNIDADE" in opcao for opcao in acao_filter.options))
+
     def test_default_selection_matches_sort_order(self) -> None:
         # Padrão: "Maior saldo de empenho" — o cartão selecionado (marcado com a classe
         # "is-selected") deve ser o primeiro da página 1, e sua NE deve ser a exibida no

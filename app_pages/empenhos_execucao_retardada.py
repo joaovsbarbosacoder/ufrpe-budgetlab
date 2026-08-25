@@ -112,6 +112,28 @@ def _aplicar_busca(por_ne: pd.DataFrame, busca: str) -> pd.DataFrame:
     return por_ne[mascara]
 
 
+def _dataframe_restrito_a_busca(dataframe: pd.DataFrame, busca: str) -> pd.DataFrame:
+    """Linhas (nível de execução, não por NE) das NEs cujo agregado bate com a busca livre —
+    usado ANTES de calcular as opções dos filtros rápidos/avançados, para elas ficarem
+    restritas ao que a busca já reduziu, em vez de sempre oferecerem opções do dataset
+    inteiro (mesmo bug relatado e corrigido em `consulta_empenhos.py::_dataframe_restrito_a_busca`).
+
+    Filtra por `ne_ccor` (todas as linhas da NE, inclusive itens de execução), não linha a
+    linha — ver docstring de `consulta_empenhos.py::_dataframe_restrito_a_busca` para o motivo
+    (linha a linha quebraria `agregar_por_ne` por falta de linha, não por ausência real do
+    dado).
+    """
+    if not busca:
+        return dataframe
+    alvo = busca.strip().lower()
+    mascara = pd.Series(False, index=dataframe.index)
+    for coluna in COLUNAS_BUSCA:
+        if coluna in dataframe.columns:
+            mascara = mascara | dataframe[coluna].astype("string").str.lower().str.contains(alvo, na=False, regex=False)
+    nes_que_batem = set(dataframe.loc[mascara, "ne_ccor"])
+    return dataframe[dataframe["ne_ccor"].isin(nes_que_batem)]
+
+
 def _brl(valor: object) -> str:
     """Mesmo padrão de formatação compacta em reais inteiros (sem centavos, ponto como
     separador de milhar) já usado em `contratos_pagamentos.py`/`contratos_continuos.py`."""
@@ -245,16 +267,30 @@ with busca_col:
         key=f"{_PREFIXO_FILTRO}_busca_{source_key}",
         placeholder="NE, descrição, favorecido, natureza, PI, PTRES…",
     )
-selections = render_filtros_rapidos(dataframe, CAMPOS_RAPIDOS_EXECUCAO, CAMPOS_EXECUCAO, _PREFIXO_FILTRO, source_key)
-with st.expander("Filtros por atributo (12 campos, cruzados) — combinações sem registro não aparecem nas listas"):
-    render_filtros_avancados(dataframe, CAMPOS_AVANCADOS_EXECUCAO, CAMPOS_EXECUCAO, _PREFIXO_FILTRO, source_key, selections)
+# a busca livre restringe as OPÇÕES dos filtros rápidos/avançados também, não só o resultado
+# final — sem isso, os filtros ofereciam atributos de NEs fora da busca (bug relatado em
+# consulta_empenhos.py, mesmo mecanismo de filtro aqui). Por `ne_ccor`, não linha a linha (ver
+# docstring de `_dataframe_restrito_a_busca`).
+dataframe_buscado = _dataframe_restrito_a_busca(dataframe, busca)
+if busca and dataframe_buscado.empty:
+    # sai aqui, antes do "Nenhum registro corresponde à combinação de filtros selecionada"
+    # mais abaixo (que fala de FILTROS DE ATRIBUTO) — a causa da lista vazia é a busca, não
+    # uma seleção de filtro, a mensagem precisa dizer a coisa certa.
+    st.warning("Nenhum empenho encontrado com os filtros informados.")
+    st.stop()
 
-filtrado = apply_filters(dataframe, CAMPOS_EXECUCAO, selections)
+selections = render_filtros_rapidos(dataframe_buscado, CAMPOS_RAPIDOS_EXECUCAO, CAMPOS_EXECUCAO, _PREFIXO_FILTRO, source_key)
+with st.expander("Filtros por atributo (12 campos, cruzados) — combinações sem registro não aparecem nas listas"):
+    render_filtros_avancados(dataframe_buscado, CAMPOS_AVANCADOS_EXECUCAO, CAMPOS_EXECUCAO, _PREFIXO_FILTRO, source_key, selections)
+
+filtrado = apply_filters(dataframe_buscado, CAMPOS_EXECUCAO, selections)
 if filtrado.empty:
     st.warning("Nenhum registro corresponde à combinação de filtros selecionada.")
     st.stop()
 
 por_ne = saldo_por_ne(agregar_por_ne(filtrado))
+# `filtrado` já vem restrito à busca (via `dataframe_buscado`) — chamada mantida como rede de
+# segurança (idempotente), não como o filtro principal.
 visivel = _aplicar_busca(por_ne, busca)
 if visivel.empty:
     st.warning("Nenhum empenho encontrado com os filtros informados.")
