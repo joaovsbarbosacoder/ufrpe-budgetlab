@@ -826,7 +826,7 @@ def _aplicar_edicoes_da_sessao(dataframe: pd.DataFrame, source_key: str) -> pd.D
 # "+ Novo programa" fica ao lado do título, não abaixo dele — por isso o cabeçalho precisa
 # de um source_key (mtime do arquivo) antes de qualquer outra checagem: sem arquivo não há
 # como calcular esse mtime, então o popover só aparece quando a planilha existe.
-col_titulo, col_novo = st.columns([5, 1])
+col_titulo, col_relatorio, col_novo = st.columns([4, 1.4, 1])
 with col_titulo:
     render_page_header(
         "Bolsas e Auxílios",
@@ -887,7 +887,9 @@ dataframe = _com_programas_extra(dataframe, source_key)
 dataframe = _aplicar_edicoes_da_sessao(dataframe, source_key)
 dataframe = com_saldo_execucao(dataframe, por_ne_execucao)
 
-render_botao_relatorio(dataframe, RELATORIO_BOLSAS_AUXILIOS, "bolsas")
+with col_relatorio:
+    st.write("")
+    render_botao_relatorio(dataframe, RELATORIO_BOLSAS_AUXILIOS, "bolsas")
 
 busca = st.text_input(
     "Buscar",

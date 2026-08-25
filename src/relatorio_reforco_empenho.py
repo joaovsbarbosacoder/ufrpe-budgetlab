@@ -17,15 +17,17 @@ Não lê planilha, não é interface — recebe o DataFrame já normalizado de
 `ler_bolsas_auxilios`/`ler_contratos_continuos` (com `meses_a_empenhar` já calculado por
 `necessidade_empenho.py`).
 
-"Meses a empenhar" é editável por linha (personalizado por empenho, pedido explícito) — o
+"Meses a empenhar" E "Empenhar (R$)" são editáveis por linha, os dois (pedido explícito) — o
 valor sugerido inicial vem de `meses_a_empenhar`, mas cada linha pode ser ajustada livremente
 antes de gerar o relatório (a edição em si mora em `st.session_state`, na página, não aqui).
-"Empenhar (R$)" é sempre DERIVADO (meses × valor mensal da linha), nunca um campo editado
-diretamente — um único controle por linha evita os dois campos saírem de sincronia.
+Editar "Meses a Empenhar" recalcula "Empenhar (R$)" (= meses × valor mensal) e sempre vence
+sobre um valor digitado direto antes; editar "Empenhar (R$)" direto fica valendo como está até
+a próxima edição de "Meses a Empenhar" na mesma linha.
 
 Contrato público:
     EspecificacaoRelatorio (dataclass) — BOLSAS_AUXILIOS / CONTRATOS_CONTINUOS, prontas
     linhas_para_processo(df, spec, processo) -> pd.DataFrame
+    excluir_linhas_zeradas(linhas) -> pd.DataFrame
     gerar_pdf_detalhado(spec, processo, linhas) -> bytes
     gerar_pdf_resumido(spec, processo, linhas) -> bytes
 """
@@ -117,6 +119,15 @@ def linhas_para_processo(df: pd.DataFrame, spec: EspecificacaoRelatorio, process
         }
     )
     return resultado.reset_index(drop=True)
+
+
+def excluir_linhas_zeradas(linhas: pd.DataFrame) -> pd.DataFrame:
+    """Remove linhas com `meses` OU `empenhar` igual a zero (pedido explícito) — zero não é
+    "sem dado" (`NaN`, que continua na saída — ver `_formatar_valor`), é "não há o que
+    reforçar aqui", então não deve entrar no PDF final. A tela de edição continua mostrando
+    essas linhas (a exclusão é só para gerar o relatório, ver `render_botao_relatorio`)."""
+
+    return linhas[(linhas["meses"] != 0) & (linhas["empenhar"] != 0)]
 
 
 def _formatar_valor(valor: float) -> str:

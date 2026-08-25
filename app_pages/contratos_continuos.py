@@ -1024,7 +1024,7 @@ def _com_contratos_extra(dataframe: pd.DataFrame, source_key: str) -> pd.DataFra
 # "+ Novo contrato" fica ao lado do título, não abaixo dele — por isso o cabeçalho precisa de
 # um source_key (mtime do arquivo) antes de qualquer outra checagem: sem arquivo não há como
 # calcular esse mtime, então o popover só aparece quando a planilha existe.
-col_titulo, col_novo = st.columns([5, 1])
+col_titulo, col_relatorio, col_novo = st.columns([4, 1.4, 1])
 with col_titulo:
     render_page_header(
         "Contratos Contínuos",
@@ -1103,7 +1103,9 @@ dataframe = _aplicar_edicoes_da_sessao(dataframe, source_key)
 dataframe = com_saldo_execucao(dataframe, por_ne_execucao)
 dataframe = com_meses_pagos(dataframe, meses_pagos_por_contrato_df)
 
-render_botao_relatorio(dataframe, RELATORIO_CONTRATOS_CONTINUOS, "continuos")
+with col_relatorio:
+    st.write("")
+    render_botao_relatorio(dataframe, RELATORIO_CONTRATOS_CONTINUOS, "continuos")
 
 busca = st.text_input(
     "Buscar",

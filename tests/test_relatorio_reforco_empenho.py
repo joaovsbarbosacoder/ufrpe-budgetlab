@@ -13,6 +13,7 @@ import pandas as pd
 from src.relatorio_reforco_empenho import (
     BOLSAS_AUXILIOS,
     CONTRATOS_CONTINUOS,
+    excluir_linhas_zeradas,
     gerar_pdf_detalhado,
     gerar_pdf_resumido,
     linhas_para_processo,
@@ -100,6 +101,31 @@ class TestLinhasParaProcessoContinuos(unittest.TestCase):
     def test_valor_mensal_vem_de_despesa_mensal(self):
         linhas = linhas_para_processo(_continuos_sintetico(), CONTRATOS_CONTINUOS, "000214/2026-66")
         self.assertEqual(linhas.iloc[0]["valor_mensal"], 5000.0)
+
+
+class TestExcluirLinhasZeradas(unittest.TestCase):
+    def _linhas(self, meses: list[float], empenhar: list[float]) -> pd.DataFrame:
+        return pd.DataFrame({"item_despesa": [f"item{i}" for i in range(len(meses))], "meses": meses, "empenhar": empenhar})
+
+    def test_remove_linha_com_meses_zero(self):
+        resultado = excluir_linhas_zeradas(self._linhas([0.0, 1.5], [0.0, 3000.0]))
+        self.assertEqual(len(resultado), 1)
+        self.assertEqual(resultado.iloc[0]["item_despesa"], "item1")
+
+    def test_remove_linha_com_empenhar_zero_mesmo_com_meses_nao_zero(self):
+        # editado manualmente pra 0 direto na coluna Empenhar (R$), sem mexer em Meses.
+        resultado = excluir_linhas_zeradas(self._linhas([2.0, 1.0], [0.0, 1500.0]))
+        self.assertEqual(len(resultado), 1)
+        self.assertEqual(resultado.iloc[0]["item_despesa"], "item1")
+
+    def test_linha_com_meses_nulo_nao_e_removida(self):
+        # NaN (dado incompleto) e zero (nada a reforçar) são coisas diferentes — só zero sai.
+        resultado = excluir_linhas_zeradas(self._linhas([float("nan"), 1.0], [float("nan"), 1500.0]))
+        self.assertEqual(len(resultado), 2)
+
+    def test_todas_zeradas_devolve_vazio(self):
+        resultado = excluir_linhas_zeradas(self._linhas([0.0, 0.0], [0.0, 0.0]))
+        self.assertTrue(resultado.empty)
 
 
 class TestGerarPdfDetalhado(unittest.TestCase):
