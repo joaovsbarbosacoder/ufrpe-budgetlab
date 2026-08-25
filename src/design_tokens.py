@@ -49,18 +49,22 @@ CARD_PAD = "18px 20px 16px"
 # SUBDIV_GAP entre elas — mantém as duas constantes coerentes entre si em
 # vez de um número solto maior que o necessário (o que forçava rolagem
 # horizontal mesmo quando a tabela cabia no cartão).
-TABLE_MIN_WIDTH = "830px"
+TABLE_MIN_WIDTH = "1000px"
 
 # --- Grade da tabela de subdivisões (uma definição, todos os usos) --------
-# Iduso/PTRES e as quatro colunas de valor foram encolhidas ao ponto de
-# quase não sobrar espaço livre dentro de cada uma: como Iduso/PTRES são
-# alinhados à esquerda e os valores à direita, uma coluna larga demais para
-# o conteúdo típico (poucos dígitos) sobra como espaço em branco bem no
-# meio da grade — o "vão" entre PTRES/Inicial e entre Cancelamento/
-# Atualizada relatado. Colunas mais justas ao conteúdo real reduzem isso.
+# Um ajuste anterior encolheu Iduso/PTRES e as quatro colunas de valor para
+# reduzir o "vão" de espaço em branco no meio da grade (colunas largas
+# demais para o conteúdo típico) — mas foi longe demais: "Grupo de Despesa"
+# e "Res. Prim. Lei" também têm nome + código (mesmo padrão de "Plano
+# Orçamentário"/"Fonte de Recursos", que ficaram largas o suficiente), não
+# só um código curto, e ficaram estreitas a ponto de quebrar palavra no
+# meio ("OBRIGATO"/"RIO"); PTRES tem até 6 dígitos ("169885") e as colunas
+# de valor podem chegar a centenas de milhões/bilhões — nem cabiam sem
+# quebrar em duas linhas. Larguras abaixo vêm do conteúdo real observado
+# (ver histórico da conversa), não de um valor arbitrário maior.
 SUBDIV_COLUMNS = (
     "minmax(150px, 1.4fr) minmax(110px, 1fr) "
-    "64px 60px 42px 44px 72px 72px 78px 84px"
+    "minmax(110px, 0.8fr) minmax(100px, 0.7fr) 46px 64px 92px 88px 96px 104px"
 )
 SUBDIV_GAP = "6px"
 

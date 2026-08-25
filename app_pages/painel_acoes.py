@@ -258,30 +258,46 @@ def _inject_css() -> None:
             padding: 9px 0; border-bottom: 1px solid {BORDER_SOFT}; align-items: baseline;
         }}
         .po-foot {{ padding-top: 9px; font-family: {FONT_HEADING}; align-items: baseline; }}
-        .po-name {{ font-family: {FONT_BODY}; font-size: {SIZE['body']}; line-height: 1.25; color: {TEXT}; }}
-        .po-name-sm {{ font-family: {FONT_BODY}; font-size: {SIZE['small']}; line-height: 1.25; color: {TEXT}; }}
+        .po-name {{
+            font-family: {FONT_BODY}; font-size: {SIZE['body']}; line-height: 1.25; color: {TEXT};
+            overflow-wrap: normal; word-break: normal;
+        }}
+        .po-name-sm {{
+            font-family: {FONT_BODY}; font-size: {SIZE['small']}; line-height: 1.25; color: {TEXT};
+            overflow-wrap: normal; word-break: normal;
+        }}
         .po-code {{
             font-family: {FONT_HEADING}; font-size: {SIZE['code']};
             letter-spacing: {TRACK['label']}; color: {TEXT_MUTED};
+            white-space: nowrap;
         }}
         .po-flat {{
             font-family: {FONT_HEADING}; font-size: {SIZE['small']};
             letter-spacing: 0.08em; color: {TEXT_MUTED};
+            white-space: nowrap;
         }}
         .po-val {{
             text-align: right; font-family: {FONT_BODY}; font-size: {SIZE['value']};
             font-variant-numeric: tabular-nums; color: {TEXT_MUTED};
+            white-space: nowrap;
         }}
         .po-val-strong {{
             text-align: right; font-family: {FONT_BODY}; font-size: {SIZE['value_strong']};
             font-weight: 600; font-variant-numeric: tabular-nums; color: {ACCENT_STRONG};
+            white-space: nowrap;
         }}
         .po-foot-label {{
             grid-column: span 6; font-size: {SIZE['label']};
             letter-spacing: {TRACK['label']}; text-transform: uppercase; color: {TEXT_MUTED};
         }}
-        .po-foot-val {{ text-align: right; font-size: {SIZE['body']}; font-variant-numeric: tabular-nums; color: {TEXT}; }}
-        .po-foot-total {{ text-align: right; font-size: 15px; font-variant-numeric: tabular-nums; color: {ACCENT_STRONG}; }}
+        .po-foot-val {{
+            text-align: right; font-size: {SIZE['body']}; font-variant-numeric: tabular-nums; color: {TEXT};
+            white-space: nowrap;
+        }}
+        .po-foot-total {{
+            text-align: right; font-size: 15px; font-variant-numeric: tabular-nums; color: {ACCENT_STRONG};
+            white-space: nowrap;
+        }}
         .po-empty {{
             font-family: {FONT_HEADING}; font-size: 16px; letter-spacing: 0.1em;
             text-transform: uppercase; color: {TEXT_MUTED}; padding: 40px 0;
