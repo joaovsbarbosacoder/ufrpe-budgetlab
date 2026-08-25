@@ -67,7 +67,12 @@ def _abrir_relatorio(df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str)
         key=f"reforco_editor_{chave}_{processo}",
         disabled=_COLUNAS_SOMENTE_LEITURA,
         column_config={
-            "Meses a Empenhar": st.column_config.NumberColumn(step=0.1, min_value=0.0, format="%.2f"),
+            # `step` PRECISA bater com as casas decimais de `format` — com step=0.1 e
+            # format="%.2f", a célula chegou a EXIBIR o valor arredondado para a casa de
+            # 0,1 (ex. "0.90") enquanto o valor de verdade usado no cálculo de "Empenhar
+            # (R$)" era 0,92 (bug real observado: os dois quadros mostravam números
+            # diferentes pro mesmo empenho). step=0.01 mantém exibição e cálculo em sincronia.
+            "Meses a Empenhar": st.column_config.NumberColumn(step=0.01, min_value=0.0, format="%.2f"),
         },
         hide_index=True,
         width="stretch",
