@@ -930,9 +930,30 @@ else:
 
 st.subheader("Programas, bolsas e auxílios")
 st.caption("🟢 Atualizado · 🟡 Necessita reforço de empenho · 🔴 Sem empenho / Não localizado")
+
+# minimizada por padrão (pedido explícito) — só QTD_INICIAL_LISTA (5) cartões de início,
+# "Ver mais" revela o resto de uma vez, "Ver menos" devolve ao estado minimizado — mesmo
+# padrão de app_pages/contratos_continuos.py::"Carteira de contratos" (lá o limite é 3, aqui
+# foi pedido 5).
+QTD_INICIAL_LISTA = 5
+mostrar_todos_lista_key = f"bl_lista_mostrar_todos_{source_key}"
+mostrar_todos_lista = st.session_state.get(mostrar_todos_lista_key, False)
+visiveis_lista = filtrado if mostrar_todos_lista else filtrado.iloc[:QTD_INICIAL_LISTA]
+
 with st.container(key="bl_lista"):
-    for _, linha in filtrado.iterrows():
+    for _, linha in visiveis_lista.iterrows():
         _render_card(linha, source_key, removidos)
+
+if not mostrar_todos_lista and len(filtrado) > QTD_INICIAL_LISTA:
+    st.caption(f"Mostrando {QTD_INICIAL_LISTA} de {len(filtrado)} programas")
+    if st.button("Ver mais", key=f"bl_lista_ver_mais_{source_key}"):
+        st.session_state[mostrar_todos_lista_key] = True
+        st.rerun()
+elif len(filtrado):
+    st.caption(f"Mostrando todos os {len(filtrado)} programas")
+    if len(filtrado) > QTD_INICIAL_LISTA and st.button("Ver menos", key=f"bl_lista_ver_menos_{source_key}"):
+        st.session_state[mostrar_todos_lista_key] = False
+        st.rerun()
 
 st.caption(
     "Base de Bolsas e Auxílios consolidada manualmente (não é uma extração única e "
