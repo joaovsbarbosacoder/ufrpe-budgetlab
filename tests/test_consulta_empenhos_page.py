@@ -124,6 +124,88 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any("Marque a caixinha" in item.value for item in app.caption))
 
+    def test_selecionar_todos_marca_todos_os_cartoes_visiveis(self) -> None:
+        app = self._open_page()
+
+        botao = next(b for b in app.button if b.label == "Selecionar todos")
+        botao.click()
+        app.run(timeout=60)
+
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(all(c.value for c in app.checkbox))
+        self.assertTrue(any(b.label == "Desmarcar todos" for b in app.button))
+
+    def test_desmarcar_todos_desmarca_todos_os_cartoes_visiveis(self) -> None:
+        app = self._open_page()
+
+        selecionar = next(b for b in app.button if b.label == "Selecionar todos")
+        selecionar.click()
+        app.run(timeout=60)
+
+        desmarcar = next(b for b in app.button if b.label == "Desmarcar todos")
+        desmarcar.click()
+        app.run(timeout=60)
+
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(all(not c.value for c in app.checkbox))
+        self.assertTrue(any(b.label == "Selecionar todos" for b in app.button))
+
+    def test_selecionar_todos_preserva_marcacao_apos_ver_mais(self) -> None:
+        # "Selecionar todos" marca só o que está EXIBIDO no momento do clique — revelar mais
+        # cartões depois (via "Ver mais") não marca os novos automaticamente, nem desmarca os
+        # já marcados.
+        app = self._open_page()
+
+        selecionar = next(b for b in app.button if b.label == "Selecionar todos")
+        selecionar.click()
+        app.run(timeout=60)
+        marcados_antes = sum(1 for c in app.checkbox if c.value)
+
+        vermais = next(b for b in app.button if b.label == "Ver mais")
+        vermais.click()
+        app.run(timeout=60)
+
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(sum(1 for c in app.checkbox if c.value), marcados_antes)
+        self.assertGreater(len(app.checkbox), marcados_antes)
+        self.assertTrue(any(b.label == "Selecionar todos" for b in app.button))
+
+    def test_consolidacao_do_grupo_pede_marcacao_quando_vazia(self) -> None:
+        app = self._open_page()
+
+        self.assertTrue(any(h.value == "Consolidação Orçamentária do Grupo" for h in app.subheader))
+        self.assertTrue(
+            any("Marque a caixinha ao lado de um ou mais empenhos" in item.value for item in app.caption)
+        )
+
+    def test_consolidacao_do_grupo_mostra_os_4_blocos_apos_marcar(self) -> None:
+        app = self._open_page()
+        cartoes = self._cartoes_lista(app)
+        ne_primeira = self._ne_do_cartao(cartoes[0])
+
+        caixa = next(c for c in app.checkbox if c.key.endswith(ne_primeira))
+        caixa.set_value(True)
+        app.run(timeout=60)
+
+        self.assertEqual(len(app.exception), 0)
+        rotulos_blocos = {"Elemento de Despesa", "Grupo de Despesa", "Ação de Governo", "UGR - Gestão"}
+        self.assertTrue(rotulos_blocos.issubset({e.label for e in app.expander}))
+
+    def test_bloco_elemento_de_despesa_mostra_o_grupo_marcado_nao_o_escopo_inteiro(self) -> None:
+        app = self._open_page()
+        cartoes = self._cartoes_lista(app)
+        ne_primeira = self._ne_do_cartao(cartoes[0])
+
+        caixa = next(c for c in app.checkbox if c.key.endswith(ne_primeira))
+        caixa.set_value(True)
+        app.run(timeout=60)
+
+        bloco = next(e for e in app.expander if e.label == "Elemento de Despesa")
+        # "NEs" (coluna de contagem) do bloco tem que bater com o tamanho do grupo marcado
+        # (1), não com as milhares de NEs do recorte de filtros inteiro.
+        html = bloco.markdown[0].value
+        self.assertIn('class="ce-cons-val">1<', html)
+
     def test_consolidacao_comeca_enxuta_com_botao_ver_mais(self) -> None:
         app = self._open_page()
 

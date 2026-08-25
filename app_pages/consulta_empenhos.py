@@ -107,6 +107,18 @@ DIMENSOES_CONSOLIDACAO = {
     "Número do Processo": ("processo_ne", None),
 }
 
+#: dimensões do quadro "Consolidação Orçamentária do Grupo" (pedido explícito) — só as NEs
+#: marcadas na lista, não o recorte de filtros inteiro (isso já é "Consolidação do escopo",
+#: acima). Nesta ordem porque foi a ordem citada no pedido; ao contrário de
+#: `DIMENSOES_CONSOLIDACAO`, aqui cada dimensão é um bloco recolhível próprio, não um único
+#: dropdown "Agrupar por" — o grupo marcado costuma ser pequeno o bastante pra ver as 4 juntas.
+DIMENSOES_CONSOLIDACAO_GRUPO = {
+    "Elemento de Despesa": ("elemento_cod", "elemento_desc"),
+    "Grupo de Despesa": ("gnd_cod", "gnd_desc"),
+    "Ação de Governo": ("acao_cod", "acao_desc"),
+    "UGR - Gestão": ("ugr_cod", "ugr_desc"),
+}
+
 ORDENS = ("Maior saldo de empenho", "Maior valor empenhado", "Menor % liquidado", "Nº da NE")
 
 QTD_INICIAL_LISTA = 8  # cartões mostrados de início — lista enxuta, não os milhares de NEs do recorte
@@ -496,6 +508,55 @@ def _render_consolidacao(visivel: pd.DataFrame, source_key: str) -> None:
             )
 
 
+def _html_tabela_agrupada(dataframe: pd.DataFrame, coluna_cod: str, coluna_desc: str | None) -> str:
+    """Mesma agregação/HTML de `_render_consolidacao`, mas sem paginação — usada no quadro do
+    grupo marcado (`_render_consolidacao_grupo`), onde o grupo costuma ser pequeno o bastante
+    (algumas NEs escolhidas à mão) pra não precisar de "Ver mais" dentro de cada dimensão."""
+
+    colunas_grupo = [coluna_cod] if coluna_desc is None else [coluna_cod, coluna_desc]
+    agrupado = (
+        dataframe.groupby(colunas_grupo, dropna=False)
+        .agg(qtd=("ne_ccor", "count"), emp=("empenhada", lambda s: s.sum(min_count=1)),
+             liq=("liquidada", lambda s: s.sum(min_count=1)), pag=("paga", lambda s: s.sum(min_count=1)))
+        .reset_index()
+    )
+    if agrupado.empty:
+        return ""
+    agrupado["saldo"] = agrupado["emp"] - agrupado["liq"].fillna(0.0)
+    agrupado = agrupado.sort_values("emp", ascending=False, na_position="last")
+
+    linhas = "".join(
+        _html_linha_consolidacao(
+            nome=(
+                "(não informado)"
+                if pd.isna(row[coluna_cod])
+                else str(row[coluna_desc]) if coluna_desc and pd.notna(row[coluna_desc]) else str(row[coluna_cod])
+            ),
+            codigo=row[coluna_cod],
+            tem_codigo=True,
+            linha=row,
+        )
+        for _, row in agrupado.iterrows()
+    )
+    return f'<div class="ce-cons-head">{_CONSOLIDACAO_CABECALHO}</div>{linhas}'
+
+
+def _render_consolidacao_grupo(grupo: pd.DataFrame) -> None:
+    """Quadro "Consolidação Orçamentária do Grupo" (pedido explícito) — as NEs marcadas na
+    lista, quebradas por 4 dimensões orçamentárias ao mesmo tempo (`DIMENSOES_CONSOLIDACAO_GRUPO`),
+    um bloco recolhível (`st.expander`) por dimensão, para comparar mais de uma lado a lado
+    abrindo os blocos que interessam — ao contrário de "Consolidação do escopo" (dropdown,
+    uma dimensão de cada vez, sobre o recorte de filtros inteiro, não o grupo marcado)."""
+
+    for rotulo, (coluna_cod, coluna_desc) in DIMENSOES_CONSOLIDACAO_GRUPO.items():
+        with st.expander(rotulo):
+            html = _html_tabela_agrupada(grupo, coluna_cod, coluna_desc)
+            if html:
+                st.markdown(html, unsafe_allow_html=True)
+            else:
+                st.caption("Nenhum empenho no grupo para consolidar.")
+
+
 def _render_resumo_grupo(visivel: pd.DataFrame, marcados: set[str], source_key: str) -> None:
     """KPIs agregados só das NEs marcadas na lista — "contexto de execução" do subconjunto
     que o usuário escolheu comparar, não do recorte de filtros inteiro (isso já é a faixa de
@@ -728,6 +789,27 @@ with coluna_principal:
 
         dados_visiveis = ordenado.iloc[:mostrar]
 
+        # "Selecionar todos"/"Desmarcar todos" (pedido explícito) — alterna a marcação de
+        # TODOS os empenhos atualmente exibidos (`dados_visiveis`, a lista revelada até agora
+        # via "Ver mais", não o recorte de filtros inteiro — "exibidos" é a palavra-chave).
+        # Rótulo e efeito dependem do estado atual: se todos já estão marcados, o clique
+        # desmarca; caso contrário, marca todos (mesmo se alguns já estavam marcados).
+        _prefixo_marca_lista = f"consulta_empenhos_marca_{source_key}_"
+        todos_marcados_lista = len(dados_visiveis) > 0 and all(
+            st.session_state.get(f"{_prefixo_marca_lista}{ne}", False) for ne in dados_visiveis["ne_ccor"]
+        )
+        _, col_selecionar_todos = st.columns([3, 1])
+        with col_selecionar_todos:
+            rotulo_selecionar_todos = "Desmarcar todos" if todos_marcados_lista else "Selecionar todos"
+            if st.button(
+                rotulo_selecionar_todos, key=f"consulta_empenhos_selecionar_todos_{source_key}",
+                use_container_width=True,
+            ):
+                novo_valor = not todos_marcados_lista
+                for ne in dados_visiveis["ne_ccor"]:
+                    st.session_state[f"{_prefixo_marca_lista}{ne}"] = novo_valor
+                st.rerun()
+
         _, _, col_cabecalho_lista = st.columns(_LISTA_COLUNAS, vertical_alignment="center")
         with col_cabecalho_lista:
             st.markdown(f'<div class="ce-list-head">{_LISTA_CABECALHO}</div>', unsafe_allow_html=True)
@@ -777,6 +859,20 @@ with coluna_detalhe:
         st.subheader("Resumo do grupo selecionado")
         st.caption("Contexto agregado das NEs marcadas na lista, para comparar um subconjunto escolhido.")
         _render_resumo_grupo(visivel, marcados, source_key)
+
+# Largura total (não dentro de `coluna_detalhe`, estreita demais pra 4 tabelas de atributo) —
+# mesmas NEs marcadas do "Resumo do grupo selecionado" acima, quebradas por dimensão
+# orçamentária (pedido explícito).
+with st.container(border=True):
+    st.subheader("Consolidação Orçamentária do Grupo")
+    st.caption(
+        "Elemento de Despesa, Grupo de Despesa, Ação de Governo e UGR das NEs marcadas na "
+        "lista — um bloco por dimensão, abra o(s) que interessa(m) comparar."
+    )
+    if not marcados:
+        st.caption("Marque a caixinha ao lado de um ou mais empenhos na lista para ver a consolidação aqui.")
+    else:
+        _render_consolidacao_grupo(visivel[visivel["ne_ccor"].isin(marcados)])
 
 data_extracao_texto = datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y")
 st.caption(f"Procedência: extração de {data_extracao_texto} · hash {manifesto.sha256[:8]}")
