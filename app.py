@@ -12,9 +12,12 @@ apply_theme()
 
 page = st.navigation(
     {
-        # seção "" fica no início do menu, fora do agrupamento colapsável (ver docstring de
+        # seção "" fica no início do menu, sem cabeçalho de grupo (ver docstring de
         # st.navigation) — mantém as páginas que não são sobre Contratos sem um nível extra
-        # de clique.
+        # de agrupamento visual. Com position="sidebar" (pedido explícito, no lugar da barra
+        # no topo), cada seção nomeada vira um cabeçalho na lateral, com as páginas listadas
+        # uma abaixo da outra por baixo dele — não mais um dropdown por seção, como era com
+        # position="top".
         "": [
             st.Page("app_pages/home.py", title="Início", icon=":material/home:"),
             st.Page(
@@ -48,12 +51,10 @@ page = st.navigation(
                 icon=":material/school:",
             ),
         ],
-        # com position="top", uma seção nomeada vira um item colapsável só — Contratos
-        # Contínuos e Contratos Vigência ficam como subdivisões de um único botão "Contratos"
-        # (pedido explícito), em vez de dois itens soltos disputando espaço na barra.
-        # "Contratos — Pagamentos" foi tirada do menu por pedido explícito (código mantido em
-        # app_pages/contratos_pagamentos.py e src/contratos_pagamentos.py, pronta pra reativar
-        # bastando devolver o st.Page abaixo).
+        # Contratos Contínuos e Contratos Vigência agrupadas sob um cabeçalho "Contratos"
+        # (pedido explícito). "Contratos — Pagamentos" foi tirada do menu por pedido explícito
+        # (código mantido em app_pages/contratos_pagamentos.py e
+        # src/contratos_pagamentos.py, pronta pra reativar bastando devolver o st.Page abaixo).
         "Contratos": [
             st.Page(
                 "app_pages/contratos_continuos.py",
@@ -66,8 +67,18 @@ page = st.navigation(
                 icon=":material/event_upcoming:",
             ),
         ],
+        # último grupo da lateral, por pedido explícito ("o menu de reimportação no final") —
+        # uma seção própria, não dentro de "" ou "Contratos", justamente para garantir que
+        # fica depois de tudo (a ordem das seções na lateral segue a ordem das chaves aqui).
+        "Administração": [
+            st.Page(
+                "app_pages/atualizar_planilhas.py",
+                title="Atualizar Planilhas",
+                icon=":material/upload_file:",
+            ),
+        ],
     },
-    position="top",
+    position="sidebar",
 )
 
 page.run()

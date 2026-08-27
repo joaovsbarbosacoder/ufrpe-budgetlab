@@ -15,7 +15,7 @@ with st.container(border=True):
     st.write(
         "Cada base tem importação própria e versionada, com manifesto e "
         "rastreabilidade completa até a célula de origem. A reimportação "
-        "acontece dentro da própria página de análise da base."
+        "acontece na página \"Atualizar Planilhas\" (menu Administração)."
     )
 
 with st.container(border=True):
