@@ -64,7 +64,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         kpis = self._kpis_html(app)
         self.assertIn("Empenhos", kpis)
-        self.assertIn("3716", kpis)
+        self.assertIn("3742", kpis)
         self.assertIn("Saldo de empenho", kpis)
         self.assertIn("A pagar", kpis)
 
@@ -78,9 +78,9 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         app = self._open_page()
 
         cartoes = self._cartoes_lista(app)
-        self.assertEqual(len(cartoes), 8)  # QTD_INICIAL_LISTA — não as 3716 NEs do recorte
+        self.assertEqual(len(cartoes), 8)  # QTD_INICIAL_LISTA — não as 3742 NEs do recorte
         self.assertTrue(
-            any("Mostrando 8 de 3716 notas" in item.value for item in app.markdown)
+            any("Mostrando 8 de 3742 notas" in item.value for item in app.markdown)
         )
         self.assertTrue(any(b.label == "Ver mais" for b in app.button))
 
@@ -95,7 +95,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         cartoes = self._cartoes_lista(app)
         self.assertEqual(len(cartoes), 16)  # QTD_INICIAL_LISTA + QTD_INCREMENTO_LISTA
         self.assertTrue(
-            any("Mostrando 16 de 3716 notas" in item.value for item in app.markdown)
+            any("Mostrando 16 de 3742 notas" in item.value for item in app.markdown)
         )
 
     def test_grupo_selecionado_mostra_instrucao_sem_marcacoes(self) -> None:
@@ -245,7 +245,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         self.assertEqual(len(app.exception), 0)
         kpis = self._kpis_html(app)
-        self.assertNotIn(">3716<", kpis)
+        self.assertNotIn(">3742<", kpis)
 
     def test_filtering_by_acao_narrows_scope(self) -> None:
         app = self._open_page()
@@ -256,7 +256,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         self.assertEqual(len(app.exception), 0)
         kpis = self._kpis_html(app)
-        self.assertNotIn(">3716<", kpis)
+        self.assertNotIn(">3742<", kpis)
 
     def _empenhos_no_kpi(self, app: AppTest) -> int:
         match = re.search(
@@ -300,7 +300,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(next(m for m in app.multiselect if m.label == "Ação de Governo").value, [])
         kpis = self._kpis_html(app)
-        self.assertIn(">3716<", kpis)
+        self.assertIn(">3742<", kpis)
 
     def test_busca_livre_narrows_scope(self) -> None:
         app = self._open_page()

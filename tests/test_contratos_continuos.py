@@ -25,8 +25,9 @@ import openpyxl
 import pandas as pd
 
 from src.contratos_continuos import ErroLayoutBase, NOME_ABA, com_meses_pagos, com_saldo_execucao, ler_contratos_continuos
-from src.execucao_anual import agregar_por_ne, ler_execucao_anual, saldo_por_ne
-from src.importacao_execucao import Manifesto
+from src.execucao_anual import agregar_por_ne, saldo_por_ne
+from src.importacao_execucao import carregar_atual
+from src.necessidade_empenho import calcular_necessidade_empenho
 
 CAMINHO_BASE = Path("tests/fixtures/contratos_continuos_2026-08-13.xlsm")
 
@@ -113,14 +114,24 @@ class TestLeituraContratosContinuos(unittest.TestCase):
     "Planilha de Contratos Contínuos ou manifesto de Execução Anual ausente",
 )
 class TestSaldoViaExecucaoAnual(unittest.TestCase):
-    """Confere `saldo_execucao`/`diverge_saldo` contra os casos já levantados manualmente:
-    2 NEs com divergência real (BASE_TG da planilha desatualizado em relação à Execução
-    Anual reimportada) e uma amostra de NEs que batem exatamente."""
+    """Confere `saldo_execucao`/`diverge_saldo` contra os casos já levantados manualmente.
+
+    Números recalibrados em 26/08/2026, depois que o usuário reimportou a Execução Anual só
+    com o exercício de 2026 atualizado (composição por ano, ver `src/importacao_versionada.py`)
+    — confirmado pelo usuário que os novos valores são reais (R$ 31.675,48 de saldo do NE 092,
+    por exemplo). Como a planilha de Contratos Contínuos (`CAMINHO_BASE`, fixture congelada de
+    13/08) não foi atualizada junto, a maioria dos NEs passou a divergir da Execução Anual —
+    isso é esperado (a planilha ficou desatualizada, não um bug), não mais os "2 casos
+    isolados" da calibração original. NE 2026NE000082 é um dos poucos que ainda batem
+    exatamente nas duas comparações; usado como amostra "sem divergência"."""
 
     @classmethod
     def setUpClass(cls):
-        manifesto = Manifesto.atual()
-        df_execucao = ler_execucao_anual(Path("data/raw") / manifesto.arquivo)
+        # `carregar_atual` (composta por ano, ver src/importacao_execucao.py) — mesmo
+        # carregador que a página usa de verdade, não a leitura de um único arquivo: assim o
+        # teste nunca fica desalinhado do que a Execução Anual "atual" realmente é depois de
+        # uma importação parcial (ex.: só o exercício corrente).
+        df_execucao = carregar_atual()
         cls.por_ne = saldo_por_ne(agregar_por_ne(df_execucao))
         cls.df = com_saldo_execucao(ler_contratos_continuos(CAMINHO_BASE), cls.por_ne)
 
@@ -137,24 +148,24 @@ class TestSaldoViaExecucaoAnual(unittest.TestCase):
     def test_ne_350_diverge_por_liquidacao_nao_capturada_na_planilha(self):
         linha = self._linha("2026NE000350")
         self.assertAlmostEqual(linha["saldo_colado_planilha"], 1516940.26, places=2)
-        self.assertAlmostEqual(linha["saldo_execucao"], 1180243.92, places=2)
+        self.assertAlmostEqual(linha["saldo_execucao"], 2079460.86, places=2)
         self.assertTrue(bool(linha["diverge_saldo"]))
 
     def test_ne_094_diverge_por_liquidacao_nao_capturada_na_planilha(self):
         linha = self._linha("2026NE000094")
         self.assertAlmostEqual(linha["saldo_colado_planilha"], 39221.85, places=2)
-        self.assertAlmostEqual(linha["saldo_execucao"], 20227.20, places=2)
+        self.assertAlmostEqual(linha["saldo_execucao"], 60744.90, places=2)
         self.assertTrue(bool(linha["diverge_saldo"]))
 
-    def test_ne_092_bate_exatamente(self):
-        linha = self._linha("2026NE000092")
-        self.assertAlmostEqual(linha["saldo_colado_planilha"], 17658.16, places=2)
-        self.assertAlmostEqual(linha["saldo_execucao"], 17658.16, places=2)
+    def test_ne_082_bate_exatamente(self):
+        linha = self._linha("2026NE000082")
+        self.assertAlmostEqual(linha["saldo_colado_planilha"], 140160.23, places=2)
+        self.assertAlmostEqual(linha["saldo_execucao"], 140160.23, places=2)
         self.assertFalse(bool(linha["diverge_saldo"]))
 
     def test_quantidade_total_de_divergencias_bate_com_o_levantamento(self):
         unicos = self.df.dropna(subset=["ne_curta"]).drop_duplicates("ne_curta")
-        self.assertEqual(int(unicos["diverge_saldo"].sum()), 2)
+        self.assertEqual(int(unicos["diverge_saldo"].sum()), 32)
 
     def test_valor_empenhado_e_somado_por_ne_antes_de_comparar(self):
         # NE 116 tem 5 itens (ver investigação da fixture) — valor_empenhado da linha
@@ -166,10 +177,13 @@ class TestSaldoViaExecucaoAnual(unittest.TestCase):
         self.assertEqual(len(totais_ne), 1)
         self.assertAlmostEqual(totais_ne[0], soma_itens, places=2)
 
-    def test_ne_148_diverge_por_arredondamento_do_rateio(self):
+    def test_ne_148_diverge_valor_empenhado(self):
+        # até 13/08 era só arredondamento do rateio (R$ 4,44 de diferença); com a Execução
+        # Anual de 26/08 (composição por ano), a diferença ficou grande o bastante pra não ser
+        # mais só arredondamento — mesma causa geral dos outros NEs: planilha desatualizada.
         linha = self._linha("2026NE000148")
         self.assertAlmostEqual(linha["valor_empenhado_planilha_total_ne"], 22209.56, places=2)
-        self.assertAlmostEqual(linha["valor_empenhado_execucao"], 22214.0, places=2)
+        self.assertAlmostEqual(linha["valor_empenhado_execucao"], 28820.0, places=2)
         self.assertTrue(bool(linha["diverge_valor_empenhado"]))
 
     def test_ne_178_diverge_porque_planilha_esta_zerada(self):
@@ -178,15 +192,111 @@ class TestSaldoViaExecucaoAnual(unittest.TestCase):
         self.assertAlmostEqual(linha["valor_empenhado_execucao"], 9610.0, places=2)
         self.assertTrue(bool(linha["diverge_valor_empenhado"]))
 
-    def test_ne_092_valor_empenhado_bate_exatamente(self):
-        linha = self._linha("2026NE000092")
-        self.assertAlmostEqual(linha["valor_empenhado_planilha_total_ne"], 42051.96, places=2)
-        self.assertAlmostEqual(linha["valor_empenhado_execucao"], 42051.96, places=2)
+    def test_ne_082_valor_empenhado_bate_exatamente(self):
+        linha = self._linha("2026NE000082")
+        self.assertAlmostEqual(linha["valor_empenhado_planilha_total_ne"], 581056.92, places=2)
+        self.assertAlmostEqual(linha["valor_empenhado_execucao"], 581056.92, places=2)
         self.assertFalse(bool(linha["diverge_valor_empenhado"]))
 
     def test_quantidade_total_de_divergencias_de_valor_empenhado_bate_com_o_levantamento(self):
         unicos = self.df.dropna(subset=["ne_curta"]).drop_duplicates("ne_curta")
-        self.assertEqual(int(unicos["diverge_valor_empenhado"].sum()), 2)
+        self.assertEqual(int(unicos["diverge_valor_empenhado"].sum()), 30)
+
+    def test_necessidade_de_empenho_recalculada_para_ne_encontradas_na_execucao(self):
+        # para toda linha marcada "execucao" (meses_empenhados_execucao/meses_liquidados_execucao
+        # em vez das colunas manuais da planilha), meses_a_empenhar/valor_a_empenhar têm que
+        # bater com a mesma fórmula de necessidade_empenho.py aplicada aos dois novos campos.
+        via_execucao = self.df[self.df["necessidade_via"] == "execucao"]
+        self.assertFalse(via_execucao.empty)
+        for _, linha in via_execucao.iterrows():
+            meses_esperado = linha["meses_empenhados_execucao"] - linha["meses_liquidados_execucao"]
+            self.assertAlmostEqual(linha["meses_a_empenhar"], meses_esperado, places=6)
+            if pd.notna(linha["despesa_mensal"]):
+                self.assertAlmostEqual(linha["valor_a_empenhar"], linha["despesa_mensal"] * meses_esperado, places=2)
+
+
+class TestNecessidadeViaExecucaoAnual(unittest.TestCase):
+    """`com_saldo_execucao` recalcula `meses_a_empenhar`/`valor_a_empenhar` a partir da
+    Execução Anual quando a NE já foi encontrada, em vez das colunas manuais
+    `meses_empenhados`/`meses_liquidados` da planilha — dados sintéticos, sem depender de
+    fixture (ver `TestSaldoViaExecucaoAnual` para a confirmação contra dado real)."""
+
+    def _por_ne(self, linhas: list[tuple[str, float, float]]) -> pd.DataFrame:
+        registros = [
+            {"ne_ccor": "00000000000" + curta, "empenhada": empenhada, "liquidada": liquidada, "saldo": empenhada - liquidada}
+            for curta, empenhada, liquidada in linhas
+        ]
+        return pd.DataFrame(registros, columns=["ne_ccor", "empenhada", "liquidada", "saldo"])
+
+    def _df(self, linhas: list[dict]) -> pd.DataFrame:
+        base = {
+            "ne_curta": pd.NA, "despesa_mensal": 0.0, "valor_empenhado": 0.0,
+            "saldo_colado_planilha": 0.0, "meses_empenhados": 0.0, "meses_liquidados": 0.0,
+        }
+        df = pd.DataFrame([{**base, **linha} for linha in linhas])
+        df["meses_a_empenhar"], df["valor_a_empenhar"] = calcular_necessidade_empenho(
+            df["meses_empenhados"], df["meses_liquidados"], df["despesa_mensal"]
+        )
+        return df
+
+    def test_ne_encontrada_recalcula_a_partir_da_execucao_com_fracao_exata(self):
+        # regra confirmada com o usuário: fração exata, sem arredondar meses.
+        df = self._df([{
+            "ne_curta": "2026NE000001", "despesa_mensal": 1000.0,
+            "meses_empenhados": 99.0, "meses_liquidados": 99.0,  # valor da planilha — deve ser ignorado
+        }])
+        resultado = com_saldo_execucao(df, self._por_ne([("2026NE000001", 5000.0, 2500.0)]))
+        self.assertEqual(resultado.loc[0, "necessidade_via"], "execucao")
+        self.assertAlmostEqual(resultado.loc[0, "meses_empenhados_execucao"], 5.0)
+        self.assertAlmostEqual(resultado.loc[0, "meses_liquidados_execucao"], 2.5)
+        self.assertAlmostEqual(resultado.loc[0, "meses_a_empenhar"], 2.5)
+        self.assertAlmostEqual(resultado.loc[0, "valor_a_empenhar"], 2500.0)
+
+    def test_sem_ne_mantem_valor_da_planilha(self):
+        df = self._df([{"ne_curta": pd.NA, "despesa_mensal": 1000.0, "meses_empenhados": 3.0, "meses_liquidados": 1.0}])
+        resultado = com_saldo_execucao(df, self._por_ne([]))
+        self.assertEqual(resultado.loc[0, "necessidade_via"], "planilha")
+        self.assertTrue(pd.isna(resultado.loc[0, "meses_empenhados_execucao"]))
+        self.assertAlmostEqual(resultado.loc[0, "meses_a_empenhar"], 2.0)
+        self.assertAlmostEqual(resultado.loc[0, "valor_a_empenhar"], 2000.0)
+
+    def test_ne_nao_encontrada_na_execucao_mantem_valor_da_planilha(self):
+        df = self._df([{
+            "ne_curta": "2026NE000099", "despesa_mensal": 1000.0,
+            "meses_empenhados": 3.0, "meses_liquidados": 1.0,
+        }])
+        resultado = com_saldo_execucao(df, self._por_ne([("2026NE000001", 5000.0, 2500.0)]))
+        self.assertEqual(resultado.loc[0, "necessidade_via"], "planilha")
+        self.assertAlmostEqual(resultado.loc[0, "valor_a_empenhar"], 2000.0)
+
+    def test_contrato_com_varios_itens_usa_despesa_mensal_somada_por_ne(self):
+        # mesmo critério de rateio de `valor_empenhado_planilha_total_ne`: a razão
+        # meses_empenhados_execucao/meses_liquidados_execucao é da NE inteira (repetida em
+        # todo item), não recalculada por item — só o valor_a_empenhar final usa a despesa
+        # mensal do item.
+        df = self._df([
+            {"ne_curta": "2026NE000002", "despesa_mensal": 600.0},
+            {"ne_curta": "2026NE000002", "despesa_mensal": 400.0},
+        ])
+        resultado = com_saldo_execucao(df, self._por_ne([("2026NE000002", 3000.0, 1000.0)]))
+        self.assertTrue((resultado["meses_empenhados_execucao"] == 3.0).all())
+        self.assertTrue((resultado["meses_liquidados_execucao"] == 1.0).all())
+        self.assertAlmostEqual(resultado.loc[0, "valor_a_empenhar"], 600.0 * 2)
+        self.assertAlmostEqual(resultado.loc[1, "valor_a_empenhar"], 400.0 * 2)
+
+    def test_despesa_mensal_total_ne_zero_mantem_planilha(self):
+        # divisão por zero não pode acontecer — fica no fallback da planilha.
+        df = self._df([{
+            "ne_curta": "2026NE000003", "despesa_mensal": 0.0,
+            "meses_empenhados": 3.0, "meses_liquidados": 1.0,
+        }])
+        resultado = com_saldo_execucao(df, self._por_ne([("2026NE000003", 5000.0, 2500.0)]))
+        self.assertEqual(resultado.loc[0, "necessidade_via"], "planilha")
+        # despesa_mensal também é 0 nesta linha (é o próprio motivo de despesa_mensal_total_ne
+        # dar zero) — o fallback preserva meses_a_empenhar (3 - 1 = 2), mas valor_a_empenhar
+        # é 0 × 2, não um valor mensal diferente.
+        self.assertAlmostEqual(resultado.loc[0, "meses_a_empenhar"], 2.0)
+        self.assertAlmostEqual(resultado.loc[0, "valor_a_empenhar"], 0.0)
 
 
 class TestComMesesPagos(unittest.TestCase):

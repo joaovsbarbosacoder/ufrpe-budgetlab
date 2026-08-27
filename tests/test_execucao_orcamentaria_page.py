@@ -36,7 +36,9 @@ class ExecucaoOrcamentariaPageTests(unittest.TestCase):
             ["Empenhado", "Liquidado", "Pago", "% Liquidado/Empenhado", "% Pago/Liquidado"],
         )
         empenhado = next(metric for metric in app.metric if metric.label == "Empenhado")
-        self.assertEqual(empenhado.value, "R$ 3,23 bi")
+        # recalibrado em 26/08/2026: usuário reimportou a Execução Anual só com 2026
+        # atualizado (composição por ano) — total empenhado mudou de R$ 3,23 bi pra R$ 3,25 bi.
+        self.assertEqual(empenhado.value, "R$ 3,25 bi")
 
     def test_shows_procedencia_footer_with_manifest_hash(self) -> None:
         app = self._open_page()

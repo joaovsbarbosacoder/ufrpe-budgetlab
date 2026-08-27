@@ -129,6 +129,15 @@ class PainelAcoesPageTests(unittest.TestCase):
         app.run()
         app.switch_page("app_pages/painel_acoes.py")
         app.run(timeout=20)
+        # composição por ano (ver src/importacao_versionada.py): o seletor de Ano pode ter
+        # mais opções além do ano da fixture importada (anos de uma extração real anterior,
+        # ainda compostos junto — não apagados só porque a fixture não os traz), e o padrão
+        # do seletor é sempre o ano mais recente disponível — que pode não ser mais 2024 (o
+        # ano usado por todas as fixtures deste arquivo). Seleciona explicitamente em vez de
+        # depender de qual ano calha de ser "o mais recente" no ambiente onde o teste roda.
+        if app.selectbox:
+            app.selectbox[0].select(2024)
+            app.run(timeout=20)
         return app
 
     def test_renders_cards_after_loading_validated_base(self) -> None:
