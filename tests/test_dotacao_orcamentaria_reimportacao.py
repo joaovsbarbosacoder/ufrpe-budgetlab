@@ -1,10 +1,16 @@
-"""Testes da reimportação pela interface na Dotação Orçamentária.
+"""Testes da reimportação pela interface — página "Atualizar Planilhas", card "Dotação
+Orçamentária (Dotação Anual)" (movida de `app_pages/dotacao_orcamentaria.py`, ver
+`src/reimportacao_especificacoes.py`).
 
 Espelha `tests/test_execucao_orcamentaria_reimportacao.py` (mesmo componente reutilizado,
 `src/ui_reimportacao.py`), com fixtures sintéticas de duas colunas-ano em vez de variantes
 do arquivo real — a Dotação Anual guarda um indicador por coluna, uma coluna por ano, então
 duas colunas do mesmo indicador com anos diferentes já reproduzem exercício retroativo,
 removido e em avanço sem precisar editar um arquivo de milhares de linhas.
+
+"Atualizar Planilhas" tem mais de um `st.file_uploader` na mesma página — os testes pegam o
+SEGUNDO uploader com rótulo "Nova extração (.xlsx)" (o primeiro é da Execução Anual, card
+renderizado antes do de Dotação — ver `app_pages/atualizar_planilhas.py`).
 """
 
 from __future__ import annotations
@@ -129,12 +135,13 @@ class DotacaoReimportacaoPageTests(unittest.TestCase):
     def _open_page(self) -> AppTest:
         app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
         app.run()
-        app.switch_page("app_pages/dotacao_orcamentaria.py")
-        app.run(timeout=30)
+        app.switch_page("app_pages/atualizar_planilhas.py")
+        app.run(timeout=60)
         return app
 
     def _upload(self, app: AppTest, content: bytes, filename: str) -> None:
-        app.file_uploader[0].set_value((filename, content, XLSX_MIME))
+        uploaders = [u for u in app.file_uploader if u.label == "Nova extração (.xlsx)"]
+        uploaders[1].set_value((filename, content, XLSX_MIME))
         app.run(timeout=60)
 
     def _importar_baseline(self) -> None:
@@ -159,7 +166,7 @@ class DotacaoReimportacaoPageTests(unittest.TestCase):
         self.assertTrue(confirmar.disabled)
         self.assertFalse(any(b.label == "Confirmar importação" for b in app.button))
 
-        checkbox = next(c for c in app.checkbox if "confirmo a substituição" in c.label)
+        checkbox = next(c for c in app.checkbox if "confirmo a atualização" in c.label)
         self.assertFalse(checkbox.value)
 
     def test_retroactive_change_commits_once_explicitly_confirmed(self) -> None:
@@ -167,9 +174,9 @@ class DotacaoReimportacaoPageTests(unittest.TestCase):
         app = self._open_page()
         self._upload(app, self.retroativo, "dotacao_retroativo.xlsx")
 
-        checkbox = next(c for c in app.checkbox if "confirmo a substituição" in c.label)
+        checkbox = next(c for c in app.checkbox if "confirmo a atualização" in c.label)
         checkbox.check()
-        app.run(timeout=30)
+        app.run(timeout=60)
 
         confirmar = next(b for b in app.button if b.label == "Confirmar substituição")
         self.assertFalse(confirmar.disabled)
@@ -181,17 +188,26 @@ class DotacaoReimportacaoPageTests(unittest.TestCase):
         self.assertEqual(manifesto_novo.totais_por_ano["2023"]["dotacao_atualizada"], 1500.0)
         self.assertEqual(manifesto_novo.arquivo, "dotacao_retroativo.xlsx")
 
-    def test_removed_exercise_shows_gate_and_blocks_commit_by_default(self) -> None:
+    def test_removed_exercise_is_informational_and_does_not_block(self) -> None:
+        # mesmo critério de test_execucao_orcamentaria_reimportacao.py: composição por ano não
+        # bloqueia mais por exercício ausente, só informa.
         self._importar_baseline()
         app = self._open_page()
         self._upload(app, self.removido, "dotacao_removido.xlsx")
 
         self.assertEqual(len(app.exception), 0)
         textos = [item.value for item in app.markdown]
-        self.assertTrue(any("Exercícios que somem do painel" in t and "2023" in t for t in textos))
+        self.assertTrue(any("não incluídos nesta extração" in t and "2023" in t for t in textos))
+        self.assertFalse(any(b.label == "Confirmar substituição" for b in app.button))
 
-        confirmar = next(b for b in app.button if b.label == "Confirmar substituição")
-        self.assertTrue(confirmar.disabled)
+        confirmar = next(b for b in app.button if b.label == "Confirmar importação")
+        self.assertFalse(confirmar.disabled)
+        confirmar.click()
+        app.run(timeout=60)
+
+        self.assertEqual(len(app.exception), 0)
+        manifesto_novo = Manifesto.atual()
+        self.assertNotIn(2023, manifesto_novo.anos)
 
     def test_ongoing_exercise_advance_commits_without_gate(self) -> None:
         self._importar_baseline()
@@ -281,8 +297,8 @@ class PastaDeEntradaDotacaoTests(unittest.TestCase):
     def _open_page(self) -> AppTest:
         app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
         app.run()
-        app.switch_page("app_pages/dotacao_orcamentaria.py")
-        app.run(timeout=30)
+        app.switch_page("app_pages/atualizar_planilhas.py")
+        app.run(timeout=60)
         return app
 
     def test_arquivo_seguro_na_pasta_compartilhada_e_aplicado_automaticamente(self) -> None:
