@@ -28,24 +28,16 @@ _THEME_CSS = f"""
     [data-testid="stAppViewContainer"] {{
         background: radial-gradient(circle at top left, {BG_GRADIENT_EDGE} 0%, {BG} 55%);
     }}
+    /* Antes do menu ir pra lateral, esse cabeçalho tinha a barra de navegação do topo dentro
+       dele — o fundo escuro semi-transparente disfarçava como parte dela. Sem a navegação
+       ali, ele sobrava como uma faixa com tom diferente do resto do painel (pedido explícito
+       pra corrigir) — transparente deixa o gradiente de fundo do app aparecer por trás,
+       igual ao restante da página; só o botão "Deploy"/menu "⋮" continuam visíveis. */
     [data-testid="stHeader"] {{
-        background: rgba(11, 18, 32, 0.85);
-        backdrop-filter: blur(6px);
+        background: transparent;
         position: static !important;
     }}
     .block-container {{ max-width: 1480px; padding-top: 1rem; padding-bottom: 3.25rem; }}
-    [data-testid="stNavigation"] {{
-        position: static !important;
-        border-bottom: 1px solid {BORDER};
-        padding-bottom: 0.35rem;
-    }}
-    [data-testid="stNavigation"] a {{
-        border-radius: 10px;
-    }}
-    [data-testid="stNavigation"] a[aria-selected="true"] {{
-        background: {ACCENT_SOFT};
-        color: {ACCENT};
-    }}
     [data-testid="stMetric"] {{
         background: transparent;
         border: 0;
@@ -56,7 +48,59 @@ _THEME_CSS = f"""
     [data-testid="stMetricValue"] {{ font-weight: 650; letter-spacing: -0.02em; color: {TEXT}; }}
     [data-testid="stMetricLabel"] {{ color: {TEXT_MUTED}; font-weight: 600; }}
     [data-testid="stDataFrame"] {{ border: 1px solid {BORDER}; border-radius: {RADIUS}; overflow: hidden; }}
-    [data-testid="stSidebar"] {{ background: {SIDEBAR_BG}; border-right: 1px solid {BORDER}; }}
+    /* Barra lateral em modo "trilho de ícones" por padrão (pedido explícito) — estreita o
+       bastante pra caber só o ícone de cada página, expande pra largura confortável ao
+       passar o mouse por cima. min-width/width juntos porque o Streamlit define os dois via
+       style inline (ver stSidebar); só max-width não bastava para vencer o width inline. */
+    [data-testid="stSidebar"] {{
+        background: {SIDEBAR_BG};
+        border-right: 1px solid {BORDER};
+        min-width: 4.5rem !important;
+        width: 4.5rem !important;
+        transition: width 0.18s ease, min-width 0.18s ease;
+    }}
+    [data-testid="stSidebar"]:hover {{
+        min-width: 21rem !important;
+        width: 21rem !important;
+    }}
+    [data-testid="stSidebarContent"] {{ overflow-x: hidden; }}
+    [data-testid="stSidebarNavLink"] {{ border-radius: 10px; }}
+    [data-testid="stSidebarNavLink"][aria-current="page"] {{
+        background: {ACCENT_SOFT};
+        color: {ACCENT};
+    }}
+    /* Rótulo de cada item some no estado estreito (só o ícone fica visível) e o cabeçalho
+       de seção ("Contratos", "Administração") também — reaparecem ao passar o mouse. Largura
+       de hover generosa (21rem) + nowrap: o pedido explícito era não voltar a cortar/quebrar
+       o texto dos itens quando exibidos (ex.: "Empenhos com Execução Retardada"). */
+    [data-testid="stSidebarNavLink"] span[label] {{
+        display: inline-block;
+        max-width: 0;
+        opacity: 0;
+        overflow: hidden;
+        white-space: nowrap;
+        transition: max-width 0.18s ease, opacity 0.12s ease;
+    }}
+    [data-testid="stSidebarNavLink"] span[label] p {{
+        white-space: nowrap;
+        overflow: visible;
+        text-overflow: clip;
+    }}
+    [data-testid="stNavSectionHeader"] {{
+        opacity: 0;
+        max-height: 0;
+        overflow: hidden;
+        white-space: nowrap;
+        transition: opacity 0.12s ease, max-height 0.18s ease;
+    }}
+    [data-testid="stSidebar"]:hover [data-testid="stSidebarNavLink"] span[label] {{
+        max-width: 16rem;
+        opacity: 1;
+    }}
+    [data-testid="stSidebar"]:hover [data-testid="stNavSectionHeader"] {{
+        opacity: 1;
+        max-height: 2.5rem;
+    }}
     [data-testid="stAlert"] {{ border-radius: {RADIUS}; border-width: 1px; }}
     [data-testid="stExpander"] {{
         background: {SURFACE};
