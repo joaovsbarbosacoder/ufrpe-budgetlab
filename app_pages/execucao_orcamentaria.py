@@ -2,22 +2,19 @@
 
 Lê o arquivo apontado pelo manifesto atual (`data/manifestos/execucao_anual_atual.json`),
 gerado por `src/importacao_execucao.py` — importação versionada própria, o padrão adotado por
-toda base do projeto (ver também Dotação Anual, `src/importacao_dotacao.py`). Esta página
-também oferece a reimportação (seção "Reimportar base", no final da página) — upload manual OU
-uma pasta de entrada (`data/raw/_entrada/`, compartilhada por todas as bases, ver
-`src/ui_reimportacao.py`) verificada a cada carregamento da página: um arquivo solto lá é
-validado sozinho e, se seguro (sem retroatividade nem exercício removido), aplicado sem
-precisar de clique nenhum; do contrário, pede a mesma confirmação explícita de sempre.
+toda base do projeto (ver também Dotação Anual, `src/importacao_dotacao.py`). A reimportação
+(upload manual OU a pasta de entrada compartilhada, ver `src/ui_reimportacao.py`) não mora mais
+nesta página — foi para "Atualizar Planilhas" (`app_pages/atualizar_planilhas.py`), pedido
+explícito de um único lugar para atualizar qualquer base, versionada ou não. A especificação
+usada lá é `src/reimportacao_especificacoes.py::ESPECIFICACAO_EXECUCAO_ANUAL`.
 
-Implementa os cinco blocos da seção 8 de `docs/base_execucao_anual.md`:
-filtros no topo, faixa de cards, série histórica, composição por dimensão
-e rastreabilidade — mais a reimportação pela interface.
+Implementa os quatro blocos da seção 8 de `docs/base_execucao_anual.md`:
+filtros no topo, faixa de cards, série histórica, composição por dimensão e rastreabilidade.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -29,10 +26,8 @@ from src.execucao_anual import (
     MEDIDAS,
     agregar,
     detalhar_nota_empenho,
-    ler_execucao_anual,
 )
-from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, Manifesto, importar
-from src.ui_reimportacao import EspecificacaoReimportacao, render_reimportacao
+from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
 from src.ui_theme import (
     format_brl_compact,
     format_brl_full,
@@ -41,8 +36,6 @@ from src.ui_theme import (
     render_page_header,
 )
 
-
-DIRETORIO_DADOS_BRUTOS = Path("data/raw")
 
 # nome do filtro -> (rótulo, coluna código, coluna descrição | None)
 FILTER_FIELDS = (
@@ -60,10 +53,13 @@ FILTER_FIELDS = (
 
 
 @st.cache_data(show_spinner="Lendo a base de Execução Anual...")
-def _cached_leitura(caminho: str, mtime: float) -> pd.DataFrame:
-    """`mtime` só participa da chave de cache — força reler se o arquivo mudar."""
+def _cached_leitura(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
+    """`caminho_ponteiro`/`mtime_ponteiro` só participam da chave de cache — força reler
+    quando o manifesto atual mudar (toda importação nova, mesmo parcial, reescreve o
+    ponteiro). O DataFrame devolvido já é a base composta por ano (ver
+    `importacao_execucao.carregar_atual`), não só o arquivo do manifesto atual."""
 
-    return ler_execucao_anual(caminho)
+    return carregar_atual()
 
 
 def _pct(value: float | None) -> str:
@@ -420,25 +416,6 @@ def _render_rastreabilidade(dataframe: pd.DataFrame, filtered: pd.DataFrame, sou
     )
 
 
-def _linhas_resumo_execucao(manifesto: Manifesto) -> str:
-    return (
-        f"{manifesto.linhas} linhas · {manifesto.linhas_empenho} de empenho · "
-        f"{manifesto.linhas_item_execucao} de item de execução · "
-        f"{manifesto.notas_empenho_distintas} NEs distintas · "
-        f"exercícios {', '.join(map(str, manifesto.anos))}"
-    )
-
-
-ESPECIFICACAO_REIMPORTACAO = EspecificacaoReimportacao(
-    prefixo_estado="execucao_anual_reimport",
-    diretorio_dados_brutos=DIRETORIO_DADOS_BRUTOS,
-    diretorio_manifestos=DIRETORIO_MANIFESTOS_PADRAO,
-    medidas=MEDIDAS,
-    importar=importar,
-    linhas_resumo=_linhas_resumo_execucao,
-)
-
-
 # ---------------------------------------------------------------------- página
 render_page_header(
     "Execução Orçamentária",
@@ -454,16 +431,9 @@ if manifesto is None:
     )
     st.stop()
 
-caminho_base = DIRETORIO_DADOS_BRUTOS / manifesto.arquivo
-if not caminho_base.exists():
-    st.error(
-        f"O arquivo da extração atual do manifesto não foi encontrado em "
-        f"'{caminho_base}'."
-    )
-    st.stop()
-
+caminho_ponteiro = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO
 try:
-    dataframe = _cached_leitura(str(caminho_base), caminho_base.stat().st_mtime)
+    dataframe = _cached_leitura(str(caminho_ponteiro), caminho_ponteiro.stat().st_mtime)
 except Exception as error:
     st.error(f"Não foi possível ler a base de Execução Anual: {error}")
     st.stop()
@@ -508,7 +478,7 @@ with st.container(border=True):
     _render_rastreabilidade(dataframe, filtered, source_key)
 
 data_extracao_texto = datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y")
-st.caption(f"Procedência: extração de {data_extracao_texto} · hash {manifesto.sha256[:8]}")
-
-with st.expander("Reimportar base", expanded=False):
-    render_reimportacao(ESPECIFICACAO_REIMPORTACAO)
+st.caption(
+    f"Última extração: {data_extracao_texto} · hash {manifesto.sha256[:8]} — exercícios não "
+    "trazidos por ela usam a extração anterior que os trouxe (composição por ano)."
+)

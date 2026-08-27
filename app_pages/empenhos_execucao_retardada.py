@@ -51,14 +51,13 @@ validada — só lê e reaproveita.
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from src.execucao_anual import agregar_por_ne, detalhar_nota_empenho, ler_execucao_anual, saldo_por_ne
+from src.execucao_anual import agregar_por_ne, detalhar_nota_empenho, saldo_por_ne
 from src.execucao_anual import ne_curta as _ne_curta_execucao
-from src.importacao_execucao import Manifesto
+from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
 from src.ui_filtros_execucao import (
     CAMPOS_AVANCADOS_EXECUCAO,
     CAMPOS_EXECUCAO,
@@ -69,8 +68,6 @@ from src.ui_filtros_execucao import (
     render_filtros_rapidos,
 )
 from src.ui_theme import render_metric_grid, render_page_header
-
-DIRETORIO_DADOS_BRUTOS = Path("data/raw")
 
 #: namespace de `st.session_state` desta página no filtro compartilhado — distinto do de
 #: Consulta de Empenhos, para as duas páginas conviverem sem colidir chaves.
@@ -86,10 +83,12 @@ COLUNAS_BUSCA = [
 
 
 @st.cache_data(show_spinner="Lendo a base de Execução Anual...")
-def _cached_leitura(caminho: str, mtime: float) -> pd.DataFrame:
-    """`mtime` só participa da chave de cache — força reler se o arquivo mudar."""
+def _cached_leitura(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
+    """`caminho_ponteiro`/`mtime_ponteiro` só participam da chave de cache — força reler
+    quando o manifesto atual mudar. O DataFrame devolvido já é a base composta por ano (ver
+    `importacao_execucao.carregar_atual`), não só o arquivo do manifesto atual."""
 
-    return ler_execucao_anual(caminho)
+    return carregar_atual()
 
 
 def _ne_exibicao(ne_ccor: object, ano: object) -> str:
@@ -228,13 +227,9 @@ if manifesto is None:
     )
     st.stop()
 
-caminho_base = DIRETORIO_DADOS_BRUTOS / manifesto.arquivo
-if not caminho_base.exists():
-    st.error(f"O arquivo da extração atual do manifesto não foi encontrado em '{caminho_base}'.")
-    st.stop()
-
+caminho_ponteiro = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO
 try:
-    dataframe = _cached_leitura(str(caminho_base), caminho_base.stat().st_mtime)
+    dataframe = _cached_leitura(str(caminho_ponteiro), caminho_ponteiro.stat().st_mtime)
 except Exception as error:
     st.error(f"Não foi possível ler a base de Execução Anual: {error}")
     st.stop()

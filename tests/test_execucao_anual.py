@@ -21,6 +21,7 @@ import pandas as pd
 
 from src.execucao_anual import (
     COLUNAS,
+    LINHAS_CABECALHO,
     MEDIDAS,
     ErroLayoutBase,
     _SENTINELAS_PROCESSO,
@@ -34,6 +35,7 @@ from src.execucao_anual import (
 )
 from src.importacao_execucao import (
     Manifesto,
+    carregar_atual,
     comparar,
     gerar_manifesto,
     historico,
@@ -361,6 +363,61 @@ class TestImportacaoVersionada(unittest.TestCase):
             self.assertEqual(len(tabela), 1)
             for coluna in ("data_extracao", "arquivo", "sha256_curto", "linhas", *MEDIDAS):
                 self.assertIn(coluna, tabela.columns)
+
+
+_COL_ANO = 36  # posição 0-indexada da coluna "ano" no arquivo bruto (ver test_execucao_orcamentaria_reimportacao.py)
+
+
+def _dados_por_ano(caminho_base: Path, anos: set[int]) -> pd.DataFrame:
+    dados = pd.read_excel(caminho_base, header=None, skiprows=LINHAS_CABECALHO, dtype=str)
+    return dados[dados[_COL_ANO].astype(int).isin(anos)]
+
+
+def _variante_por_anos(caminho_base: Path, destino: Path, anos: set[int]) -> Path:
+    """Cópia da fixture só com as linhas dos anos pedidos — cabeçalho preservado (2 linhas),
+    mesma técnica de `test_execucao_orcamentaria_reimportacao.py::_build_variant`."""
+    cabecalho = pd.read_excel(caminho_base, header=None, nrows=LINHAS_CABECALHO, dtype=str)
+    filtrado = _dados_por_ano(caminho_base, anos).reset_index(drop=True)
+    completo = pd.concat([cabecalho, filtrado], ignore_index=True)
+    completo.to_excel(destino, header=False, index=False, engine="openpyxl")
+    return destino
+
+
+@unittest.skipUnless(CAMINHO_BASE.exists(), f"Base ausente em {CAMINHO_BASE}")
+class TestCarregarAtualComposicaoPorAno(unittest.TestCase):
+    """`carregar_atual` — composição por ano (pedido explícito do usuário): subir só o
+    exercício corrente não apaga os exercícios fechados já importados antes."""
+
+    def test_importacao_parcial_de_2026_mantem_anos_anteriores_disponiveis(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            caminho_fechados = _variante_por_anos(
+                CAMINHO_BASE, tmp_path / "ate_2025.xlsx", {2023, 2024, 2025}
+            )
+            importar(caminho_fechados, tmp_path)
+            caminho_2026 = _variante_por_anos(CAMINHO_BASE, tmp_path / "2026.xlsx", {2026})
+            segunda = importar(caminho_2026, tmp_path)
+
+            # a importação em si continua marcando 2023-2025 como "não trazidos" (informativo,
+            # ver Delta.anos_removidos) — só não bloqueia mais (ver exige_confirmacao).
+            self.assertEqual(segunda.delta.anos_removidos, [2023, 2024, 2025])
+
+            composto = carregar_atual(tmp_path, tmp_path)
+            self.assertEqual(sorted(composto["ano"].unique().tolist()), [2023, 2024, 2025, 2026])
+
+    def test_ano_corrigido_substitui_so_esse_ano_no_composto(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            importar(_variante_por_anos(CAMINHO_BASE, tmp_path / "2024.xlsx", {2024}), tmp_path)
+            importar(_variante_por_anos(CAMINHO_BASE, tmp_path / "2025.xlsx", {2025}), tmp_path)
+            importar(_variante_por_anos(CAMINHO_BASE, tmp_path / "2024_v2.xlsx", {2024}), tmp_path)
+
+            composto = carregar_atual(tmp_path, tmp_path)
+            self.assertEqual(sorted(composto["ano"].unique().tolist()), [2024, 2025])
+            # nenhuma linha de 2024 duplicada — a segunda importação de 2024 substituiu a
+            # primeira por inteiro, não somou.
+            linhas_2024_originais = len(_dados_por_ano(CAMINHO_BASE, {2024}))
+            self.assertEqual(int((composto["ano"] == 2024).sum()), linhas_2024_originais)
 
 
 class TestDelta(unittest.TestCase):

@@ -8,8 +8,15 @@ Não importa Streamlit. Não conhece nenhuma base específica — cada base forn
 funções de leitura/reconciliação/validação e o conjunto de medidas que possui.
 
 Política adotada (decisão do projeto, válida para qualquer base que use este núcleo):
-  * SUBSTITUIÇÃO TOTAL — a extração mais recente é a verdade completa. Não há merge de
-    extrações diferentes.
+  * COMPOSIÇÃO POR ANO — cada extração é a verdade completa PARA OS EXERCÍCIOS QUE ELA TRAZ.
+    Um exercício ausente da extração mais recente não desaparece: continua disponível com o
+    último dado importado para ele. Pedido explícito do usuário — os exercícios fechados não
+    precisam ser reenviados a cada atualização, só o exercício corrente muda com frequência.
+    Dentro de um mesmo exercício não há merge: se o ano X está na extração nova, ela vale
+    inteira para o ano X (nunca soma/mescla linha a linha com a extração anterior desse ano).
+    `manifestos_por_ano` resolve, pra cada ano já visto, qual foi o manifesto mais recente que
+    o trouxe — é a partir dela que `carregar_atual` (`importacao_execucao.py`/
+    `importacao_dotacao.py`) monta o DataFrame composto que as páginas de fato leem.
   * A data de referência da extração vem da data de modificação do arquivo (mtime) no momento
     em que ele é gravado em disco — que hoje, para bases importadas via upload de navegador,
     é o momento do upload (o navegador não preserva o mtime do arquivo original).
@@ -236,6 +243,9 @@ class Delta:
     houve_anterior: bool
     mesma_extracao: bool = False
     anos_novos: list[int] = field(default_factory=list)
+    #: Anos que a extração anterior tinha e esta não traz — INFORMATIVO, não é mais motivo de
+    #: bloqueio (ver `exige_confirmacao`): sob composição por ano, esses exercícios continuam
+    #: disponíveis com o último dado importado, não desaparecem do painel.
     anos_removidos: list[int] = field(default_factory=list)
     anos_alterados: dict[int, dict[str, dict[str, float | None]]] = field(default_factory=dict)
     #: Subconjunto de `anos_alterados` que já eram anteriores ao exercício mais recente da
@@ -253,7 +263,10 @@ class Delta:
         if self.anos_novos:
             linhas.append(f"Exercícios novos: {', '.join(map(str, self.anos_novos))}.")
         if self.anos_removidos:
-            linhas.append(f"Exercícios que sumiram: {', '.join(map(str, self.anos_removidos))}.")
+            linhas.append(
+                "Exercícios não incluídos nesta extração (mantêm o último dado importado): "
+                + ", ".join(map(str, self.anos_removidos)) + "."
+            )
         for ano, medidas in sorted(self.anos_alterados.items()):
             partes = [_formatar_mudanca(medida, valores) for medida, valores in medidas.items()]
             linhas.append(f"{ano}: " + "; ".join(partes))
@@ -301,7 +314,8 @@ def comparar(
     if delta.anos_removidos:
         delta.alertas.append(
             f"A nova extração não traz {', '.join(map(str, delta.anos_removidos))}. "
-            "Como a política é de substituição total, esses exercícios deixarão de existir no painel."
+            "Sob composição por ano, esses exercícios continuam disponíveis no painel com o "
+            "último dado importado para eles — não é preciso reenviá-los."
         )
 
     ano_mais_recente_ant = max(anos_ant) if anos_ant else None
@@ -332,23 +346,22 @@ class MotivosGate:
     """Por que uma reimportação exige confirmação explícita antes de gravar."""
 
     anos_retroativos: list[int]
-    anos_removidos: list[int]
 
 
 def exige_confirmacao(delta: Delta) -> MotivosGate | None:
-    """Política do gate: retroatividade OU exercício removido exigem confirmação explícita.
+    """Política do gate: só retroatividade exige confirmação explícita — mudar um valor já
+    divulgado de um exercício fechado.
 
-    Perda de dado (um exercício sumir) merece a mesma cautela que alterar um exercício já
-    fechado — ambos mudam o que já foi divulgado. Decide por campos estruturados do `Delta`
-    (`anos_retroativos`, `anos_removidos`), não por inspecionar o texto de `delta.alertas`.
+    Um exercício ausente da extração nova (`delta.anos_removidos`) NÃO gera gate desde que a
+    política virou composição por ano (ver docstring do módulo): esse exercício não é perdido,
+    só não é atualizado nesta rodada — é o caso normal e esperado de enviar só o exercício
+    corrente. Continua aparecendo como informação (`delta.anos_removidos`,
+    `Delta.resumo_texto()`), só deixou de bloquear.
     """
 
-    if not delta.anos_retroativos and not delta.anos_removidos:
+    if not delta.anos_retroativos:
         return None
-    return MotivosGate(
-        anos_retroativos=list(delta.anos_retroativos),
-        anos_removidos=list(delta.anos_removidos),
-    )
+    return MotivosGate(anos_retroativos=list(delta.anos_retroativos))
 
 
 # --------------------------------------------------------------------------------------
@@ -420,6 +433,29 @@ def historico(
     ponteiro = nome_ponteiro(base)
     arquivos = [p for p in diretorio.glob(f"{base}_*.json") if p.name != ponteiro]
     return sorted((Manifesto.carregar(p) for p in arquivos), key=lambda m: m.data_extracao)
+
+
+def manifestos_por_ano(
+    base: str,
+    diretorio_manifestos: str | Path = DIRETORIO_MANIFESTOS_PADRAO,
+) -> dict[int, Manifesto]:
+    """Para cada ano já visto por esta base, o manifesto mais recente (por `importado_em`) que
+    o traz — a base para "composição por ano" (ver docstring do módulo).
+
+    `historico()` já inclui a importação mais recente: `Manifesto.salvar` sempre grava, no
+    mesmo carregamento, tanto o ponteiro (`{base}_atual.json`) quanto um arquivo próprio com
+    `rotulo` (data + hash) — não precisa somar `Manifesto.atual()` separado.
+
+    Quem consome isto (`carregar_atual` em `importacao_execucao.py`/`importacao_dotacao.py`)
+    agrupa os anos por manifesto (via `sha256`) antes de ler qualquer arquivo, pra nunca ler o
+    mesmo arquivo mais de uma vez nem duplicar linha de um ano que uma importação mais nova já
+    assumiu.
+    """
+    resultado: dict[int, Manifesto] = {}
+    for m in sorted(historico(base, diretorio_manifestos), key=lambda m: m.importado_em):
+        for ano in m.anos:
+            resultado[ano] = m
+    return resultado
 
 
 def historico_como_tabela(

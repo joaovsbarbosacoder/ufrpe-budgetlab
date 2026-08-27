@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import html as html_lib
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -52,18 +51,17 @@ from src.dotacao_anual_analysis import (
     build_dotacao_anual_subdivision_analysis,
     build_item_indicators,
 )
-from src.importacao_dotacao import Manifesto, ler_dotacao_anual
+from src.importacao_dotacao import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
 from src.ui_theme import format_brl_compact, render_alert, render_metric_grid, render_page_header
 
 
-DIRETORIO_DADOS_BRUTOS = Path("data/raw")
-
-
 @st.cache_data(show_spinner="Lendo a base de Dotação Anual...")
-def _cached_leitura(caminho: str, mtime: float) -> pd.DataFrame:
-    """`mtime` só participa da chave de cache — força reler se o arquivo mudar."""
+def _cached_leitura(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
+    """`caminho_ponteiro`/`mtime_ponteiro` só participam da chave de cache — força reler
+    quando o manifesto atual mudar. O DataFrame devolvido já é a base composta por ano (ver
+    `importacao_dotacao.carregar_atual`), não só o arquivo do manifesto atual."""
 
-    return ler_dotacao_anual(caminho).workbook.consolidated_data
+    return carregar_atual()
 
 
 INDICATOR_DISPLAY_ORDER = (
@@ -418,16 +416,9 @@ if manifesto is None:
     )
     st.stop()
 
-caminho_base = DIRETORIO_DADOS_BRUTOS / manifesto.arquivo
-if not caminho_base.exists():
-    st.error(
-        f"O arquivo da extração atual do manifesto não foi encontrado em "
-        f"'{caminho_base}'."
-    )
-    st.stop()
-
+caminho_ponteiro = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO
 try:
-    dataframe = _cached_leitura(str(caminho_base), caminho_base.stat().st_mtime)
+    dataframe = _cached_leitura(str(caminho_ponteiro), caminho_ponteiro.stat().st_mtime)
 except Exception as error:
     st.error(f"Não foi possível ler a base de Dotação Anual: {error}")
     st.stop()
@@ -503,4 +494,7 @@ for codigo, nome in ordem:
     _render_card(codigo, nome, grupo, source_key)
 
 data_extracao_texto = datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y")
-st.caption(f"Procedência: extração de {data_extracao_texto} · hash {manifesto.sha256[:8]}")
+st.caption(
+    f"Última extração: {data_extracao_texto} · hash {manifesto.sha256[:8]} — exercícios não "
+    "trazidos por ela usam a extração anterior que os trouxe (composição por ano)."
+)

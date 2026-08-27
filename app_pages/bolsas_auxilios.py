@@ -48,6 +48,14 @@ Diferenças deliberadas em relação ao handoff:
     "MESES DE SALDO" da planilha, validada linha a linha contra a origem). Como o cartão do
     handoff não tinha campos para Meses Empenhados/Liquidados, acrescentei uma linha extra
     para os dois, editáveis como o resto.
+  * Para processos cuja NE já foi encontrada na Execução Anual, `meses_empenhados`/
+    `meses_liquidados` deixam de vir da planilha e passam a vir da própria Execução Anual
+    (`com_saldo_execucao`, campos `meses_empenhados_execucao`/`meses_liquidados_execucao`) —
+    pedido explícito do usuário para não depender de atualizar a planilha de Bolsas só para
+    refletir um novo saldo/liquidado. Os dois campos do cartão viram exibição (rótulo
+    "(Execução Anual)"), não mais editáveis, nesse caso. Sem NE encontrada, continuam
+    editáveis como sempre, seedados pela planilha (fallback inalterado; mesmo critério de
+    `contratos_continuos.py`).
   * `saldo_execucao` e `valor_empenhado_execucao` (autoritativos, vindos da Execução Anual)
     não existiam no handoff (foi desenhado antes dessa integração) — aparecem fixos (não
     editáveis) junto da tag de status, com divergência contra `saldo_colado_planilha`/
@@ -114,10 +122,13 @@ from src.design_tokens import (
     TRACK,
     WARNING,
 )
-from src.execucao_anual import agregar_por_ne, ler_execucao_anual, saldo_por_ne
+from src.execucao_anual import agregar_por_ne, saldo_por_ne
 from src.importacao_dotacao import Manifesto as ManifestoDotacao
-from src.importacao_dotacao import ler_dotacao_anual
-from src.importacao_execucao import Manifesto
+from src.importacao_dotacao import NOME_PONTEIRO as NOME_PONTEIRO_DOTACAO
+from src.importacao_dotacao import carregar_atual as carregar_dotacao_atual
+from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, Manifesto
+from src.importacao_execucao import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO
+from src.importacao_execucao import carregar_atual as carregar_execucao_atual
 from src.necessidade_empenho import calcular_necessidade_empenho
 from src.relatorio_reforco_empenho import BOLSAS_AUXILIOS as RELATORIO_BOLSAS_AUXILIOS
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
@@ -139,12 +150,16 @@ def _cached_leitura(caminho: str, mtime: float) -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner="Lendo a base de Execução Anual...")
-def _cached_por_ne_execucao(caminho: str, mtime: float) -> pd.DataFrame:
-    return saldo_por_ne(agregar_por_ne(ler_execucao_anual(caminho)))
+def _cached_por_ne_execucao(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
+    """`caminho_ponteiro`/`mtime_ponteiro` só participam da chave de cache — força reler
+    quando o manifesto atual mudar. `carregar_atual` já devolve a base composta por ano (ver
+    `src/importacao_execucao.py`)."""
+
+    return saldo_por_ne(agregar_por_ne(carregar_execucao_atual()))
 
 
 @st.cache_data(show_spinner="Lendo a base de Dotação Anual...")
-def _cached_dotacao_por_ptres(caminho: str, mtime: float) -> tuple[pd.DataFrame, int]:
+def _cached_dotacao_por_ptres(caminho_ponteiro: str, mtime_ponteiro: float) -> tuple[pd.DataFrame, int]:
     """Uma linha por PTRES do exercício mais recente da base (a base traz vários anos —
     misturar exercícios inflaria a dotação de cada PTRES): Ação, Plano Orçamentário e Dotação
     Atualizada. Um PTRES pode, em tese, aparecer em mais de uma combinação de Ação/Plano
@@ -152,9 +167,11 @@ def _cached_dotacao_por_ptres(caminho: str, mtime: float) -> tuple[pd.DataFrame,
     manual contra a extração de 14/08/2026 mostrou 1:1 para todos os PTRES usados pelas
     bolsas cadastradas; se isso mudar, o pior caso é mostrar só a primeira combinação
     encontrada, não um valor de dotação errado (a soma de `dotacao_atualizada` continua
-    correta, agregada por PTRES independente da cardinalidade)."""
+    correta, agregada por PTRES independente da cardinalidade). `caminho_ponteiro`/
+    `mtime_ponteiro` só participam da chave de cache — `carregar_atual` já devolve a base
+    composta por ano (ver `src/importacao_dotacao.py`)."""
 
-    dados = ler_dotacao_anual(caminho).workbook.consolidated_data
+    dados = carregar_dotacao_atual()
     ano_exercicio = int(dados["ano_lancamento"].max())
     do_exercicio = dados[dados["ano_lancamento"] == ano_exercicio]
 
@@ -387,14 +404,14 @@ def _campo_numero(col, label: str, valor: float, key: str, step: float = 1.0, fm
 
 def _rotulo_expander(linha: pd.Series) -> str:
     """Prévia do cartão minimizado — a partir dos valores brutos da linha (não dos widgets,
-    que só existem depois de abrir o expander)."""
+    que só existem depois de abrir o expander). `valor_a_empenhar` já vem resolvido pelo
+    pipeline (Execução Anual quando disponível, planilha como fallback — ver
+    `com_saldo_execucao`); recalcular aqui a partir de `meses_empenhados`/`meses_liquidados`
+    mostraria um número desatualizado sempre que a Execução Anual estiver disponível."""
 
     programa = _ou_vazio(linha["programa_bolsa"]) or "(sem item de despesa)"
     processo = _ou_vazio(linha["processo"])
-    valor_mensal = _ou_zero(linha["qtd_efetiva"]) * _ou_zero(linha["valor_unitario"])
-    _, valor_a_empenhar = calcular_necessidade_empenho(
-        _ou_zero(linha["meses_empenhados"]), _ou_zero(linha["meses_liquidados"]), valor_mensal
-    )
+    valor_a_empenhar = _ou_zero(linha["valor_a_empenhar"])
     situacao_bruta = linha["situacao_tg"]
     if pd.notna(situacao_bruta) and situacao_bruta in ("SEM EMPENHO", "NÃO LOCALIZADO"):
         emoji = "🔴"
@@ -450,8 +467,21 @@ def _render_card(linha: pd.Series, source_key: str, removidos: set) -> None:
         valor_empenhado = _campo_numero(r3[3], "Empenhado (R$)", _ou_zero(linha["valor_empenhado_tg"]), f"{k}_valorempenhado", step=100.0)
 
         r4 = st.columns(4)
-        meses_empenhados = _campo_numero(r4[0], "Meses Empenhados", _ou_zero(linha["meses_empenhados"]), f"{k}_mesesemp", step=0.1)
-        meses_liquidados = _campo_numero(r4[1], "Meses Liquidados", _ou_zero(linha["meses_liquidados"]), f"{k}_mesesliq", step=0.1)
+        # Mesmo critério de `app_pages/contratos_continuos.py::_render_card`: com NE já
+        # encontrada na Execução Anual, os campos manuais viram exibição (ver
+        # `com_saldo_execucao`), não editáveis — digitar ali deixaria de ter efeito no
+        # "Empenhar" mostrado, e reintroduziria o bug de dois quadros com números diferentes.
+        via_execucao = pd.notna(linha["meses_empenhados_execucao"])
+        if via_execucao:
+            meses_empenhados = float(linha["meses_empenhados_execucao"])
+            meses_liquidados = float(linha["meses_liquidados_execucao"])
+            r4[0].markdown("<div class='bls-label'>Meses Empenhados (Execução Anual)</div>", unsafe_allow_html=True)
+            r4[0].markdown(f"<div class='bls-calc'>{_num(meses_empenhados)}</div>", unsafe_allow_html=True)
+            r4[1].markdown("<div class='bls-label'>Meses Liquidados (Execução Anual)</div>", unsafe_allow_html=True)
+            r4[1].markdown(f"<div class='bls-calc'>{_num(meses_liquidados)}</div>", unsafe_allow_html=True)
+        else:
+            meses_empenhados = _campo_numero(r4[0], "Meses Empenhados", _ou_zero(linha["meses_empenhados"]), f"{k}_mesesemp", step=0.1)
+            meses_liquidados = _campo_numero(r4[1], "Meses Liquidados", _ou_zero(linha["meses_liquidados"]), f"{k}_mesesliq", step=0.1)
         saldo_planilha = _campo_numero(r4[2], "Saldo (R$)", _ou_zero(linha["saldo_colado_planilha"]), f"{k}_saldo", step=100.0)
 
         valor_mensal = qtd_efetiva * valor_unitario
@@ -465,7 +495,8 @@ def _render_card(linha: pd.Series, source_key: str, removidos: set) -> None:
         r5 = st.columns(4)
         r5[0].markdown("<div class='bls-label'>Meses de Saldo</div>", unsafe_allow_html=True)
         r5[0].markdown(f"<div class='bls-calc'>{_num(meses_a_empenhar)}</div>", unsafe_allow_html=True)
-        r5[1].markdown("<div class='bls-label'>Empenhar</div>", unsafe_allow_html=True)
+        rotulo_empenhar = "Empenhar (Execução Anual)" if via_execucao else "Empenhar (planilha)"
+        r5[1].markdown(f"<div class='bls-label'>{rotulo_empenhar}</div>", unsafe_allow_html=True)
         r5[1].markdown(f"<div class='bls-calc strong'>{_brl(valor_a_empenhar)}</div>", unsafe_allow_html=True)
 
         saldo_execucao = linha["saldo_execucao"]
@@ -855,14 +886,13 @@ if manifesto_execucao is None:
     )
     st.stop()
 
-caminho_execucao = DIRETORIO_DADOS_BRUTOS / manifesto_execucao.arquivo
-if not caminho_execucao.exists():
-    st.error(f"O arquivo da extração atual de Execução Anual não foi encontrado em '{caminho_execucao}'.")
-    st.stop()
+caminho_ponteiro_execucao = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO_EXECUCAO
 
 try:
     dataframe = _cached_leitura(str(CAMINHO_PLANILHA), CAMINHO_PLANILHA.stat().st_mtime)
-    por_ne_execucao = _cached_por_ne_execucao(str(caminho_execucao), caminho_execucao.stat().st_mtime)
+    por_ne_execucao = _cached_por_ne_execucao(
+        str(caminho_ponteiro_execucao), caminho_ponteiro_execucao.stat().st_mtime
+    )
 except Exception as error:
     st.error(f"Não foi possível ler os dados: {error}")
     st.stop()
@@ -874,14 +904,13 @@ dotacao_dimensoes = None
 ano_exercicio_dotacao = None
 manifesto_dotacao = ManifestoDotacao.atual()
 if manifesto_dotacao is not None:
-    caminho_dotacao = DIRETORIO_DADOS_BRUTOS / manifesto_dotacao.arquivo
-    if caminho_dotacao.exists():
-        try:
-            dotacao_dimensoes, ano_exercicio_dotacao = _cached_dotacao_por_ptres(
-                str(caminho_dotacao), caminho_dotacao.stat().st_mtime
-            )
-        except Exception:
-            dotacao_dimensoes = None
+    caminho_ponteiro_dotacao = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO_DOTACAO
+    try:
+        dotacao_dimensoes, ano_exercicio_dotacao = _cached_dotacao_por_ptres(
+            str(caminho_ponteiro_dotacao), caminho_ponteiro_dotacao.stat().st_mtime
+        )
+    except Exception:
+        dotacao_dimensoes = None
 
 dataframe = _com_programas_extra(dataframe, source_key)
 dataframe = _aplicar_edicoes_da_sessao(dataframe, source_key)

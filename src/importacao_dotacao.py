@@ -45,12 +45,15 @@ from src.importacao_versionada import (
     historico as _historico_generico,
     historico_como_tabela as _historico_como_tabela_generico,
     importar as _importar_generico,
+    manifestos_por_ano,
     nome_ponteiro,
 )
 from src.tesouro_dotacao_anual_workbook import (
     DotacaoAnualWorkbookResult,
     process_dotacao_anual_workbook,
 )
+
+DIRETORIO_DADOS_BRUTOS_PADRAO = Path("data/raw")
 
 BASE = "dotacao_anual"
 NOME_PONTEIRO = nome_ponteiro(BASE)
@@ -63,6 +66,7 @@ ROTULOS_MEDIDAS: dict[str, str] = dict(KNOWN_ITEM_INDICATORS)
 
 __all__ = [
     "BASE",
+    "DIRETORIO_DADOS_BRUTOS_PADRAO",
     "DIRETORIO_MANIFESTOS_PADRAO",
     "NOME_PONTEIRO",
     "TOLERANCIA",
@@ -81,6 +85,7 @@ __all__ = [
     "gerar_manifesto",
     "comparar",
     "importar",
+    "carregar_atual",
     "historico",
     "historico_como_tabela",
 ]
@@ -233,6 +238,42 @@ def importar(
         diretorio_manifestos=diretorio_manifestos,
         registrar=registrar,
     )
+
+
+def carregar_atual(
+    diretorio_dados_brutos: str | Path = DIRETORIO_DADOS_BRUTOS_PADRAO,
+    diretorio_manifestos: str | Path = DIRETORIO_MANIFESTOS_PADRAO,
+) -> pd.DataFrame | None:
+    """Base composta por ano — o que as páginas devem ler no lugar de `ler_dotacao_anual`
+    direto no arquivo de `Manifesto.atual()`. `None` se nenhuma importação foi feita ainda.
+    Mesmo critério de `importacao_execucao.carregar_atual` (ver lá para o raciocínio geral de
+    agrupar por `sha256` antes de ler).
+
+    Linha sem `ano_lancamento` (item sem exercício determinável — já existia antes desta
+    composição, ver `reconciliar_dotacao_anual`) não pertence a nenhum ano específico, então
+    não dá pra decidir de qual manifesto ela "é dona" só pelo ano: mantém a linha de TODOS os
+    manifestos contribuindo, em vez de arriscar descartar dado silenciosamente (ver AGENTS.md)
+    só porque ela não tem como ser atribuída a um exercício."""
+    por_ano = manifestos_por_ano(BASE, diretorio_manifestos)
+    if not por_ano:
+        return None
+
+    anos_por_sha: dict[str, list[int]] = {}
+    manifesto_por_sha: dict[str, Manifesto] = {}
+    for ano, manifesto in por_ano.items():
+        anos_por_sha.setdefault(manifesto.sha256, []).append(ano)
+        manifesto_por_sha[manifesto.sha256] = manifesto
+
+    diretorio_dados_brutos = Path(diretorio_dados_brutos)
+    partes = []
+    for sha, anos in sorted(anos_por_sha.items(), key=lambda item: min(item[1])):
+        manifesto = manifesto_por_sha[sha]
+        leitura = ler_dotacao_anual(diretorio_dados_brutos / manifesto.arquivo)
+        dataframe = leitura.workbook.consolidated_data
+        pertence = dataframe["ano_lancamento"].isin(anos) | dataframe["ano_lancamento"].isna()
+        partes.append(dataframe[pertence])
+
+    return partes[0] if len(partes) == 1 else pd.concat(partes, ignore_index=True)
 
 
 def historico(diretorio_manifestos: str | Path = DIRETORIO_MANIFESTOS_PADRAO) -> list[Manifesto]:

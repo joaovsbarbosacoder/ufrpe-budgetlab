@@ -39,7 +39,11 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.execucao_anual import indice_saldo_por_ne_curta, indice_valor_empenhado_por_ne_curta
+from src.execucao_anual import (
+    indice_liquidado_por_ne_curta,
+    indice_saldo_por_ne_curta,
+    indice_valor_empenhado_por_ne_curta,
+)
 from src.necessidade_empenho import calcular_necessidade_empenho
 
 NOME_ABA = "Bolsas e auxílios"
@@ -161,6 +165,19 @@ def com_saldo_execucao(df: pd.DataFrame, por_ne_execucao: pd.DataFrame) -> pd.Da
     fica com os quatro campos nulos — não é erro, é ausência de dado para comparar. Uma linha
     por NE nesta base (ver docstring do módulo), então a comparação é direta, sem precisar
     somar por NE como em `contratos_continuos.com_saldo_execucao`.
+
+    Também recalcula `meses_a_empenhar`/`valor_a_empenhar` (a "Necessidade de Empenho") a
+    partir da Execução Anual em vez das colunas manuais `meses_empenhados`/`meses_liquidados`
+    da planilha, para todo processo cuja NE já foi encontrada acima: `valor_liquidado_execucao`
+    (novo campo, via `indice_liquidado_por_ne_curta`) e `valor_empenhado_execucao` ÷
+    `valor_mensal` viram `meses_liquidados_execucao`/`meses_empenhados_execucao` — fração
+    exata, sem arredondar (decisão confirmada com o usuário; mesmo critério de
+    `contratos_continuos.com_saldo_execucao`). Assim a Necessidade de Empenho atualiza sozinha
+    a cada reimportação de Execução Anual, sem precisar tocar na planilha de Bolsas. Processo
+    sem NE, ou com NE ainda não encontrada na Execução carregada, mantém
+    `meses_empenhados`/`meses_liquidados` da planilha (fallback inalterado) — `necessidade_via`
+    (novo campo) marca "execucao" ou "planilha" conforme a fonte usada em cada linha, para a
+    interface deixar isso visível.
     """
     resultado = df.copy()
 
@@ -171,5 +188,27 @@ def com_saldo_execucao(df: pd.DataFrame, por_ne_execucao: pd.DataFrame) -> pd.Da
     indice_valor_empenhado = indice_valor_empenhado_por_ne_curta(por_ne_execucao)
     resultado["valor_empenhado_execucao"] = resultado["ne_curta"].map(indice_valor_empenhado)
     resultado["diverge_valor_empenhado"] = _diverge(resultado["valor_empenhado_execucao"], resultado["valor_empenhado_tg"])
+
+    indice_liquidado = indice_liquidado_por_ne_curta(por_ne_execucao)
+    resultado["valor_liquidado_execucao"] = resultado["ne_curta"].map(indice_liquidado)
+
+    tem_base_para_calculo = (
+        resultado["valor_empenhado_execucao"].notna()
+        & resultado["valor_liquidado_execucao"].notna()
+        & resultado["valor_mensal"].notna()
+        & (resultado["valor_mensal"] != 0)
+    )
+
+    meses_empenhados_execucao = resultado["valor_empenhado_execucao"] / resultado["valor_mensal"]
+    meses_liquidados_execucao = resultado["valor_liquidado_execucao"] / resultado["valor_mensal"]
+    resultado["meses_empenhados_execucao"] = meses_empenhados_execucao.where(tem_base_para_calculo)
+    resultado["meses_liquidados_execucao"] = meses_liquidados_execucao.where(tem_base_para_calculo)
+
+    meses_a_empenhar_execucao, valor_a_empenhar_execucao = calcular_necessidade_empenho(
+        meses_empenhados_execucao, meses_liquidados_execucao, resultado["valor_mensal"]
+    )
+    resultado["meses_a_empenhar"] = resultado["meses_a_empenhar"].where(~tem_base_para_calculo, meses_a_empenhar_execucao)
+    resultado["valor_a_empenhar"] = resultado["valor_a_empenhar"].where(~tem_base_para_calculo, valor_a_empenhar_execucao)
+    resultado["necessidade_via"] = pd.Series("planilha", index=resultado.index).where(~tem_base_para_calculo, "execucao")
 
     return resultado

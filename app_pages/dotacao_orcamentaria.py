@@ -2,18 +2,15 @@
 
 Lê o arquivo apontado pelo manifesto atual (`data/manifestos/dotacao_anual_atual.json`),
 gerado por `src/importacao_dotacao.py` — mesmo padrão de importação versionada da Execução
-Anual (ver `docs/base_execucao_anual.md`). A reimportação pela interface (seção "Reimportar
-base", no final da página) reaproveita o mesmo componente `src/ui_reimportacao.py` que a
-Execução Anual usa — upload manual OU pasta de entrada (`data/raw/_entrada/`, compartilhada
-por todas as bases, ver `src/ui_reimportacao.py`), verificada a cada carregamento; um arquivo
-lá é aplicado sozinho quando seguro (sem retroatividade/exercício removido), ou pede a
-confirmação explícita de sempre quando não é.
+Anual (ver `docs/base_execucao_anual.md`). A reimportação pela interface não mora mais nesta
+página — foi para "Atualizar Planilhas" (`app_pages/atualizar_planilhas.py`), pedido explícito
+de um único lugar para atualizar qualquer base, versionada ou não. A especificação usada lá é
+`src/reimportacao_especificacoes.py::ESPECIFICACAO_DOTACAO_ANUAL`.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -25,15 +22,7 @@ from src.dotacao_anual_analysis import (
     build_dotacao_anual_year_analysis,
     build_item_indicators,
 )
-from src.importacao_dotacao import (
-    DIRETORIO_MANIFESTOS_PADRAO,
-    MEDIDAS,
-    Manifesto,
-    ROTULOS_MEDIDAS,
-    importar,
-    ler_dotacao_anual,
-)
-from src.ui_reimportacao import EspecificacaoReimportacao, render_reimportacao
+from src.importacao_dotacao import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
 from src.ui_theme import (
     format_brl_compact,
     format_brl_full,
@@ -43,14 +32,13 @@ from src.ui_theme import (
 )
 
 
-DIRETORIO_DADOS_BRUTOS = Path("data/raw")
-
-
 @st.cache_data(show_spinner="Lendo a base de Dotação Anual...")
-def _cached_leitura(caminho: str, mtime: float) -> pd.DataFrame:
-    """`mtime` só participa da chave de cache — força reler se o arquivo mudar."""
+def _cached_leitura(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
+    """`caminho_ponteiro`/`mtime_ponteiro` só participam da chave de cache — força reler
+    quando o manifesto atual mudar. O DataFrame devolvido já é a base composta por ano (ver
+    `importacao_dotacao.carregar_atual`), não só o arquivo do manifesto atual."""
 
-    return ler_dotacao_anual(caminho).workbook.consolidated_data
+    return carregar_atual()
 
 
 FILTERS = (
@@ -247,28 +235,6 @@ def _render_year_chart(filtered: pd.DataFrame, source_key: str, ano_extracao: in
     st.plotly_chart(figure, width="stretch", config={"displayModeBar": False})
 
 
-def _linhas_resumo_dotacao(manifesto: Manifesto) -> str:
-    contagens = manifesto.contagens
-    return (
-        f"{contagens.get('abas_reconhecidas')} aba(s) reconhecida(s) · "
-        f"{contagens.get('linhas_normalizadas')} linhas normalizadas · "
-        f"{contagens.get('nulos')} nulos · {contagens.get('zeros')} zeros · "
-        f"{contagens.get('negativos')} negativos · "
-        f"exercícios {', '.join(map(str, manifesto.anos))}"
-    )
-
-
-ESPECIFICACAO_REIMPORTACAO = EspecificacaoReimportacao(
-    prefixo_estado="dotacao_anual_reimport",
-    diretorio_dados_brutos=DIRETORIO_DADOS_BRUTOS,
-    diretorio_manifestos=DIRETORIO_MANIFESTOS_PADRAO,
-    medidas=MEDIDAS,
-    importar=importar,
-    linhas_resumo=_linhas_resumo_dotacao,
-    formatar_medida=lambda medida: ROTULOS_MEDIDAS[medida],
-)
-
-
 render_page_header(
     "Dotação Orçamentária",
     "Visão gerencial da Dotação Anual validada, por ano de lançamento.",
@@ -284,16 +250,9 @@ if manifesto is None:
     )
     st.stop()
 
-caminho_base = DIRETORIO_DADOS_BRUTOS / manifesto.arquivo
-if not caminho_base.exists():
-    st.error(
-        f"O arquivo da extração atual do manifesto não foi encontrado em "
-        f"'{caminho_base}'."
-    )
-    st.stop()
-
+caminho_ponteiro = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO
 try:
-    dataframe = _cached_leitura(str(caminho_base), caminho_base.stat().st_mtime)
+    dataframe = _cached_leitura(str(caminho_ponteiro), caminho_ponteiro.stat().st_mtime)
 except Exception as error:
     st.error(f"Não foi possível ler a base de Dotação Anual: {error}")
     st.stop()
@@ -350,7 +309,7 @@ with st.container(border=True):
     _render_year_chart(filtered, source_key, ano_extracao)
 
 data_extracao_texto = datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y")
-st.caption(f"Procedência: extração de {data_extracao_texto} · hash {manifesto.sha256[:8]}")
-
-with st.expander("Reimportar base", expanded=False):
-    render_reimportacao(ESPECIFICACAO_REIMPORTACAO)
+st.caption(
+    f"Última extração: {data_extracao_texto} · hash {manifesto.sha256[:8]} — exercícios não "
+    "trazidos por ela usam a extração anterior que os trouxe (composição por ano)."
+)

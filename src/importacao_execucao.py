@@ -29,8 +29,11 @@ from src.importacao_versionada import (
     historico as _historico_generico,
     historico_como_tabela as _historico_como_tabela_generico,
     importar as _importar_generico,
+    manifestos_por_ano,
     nome_ponteiro,
 )
+
+DIRETORIO_DADOS_BRUTOS_PADRAO = Path("data/raw")
 
 BASE = "execucao_anual"
 NOME_PONTEIRO = nome_ponteiro(BASE)
@@ -38,6 +41,7 @@ TOLERANCIA = TOLERANCIA_PADRAO
 
 __all__ = [
     "BASE",
+    "DIRETORIO_DADOS_BRUTOS_PADRAO",
     "DIRETORIO_MANIFESTOS_PADRAO",
     "NOME_PONTEIRO",
     "TOLERANCIA",
@@ -49,6 +53,7 @@ __all__ = [
     "gerar_manifesto",
     "comparar",
     "importar",
+    "carregar_atual",
     "historico",
     "historico_como_tabela",
 ]
@@ -96,6 +101,38 @@ def importar(
         diretorio_manifestos=diretorio_manifestos,
         registrar=registrar,
     )
+
+
+def carregar_atual(
+    diretorio_dados_brutos: str | Path = DIRETORIO_DADOS_BRUTOS_PADRAO,
+    diretorio_manifestos: str | Path = DIRETORIO_MANIFESTOS_PADRAO,
+) -> pd.DataFrame | None:
+    """Base composta por ano — o que as páginas devem ler no lugar de `ler_execucao_anual`
+    direto no arquivo de `Manifesto.atual()`. `None` se nenhuma importação foi feita ainda.
+
+    Agrupa os anos por manifesto (via `sha256`, ver `manifestos_por_ano`) antes de ler
+    qualquer arquivo — um manifesto que hoje só é dono de parte dos anos que ele trouxe (por
+    ter sido parcialmente sobreposto por uma importação mais nova) é filtrado para só esses
+    anos, senão um ano já sobreposto apareceria duplicado (uma vez pela versão antiga, outra
+    pela nova)."""
+    por_ano = manifestos_por_ano(BASE, diretorio_manifestos)
+    if not por_ano:
+        return None
+
+    anos_por_sha: dict[str, list[int]] = {}
+    manifesto_por_sha: dict[str, Manifesto] = {}
+    for ano, manifesto in por_ano.items():
+        anos_por_sha.setdefault(manifesto.sha256, []).append(ano)
+        manifesto_por_sha[manifesto.sha256] = manifesto
+
+    diretorio_dados_brutos = Path(diretorio_dados_brutos)
+    partes = []
+    for sha, anos in sorted(anos_por_sha.items(), key=lambda item: min(item[1])):
+        manifesto = manifesto_por_sha[sha]
+        df = ler_execucao_anual(diretorio_dados_brutos / manifesto.arquivo)
+        partes.append(df[df["ano"].isin(anos)])
+
+    return partes[0] if len(partes) == 1 else pd.concat(partes, ignore_index=True)
 
 
 def historico(diretorio_manifestos: str | Path = DIRETORIO_MANIFESTOS_PADRAO) -> list[Manifesto]:

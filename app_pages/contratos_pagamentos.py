@@ -82,8 +82,8 @@ import streamlit as st
 from src.contratos_continuos import ler_contratos_continuos
 from src.contratos_pagamentos import MESES_ORDEM, ler_pagamentos, serie_por_contrato, soma_por_ne
 from src.design_tokens import ACCENT_STRONG, BORDER, FONT_HEADING, NEGATIVE, POSITIVE, SURFACE, TEXT_MUTED
-from src.execucao_anual import agregar_por_ne, indice_valor_pago_por_ne_curta, ler_execucao_anual
-from src.importacao_execucao import Manifesto
+from src.execucao_anual import agregar_por_ne, indice_valor_pago_por_ne_curta
+from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
 from src.ui_theme import render_page_header
 
 DIRETORIO_DADOS_BRUTOS = Path("data/raw")
@@ -110,11 +110,13 @@ def _cached_nes_continuos(caminho: str, mtime: float) -> set[str]:
 
 
 @st.cache_data(show_spinner=False)
-def _cached_valor_pago_execucao(caminho: str, mtime: float) -> pd.Series:
+def _cached_valor_pago_execucao(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.Series:
     """Valor oficial pago por NE (Execução Anual), indexado pela NE curta — base da
-    reconciliação da seção "Conciliação com Execução Anual" mais abaixo na página."""
+    reconciliação da seção "Conciliação com Execução Anual" mais abaixo na página.
+    `caminho_ponteiro`/`mtime_ponteiro` só participam da chave de cache — `carregar_atual` já
+    devolve a base composta por ano (ver `src/importacao_execucao.py`)."""
 
-    return indice_valor_pago_por_ne_curta(agregar_por_ne(ler_execucao_anual(caminho)))
+    return indice_valor_pago_por_ne_curta(agregar_por_ne(carregar_atual()))
 
 
 def _brl(v: object) -> str:
@@ -320,11 +322,9 @@ else:
 # nenhuma Execução Anual foi importada ainda, e a seção mostra um aviso em vez da comparação.
 manifesto_execucao = Manifesto.atual()
 if manifesto_execucao is not None:
-    caminho_execucao = DIRETORIO_DADOS_BRUTOS / manifesto_execucao.arquivo
-    valor_pago_execucao = (
-        _cached_valor_pago_execucao(str(caminho_execucao), caminho_execucao.stat().st_mtime)
-        if caminho_execucao.exists()
-        else pd.Series(dtype=float)
+    caminho_ponteiro_execucao = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO
+    valor_pago_execucao = _cached_valor_pago_execucao(
+        str(caminho_ponteiro_execucao), caminho_ponteiro_execucao.stat().st_mtime
     )
 else:
     valor_pago_execucao = pd.Series(dtype=float)

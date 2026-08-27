@@ -39,7 +39,11 @@ from pathlib import Path
 import pandas as pd
 
 from src.contratos_pagamentos import normalizar_numero_contrato
-from src.execucao_anual import indice_saldo_por_ne_curta, indice_valor_empenhado_por_ne_curta
+from src.execucao_anual import (
+    indice_liquidado_por_ne_curta,
+    indice_saldo_por_ne_curta,
+    indice_valor_empenhado_por_ne_curta,
+)
 from src.necessidade_empenho import calcular_necessidade_empenho
 
 NOME_ABA = "Planilha atualizada"
@@ -184,6 +188,19 @@ def com_saldo_execucao(df: pd.DataFrame, por_ne_execucao: pd.DataFrame) -> pd.Da
 
     NE sem correspondência na Execução (ou linha sem `ne_curta`, contrato ainda sem empenho)
     fica com os campos de comparação nulos — não é erro, é ausência de dado para comparar.
+
+    Também recalcula `meses_a_empenhar`/`valor_a_empenhar` (a "Necessidade de Empenho") a
+    partir da Execução Anual em vez das colunas manuais `meses_empenhados`/`meses_liquidados`
+    da planilha, para todo contrato cuja NE já foi encontrada acima: `valor_liquidado_execucao`
+    (novo campo, via `indice_liquidado_por_ne_curta`) e `valor_empenhado_execucao` ÷
+    `despesa_mensal_total_ne` (despesa mensal somada por NE, mesmo motivo do rateio acima)
+    viram `meses_liquidados_execucao`/`meses_empenhados_execucao` — fração exata, sem
+    arredondar (decisão confirmada com o usuário). Assim a Necessidade de Empenho atualiza
+    sozinha a cada reimportação de Execução Anual, sem precisar tocar na planilha de Contratos
+    Contínuos. Contrato sem NE, ou com NE ainda não encontrada na Execução carregada, mantém
+    `meses_empenhados`/`meses_liquidados` da planilha (fallback inalterado) — `necessidade_via`
+    (novo campo) marca "execucao" ou "planilha" conforme a fonte usada em cada linha, para a
+    interface deixar isso visível.
     """
     resultado = df.copy()
 
@@ -194,11 +211,36 @@ def com_saldo_execucao(df: pd.DataFrame, por_ne_execucao: pd.DataFrame) -> pd.Da
     indice_valor_empenhado = indice_valor_empenhado_por_ne_curta(por_ne_execucao)
     resultado["valor_empenhado_execucao"] = resultado["ne_curta"].map(indice_valor_empenhado)
 
+    indice_liquidado = indice_liquidado_por_ne_curta(por_ne_execucao)
+    resultado["valor_liquidado_execucao"] = resultado["ne_curta"].map(indice_liquidado)
+
     soma_planilha_por_ne = resultado.dropna(subset=["ne_curta"]).groupby("ne_curta")["valor_empenhado"].sum()
     resultado["valor_empenhado_planilha_total_ne"] = resultado["ne_curta"].map(soma_planilha_por_ne)
     resultado["diverge_valor_empenhado"] = _diverge(
         resultado["valor_empenhado_execucao"], resultado["valor_empenhado_planilha_total_ne"]
     )
+
+    soma_despesa_mensal_por_ne = resultado.dropna(subset=["ne_curta"]).groupby("ne_curta")["despesa_mensal"].sum()
+    resultado["despesa_mensal_total_ne"] = resultado["ne_curta"].map(soma_despesa_mensal_por_ne)
+
+    tem_base_para_calculo = (
+        resultado["valor_empenhado_execucao"].notna()
+        & resultado["valor_liquidado_execucao"].notna()
+        & resultado["despesa_mensal_total_ne"].notna()
+        & (resultado["despesa_mensal_total_ne"] != 0)
+    )
+
+    meses_empenhados_execucao = resultado["valor_empenhado_execucao"] / resultado["despesa_mensal_total_ne"]
+    meses_liquidados_execucao = resultado["valor_liquidado_execucao"] / resultado["despesa_mensal_total_ne"]
+    resultado["meses_empenhados_execucao"] = meses_empenhados_execucao.where(tem_base_para_calculo)
+    resultado["meses_liquidados_execucao"] = meses_liquidados_execucao.where(tem_base_para_calculo)
+
+    meses_a_empenhar_execucao, valor_a_empenhar_execucao = calcular_necessidade_empenho(
+        meses_empenhados_execucao, meses_liquidados_execucao, resultado["despesa_mensal"]
+    )
+    resultado["meses_a_empenhar"] = resultado["meses_a_empenhar"].where(~tem_base_para_calculo, meses_a_empenhar_execucao)
+    resultado["valor_a_empenhar"] = resultado["valor_a_empenhar"].where(~tem_base_para_calculo, valor_a_empenhar_execucao)
+    resultado["necessidade_via"] = pd.Series("planilha", index=resultado.index).where(~tem_base_para_calculo, "execucao")
 
     return resultado
 

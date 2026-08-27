@@ -18,6 +18,7 @@ from pathlib import Path
 from src.importacao_dotacao import (
     MEDIDAS,
     Manifesto,
+    carregar_atual,
     historico,
     importar,
     ler_dotacao_anual,
@@ -139,7 +140,9 @@ class ImportarDotacaoAnualTests(unittest.TestCase):
             segunda = importar(caminho_2025, tmp)
 
             self.assertEqual(segunda.delta.anos_novos, [2025])
-            self.assertEqual(segunda.delta.anos_removidos, [2024])  # substituição total
+            # 2024 não está na extração nova — ainda aparece aqui (informativo), mas não é
+            # mais "perdido": composição por ano mantém disponível (ver CarregarAtualTests).
+            self.assertEqual(segunda.delta.anos_removidos, [2024])
             self.assertEqual(
                 segunda.manifesto.totais_por_ano["2025"]["dotacao_atualizada"], 5000.0
             )
@@ -152,6 +155,48 @@ class ImportarDotacaoAnualTests(unittest.TestCase):
             self.assertFalse(res.ok)
             self.assertIsNone(res.caminho_manifesto)
             self.assertIsNone(Manifesto.atual(tmp))
+
+
+class CarregarAtualTests(unittest.TestCase):
+    """`carregar_atual` — composição por ano (pedido explícito do usuário): uma importação que
+    só traz um ano novo não apaga o ano anterior, os dois continuam disponíveis juntos."""
+
+    def test_sem_nenhuma_importacao_devolve_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(carregar_atual(Path(tmp), Path(tmp)))
+
+    def test_uma_unica_importacao_devolve_só_os_anos_dela(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            caminho = _escrever_workbook(Path(tmp), "dotacao_2024.xlsx", write_recognized_sheet)
+            importar(caminho, tmp)
+
+            composto = carregar_atual(Path(tmp), Path(tmp))
+            self.assertEqual(sorted(composto["ano_lancamento"].dropna().unique()), [2024])
+
+    def test_importacao_de_ano_novo_mantem_o_ano_anterior_disponivel(self) -> None:
+        # exatamente o caso que motivou a composição por ano: subir só 2025 não apaga 2024.
+        with tempfile.TemporaryDirectory() as tmp:
+            caminho_2024 = _escrever_workbook(Path(tmp), "dotacao_2024.xlsx", write_recognized_sheet)
+            importar(caminho_2024, tmp)
+            caminho_2025 = _escrever_workbook(
+                Path(tmp), "dotacao_2025.xlsx", write_recognized_sheet_2025
+            )
+            importar(caminho_2025, tmp)
+
+            composto = carregar_atual(Path(tmp), Path(tmp))
+            anos = sorted(composto["ano_lancamento"].dropna().unique())
+            self.assertEqual(anos, [2024, 2025])
+            # cada ano com o valor da extração que efetivamente o trouxe.
+            de_2024 = composto[composto["ano_lancamento"] == 2024]
+            de_2025 = composto[composto["ano_lancamento"] == 2025]
+            self.assertAlmostEqual(
+                de_2024[de_2024["item_informacao_codigo"] == "dotacao_inicial"]["valor_movimento_liquido"].sum(),
+                1000.0,
+            )
+            self.assertAlmostEqual(
+                de_2025[de_2025["item_informacao_codigo"] == "dotacao_atualizada"]["valor_movimento_liquido"].sum(),
+                5000.0,
+            )
 
 
 if __name__ == "__main__":

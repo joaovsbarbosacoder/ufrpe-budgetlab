@@ -17,17 +17,19 @@ extração chega:
     extração válida) e ficam de fora, silenciosamente, PARA ESTA PÁGINA — outra página (com
     outra `spec`) pode reconhecê-los. Só quando exatamente um arquivo da pasta é reconhecido
     por esta base é que ele vira candidato: SE o delta contra a extração atual não tem
-    retroatividade nem exercício removido, é aplicado automaticamente, sem exigir clique
-    nenhum (o arquivo some da pasta de entrada, movido para `diretorio_dados_brutos`). SE tem
-    retroatividade/remoção, a mesma trava de sempre entra em ação — mostra a prévia/comparação
-    e exige o checkbox de confirmação antes de aplicar; o arquivo fica parado na pasta até
-    alguém decidir. Mais de um arquivo reconhecido PARA ESTA BASE é ambíguo — nada é processado
-    até sobrar só um (arquivos de outras bases na mesma pasta não contam para essa ambiguidade).
+    retroatividade, é aplicado automaticamente, sem exigir clique nenhum (o arquivo some da
+    pasta de entrada, movido para `diretorio_dados_brutos`). SE tem retroatividade, a mesma
+    trava de sempre entra em ação — mostra a prévia/comparação e exige o checkbox de
+    confirmação antes de aplicar; o arquivo fica parado na pasta até alguém decidir. Mais de
+    um arquivo reconhecido PARA ESTA BASE é ambíguo — nada é processado até sobrar só um
+    (arquivos de outras bases na mesma pasta não contam para essa ambiguidade).
   * UPLOAD MANUAL (`st.file_uploader`, sempre disponível como alternativa) — mesmo fluxo de
     sempre: upload → staging (nunca sobrescreve a extração ativa antes de validar) → prévia →
-    gravação direta se seguro, ou confirmação explícita se há retroatividade/remoção.
+    gravação direta se seguro, ou confirmação explícita se há retroatividade.
 
-Em ambos os casos: substituição total, nunca merge; nada é gravado sem passar pela validação
+Em ambos os casos: composição por ano, nunca merge dentro de um mesmo exercício (ver
+`src/importacao_versionada.py`) — um exercício ausente da extração enviada continua disponível
+com o último dado importado para ele, não desaparece; nada é gravado sem passar pela validação
 de `importacao_versionada.importar`.
 """
 
@@ -159,8 +161,10 @@ def _processar_candidato(
     diferencia a pasta de entrada (automática quando segura) do upload manual (sempre pede o
     clique em "Confirmar importação", mesmo quando seguro, porque ali a intenção de atualizar
     já foi expressa ao escolher o arquivo, mas o clique final continua sendo o padrão
-    existente). Retroatividade/exercício removido SEMPRE exige o checkbox de confirmação,
-    nas duas origens — `aplicar_automatico` nunca pula esse gate.
+    existente). Retroatividade SEMPRE exige o checkbox de confirmação, nas duas origens —
+    `aplicar_automatico` nunca pula esse gate. Exercício ausente da extração nova NÃO exige
+    mais confirmação (composição por ano, ver `src/importacao_versionada.py`) — continua
+    aparecendo como informação em `delta.resumo_texto()`, só deixou de bloquear.
     """
 
     manifesto_novo = resultado.manifesto
@@ -200,7 +204,7 @@ def _processar_candidato(
 
     if motivo_gate is None:
         if aplicar_automatico:
-            st.info("Sem retroatividade nem exercício removido — aplicando automaticamente.")
+            st.info("Sem retroatividade — aplicando automaticamente.")
             _efetivar_reimportacao(
                 spec, staging_path, manifesto_novo, geracao_key, ignorar_arquivo_ausente=True
             )
@@ -210,21 +214,16 @@ def _processar_candidato(
         return
 
     st.error(
-        "Esta substituição altera dados já divulgados — confira com atenção antes de confirmar."
+        "Esta importação altera valores já divulgados de exercício(s) fechado(s) — confira "
+        "com atenção antes de confirmar."
     )
-    if motivo_gate.anos_retroativos:
-        st.write("**Exercícios com valores alterados retroativamente:**")
-        for linha in _formatar_variacoes_retroativas(delta):
-            st.write(f"- {linha}")
-    if motivo_gate.anos_removidos:
-        st.write(
-            "**Exercícios que somem do painel** (substituição total — deixam de existir): "
-            + ", ".join(map(str, motivo_gate.anos_removidos))
-        )
+    st.write("**Exercícios com valores alterados retroativamente:**")
+    for linha in _formatar_variacoes_retroativas(delta):
+        st.write(f"- {linha}")
 
     confirmado = st.checkbox(
-        "Entendo o impacto acima e confirmo a substituição, incluindo os exercícios "
-        "fechados/removidos listados.",
+        "Entendo o impacto acima e confirmo a atualização, incluindo os exercícios "
+        "fechados listados.",
         key=f"{spec.prefixo_estado}_confirma_{geracao}",
     )
     if st.button("Confirmar substituição", type="primary", disabled=not confirmado):
@@ -259,9 +258,8 @@ def _render_pasta_de_entrada(spec: EspecificacaoReimportacao, geracao_key: str, 
         st.caption(
             "Pasta compartilhada por todas as bases — solte a extração mais recente aqui (fora "
             "do navegador) para que cada página reconheça sozinha o que é seu ao carregar (pelo "
-            "layout do arquivo, não pelo nome). Sem retroatividade nem exercício removido, é "
-            "aplicada automaticamente; do contrário, pede a mesma confirmação de sempre aqui "
-            "embaixo."
+            "layout do arquivo, não pelo nome). Sem retroatividade, é aplicada automaticamente; "
+            "havendo valor retroativo, pede a mesma confirmação de sempre aqui embaixo."
         )
         if not todos:
             st.write("Nenhum arquivo pendente.")
@@ -307,9 +305,10 @@ def render_reimportacao(spec: EspecificacaoReimportacao) -> None:
     _render_pasta_de_entrada(spec, geracao_key, geracao)
 
     st.caption(
-        "Ou envie manualmente — substituição total: a extração enviada passa a valer para a "
-        "base inteira. Nada é gravado até você confirmar — o arquivo fica em uma área "
-        "temporária enquanto você revisa a prévia abaixo."
+        "Ou envie manualmente — os exercícios trazidos pela extração enviada são atualizados; "
+        "os demais continuam com o último dado importado para eles. Nada é gravado até você "
+        "confirmar — o arquivo fica em uma área temporária enquanto você revisa a prévia "
+        "abaixo."
     )
     uploaded_file = st.file_uploader(
         "Nova extração (.xlsx)",

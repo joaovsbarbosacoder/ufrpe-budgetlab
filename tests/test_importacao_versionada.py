@@ -20,6 +20,7 @@ from src.importacao_versionada import (
     Manifesto,
     comparar,
     exige_confirmacao,
+    manifestos_por_ano,
     nome_ponteiro,
 )
 
@@ -261,18 +262,86 @@ class ExigeConfirmacaoTests(unittest.TestCase):
         motivo = exige_confirmacao(d)
         self.assertIsNotNone(motivo)
         self.assertEqual(motivo.anos_retroativos, [2024])
-        self.assertEqual(motivo.anos_removidos, [])
 
-    def test_ano_removido_exige_gate_mesmo_sem_retroatividade(self) -> None:
+    def test_ano_ausente_da_extracao_nova_nao_exige_gate(self) -> None:
+        # composição por ano (pedido explícito do usuário): um exercício ausente da extração
+        # nova não é motivo de bloqueio — ele continua disponível com o último dado importado
+        # (ver `manifestos_por_ano`/`carregar_atual`), não é "perdido" como na substituição
+        # total antiga.
         antes = _manifesto("B" * 64, {
             2023: {"indicador": 10.0}, 2024: {"indicador": 10.0},
         })
         depois = _manifesto("C" * 64, {2024: {"indicador": 10.0}})
         d = comparar(antes, depois, medidas=["indicador"])
-        motivo = exige_confirmacao(d)
-        self.assertIsNotNone(motivo)
-        self.assertEqual(motivo.anos_retroativos, [])
-        self.assertEqual(motivo.anos_removidos, [2023])
+        self.assertEqual(d.anos_removidos, [2023])  # ainda informativo no Delta
+        self.assertIsNone(exige_confirmacao(d))  # mas não gera mais gate
+
+
+def _manifesto_gravavel(
+    sha: str, anos: list[int], importado_em: str, base: str = "teste_composicao"
+) -> Manifesto:
+    """Igual a `_manifesto`, mas com `importado_em` variável (`_manifesto` fixa sempre o mesmo
+    valor, insuficiente pra testar a ordem cronológica que `manifestos_por_ano` resolve)."""
+    return Manifesto(
+        base=base,
+        arquivo=f"{sha}.xlsx",
+        sha256=sha,
+        data_extracao=importado_em,
+        importado_em=importado_em,
+        anos=anos,
+        totais={},
+        totais_por_ano={str(a): {} for a in anos},
+    )
+
+
+class ManifestosPorAnoTests(unittest.TestCase):
+    """`manifestos_por_ano` — base de "composição por ano" (ver docstring do módulo): resolve,
+    por ano, qual foi o manifesto mais recente (por `importado_em`) que o trouxe."""
+
+    def test_sem_nenhuma_importacao_devolve_vazio(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(manifestos_por_ano("base_inexistente", Path(tmp)), {})
+
+    def test_uma_unica_importacao_e_dona_de_todos_os_seus_anos(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diretorio = Path(tmp)
+            m1 = _manifesto_gravavel("1" * 64, [2024, 2025, 2026], "2026-08-01T10:00:00")
+            m1.salvar(diretorio)
+
+            resultado = manifestos_por_ano("teste_composicao", diretorio)
+            self.assertEqual(set(resultado), {2024, 2025, 2026})
+            self.assertTrue(all(m.sha256 == m1.sha256 for m in resultado.values()))
+
+    def test_importacao_parcial_mais_recente_assume_so_os_anos_que_traz(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diretorio = Path(tmp)
+            m1 = _manifesto_gravavel("1" * 64, [2023, 2024, 2025], "2026-08-01T10:00:00")
+            m1.salvar(diretorio)
+            m2 = _manifesto_gravavel("2" * 64, [2026], "2026-08-26T10:00:00")
+            m2.salvar(diretorio)
+
+            resultado = manifestos_por_ano("teste_composicao", diretorio)
+            self.assertEqual(set(resultado), {2023, 2024, 2025, 2026})
+            # 2023-2025 continuam com o manifesto antigo — não desapareceram nem foram
+            # sobrescritos por uma importação que nunca os trouxe.
+            self.assertEqual(resultado[2023].sha256, m1.sha256)
+            self.assertEqual(resultado[2024].sha256, m1.sha256)
+            self.assertEqual(resultado[2025].sha256, m1.sha256)
+            self.assertEqual(resultado[2026].sha256, m2.sha256)
+
+    def test_ano_sobreposto_fica_com_o_manifesto_mais_recente(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            diretorio = Path(tmp)
+            m1 = _manifesto_gravavel("1" * 64, [2025, 2026], "2026-08-01T10:00:00")
+            m1.salvar(diretorio)
+            # correção retroativa de 2025, publicada depois — mesmo critério de
+            # `comparar`/`exige_confirmacao`: importação mais recente vence.
+            m2 = _manifesto_gravavel("2" * 64, [2025], "2026-08-26T10:00:00")
+            m2.salvar(diretorio)
+
+            resultado = manifestos_por_ano("teste_composicao", diretorio)
+            self.assertEqual(resultado[2025].sha256, m2.sha256)
+            self.assertEqual(resultado[2026].sha256, m1.sha256)
 
 
 if __name__ == "__main__":

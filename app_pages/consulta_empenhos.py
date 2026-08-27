@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import html as html_lib
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -71,19 +70,16 @@ from src.design_tokens import (
 from src.execucao_anual import (
     agregar_por_ne,
     detalhar_nota_empenho,
-    ler_execucao_anual,
     ne_curta as _ne_curta_execucao,
     saldo_por_ne,
 )
-from src.importacao_execucao import Manifesto
+from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
 from src.ui_filtros_execucao import CAMPOS_AVANCADOS_EXECUCAO, CAMPOS_EXECUCAO, CAMPOS_RAPIDOS_EXECUCAO, apply_filters
 from src.ui_filtros_execucao import limpar_filtros as _limpar_filtros_compartilhado
 from src.ui_filtros_execucao import render_filtros_avancados as _render_filtros_avancados_compartilhado
 from src.ui_filtros_execucao import render_filtros_rapidos as _render_filtros_rapidos_compartilhado
 from src.ui_theme import format_brl_compact, render_page_header
 
-
-DIRETORIO_DADOS_BRUTOS = Path("data/raw")
 
 #: namespace de `st.session_state` para o filtro compartilhado (`src/ui_filtros_execucao.py`)
 #: — mesmo prefixo usado nas chaves desde antes da extração, para não invalidar estado de
@@ -158,10 +154,12 @@ def _num(value: object) -> str:
 
 
 @st.cache_data(show_spinner="Lendo a base de Execução Anual...")
-def _cached_leitura(caminho: str, mtime: float) -> pd.DataFrame:
-    """`mtime` só participa da chave de cache — força reler se o arquivo mudar."""
+def _cached_leitura(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
+    """`caminho_ponteiro`/`mtime_ponteiro` só participam da chave de cache — força reler
+    quando o manifesto atual mudar. O DataFrame devolvido já é a base composta por ano (ver
+    `importacao_execucao.carregar_atual`), não só o arquivo do manifesto atual."""
 
-    return ler_execucao_anual(caminho)
+    return carregar_atual()
 
 
 # Mecanismo de filtro (busca + rápidos + avançados) extraído para `src/ui_filtros_execucao.py`
@@ -673,13 +671,9 @@ if manifesto is None:
     )
     st.stop()
 
-caminho_base = DIRETORIO_DADOS_BRUTOS / manifesto.arquivo
-if not caminho_base.exists():
-    st.error(f"O arquivo da extração atual do manifesto não foi encontrado em '{caminho_base}'.")
-    st.stop()
-
+caminho_ponteiro = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO
 try:
-    dataframe = _cached_leitura(str(caminho_base), caminho_base.stat().st_mtime)
+    dataframe = _cached_leitura(str(caminho_ponteiro), caminho_ponteiro.stat().st_mtime)
 except Exception as error:
     st.error(f"Não foi possível ler a base de Execução Anual: {error}")
     st.stop()
