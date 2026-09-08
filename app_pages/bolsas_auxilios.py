@@ -1,5 +1,30 @@
 """Bolsas e Auxílios — necessidade de empenho e saldo, cruzado com a Execução Anual.
 
+CADASTRO NATIVO, MULTI-EXERCÍCIO (pedido explícito): esta página não lê mais a planilha de
+Bolsas e Auxílios — os programas vivem em `src/bolsas_auxilios_cadastro.py`
+(`data/bolsas_auxilios/<ano>/<id>.json`, um arquivo por programa, agrupado por exercício). O
+exercício 2026 foi migrado uma única vez a partir da planilha então em uso
+(`bolsas_auxilios_cadastro.migrar_de_planilha`); dali em diante toda edição, programa novo ou
+remoção grava direto no cadastro nativo, sem depender de reimportar Excel. Um seletor de
+exercício no topo troca qual ano está em tela; "Duplicar cadastro" copia a identidade/
+classificação dos programas do exercício atual para o próximo (execução em branco — o vínculo
+com a Execução Anual se refaz quando o usuário digitar o novo número de empenho), suportando
+gerar 2028, 2029... a partir de qualquer exercício mais recente, não só 2026→2027. Exercícios
+anteriores continuam navegáveis como histórico (nunca substituídos). `com_saldo_execucao` já é
+multi-ano por natureza (`ne_curta` embute o ano, "2027NE000123" nunca colide com "2026NE..."),
+então nenhuma mudança foi necessária ali.
+
+LINHA DO TEMPO MENSAL NO RESUMO CONSOLIDADO (pedido explícito): cada bolsa listada em
+"Resumo Consolidado" é clicável quando sua NE (`ne_curta`) tem dado na base MENSAL (2026+,
+`_cached_linha_do_tempo` → `src.tesouro_execucao_mensal.linha_do_tempo_por_ne`) — abre o
+mesmo pop-up "Linha do tempo mensal" de `app_pages/consulta_empenhos.py`
+(`src/ui_linha_do_tempo.py`, compartilhado: "mesmo formato implementado na consulta de
+empenhos", pedido explícito). Bolsa sem NE ou sem dado mensal aparece como texto simples, sem
+botão. Isso forçou trocar o cartão de "Resumo Consolidado" de uma única tabela HTML
+(`st.markdown`) para `st.container(border=True)` com um `st.button` de verdade por linha — ver
+`_render_resumo_consolidado` — porque HTML puro não dispara evento Python, então não dá pra
+ter um botão clicável dentro de um bloco de HTML injetado de uma vez só.
+
 Adaptação do handoff de design (`painel_bolsas.py`, versão "cartão com rótulo pequeno acima
 de cada campo") para os leitores e a regra de saldo já aprovados e testados neste projeto
 (`src/bolsas_auxilios.py`, `src/necessidade_empenho.py`,
@@ -57,11 +82,18 @@ Diferenças deliberadas em relação ao handoff:
     editáveis como sempre, seedados pela planilha (fallback inalterado; mesmo critério de
     `contratos_continuos.py`).
   * `saldo_execucao` e `valor_empenhado_execucao` (autoritativos, vindos da Execução Anual)
-    não existiam no handoff (foi desenhado antes dessa integração) — aparecem fixos (não
-    editáveis) junto da tag de status, com divergência contra `saldo_colado_planilha`/
-    `valor_empenhado_tg` sinalizada, não escondida. O "Valor Empenhado" do Resumo
-    Consolidado usa `valor_empenhado_execucao`, com `valor_empenhado_tg` (planilha) como
-    reserva só para NE sem correspondência na Execução — mesmo padrão de fallback do saldo.
+    não existiam no handoff (foi desenhado antes dessa integração). Pedido explícito
+    ("faça com que os dados acompanhem a Execução Anual"): quando a NE já foi encontrada lá,
+    "Saldo (R$)" e "Empenhado (R$)" do cartão passam a EXIBIR o valor da Execução Anual
+    diretamente (rótulo "(Execução Anual)", não editável) — mesmo critério já usado para
+    Meses Empenhados/Liquidados (ver bullet acima), em vez do valor antigo de mostrar os dois
+    lado a lado com uma tag "Diverge"/"Bate" quando discordavam. Com o cartão passando a
+    exibir sempre o número autoritativo, não sobra o que divergir dali; a tag de status virou
+    "Via Execução Anual"/"Sem Execução" (se nenhuma NE foi encontrada lá, os campos
+    continuam editáveis a partir da planilha, fallback inalterado). O "Valor Empenhado" do
+    Resumo Consolidado usa `valor_empenhado_execucao`, com `valor_empenhado_tg` (planilha)
+    como reserva só para NE sem correspondência na Execução — mesmo padrão de fallback do
+    saldo, e mesmo critério que o cartão agora segue.
   * Cada programa é um `st.expander` (minimizado por padrão), não um `st.container(border=True)`
     sempre aberto — o chrome de borda/raio vem de graça do CSS global do app
     (`src/ui_theme.py::_THEME_CSS`, que já estiliza `[data-testid="stExpander"]`), então não
@@ -85,12 +117,19 @@ Diferenças deliberadas em relação ao handoff:
     Empenho/Não Localizado" e "Saldo Divergente" também saíram do topo antes, por pedido
     explícito — continuam visíveis por cartão (tag vermelha "Sem Empenho"/"Não Localizado"/
     "Diverge"), só não aparecem mais como contagem agregada na entrada da tela.
-  * "Remover" oculta o cartão só nesta sessão (não apaga da planilha de origem).
+  * "Remover" apaga o programa em definitivo do cadastro nativo (pedido explícito de
+    desvinculação de planilha tornou o cadastro a fonte de verdade — não sobra "planilha de
+    origem" para preservar) — pede confirmação num segundo clique antes de excluir de fato.
   * "+ Novo programa" é um `st.popover` compacto no canto superior direito, ao lado do
-    título — não um `st.expander` de largura total abaixo dele. Grava em
-    `st.session_state`, sem persistência entre sessões — mesma ressalva do README do
-    handoff. Não tem nome/CPF de bolsista: a granularidade real da base é por programa, não
+    título — não um `st.expander` de largura total abaixo dele. Grava direto no cadastro
+    nativo do exercício em tela (`src/bolsas_auxilios_cadastro.py`), sobrevive a fechar o
+    navegador. Não tem nome/CPF de bolsista: a granularidade real da base é por programa, não
     por beneficiário (ver `src/bolsas_auxilios.py`).
+  * Edição inline de cada cartão só grava no cadastro nativo quando o botão "💾 Salvar" do
+    próprio cartão é clicado — os campos ficam editáveis e refletem nos quadros acima (KPIs,
+    Resumo Consolidado) a cada tecla via `_aplicar_edicoes_da_sessao`, mas isso é só o estado
+    da sessão; sem clicar em salvar, fechar a aba perde a edição (mesmo padrão de confirmação
+    explícita já usado no Relatório de Reforço de Empenho).
 """
 
 from __future__ import annotations
@@ -102,7 +141,18 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from src.bolsas_auxilios import com_saldo_execucao, ler_bolsas_auxilios
+from src.bolsas_auxilios import com_saldo_execucao
+from src.bolsas_auxilios_cadastro import (
+    anos_disponiveis,
+    atualizar_programa,
+    carregar_programas,
+    como_dataframe,
+    duplicar_exercicio,
+    excluir_exercicio,
+    excluir_programa,
+    novo_programa,
+    salvar_programa,
+)
 from src.design_tokens import (
     ACCENT,
     ACCENT_STRONG,
@@ -122,7 +172,7 @@ from src.design_tokens import (
     TRACK,
     WARNING,
 )
-from src.execucao_anual import agregar_por_ne, saldo_por_ne
+from src.execucao_anual import agregar_por_ne, ne_curta as _ne_curta_execucao, saldo_por_ne
 from src.importacao_dotacao import Manifesto as ManifestoDotacao
 from src.importacao_dotacao import NOME_PONTEIRO as NOME_PONTEIRO_DOTACAO
 from src.importacao_dotacao import carregar_atual as carregar_dotacao_atual
@@ -131,22 +181,35 @@ from src.importacao_execucao import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO
 from src.importacao_execucao import carregar_atual as carregar_execucao_atual
 from src.necessidade_empenho import calcular_necessidade_empenho
 from src.relatorio_reforco_empenho import BOLSAS_AUXILIOS as RELATORIO_BOLSAS_AUXILIOS
+from src.tesouro_execucao_mensal import (
+    ler_execucao_mensal,
+    linha_do_tempo_por_ne,
+    primeiro_mes_com_empenho_por_ne,
+)
+from src.ui_linha_do_tempo import MESES_ABREV, abrir_linha_do_tempo
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
 from src.ui_theme import format_brl_compact, render_metric_grid, render_page_header
 
-DIRETORIO_DADOS_BRUTOS = Path("data/raw")
-CAMINHO_PLANILHA = DIRETORIO_DADOS_BRUTOS / "BOLSAS E AUXÍLIOS 2026 - AGO A DEZ.xlsx"
+#: mesmo arquivo usado por `app_pages/consulta_empenhos.py`/`app_pages/execucao_mensal.py`
+#: para a linha do tempo mensal — base MENSAL (só 2026+), sem importação versionada ainda.
+CAMINHO_EXECUCAO_MENSAL = Path("data/raw") / "BI CPOC - EXEC. DESPESAS - Mensal.xlsx"
 
 COLUNAS_BUSCA = ["processo", "programa_bolsa", "unidade_cod", "acao_cod", "pi_cod", "ne_curta"]
 
 SITUACAO_OPCOES = ["ATUALIZADO", "SEM EMPENHO", "NÃO LOCALIZADO"]
 
 
-@st.cache_data(show_spinner="Lendo a planilha de Bolsas e Auxílios...")
-def _cached_leitura(caminho: str, mtime: float) -> pd.DataFrame:
-    """`mtime` só participa da chave de cache — força reler se o arquivo mudar."""
+@st.cache_data(show_spinner="Lendo a linha do tempo mensal...")
+def _cached_linha_do_tempo(caminho: str, mtime: float) -> pd.DataFrame:
+    """Empenhado/Liquidado/Pago por (NE, mês), a partir da base MENSAL — com `ne_curta`
+    (forma "2026NE000123", ver `src.execucao_anual.ne_curta`) acrescentada, pra poder ligar
+    com o `ne_curta` já usado no cadastro de Bolsas (`src/bolsas_auxilios.py`). Pop-up "Linha
+    do tempo mensal" (`src/ui_linha_do_tempo.py`), pedido explícito: mesmo formato de
+    `app_pages/consulta_empenhos.py`. `mtime` só participa da chave de cache."""
 
-    return ler_bolsas_auxilios(caminho)
+    tempo = linha_do_tempo_por_ne(ler_execucao_mensal(caminho))
+    tempo["ne_curta"] = tempo["ne_ccor"].apply(_ne_curta_execucao)
+    return tempo
 
 
 @st.cache_data(show_spinner="Lendo a base de Execução Anual...")
@@ -256,13 +319,19 @@ def _inject_css() -> None:
         .bls-tag.warn {{ background: rgba(245,165,36,0.12); color: {WARNING}; }}
         .bls-tag.bad {{ background: rgba(240,87,107,0.12); color: {NEGATIVE}; }}
         .bls-exec {{ font-size: 11px; color: {TEXT_MUTED}; }}
-        /* Resumo Consolidado: mesmo padrão de cartão + grade HTML de app_pages/painel_acoes.py
-           (.po-*), com prefixo próprio (.bls-resumo-*) — nao eh um st.dataframe: grade fixa,
-           tipografia do projeto, sem cara de planilha (sem linhas zebradas nem grade do Excel). */
-        .bls-resumo-card {{
-            border: 1px solid {BORDER}; border-radius: {RADIUS};
-            background: {SURFACE}; padding: {CARD_PAD}; margin-bottom: {SPACE['xl']};
-        }}
+        /* Resumo Consolidado: cartão + grade HTML de app_pages/painel_acoes.py (.po-*), com
+           prefixo próprio (.bls-resumo-*) — nao eh um st.dataframe: grade fixa, tipografia do
+           projeto, sem cara de planilha (sem linhas zebradas nem grade do Excel).
+
+           Pedido explícito posterior: cada bolsa virou um `st.button` clicável (abre pop-up
+           de linha do tempo mensal, ver `_render_resumo_consolidado`/`src/ui_linha_do_tempo.py`)
+           — por isso o cartão externo trocou de `<div class="bls-resumo-card">` pra
+           `st.container(border=True, key="bls_resumo_card")`: não dá pra ter um `st.button`
+           clicável dentro de HTML injetado via `st.markdown` num único bloco (HTML puro não
+           dispara evento Python), então as linhas de bolsa precisam ser widgets de verdade,
+           não mais uma grade HTML fixa igual à do cabeçalho/rodapé. `st.container(border=True)`
+           já usa o mesmo tom/borda de `SURFACE`/`BORDER` globalmente (ver `src/ui_theme.py`),
+           então o visual do cartão não muda. */
         .bls-resumo-head {{
             display: grid; grid-template-columns: minmax(0,1fr) auto;
             gap: 24px; align-items: start; margin-bottom: {SPACE['md']};
@@ -283,36 +352,63 @@ def _inject_css() -> None:
             font-family: {FONT_HEADING}; font-size: {SIZE['metric']}; line-height: 1.1;
             color: {ACCENT_STRONG}; font-variant-numeric: tabular-nums;
         }}
-        .bls-resumo-scroll {{ overflow-x: auto; padding-bottom: 2px; }}
-        .bls-resumo-row, .bls-resumo-head-row, .bls-resumo-foot {{
-            display: grid; grid-template-columns: minmax(200px,2fr) 120px 120px 150px;
-            gap: 10px; min-width: 560px;
+        /* Cabeçalho de rótulos, linhas e rodapé viraram `st.columns` de verdade — mesma
+           largura relativa nos três (`_LARGURAS_RESUMO`) — em vez de uma grade HTML fixa
+           (cabeçalho) + uma linha solta em flex-wrap (dados): o cabeçalho prometia colunas
+           alinhadas que a linha de dados não respeitava (pedido explícito de correção —
+           "muita informação no meio", sem alinhar com nada do cabeçalho). Cada célula ainda é
+           HTML (`st.markdown`) dentro de cada coluna, só o layout que passou a ser nativo. */
+        .st-key-bls_resumo_card button {{ justify-content: flex-start; text-align: left; }}
+        /* Rolagem (pedido explícito) em vez de "Ver mais" — 5 bolsas visíveis por padrão;
+           mesmo padrão de app_pages/consulta_empenhos.py::.st-key-ce_list_scroll, altura
+           menor aqui (~5 linhas, não ~15: o Resumo Consolidado é um card de apoio, não a
+           lista principal da tela). */
+        .st-key-bls_resumo_scroll {{ max-height: 340px; overflow-y: auto; padding-right: 8px; }}
+        .bls-resumo-nome-simples {{
+            font-family: {FONT_BODY}; font-size: {SIZE['body']}; color: {TEXT};
+            padding: 8px 0;
         }}
-        .bls-resumo-head-row {{
+        .bls-resumo-col-label {{
+            font-family: {FONT_HEADING}; font-size: {SIZE['micro']};
+            letter-spacing: 0.1em; text-transform: uppercase; color: {TEXT_MUTED};
+            padding-bottom: {SPACE['xs']}; border-bottom: 1px solid {BORDER};
+        }}
+        .bls-resumo-cell {{
+            text-align: right; font-family: {FONT_BODY}; font-size: {SIZE['value']};
+            font-variant-numeric: tabular-nums; color: {TEXT_MUTED}; padding: 8px 0;
+        }}
+        .bls-resumo-cell-strong {{
+            text-align: right; font-family: {FONT_BODY}; font-size: {SIZE['value_strong']};
+            font-weight: 600; font-variant-numeric: tabular-nums; color: {ACCENT_STRONG};
+            padding: 8px 0;
+        }}
+        .bls-resumo-foot-label {{
+            font-size: {SIZE['label']}; letter-spacing: {TRACK['label']};
+            text-transform: uppercase; color: {TEXT_MUTED}; padding-top: 9px;
+        }}
+        /* Pop-up "Linha do tempo mensal" (`src/ui_linha_do_tempo.py`) — mesmo formato de
+           `app_pages/consulta_empenhos.py::_inject_css` (pedido explícito: "mesmo formato
+           implementado na consulta de empenhos"). CSS duplicado de propósito: Streamlit não
+           carrega o CSS injetado numa página anterior ao navegar para outra, cada página que
+           usa esse pop-up precisa da sua própria cópia deste bloco. */
+        .ce-tempo-head, .ce-tempo-row {{
+            display: grid; grid-template-columns: minmax(60px,1fr) minmax(0,140px) minmax(0,140px) minmax(0,140px);
+            gap: 10px; align-items: baseline;
+        }}
+        .ce-tempo-head {{
             padding-bottom: {SPACE['xs']}; border-bottom: 1px solid {BORDER};
             font-family: {FONT_HEADING}; font-size: {SIZE['micro']};
             letter-spacing: 0.1em; text-transform: uppercase; color: {TEXT_MUTED};
         }}
-        .bls-resumo-row {{
-            padding: 9px 0; border-bottom: 1px solid {BORDER_SOFT}; align-items: baseline;
-        }}
-        .bls-resumo-foot {{ padding-top: 9px; font-family: {FONT_HEADING}; align-items: baseline; }}
-        .bls-resumo-name {{ font-family: {FONT_BODY}; font-size: {SIZE['body']}; line-height: 1.25; color: {TEXT}; }}
-        .bls-resumo-code {{
-            font-family: {FONT_HEADING}; font-size: {SIZE['code']};
-            letter-spacing: {TRACK['label']}; color: {TEXT_MUTED};
-        }}
-        .bls-resumo-val {{
+        .ce-tempo-row {{ padding: 8px 0; border-bottom: 1px solid {BORDER_SOFT}; }}
+        .ce-tempo-mes {{ font-family: {FONT_HEADING}; font-size: {SIZE['body']}; color: {TEXT}; }}
+        .ce-tempo-val {{
             text-align: right; font-family: {FONT_BODY}; font-size: {SIZE['value']};
             font-variant-numeric: tabular-nums; color: {TEXT_MUTED};
         }}
-        .bls-resumo-val-strong {{
+        .ce-tempo-val-strong {{
             text-align: right; font-family: {FONT_BODY}; font-size: {SIZE['value_strong']};
             font-weight: 600; font-variant-numeric: tabular-nums; color: {ACCENT_STRONG};
-        }}
-        .bls-resumo-foot-label {{
-            font-size: {SIZE['label']}; letter-spacing: {TRACK['label']};
-            text-transform: uppercase; color: {TEXT_MUTED};
         }}
         /* Cobertura Orçamentária por PTRES: um cartão por Ação, mesmo padrão visual de
            app_pages/painel_acoes.py (.po-*), reaproveitado com prefixo próprio
@@ -402,6 +498,33 @@ def _campo_numero(col, label: str, valor: float, key: str, step: float = 1.0, fm
     return col.number_input(label, value=valor, step=step, key=key, label_visibility="collapsed", format=fmt, min_value=min_value)
 
 
+_OPCOES_INICIO_EXECUCAO = ["Automático"] + [MESES_ABREV[m] for m in range(1, 13)]
+
+
+def _campo_inicio_execucao(col, valor_persistido: object, sugestao_auto: object, key: str) -> int | None:
+    """"Início da Execução" (mês 1-12) usado só pela sugestão "por calendário" do Relatório de
+    Reforço (`necessidade_ate_mes_vigente`) — pedido explícito: "o sistema faz essa análise
+    [primeiro empenho] e usa a data do primeiro empenho como referencial..., mas também inclui
+    o campo início e ele pode ser alterado caso eu perceba algum erro". "Automático" (`None`
+    persistido) usa `sugestao_auto` (mês do primeiro empenho daquela NE, detectado a partir da
+    base mensal — ver `_cached_linha_do_tempo`/`primeiro_mes_com_empenho_por_ne`) sempre que a
+    página rodar, então nunca fica desatualizado; selecionar um mês específico grava um
+    override manual, fixo até o usuário voltar pra "Automático"."""
+
+    col.markdown("<div class='bls-label'>Início da Execução</div>", unsafe_allow_html=True)
+    indice_atual = int(valor_persistido) if pd.notna(valor_persistido) else 0
+    ajuda = (
+        f"Detectado automaticamente pelo primeiro empenho: {MESES_ABREV[int(sugestao_auto)]}"
+        if pd.notna(sugestao_auto)
+        else "Sem dado suficiente na base mensal pra detectar automaticamente — informe o mês manualmente, se souber."
+    )
+    escolha = col.selectbox(
+        "Início da Execução", _OPCOES_INICIO_EXECUCAO, index=indice_atual, key=key,
+        label_visibility="collapsed", help=ajuda,
+    )
+    return None if escolha == "Automático" else _OPCOES_INICIO_EXECUCAO.index(escolha)
+
+
 def _rotulo_expander(linha: pd.Series) -> str:
     """Prévia do cartão minimizado — a partir dos valores brutos da linha (não dos widgets,
     que só existem depois de abrir o expander). `valor_a_empenhar` já vem resolvido pelo
@@ -426,11 +549,9 @@ def _rotulo_expander(linha: pd.Series) -> str:
     return " ".join(partes)
 
 
-def _render_card(linha: pd.Series, source_key: str, removidos: set) -> None:
-    indice = linha.name
-    if indice in removidos:
-        return
-    k = f"bls_{source_key}_{indice}"
+def _render_card(linha: pd.Series, ano: int, source_key: str, sugestao_inicio_por_ne: pd.Series) -> None:
+    id_programa = str(linha["id"])
+    k = f"bls_{source_key}_{id_programa}"
 
     with st.expander(_rotulo_expander(linha), expanded=False):
         c_item, c_sit = st.columns([3, 1])
@@ -464,7 +585,23 @@ def _render_card(linha: pd.Series, source_key: str, removidos: set) -> None:
         # meses_empenhados/liquidados (e valores monetários) podem vir negativos na origem
         # (anulação/ajuste retroativo); um piso de zero quebraria a leitura desse dado real.
         valor_unitario = _campo_numero(r3[2], "Valor Unit. (R$)", _ou_zero(linha["valor_unitario"]), f"{k}_valorunit", step=10.0)
-        valor_empenhado = _campo_numero(r3[3], "Empenhado (R$)", _ou_zero(linha["valor_empenhado_tg"]), f"{k}_valorempenhado", step=100.0)
+
+        # Empenhado/Saldo: mesmo critério de Meses Empenhados/Liquidados logo abaixo — com NE
+        # já encontrada na Execução Anual, o campo passa a EXIBIR o valor autoritativo (não
+        # editável) em vez do valor colado na planilha, pedido explícito pra o cartão
+        # acompanhar a Execução Anual sempre que ela tiver o dado, não só nos quadros de
+        # cima (Resumo Consolidado, KPIs). Sem NE encontrada, continua editável a partir da
+        # planilha (fallback inalterado).
+        valor_empenhado_execucao = linha["valor_empenhado_execucao"]
+        via_execucao_valor_empenhado = pd.notna(valor_empenhado_execucao)
+        if via_execucao_valor_empenhado:
+            r3[3].markdown("<div class='bls-label'>Empenhado (Execução Anual)</div>", unsafe_allow_html=True)
+            r3[3].markdown(f"<div class='bls-calc'>{_brl(float(valor_empenhado_execucao))}</div>", unsafe_allow_html=True)
+            valor_empenhado_tg_persistir = _ou_zero(linha["valor_empenhado_tg"])
+        else:
+            valor_empenhado_tg_persistir = _campo_numero(
+                r3[3], "Empenhado (R$)", _ou_zero(linha["valor_empenhado_tg"]), f"{k}_valorempenhado", step=100.0
+            )
 
         r4 = st.columns(4)
         # Mesmo critério de `app_pages/contratos_continuos.py::_render_card`: com NE já
@@ -479,10 +616,24 @@ def _render_card(linha: pd.Series, source_key: str, removidos: set) -> None:
             r4[0].markdown(f"<div class='bls-calc'>{_num(meses_empenhados)}</div>", unsafe_allow_html=True)
             r4[1].markdown("<div class='bls-label'>Meses Liquidados (Execução Anual)</div>", unsafe_allow_html=True)
             r4[1].markdown(f"<div class='bls-calc'>{_num(meses_liquidados)}</div>", unsafe_allow_html=True)
+            meses_empenhados_persistir = _ou_zero(linha["meses_empenhados"])
+            meses_liquidados_persistir = _ou_zero(linha["meses_liquidados"])
         else:
             meses_empenhados = _campo_numero(r4[0], "Meses Empenhados", _ou_zero(linha["meses_empenhados"]), f"{k}_mesesemp", step=0.1)
             meses_liquidados = _campo_numero(r4[1], "Meses Liquidados", _ou_zero(linha["meses_liquidados"]), f"{k}_mesesliq", step=0.1)
-        saldo_planilha = _campo_numero(r4[2], "Saldo (R$)", _ou_zero(linha["saldo_colado_planilha"]), f"{k}_saldo", step=100.0)
+            meses_empenhados_persistir = meses_empenhados
+            meses_liquidados_persistir = meses_liquidados
+
+        saldo_execucao = linha["saldo_execucao"]
+        via_execucao_saldo = pd.notna(saldo_execucao)
+        if via_execucao_saldo:
+            r4[2].markdown("<div class='bls-label'>Saldo (Execução Anual)</div>", unsafe_allow_html=True)
+            r4[2].markdown(f"<div class='bls-calc'>{_brl(float(saldo_execucao))}</div>", unsafe_allow_html=True)
+            saldo_colado_planilha_persistir = _ou_zero(linha["saldo_colado_planilha"])
+        else:
+            saldo_colado_planilha_persistir = _campo_numero(
+                r4[2], "Saldo (R$)", _ou_zero(linha["saldo_colado_planilha"]), f"{k}_saldo", step=100.0
+            )
 
         valor_mensal = qtd_efetiva * valor_unitario
         meses_a_empenhar, valor_a_empenhar = calcular_necessidade_empenho(
@@ -492,22 +643,16 @@ def _render_card(linha: pd.Series, source_key: str, removidos: set) -> None:
         r4[3].markdown("<div class='bls-label'>Valor Mensal</div>", unsafe_allow_html=True)
         r4[3].markdown(f"<div class='bls-calc'>{_brl(valor_mensal)}</div>", unsafe_allow_html=True)
 
-        r5 = st.columns(4)
+        r5 = st.columns(3)
         r5[0].markdown("<div class='bls-label'>Meses de Saldo</div>", unsafe_allow_html=True)
         r5[0].markdown(f"<div class='bls-calc'>{_num(meses_a_empenhar)}</div>", unsafe_allow_html=True)
         rotulo_empenhar = "Empenhar (Execução Anual)" if via_execucao else "Empenhar (planilha)"
         r5[1].markdown(f"<div class='bls-label'>{rotulo_empenhar}</div>", unsafe_allow_html=True)
         r5[1].markdown(f"<div class='bls-calc strong'>{_brl(valor_a_empenhar)}</div>", unsafe_allow_html=True)
-
-        saldo_execucao = linha["saldo_execucao"]
-        diverge_saldo = pd.notna(saldo_execucao) and abs(saldo_execucao - saldo_planilha) > 0.01
-        r5[2].markdown("<div class='bls-label'>Saldo (Execução Anual)</div>", unsafe_allow_html=True)
-        r5[2].markdown(f"<div class='bls-calc'>{_brl(saldo_execucao) if pd.notna(saldo_execucao) else 'sem NE'}</div>", unsafe_allow_html=True)
-
-        valor_empenhado_execucao = linha["valor_empenhado_execucao"]
-        diverge_valor_empenhado = pd.notna(valor_empenhado_execucao) and abs(valor_empenhado_execucao - valor_empenhado) > 0.01
-        r5[3].markdown("<div class='bls-label'>Empenhado (Execução Anual)</div>", unsafe_allow_html=True)
-        r5[3].markdown(f"<div class='bls-calc'>{_brl(valor_empenhado_execucao) if pd.notna(valor_empenhado_execucao) else 'sem NE'}</div>", unsafe_allow_html=True)
+        sugestao_inicio = sugestao_inicio_por_ne.get(linha["ne_curta"]) if pd.notna(linha["ne_curta"]) else None
+        inicio_execucao_mes_editado = _campo_inicio_execucao(
+            r5[2], linha["inicio_execucao_mes"], sugestao_inicio, f"{k}_inicio",
+        )
 
         if situacao == "SEM EMPENHO":
             tag_txt, tag_cls = "Sem Empenho", "bad"
@@ -517,31 +662,57 @@ def _render_card(linha: pd.Series, source_key: str, removidos: set) -> None:
             tag_txt, tag_cls = "Necessita Reforço", "warn"
         else:
             tag_txt, tag_cls = "Atualizado", "ok"
-        if pd.isna(saldo_execucao):
-            tag_div_txt, tag_div_cls = "Sem Execução", "warn"
-        elif diverge_saldo or diverge_valor_empenhado:
-            tag_div_txt, tag_div_cls = "Diverge", "bad"
+        # Sem "Diverge": Saldo/Empenhado agora exibem o valor da Execução Anual diretamente
+        # quando ela tem a NE (ver acima), não mais um campo separado colado da planilha ao
+        # lado do valor autoritativo — não sobra o que comparar/divergir dentro do cartão.
+        if via_execucao_saldo or via_execucao_valor_empenhado:
+            tag_div_txt, tag_div_cls = "Via Execução Anual", "ok"
         else:
-            tag_div_txt, tag_div_cls = "Bate", "ok"
+            tag_div_txt, tag_div_cls = "Sem Execução", "warn"
 
-        f1, f2 = st.columns([4, 1])
+        f1, f2, f3 = st.columns([4, 1, 1])
         f1.markdown(
             f"<span class='bls-tag {tag_cls}'>{tag_txt}</span>"
             f"<span class='bls-tag {tag_div_cls}'>{tag_div_txt}</span>",
             unsafe_allow_html=True,
         )
-        if f2.button("Remover", key=f"{k}_remover", use_container_width=True):
-            removidos.add(indice)
-            st.session_state[f"bl_removidos_{source_key}"] = removidos
+        if f2.button("💾 Salvar", key=f"{k}_salvar", use_container_width=True):
+            atualizado = {
+                **linha.to_dict(),
+                "processo": processo or None, "programa_bolsa": programa or None,
+                "unidade_cod": unidade or None, "acao_cod": acao or None, "ptres": ptres or None,
+                "fonte_cod": fonte or None, "natureza_despesa_cod": nd or None, "ugr_cod": ugr or None,
+                "pi_cod": pi or None, "ne_curta": ne_curta.strip() or None, "meses_no_ano": meses_no_ano,
+                "qtd_inicial": qtd_inicial, "qtd_efetiva": qtd_efetiva, "valor_unitario": valor_unitario,
+                "valor_empenhado_tg": valor_empenhado_tg_persistir,
+                "saldo_colado_planilha": saldo_colado_planilha_persistir,
+                "situacao_tg": situacao, "meses_empenhados": meses_empenhados_persistir,
+                "meses_liquidados": meses_liquidados_persistir,
+                "inicio_execucao_mes": inicio_execucao_mes_editado,
+            }
+            for chave_extra in ("valor_mensal", "valor_anual", "meses_a_empenhar", "valor_a_empenhar", "saldo_execucao", "valor_empenhado_execucao", "valor_liquidado_execucao", "diverge_saldo", "diverge_valor_empenhado", "meses_empenhados_execucao", "meses_liquidados_execucao", "necessidade_via", "inicio_execucao_efetivo", "valor_empenhado_autoritativo"):
+                atualizado.pop(chave_extra, None)
+            atualizar_programa(ano, atualizado)
+            st.success("Programa salvo.")
             st.rerun()
 
+        confirmar_key = f"{k}_confirmar_exclusao"
+        if st.session_state.get(confirmar_key):
+            if f3.button("Confirmar exclusão?", key=f"{k}_remover_confirmar", use_container_width=True, type="primary"):
+                excluir_programa(ano, id_programa)
+                st.session_state.pop(confirmar_key, None)
+                st.rerun()
+        else:
+            if f3.button("Remover", key=f"{k}_remover", use_container_width=True):
+                st.session_state[confirmar_key] = True
+                st.rerun()
 
-def _render_novo_programa(source_key: str) -> None:
+
+def _render_novo_programa(ano: int, source_key: str) -> None:
     """"+ Novo programa" — popover compacto no canto superior direito da tela (não um
-    expander de largura total), só nesta sessão (`st.session_state`), sem persistência em
-    disco; mesma ressalva do README do handoff."""
+    expander de largura total). Grava direto no cadastro nativo do exercício em tela
+    (`src/bolsas_auxilios_cadastro.py`), sobrevive a fechar o navegador."""
 
-    extra_key = f"bolsas_auxilios_extra_{source_key}"
     with st.popover("+ Novo programa", icon=":material/add:", width=380):
         with st.form(f"bolsas_auxilios_form_{source_key}", clear_on_submit=True):
             programa = st.text_input("Item de despesa (programa)")
@@ -575,39 +746,49 @@ def _render_novo_programa(source_key: str) -> None:
                 if not programa or not qtd_efetiva or not valor_unitario:
                     st.error("Informe ao menos o item de despesa, quantidade efetiva e valor unitário.")
                 else:
-                    extras = st.session_state.get(extra_key, [])
-                    extras.append(
-                        {
-                            "processo": processo or "—", "programa_bolsa": programa, "unidade_cod": unidade,
-                            "acao_cod": acao, "ptres": ptres, "fonte_cod": fonte, "natureza_despesa_cod": nd,
-                            "ugr_cod": ugr, "pi_cod": pi, "ne_curta": ne_curta.strip() or pd.NA,
-                            "meses_no_ano": meses_no_ano, "qtd_inicial": qtd_inicial, "qtd_efetiva": qtd_efetiva,
-                            "valor_unitario": valor_unitario, "valor_empenhado_tg": valor_empenhado,
-                            "saldo_colado_planilha": saldo_colado, "situacao_tg": "SEM EMPENHO",
-                            "meses_empenhados": meses_empenhados, "meses_liquidados": meses_liquidados,
-                        }
+                    registro = novo_programa(
+                        processo=processo or "—", programa_bolsa=programa, unidade_cod=unidade,
+                        acao_cod=acao, ptres=ptres, fonte_cod=fonte, natureza_despesa_cod=nd,
+                        ugr_cod=ugr, pi_cod=pi, ne_curta=ne_curta.strip() or None,
+                        meses_no_ano=meses_no_ano, qtd_inicial=qtd_inicial, qtd_efetiva=qtd_efetiva,
+                        valor_unitario=valor_unitario, valor_empenhado_tg=valor_empenhado,
+                        saldo_colado_planilha=saldo_colado, situacao_tg="SEM EMPENHO",
+                        meses_empenhados=meses_empenhados, meses_liquidados=meses_liquidados,
                     )
-                    st.session_state[extra_key] = extras
+                    salvar_programa(ano, registro)
+                    st.success("Programa cadastrado.")
                     st.rerun()
 
 
-def _html_linha_resumo(programa: object, processo: object, valor_empenhado: float, saldo: object, necessidade: float) -> str:
-    saldo_texto = "sem NE" if pd.isna(saldo) else _brl(saldo)
-    return (
-        '<div class="bls-resumo-row">'
-        f'<div><div class="bls-resumo-name">{_dash(programa)}</div><div class="bls-resumo-code">{_dash(processo)}</div></div>'
-        f'<span class="bls-resumo-val">{_brl(valor_empenhado)}</span>'
-        f'<span class="bls-resumo-val">{saldo_texto}</span>'
-        f'<span class="bls-resumo-val-strong">{_brl(necessidade)}</span>'
-        "</div>"
-    )
+#: larguras relativas usadas por `st.columns` no cabeçalho de rótulos, em cada linha e no
+#: rodapé do Resumo Consolidado — as três precisam ser exatamente as mesmas pra alinhar.
+_LARGURAS_RESUMO = [2.4, 1, 1, 1.3]
 
 
-def _render_resumo_consolidado(filtrado: pd.DataFrame, meses_restantes: int) -> None:
+def _html_valor_resumo(valor: object, forte: bool = False) -> str:
+    classe = "bls-resumo-cell-strong" if forte else "bls-resumo-cell"
+    texto = "sem NE" if pd.isna(valor) else _brl(valor)
+    return f'<div class="{classe}">{texto}</div>'
+
+
+def _render_resumo_consolidado(
+    filtrado: pd.DataFrame,
+    meses_restantes: int,
+    tempo_por_ne_curta: pd.DataFrame | None,
+    source_key: str,
+) -> None:
     """Card único, visível de início (antes de abrir qualquer cartão), listando — uma linha por
     bolsa, não agregado num único total — o valor empenhado, o saldo e a necessidade de
-    empenho até dezembro de cada programa. Mesmo padrão de cartão + grade HTML de
-    `app_pages/painel_acoes.py`, não `st.dataframe` (que tem cara de planilha)."""
+    empenho até dezembro de cada programa.
+
+    Pedido explícito: cada bolsa com NE encontrada na base MENSAL (2026+) é clicável — abre o
+    mesmo pop-up "Linha do tempo mensal" de `app_pages/consulta_empenhos.py`
+    (`src/ui_linha_do_tempo.py`, compartilhado). Bolsa sem NE ou sem dado mensal aparece como
+    texto simples, sem botão — mesmo critério de "some silenciosamente" já usado lá.
+
+    Cada linha é um `st.button` de verdade (não HTML): não dá pra ter um botão clicável dentro
+    de um bloco de HTML injetado via `st.markdown` — HTML puro não dispara evento Python. O
+    cartão em si virou `st.container(border=True)` pelo mesmo motivo (ver `_inject_css`)."""
 
     valor_mensal = (filtrado["qtd_efetiva"] * filtrado["valor_unitario"]).fillna(0.0)
     necessidade_ate_dezembro = valor_mensal * meses_restantes
@@ -620,50 +801,61 @@ def _render_resumo_consolidado(filtrado: pd.DataFrame, meses_restantes: int) -> 
     ordenado = filtrado.assign(_necessidade=empenhar_ate_fim, _valor_empenhado=valor_empenhado_exibido).sort_values(
         "_necessidade", ascending=False
     )
-    linhas_html = "".join(
-        _html_linha_resumo(
-            row["programa_bolsa"], row["processo"], row["_valor_empenhado"], row["saldo_execucao"], row["_necessidade"]
-        )
-        for _, row in ordenado.iterrows()
-    )
-
     necessidade_total = empenhar_ate_fim.sum()
+    nes_com_tempo = set(tempo_por_ne_curta["ne_curta"]) if tempo_por_ne_curta is not None else set()
 
-    st.markdown(
-        f"""
-        <div class="bls-resumo-card">
-          <div class="bls-resumo-head">
-            <div style="min-width:0">
-              <div class="bls-resumo-kicker">RESUMO CONSOLIDADO</div>
-              <div class="bls-resumo-title">Necessidade de Empenho por Bolsa</div>
-            </div>
-            <div style="text-align:right">
-              <div class="bls-resumo-metric-label">Necessidade até Dezembro ({meses_restantes}m)</div>
-              <div class="bls-resumo-metric">{_brl(necessidade_total)}</div>
-              <div class="bls-resumo-metric-label" style="margin-top:4px">
-                {len(filtrado)} {"bolsa" if len(filtrado) == 1 else "bolsas"}
+    with st.container(border=True, key="bls_resumo_card"):
+        st.markdown(
+            f"""
+            <div class="bls-resumo-head">
+              <div style="min-width:0">
+                <div class="bls-resumo-kicker">RESUMO CONSOLIDADO</div>
+                <div class="bls-resumo-title">Necessidade de Empenho por Bolsa</div>
+              </div>
+              <div style="text-align:right">
+                <div class="bls-resumo-metric-label">Necessidade até Dezembro ({meses_restantes}m)</div>
+                <div class="bls-resumo-metric">{_brl(necessidade_total)}</div>
+                <div class="bls-resumo-metric-label" style="margin-top:4px">
+                  {len(filtrado)} {"bolsa" if len(filtrado) == 1 else "bolsas"}
+                </div>
               </div>
             </div>
-          </div>
-          <div class="bls-resumo-scroll">
-            <div class="bls-resumo-head-row">
-              <span>Bolsa / Programa</span>
-              <span style="text-align:right">Valor Empenhado</span>
-              <span style="text-align:right">Saldo</span>
-              <span style="text-align:right">Necessidade até Dez.</span>
-            </div>
-            {linhas_html}
-            <div class="bls-resumo-foot">
-              <span class="bls-resumo-foot-label">Total</span>
-              <span class="bls-resumo-val">{_brl(valor_empenhado_exibido.sum())}</span>
-              <span class="bls-resumo-val">{_brl(_somar_unico_por_ne(filtrado, 'saldo_execucao'))}</span>
-              <span class="bls-resumo-val-strong">{_brl(necessidade_total)}</span>
-            </div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+            """,
+            unsafe_allow_html=True,
+        )
+        cabecalho = st.columns(_LARGURAS_RESUMO)
+        cabecalho[0].markdown('<div class="bls-resumo-col-label">Bolsa / Programa</div>', unsafe_allow_html=True)
+        cabecalho[1].markdown('<div class="bls-resumo-col-label" style="text-align:right">Valor Empenhado</div>', unsafe_allow_html=True)
+        cabecalho[2].markdown('<div class="bls-resumo-col-label" style="text-align:right">Saldo</div>', unsafe_allow_html=True)
+        cabecalho[3].markdown('<div class="bls-resumo-col-label" style="text-align:right">Necessidade até Dez.</div>', unsafe_allow_html=True)
+
+        # Pedido explícito: 5 bolsas visíveis por padrão; para ver mais, rolar — não "Ver
+        # mais" clicado repetidamente (mesmo padrão de app_pages/consulta_empenhos.py: caixa
+        # de altura fixa com `overflow-y: auto`, dimensionada pra ~5 linhas). Com 5 ou menos
+        # bolsas no recorte, o conteúdo nem chega a estourar essa altura e a barra de rolagem
+        # simplesmente não aparece sozinha — sem precisar de lógica condicional própria.
+        with st.container(key="bls_resumo_scroll"):
+            for indice, row in ordenado.iterrows():
+                rotulo = f"{_dash(row['programa_bolsa'])} — {_dash(row['processo'])}"
+                ne_curta_bolsa = row.get("ne_curta")
+                clicavel = pd.notna(ne_curta_bolsa) and ne_curta_bolsa in nes_com_tempo
+                linha = st.columns(_LARGURAS_RESUMO, vertical_alignment="center")
+                if clicavel:
+                    if linha[0].button(rotulo, key=f"bls_resumo_tempo_{source_key}_{row['id']}", use_container_width=True):
+                        tempo_ne = tempo_por_ne_curta[tempo_por_ne_curta["ne_curta"] == ne_curta_bolsa]
+                        legenda = f"{_dash(row['programa_bolsa'])} (NE {ne_curta_bolsa}) — base mensal (2026+)."
+                        abrir_linha_do_tempo(legenda, tempo_ne)
+                else:
+                    linha[0].markdown(f'<div class="bls-resumo-nome-simples">{_esc(rotulo)}</div>', unsafe_allow_html=True)
+                linha[1].markdown(_html_valor_resumo(row["_valor_empenhado"]), unsafe_allow_html=True)
+                linha[2].markdown(_html_valor_resumo(row["saldo_execucao"]), unsafe_allow_html=True)
+                linha[3].markdown(_html_valor_resumo(row["_necessidade"], forte=True), unsafe_allow_html=True)
+
+        rodape = st.columns(_LARGURAS_RESUMO)
+        rodape[0].markdown('<div class="bls-resumo-foot-label">Total</div>', unsafe_allow_html=True)
+        rodape[1].markdown(_html_valor_resumo(valor_empenhado_exibido.sum()), unsafe_allow_html=True)
+        rodape[2].markdown(_html_valor_resumo(_somar_unico_por_ne(filtrado, "saldo_execucao")), unsafe_allow_html=True)
+        rodape[3].markdown(_html_valor_resumo(necessidade_total, forte=True), unsafe_allow_html=True)
 
 
 _CABECALHO_DOTACAO = [
@@ -791,14 +983,6 @@ def _render_quadro_dotacao(filtrado: pd.DataFrame, dotacao_dimensoes: pd.DataFra
         _render_card_dotacao(codigo, nome, grupo)
 
 
-def _com_programas_extra(dataframe: pd.DataFrame, source_key: str) -> pd.DataFrame:
-    extras = st.session_state.get(f"bolsas_auxilios_extra_{source_key}", [])
-    if not extras:
-        return dataframe
-    novos = pd.DataFrame(extras)
-    return pd.concat([dataframe, novos], ignore_index=True)
-
-
 #: sufixo da key do widget (ver `_render_card`) -> coluna do DataFrame que ele edita.
 _CAMPOS_EDITAVEIS_NUMERICOS = {
     "mesesano": "meses_no_ano", "qtdinicial": "qtd_inicial", "qtdefetiva": "qtd_efetiva",
@@ -828,8 +1012,8 @@ def _aplicar_edicoes_da_sessao(dataframe: pd.DataFrame, source_key: str) -> pd.D
     """
 
     resultado = dataframe.copy()
-    for indice in resultado.index:
-        k = f"bls_{source_key}_{indice}"
+    for indice, id_programa in zip(resultado.index, resultado["id"]):
+        k = f"bls_{source_key}_{id_programa}"
         for sufixo, coluna in _CAMPOS_EDITAVEIS_NUMERICOS.items():
             valor = st.session_state.get(f"{k}_{sufixo}")
             if valor is not None:
@@ -854,9 +1038,78 @@ def _aplicar_edicoes_da_sessao(dataframe: pd.DataFrame, source_key: str) -> pd.D
 
 
 # ---------------------------------------------------------------------- página
-# "+ Novo programa" fica ao lado do título, não abaixo dele — por isso o cabeçalho precisa
-# de um source_key (mtime do arquivo) antes de qualquer outra checagem: sem arquivo não há
-# como calcular esse mtime, então o popover só aparece quando a planilha existe.
+_inject_css()
+
+anos = anos_disponiveis()
+if not anos:
+    st.warning(
+        "Nenhum exercício cadastrado ainda no cadastro nativo de Bolsas e Auxílios "
+        f"('{Path('data/bolsas_auxilios')}'). Rode a migração única a partir da planilha "
+        "(`bolsas_auxilios_cadastro.migrar_de_planilha`) para criar o primeiro exercício."
+    )
+    st.stop()
+
+ano_key = "bolsas_auxilios_ano_selecionado"
+if st.session_state.get(ano_key) not in anos:
+    st.session_state[ano_key] = max(anos)
+ano_selecionado = st.session_state[ano_key]
+source_key = str(ano_selecionado)
+
+# Seletor de exercício — no topo da página, acima do título/Relatório/Novo programa (pedido
+# explícito). Discreto: um botão por ano cadastrado (o selecionado em destaque), largura de
+# coluna estreita (não `st.columns` de partes iguais — ficaria esticado) + um único menu "⋮"
+# (pop-up, pedido explícito: "junte duplicar e excluir dentro de um menu") reunindo "Duplicar"
+# (sempre do exercício mais recente para o próximo — generaliza "gerar 2028, 2029..." sem
+# precisar estar vendo o ano mais recente) e "Excluir exercício" com uma caixa de seleção do
+# ano a apagar (pedido explícito: "o botão excluir deve permitir a gente selecionar o ano"),
+# em vez de só o ano em tela. O exercício mais antigo (migrado da planilha original) nunca
+# aparece como opção de exclusão.
+cols_ano = st.columns([1] * (len(anos) + 1) + [10])
+for coluna, ano in zip(cols_ano, anos):
+    if coluna.button(
+        str(ano), key=f"bls_ano_{ano}",
+        type="primary" if ano == ano_selecionado else "secondary", use_container_width=True,
+    ):
+        st.session_state[ano_key] = ano
+        st.rerun()
+
+origem_duplicar = max(anos)
+destino_duplicar = origem_duplicar + 1
+anos_excluiveis = [ano for ano in anos if ano != min(anos)]
+with cols_ano[len(anos)]:
+    with st.popover("⋮", help="Duplicar ou excluir um exercício", use_container_width=True):
+        if st.button(
+            f"Duplicar {origem_duplicar} → {destino_duplicar}",
+            key=f"bls_duplicar_{destino_duplicar}", use_container_width=True,
+            help="Copia identidade/classificação dos programas; execução fica em branco.",
+        ):
+            duplicar_exercicio(origem_duplicar, destino_duplicar)
+            st.session_state[ano_key] = destino_duplicar
+            st.success(f"Exercício {destino_duplicar} criado a partir de {origem_duplicar}.")
+            st.rerun()
+
+        if anos_excluiveis:
+            st.markdown("---")
+            ano_excluir = st.selectbox(
+                "Excluir exercício", anos_excluiveis, key=f"bls_excluir_exercicio_escolha_{source_key}",
+            )
+            confirmar_exercicio_key = f"bls_confirmar_excluir_exercicio_{ano_excluir}"
+            if st.session_state.get(confirmar_exercicio_key):
+                if st.button(
+                    f"Confirmar exclusão de {ano_excluir}?", key=f"bls_excluir_exercicio_confirmar_{ano_excluir}",
+                    use_container_width=True, type="primary",
+                ):
+                    excluir_exercicio(ano_excluir)
+                    st.session_state.pop(confirmar_exercicio_key, None)
+                    if ano_excluir == ano_selecionado:
+                        st.session_state[ano_key] = max(a for a in anos if a != ano_excluir)
+                    st.success(f"Exercício {ano_excluir} excluído.")
+                    st.rerun()
+            else:
+                if st.button(f"Excluir {ano_excluir}", key=f"bls_excluir_exercicio_{ano_excluir}", use_container_width=True):
+                    st.session_state[confirmar_exercicio_key] = True
+                    st.rerun()
+
 col_titulo, col_relatorio, col_novo = st.columns([4, 1.4, 1])
 with col_titulo:
     render_page_header(
@@ -864,19 +1117,9 @@ with col_titulo:
         "Necessidade de reforço de empenho por programa de bolsa/auxílio, cruzado com a Execução Anual.",
         "Bolsas",
     )
-_inject_css()
-
-if CAMINHO_PLANILHA.exists():
-    source_key = CAMINHO_PLANILHA.stat().st_mtime_ns.__str__()[-12:]
-    with col_novo:
-        st.write("")
-        _render_novo_programa(source_key)
-else:
-    st.info(
-        f"A planilha de Bolsas e Auxílios não foi encontrada em '{CAMINHO_PLANILHA}'. "
-        "Copie a extração atual para essa pasta antes de usar esta página."
-    )
-    st.stop()
+with col_novo:
+    st.write("")
+    _render_novo_programa(ano_selecionado, source_key)
 
 manifesto_execucao = Manifesto.atual()
 if manifesto_execucao is None:
@@ -889,13 +1132,25 @@ if manifesto_execucao is None:
 caminho_ponteiro_execucao = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO_EXECUCAO
 
 try:
-    dataframe = _cached_leitura(str(CAMINHO_PLANILHA), CAMINHO_PLANILHA.stat().st_mtime)
+    registros = carregar_programas(ano_selecionado)
+    dataframe = como_dataframe(registros)
     por_ne_execucao = _cached_por_ne_execucao(
         str(caminho_ponteiro_execucao), caminho_ponteiro_execucao.stat().st_mtime
     )
 except Exception as error:
     st.error(f"Não foi possível ler os dados: {error}")
     st.stop()
+
+# Base mensal (2026+) só para o pop-up "Linha do tempo mensal" do Resumo Consolidado —
+# opcional: sem o arquivo, o resumo continua funcionando normal, só sem nenhuma bolsa clicável.
+tempo_por_ne_curta: pd.DataFrame | None = None
+if CAMINHO_EXECUCAO_MENSAL.exists():
+    try:
+        tempo_por_ne_curta = _cached_linha_do_tempo(
+            str(CAMINHO_EXECUCAO_MENSAL), CAMINHO_EXECUCAO_MENSAL.stat().st_mtime
+        )
+    except Exception:
+        tempo_por_ne_curta = None
 
 # Dotação Anual, para o quadro "Cobertura Orçamentária por PTRES" — diferente da Execução
 # Anual (obrigatória acima), essa base é só um complemento: sem ela, o quadro não aparece,
@@ -912,13 +1167,25 @@ if manifesto_dotacao is not None:
     except Exception:
         dotacao_dimensoes = None
 
-dataframe = _com_programas_extra(dataframe, source_key)
 dataframe = _aplicar_edicoes_da_sessao(dataframe, source_key)
 dataframe = com_saldo_execucao(dataframe, por_ne_execucao)
 
+# "Início da Execução" (mês do primeiro empenho de cada NE, auto-detectado da base mensal) e
+# valor empenhado autoritativo — só para a sugestão inicial "por calendário" do Relatório de
+# Reforço (pedido explícito, ver `src.necessidade_empenho.necessidade_ate_mes_vigente`);
+# nenhum outro quadro da página usa essas duas colunas.
+if tempo_por_ne_curta is not None:
+    sugestao_inicio_por_ne = primeiro_mes_com_empenho_por_ne(tempo_por_ne_curta)
+else:
+    sugestao_inicio_por_ne = pd.Series(dtype="Int64")
+dataframe["valor_empenhado_autoritativo"] = dataframe["valor_empenhado_execucao"].fillna(dataframe["valor_empenhado_tg"])
+dataframe["inicio_execucao_efetivo"] = dataframe["inicio_execucao_mes"].fillna(
+    dataframe["ne_curta"].map(sugestao_inicio_por_ne)
+)
+
 with col_relatorio:
     st.write("")
-    render_botao_relatorio(dataframe, RELATORIO_BOLSAS_AUXILIOS, "bolsas")
+    render_botao_relatorio(dataframe, RELATORIO_BOLSAS_AUXILIOS, f"bolsas_{ano_selecionado}")
 
 busca = st.text_input(
     "Buscar",
@@ -927,26 +1194,36 @@ busca = st.text_input(
 )
 filtrado = _aplicar_busca(dataframe, busca)
 
-removidos_key = f"bl_removidos_{source_key}"
-removidos = st.session_state.get(removidos_key, set())
-filtrado = filtrado[~filtrado.index.isin(removidos)]
-
 if filtrado.empty:
-    st.warning("Nenhum registro corresponde à busca informada.")
+    if dataframe.empty:
+        st.info(
+            f"Nenhum programa cadastrado no exercício {ano_selecionado} ainda. Use "
+            "'+ Novo programa' ou, se este for o exercício mais recente, 'Duplicar cadastro' "
+            "acima para partir do exercício anterior."
+        )
+    else:
+        st.warning("Nenhum registro corresponde à busca informada.")
     st.stop()
 
 render_metric_grid(
     [
         {"label": "Despesa Anual Total", "value": format_brl_compact(filtrado["valor_anual"].sum())},
         {"label": "Valor Mensal", "value": format_brl_compact((filtrado["qtd_efetiva"] * filtrado["valor_unitario"]).sum())},
-        {"label": "Necessidade de Reforço", "value": format_brl_compact(filtrado["valor_a_empenhar"].sum())},
+        # "Necessidade de Reforço" saiu daqui (pedido explícito) — `valor_a_empenhar`, quando a
+        # NE já vem da Execução Anual, é matematicamente igual a `saldo_execucao`
+        # (empenhado − liquidado nos dois, só chegando lá por contas diferentes — ver
+        # `com_saldo_execucao`), então os dois cartões sempre mostravam o mesmo número. No
+        # lugar, "Bolsas Ativas" soma `qtd_efetiva` (QUANT. EFETIVA DE BOLSAS da origem — já é,
+        # por definição, a quantidade atual/em vigor, diferente de `qtd_inicial`), não uma
+        # contagem de programas/linhas.
+        {"label": "Bolsas Ativas", "value": str(int(filtrado["qtd_efetiva"].sum()))},
         {"label": "Programas", "value": str(len(filtrado))},
         {"label": "Saldo (Execução Anual)", "value": format_brl_compact(_somar_unico_por_ne(filtrado, "saldo_execucao"))},
     ],
     columns=5,
 )
 
-_render_resumo_consolidado(filtrado, _meses_restantes_no_ano())
+_render_resumo_consolidado(filtrado, _meses_restantes_no_ano(), tempo_por_ne_curta, source_key)
 
 if dotacao_dimensoes is not None:
     st.subheader("Cobertura Orçamentária por PTRES")
@@ -971,7 +1248,7 @@ visiveis_lista = filtrado if mostrar_todos_lista else filtrado.iloc[:QTD_INICIAL
 
 with st.container(key="bl_lista"):
     for _, linha in visiveis_lista.iterrows():
-        _render_card(linha, source_key, removidos)
+        _render_card(linha, ano_selecionado, source_key, sugestao_inicio_por_ne)
 
 if not mostrar_todos_lista and len(filtrado) > QTD_INICIAL_LISTA:
     st.caption(f"Mostrando {QTD_INICIAL_LISTA} de {len(filtrado)} programas")
@@ -985,9 +1262,9 @@ elif len(filtrado):
         st.rerun()
 
 st.caption(
-    "Base de Bolsas e Auxílios consolidada manualmente (não é uma extração única e "
-    "versionada como Dotação/Execução Anual) — uma linha por programa de bolsa/auxílio, não "
-    "por bolsista individual (a planilha não traz nome/CPF de beneficiário). Saldo Execução "
-    "vem da Execução Anual do projeto, cruzado pela NE. Edições e programas adicionados por "
-    "'+ Novo programa' existem só nesta sessão."
+    "Cadastro nativo de Bolsas e Auxílios (não depende mais de planilha) — uma linha por "
+    "programa de bolsa/auxílio, não por bolsista individual (o cadastro não guarda nome/CPF "
+    "de beneficiário). Saldo Execução vem da Execução Anual do projeto, cruzado pela NE. "
+    f"Exercício em tela: {ano_selecionado}. Edição de cartão só é gravada ao clicar em "
+    "'💾 Salvar'; '+ Novo programa' e 'Remover' gravam/apagam de imediato."
 )

@@ -1,0 +1,103 @@
+{
+  "base": "emendas_acompanhamento",
+  "arquivo": "2026_-_Emendas_-_Acompanhamento_1_1_5db888d2.xlsx",
+  "sha256": "5db888d2f8fa413257bd395caff2d14256360f026274970cff90b3a8d1959672",
+  "data_extracao": "2026-08-28T14:50:46",
+  "importado_em": "2026-08-28T17:10:55-03:00",
+  "anos": [
+    2016,
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024,
+    2025,
+    2026
+  ],
+  "totais": {
+    "dotacao_atualizada": 10525108.0,
+    "empenhada_relatorio": 7962726.789999999,
+    "liquidada_relatorio": 1800329.44,
+    "paga_relatorio": 1447991.0399999998
+  },
+  "totais_por_ano": {
+    "2016": {
+      "dotacao_atualizada": 500000.0,
+      "empenhada_relatorio": 500000.0,
+      "liquidada_relatorio": 17167.91,
+      "paga_relatorio": 17167.91
+    },
+    "2019": {
+      "dotacao_atualizada": 500000.0,
+      "empenhada_relatorio": 500000.0,
+      "liquidada_relatorio": 500000.0,
+      "paga_relatorio": 500000.0
+    },
+    "2020": {
+      "dotacao_atualizada": 1550000.0,
+      "empenhada_relatorio": 1550000.0,
+      "liquidada_relatorio": 250000.0,
+      "paga_relatorio": 250000.0
+    },
+    "2021": {
+      "dotacao_atualizada": 600000.0,
+      "empenhada_relatorio": 599232.0900000001,
+      "liquidada_relatorio": 260397.2,
+      "paga_relatorio": 123464.99
+    },
+    "2022": {
+      "dotacao_atualizada": 750000.0,
+      "empenhada_relatorio": 749873.5800000001,
+      "liquidada_relatorio": 87043.1,
+      "paga_relatorio": 12998.05
+    },
+    "2023": {
+      "dotacao_atualizada": 1065108.0,
+      "empenhada_relatorio": 1064799.97,
+      "liquidada_relatorio": 389051.23,
+      "paga_relatorio": 312035.55
+    },
+    "2024": {
+      "dotacao_atualizada": 2000000.0,
+      "empenhada_relatorio": 1998821.15,
+      "liquidada_relatorio": 296670.0,
+      "paga_relatorio": 232324.54
+    },
+    "2025": {
+      "dotacao_atualizada": 0.0,
+      "empenhada_relatorio": null,
+      "liquidada_relatorio": null,
+      "paga_relatorio": null
+    },
+    "2026": {
+      "dotacao_atualizada": 3560000.0,
+      "empenhada_relatorio": 1000000.0,
+      "liquidada_relatorio": null,
+      "paga_relatorio": null
+    }
+  },
+  "contagens": {
+    "linhas": 29,
+    "emendas_distintas": 25,
+    "ptres_distintos": 27,
+    "nulos": {
+      "dotacao_atualizada": 0,
+      "empenhada_relatorio": 8,
+      "liquidada_relatorio": 19,
+      "paga_relatorio": 20
+    },
+    "zeros": {
+      "dotacao_atualizada": 4,
+      "empenhada_relatorio": 0,
+      "liquidada_relatorio": 0,
+      "paga_relatorio": 0
+    },
+    "negativos": {
+      "dotacao_atualizada": 0,
+      "empenhada_relatorio": 0,
+      "liquidada_relatorio": 0,
+      "paga_relatorio": 0
+    }
+  }
+}

@@ -27,9 +27,35 @@ data/raw/*
 data/processed/*
 !data/processed/.gitkeep
 
+# Demandas orcamentarias submetidas pelo app (dado real de producao, nao
+# versionado — ver data/referencia/ para as listas de apoio, essas sim versionadas)
+data/demandas/*
+!data/demandas/.gitkeep
+
+# Emendas parlamentares cadastradas pelo app (mesmo motivo de data/demandas/ acima)
+data/emendas/*
+!data/emendas/.gitkeep
+
+# Prazos orcamentarios cadastrados manualmente pelo app (mesmo motivo de data/demandas/ acima)
+data/prazos_orcamentarios/*
+!data/prazos_orcamentarios/.gitkeep
+
+# Cadastro nativo de Bolsas e Auxilios / Contratos Continuos, multi-exercicio (mesmo motivo
+# de data/demandas/ acima) - substitui a leitura de planilha dessas duas paginas.
+data/bolsas_auxilios/*
+!data/bolsas_auxilios/.gitkeep
+data/contratos_continuos/*
+!data/contratos_continuos/.gitkeep
+
 # Sistema operacional
 .DS_Store
 Thumbs.db
 
 # Logs soltos (ex.: saída de smoke test)
 *.log
+
+# Configuracoes locais do Claude Code (permissoes por maquina, nao de projeto)
+.claude/settings.local.json
+
+# Screenshots soltos na raiz sem relacao clara com o codigo atual
+inbox_*.png

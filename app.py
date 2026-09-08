@@ -1,6 +1,11 @@
+import base64
+from pathlib import Path
+
 import streamlit as st
 
 from src.ui_theme import apply_theme
+
+_LOGO_B64 = base64.b64encode(Path("assets/ufrpe_logo.png").read_bytes()).decode()
 
 st.set_page_config(
     page_title="UFRPE BudgetLab",
@@ -9,6 +14,12 @@ st.set_page_config(
 )
 
 apply_theme()
+
+st.sidebar.markdown(
+    f'<div class="ufrpe-sidebar-logo">'
+    f'<img src="data:image/png;base64,{_LOGO_B64}" alt="UFRPE" /></div>',
+    unsafe_allow_html=True,
+)
 
 page = st.navigation(
     {
@@ -19,36 +30,59 @@ page = st.navigation(
         # uma abaixo da outra por baixo dele — não mais um dropdown por seção, como era com
         # position="top".
         "": [
-            st.Page("app_pages/home.py", title="Início", icon=":material/home:"),
+            st.Page("app_pages/home.py", title="Início", icon="🏠"),
             st.Page(
                 "app_pages/dotacao_orcamentaria.py",
                 title="Dotação Orçamentária",
-                icon=":material/monitoring:",
+                icon="📊",
             ),
             st.Page(
                 "app_pages/painel_acoes.py",
                 title="Painel por Ação",
-                icon=":material/grid_view:",
+                icon="🟪",
             ),
             st.Page(
                 "app_pages/execucao_orcamentaria.py",
                 title="Execução Orçamentária",
-                icon=":material/payments:",
+                icon="💳",
+            ),
+            st.Page(
+                "app_pages/execucao_mensal.py",
+                title="Execução Mensal",
+                icon="🗓️",
             ),
             st.Page(
                 "app_pages/consulta_empenhos.py",
                 title="Consulta de Empenhos",
-                icon=":material/receipt_long:",
+                icon="📋",
             ),
             st.Page(
                 "app_pages/empenhos_execucao_retardada.py",
                 title="Empenhos com Execução Retardada",
-                icon=":material/schedule:",
+                icon="🕐",
             ),
             st.Page(
                 "app_pages/bolsas_auxilios.py",
                 title="Bolsas e Auxílios",
-                icon=":material/school:",
+                icon="🎓",
+            ),
+            # Adaptadas do handoff de design (README em uploads/) — layout final, dado
+            # fictício/placeholder de propósito (ver docstring de cada página): critérios de
+            # alerta e cadastro de emendas ainda não foram definidos/validados com a PROPLAD.
+            st.Page(
+                "app_pages/emendas_parlamentares.py",
+                title="Emendas Parlamentares",
+                icon="🏛️",
+            ),
+            st.Page(
+                "app_pages/alertas_gerenciais.py",
+                title="Alertas Gerenciais",
+                icon="🚨",
+            ),
+            st.Page(
+                "app_pages/painel_prazos.py",
+                title="Prazos Orçamentários",
+                icon="⏰",
             ),
         ],
         # Contratos Contínuos e Contratos Vigência agrupadas sob um cabeçalho "Contratos"
@@ -59,12 +93,28 @@ page = st.navigation(
             st.Page(
                 "app_pages/contratos_continuos.py",
                 title="Contratos Contínuos",
-                icon=":material/handshake:",
+                icon="🤝",
             ),
             st.Page(
                 "app_pages/contratos_vigencia.py",
                 title="Contratos — Vigência",
-                icon=":material/event_upcoming:",
+                icon="📅",
+            ),
+        ],
+        # Novo módulo de escrita (não leitura de base do Tesouro): setores registram
+        # demandas orçamentárias e a PROPLAD consolida. Seção própria entre "Contratos" e
+        # "Administração" — "Administração" precisa continuar por último (ver comentário
+        # abaixo), então a nova seção entra antes dela, não depois.
+        "Demandas Orçamentárias": [
+            st.Page(
+                "app_pages/demandas_minhas.py",
+                title="Minhas Demandas",
+                icon="📝",
+            ),
+            st.Page(
+                "app_pages/demandas_consolidado.py",
+                title="Proposta Consolidada",
+                icon="🗂️",
             ),
         ],
         # último grupo da lateral, por pedido explícito ("o menu de reimportação no final") —
@@ -74,11 +124,18 @@ page = st.navigation(
             st.Page(
                 "app_pages/atualizar_planilhas.py",
                 title="Atualizar Planilhas",
-                icon=":material/upload_file:",
+                icon="📤",
             ),
         ],
     },
     position="sidebar",
+    # `expanded=False` (padrão do Streamlit) trunca a lista de páginas a partir de 12 e coloca
+    # o resto atrás de um botão "View N more" — passamos de 12 pra 14 páginas ao adicionar
+    # Emendas Parlamentares/Alertas Gerenciais e isso escondeu Contratos — Vigência, Minhas
+    # Demandas, Proposta Consolidada e Atualizar Planilhas sem nenhum aviso. `True` mantém
+    # todas sempre visíveis, coerente com o trilho de ícones (que já esconde tudo até o
+    # hover — esconder página atrás de mais um clique em cima disso seria demais).
+    expanded=True,
 )
 
 page.run()

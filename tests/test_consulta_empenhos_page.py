@@ -44,11 +44,17 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
     def _kpis_html(self, app: AppTest) -> str:
         return " ".join(item.value for item in app.markdown if "ce-kpi" in item.value)
 
-    def _cartoes_lista(self, app: AppTest) -> list[str]:
-        return [item.value for item in app.markdown if 'class="ce-list-row' in item.value]
+    def _cartoes_lista(self, app: AppTest):
+        """Botões-cartão da lista, na ordem em que aparecem — um por NE visível. Desde que o
+        botão "Ver" foi removido (pedido explícito), cada cartão É o próprio `st.button`
+        (rótulo "NE — objeto", `type="primary"` quando selecionado), não mais um
+        `st.markdown` com classe `ce-list-row` (ver docstring do módulo)."""
 
-    def _ne_do_cartao(self, cartao_html: str) -> str:
-        return re.search(r'class="ce-list-ne">([^<]+)<', cartao_html).group(1)
+        return [b for b in app.button if b.key and b.key.startswith("consulta_empenhos_ver_")]
+
+    def _ne_do_cartao(self, cartao) -> str:
+        """NE curta (ex. "2026NE000036") a partir do rótulo do botão-cartão ("NE — objeto")."""
+        return cartao.label.split(" — ", 1)[0]
 
     def _qtd_grupos_consolidacao(self, app: AppTest) -> int:
         # ao contrário dos cartões da lista (um `st.markdown` por linha), a consolidação
@@ -74,18 +80,36 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         self.assertTrue(any(f"hash {manifesto.sha256[:8]}" in item.value for item in app.caption))
 
-    def test_lista_comeca_enxuta_com_botao_ver_mais(self) -> None:
+    def _total_empenhos_no_recorte(self, app: AppTest) -> int:
+        # lido do KPI "Empenhos" em vez de hardcoded: a base real (sem fixture congelada,
+        # reimportada de vez em quando) já tem 4 outros testes deste arquivo que quebram por
+        # depender de um total fixo (ver docstring do módulo) — não repete esse problema aqui.
+        kpis = self._kpis_html(app)
+        match = re.search(r'ce-kpi-label">Empenhos</div><div class="ce-kpi-value">(\d+)<', kpis)
+        return int(match.group(1))
+
+    def test_lista_mostra_ate_o_teto_direto_sem_precisar_clicar(self) -> None:
+        # Pedido explícito: rolagem em vez de "Ver mais" clicado repetidamente — até
+        # QTD_INICIAL_LISTA (200) cartões aparecem de uma vez, dentro da caixa rolável
+        # (`.st-key-ce_list_scroll`); só acima desse teto (a base real tem milhares de NEs sem
+        # filtro) que "Ver mais" ainda aparece, como rede de segurança (ver docstring do
+        # módulo e `_render_cartoes_lista`).
         app = self._open_page()
+        total = self._total_empenhos_no_recorte(app)
 
         cartoes = self._cartoes_lista(app)
-        self.assertEqual(len(cartoes), 8)  # QTD_INICIAL_LISTA — não as 3742 NEs do recorte
+        self.assertEqual(len(cartoes), min(200, total))
         self.assertTrue(
-            any("Mostrando 8 de 3742 notas" in item.value for item in app.markdown)
+            any(f"Mostrando {min(200, total)} de {total} notas" in item.value for item in app.markdown)
+            or any(f"Mostrando todas as {total} notas" in item.value for item in app.markdown)
         )
-        self.assertTrue(any(b.label == "Ver mais" for b in app.button))
+        self.assertEqual(any(b.label == "Ver mais" for b in app.button), total > 200)
 
     def test_clicar_ver_mais_revela_mais_cartoes(self) -> None:
         app = self._open_page()
+        total = self._total_empenhos_no_recorte(app)
+        if total <= 200:
+            self.skipTest("Recorte atual tem 200 NEs ou menos — 'Ver mais' nem aparece.")
 
         ver_mais = next(b for b in app.button if b.label == "Ver mais")
         ver_mais.click()
@@ -93,9 +117,10 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         self.assertEqual(len(app.exception), 0)
         cartoes = self._cartoes_lista(app)
-        self.assertEqual(len(cartoes), 16)  # QTD_INICIAL_LISTA + QTD_INCREMENTO_LISTA
+        esperado = min(400, total)  # QTD_INICIAL_LISTA + QTD_INCREMENTO_LISTA
+        self.assertEqual(len(cartoes), esperado)
         self.assertTrue(
-            any("Mostrando 16 de 3742 notas" in item.value for item in app.markdown)
+            any(f"Mostrando {esperado} de {total} notas" in item.value for item in app.markdown)
         )
 
     def test_grupo_selecionado_mostra_instrucao_sem_marcacoes(self) -> None:
@@ -326,9 +351,12 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
     def test_busca_livre_restringe_opcoes_dos_filtros_rapidos(self) -> None:
         # bug relatado: os filtros ofereciam atributos de NEs fora da busca (opções do
         # dataset inteiro, não do recorte já reduzido pela busca livre). "informatica" bate
-        # em 34 NEs com só 7 "Ação de Governo" distintas (conferido contra a extração real,
-        # 15/08/2026) — bem menos que as 54 do dataset inteiro; "ADMINISTRACAO DA UNIDADE"
-        # (ação 2000) não é uma delas.
+        # nos campos de sempre da NE em 7 "Ação de Governo" distintas — bem menos que as 54 do
+        # dataset inteiro; "ADMINISTRACAO DA UNIDADE" (ação 2000) não é uma delas. Desde que a
+        # busca por item (base mensal, 2026+) foi ligada, uma 8ª ação aparece também: NE
+        # 153165152392026NE000490 (ação "Manutenção e Operação da Infraestrutura de TI") não
+        # tem "informatica" em nenhum campo da própria NE, só no item empenhado dentro dela —
+        # é exatamente o caso que a busca por item deveria capturar, não uma regressão.
         app = self._open_page()
         busca = next(t for t in app.text_input if t.label == "Busca livre")
         busca.set_value("informatica")
@@ -336,33 +364,32 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         self.assertEqual(len(app.exception), 0)
         acao_filter = next(m for m in app.multiselect if m.label == "Ação de Governo")
-        self.assertEqual(len(acao_filter.options), 7)
+        self.assertEqual(len(acao_filter.options), 8)
         self.assertFalse(any("ADMINISTRACAO DA UNIDADE" in opcao for opcao in acao_filter.options))
+        self.assertTrue(any("INFRAESTRUTURA DE TECNOLOGIA" in opcao for opcao in acao_filter.options))
 
     def test_default_selection_matches_sort_order(self) -> None:
-        # Padrão: "Maior saldo de empenho" — o cartão selecionado (marcado com a classe
-        # "is-selected") deve ser o primeiro da página 1, e sua NE deve ser a exibida no
-        # painel de detalhamento.
+        # Padrão: "Maior saldo de empenho" — o cartão selecionado (marcado nativamente por
+        # `type="primary"`, não uma classe CSS própria — ver docstring do módulo) deve ser o
+        # primeiro da página 1, e sua NE deve ser a exibida no painel de detalhamento.
         app = self._open_page()
         cartoes = self._cartoes_lista(app)
-        selecionado = next(c for c in cartoes if "is-selected" in c)
-        self.assertEqual(selecionado, cartoes[0])
+        selecionado = next(c for c in cartoes if c.proto.type == "primary")
+        self.assertEqual(selecionado.key, cartoes[0].key)
 
         ne_selecionada = self._ne_do_cartao(selecionado)
         self.assertTrue(
             any(f'class="ce-ne">{ne_selecionada}' in item.value for item in app.markdown)
         )
 
-    def test_clicar_ver_em_outro_cartao_troca_a_ne_selecionada(self) -> None:
+    def test_clicar_no_cartao_troca_a_ne_selecionada(self) -> None:
+        # botão "Ver" foi removido (pedido explícito) — cada cartão É o próprio `st.button`
+        # (ver docstring do módulo e `_render_cartoes_lista`); clicar nele troca a seleção.
         app = self._open_page()
         cartoes = self._cartoes_lista(app)
         ne_segunda = self._ne_do_cartao(cartoes[1])
 
-        # a chave do botão usa a NE completa (com prefixo de órgão/UG); o texto exibido no
-        # cartão já vem sem esse prefixo (ver `_ne_exibicao`), mas continua sendo um sufixo
-        # da chave completa.
-        botao = next(b for b in app.button if b.label == "Ver" and b.key.endswith(ne_segunda))
-        botao.click()
+        cartoes[1].click()
         app.run(timeout=60)
 
         self.assertEqual(len(app.exception), 0)
@@ -370,7 +397,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
             any(f'class="ce-ne">{ne_segunda}' in item.value for item in app.markdown)
         )
         cartoes_apos = self._cartoes_lista(app)
-        selecionado_apos = next(c for c in cartoes_apos if "is-selected" in c)
+        selecionado_apos = next(c for c in cartoes_apos if c.proto.type == "primary")
         self.assertEqual(self._ne_do_cartao(selecionado_apos), ne_segunda)
 
     def test_explains_when_no_manifest_available(self) -> None:

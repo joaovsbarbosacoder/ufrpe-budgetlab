@@ -52,7 +52,12 @@ from src.dotacao_anual_analysis import (
     build_item_indicators,
 )
 from src.importacao_dotacao import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
-from src.ui_theme import format_brl_compact, render_alert, render_metric_grid, render_page_header
+from src.ui_theme import (
+    format_brl_compact,
+    render_alert,
+    render_metric_grid,
+    render_page_header,
+)
 
 
 @st.cache_data(show_spinner="Lendo a base de Dotação Anual...")

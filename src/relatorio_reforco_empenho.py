@@ -5,24 +5,33 @@ Camada: regra de negócio de relatório — monta a tabela no formato usado pela
 pedidos de reforço de empenho e gera os DOIS modelos de PDF em uso (ver histórico da
 conversa para os PDFs de referência — dois modelos distintos, os dois precisam ser emitidos):
 
-  * "Detalhado" (`gerar_pdf_detalhado`) — Processo, Item de Despesa, Unidade, Ação, PTRES,
-    Fonte, ND, UGR, PI, Empenho, Empenhar (R$); Processo/Unidade/Empenho repetidos em toda
-    linha.
-  * "Resumido" (`gerar_pdf_resumido`) — Item de Despesa, Ação, PTRES, Fonte, ND, PI, UGR,
-    Empenhar (R$); sem Unidade/Empenho, Processo aparece uma vez só no cabeçalho da página
-    (não repetido linha a linha) — layout de Tabela Dinâmica do Excel impresso, PI antes de
-    UGR (ordem invertida em relação ao modelo detalhado).
+  * "Detalhado" (`gerar_pdf_detalhado`) — Processo, Item de Despesa, Item Lic., Unidade, Ação,
+    PTRES, Fonte, ND, UGR, PI, Empenho, Empenhar (R$); Processo/Unidade/Empenho repetidos em
+    toda linha; uma linha por item de licitação (`linhas_para_processo`/`coluna_itens`), em
+    ordem alfabética por fornecedor.
+  * "Resumido" (`gerar_pdf_resumido`) — Ação, PTRES, Fonte, ND, PI, UGR, Empenhar (R$); layout
+    de Tabela Dinâmica do Excel impresso de verdade (pedido explícito de correção — chegou a
+    ficar quase idêntico ao detalhado, só com 2 colunas a menos): uma linha por combinação
+    única dessas seis colunas, com "Empenhar (R$)" SOMADO entre todos os
+    itens/fornecedores daquele grupo — sem coluna de fornecedor/item de despesa, é visão
+    orçamentária, não por credor (ver `_agrupado_por_classificacao`). Processo aparece uma vez
+    só no cabeçalho da página, não repetido linha a linha; PI antes de UGR (ordem invertida em
+    relação ao modelo detalhado).
 
 Não lê planilha, não é interface — recebe o DataFrame já normalizado de
 `ler_bolsas_auxilios`/`ler_contratos_continuos` (com `meses_a_empenhar` já calculado por
 `necessidade_empenho.py`).
 
 "Meses a empenhar" E "Empenhar (R$)" são editáveis por linha, os dois (pedido explícito) — o
-valor sugerido inicial vem de `meses_a_empenhar`, mas cada linha pode ser ajustada livremente
-antes de gerar o relatório (a edição em si mora em `st.session_state`, na página, não aqui).
-Editar "Meses a Empenhar" recalcula "Empenhar (R$)" (= meses × valor mensal) e sempre vence
-sobre um valor digitado direto antes; editar "Empenhar (R$)" direto fica valendo como está até
-a próxima edição de "Meses a Empenhar" na mesma linha.
+valor sugerido inicial vem de `meses_a_empenhar` (execução: empenhado − liquidado) OU, quando o
+mês de início da execução é conhecido, da sugestão "por calendário" (pedido explícito:
+"parametrize o sistema para que ele fique pronto para empenhar o que falta para o mês
+vigente" — ver `necessidade_ate_mes_vigente`/`_com_sugestao_por_calendario`); de qualquer
+forma, cada linha pode ser ajustada livremente antes de gerar o relatório (a edição em si mora
+em `st.session_state`, na página, não aqui). Editar "Meses a Empenhar" recalcula "Empenhar
+(R$)" (= meses × valor mensal) e sempre vence sobre um valor digitado direto antes; editar
+"Empenhar (R$)" direto fica valendo como está até a próxima edição de "Meses a Empenhar" na
+mesma linha.
 
 Contrato público:
     EspecificacaoRelatorio (dataclass) — BOLSAS_AUXILIOS / CONTRATOS_CONTINUOS, prontas
@@ -44,6 +53,8 @@ from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 
+from src.necessidade_empenho import necessidade_ate_mes_vigente
+
 
 @dataclass(frozen=True)
 class EspecificacaoRelatorio:
@@ -60,6 +71,23 @@ class EspecificacaoRelatorio:
     #: relatório (nome do programa de bolsa, ou fornecedor do contrato).
     coluna_item_despesa: str
     coluna_valor_mensal: str
+    #: coluna opcional com a lista de itens que rateiam o valor mensal do contrato/NE —
+    #: `[{"numero": int, "percentual": float}, ...]`, percentuais somando 100 (ver
+    #: `src.contratos_continuos_cadastro`). Pedido explícito de correção do usuário: no SIAFI
+    #: o reforço de empenho é feito por item de licitação, mas a liquidação não é dividida por
+    #: item — o item não é uma entidade própria no cadastro do contrato (que é 1 registro por
+    #: NE inteira), só entra em jogo aqui, na hora de montar o relatório: cada item vira sua
+    #: própria linha, com `valor_mensal = despesa_mensal do contrato × percentual do item`.
+    #: Ausente em Bolsas e Auxílios (uma NE == um programa, sempre um item só).
+    coluna_itens: str | None = None
+    #: colunas opcionais para a sugestão inicial "por calendário" (pedido explícito: "fique
+    #: pronto para empenhar o que falta para o mês vigente") — valor já empenhado autoritativo
+    #: (Execução Anual quando disponível, cadastro como reserva; a página monta essa coluna
+    #: antes de chamar `render_botao_relatorio`) e o mês (1-12) do primeiro empenho daquela NE.
+    #: Sem as duas, `linhas_para_processo` cai de volta pra `meses_a_empenhar` (execução:
+    #: empenhado − liquidado) — ver `necessidade_ate_mes_vigente`.
+    coluna_valor_empenhado: str | None = None
+    coluna_inicio_execucao: str | None = None
 
 
 BOLSAS_AUXILIOS = EspecificacaoRelatorio(
@@ -68,6 +96,8 @@ BOLSAS_AUXILIOS = EspecificacaoRelatorio(
     coluna_processo="processo",
     coluna_item_despesa="programa_bolsa",
     coluna_valor_mensal="valor_mensal",
+    coluna_valor_empenhado="valor_empenhado_autoritativo",
+    coluna_inicio_execucao="inicio_execucao_efetivo",
 )
 
 CONTRATOS_CONTINUOS = EspecificacaoRelatorio(
@@ -76,12 +106,20 @@ CONTRATOS_CONTINUOS = EspecificacaoRelatorio(
     coluna_processo="processo_empenho",
     coluna_item_despesa="fornecedor",
     coluna_valor_mensal="despesa_mensal",
+    coluna_itens="itens",
+    coluna_valor_empenhado="valor_empenhado_autoritativo",
+    coluna_inicio_execucao="inicio_execucao_efetivo",
 )
 
 #: colunas do esquema comum do relatório, já com o nome final de exibição — nesta ordem.
+#: "ITEM LIC." (pedido explícito: "o item da licitação tem que ser uma coluna do modelo
+#: detalhado") — só no modelo detalhado; o modelo resumido (`_CABECALHO_RESUMIDO`) não pediu
+#: essa coluna. Em branco para Bolsas e Auxílios (sem esse conceito, ver `item_licitacao` em
+#: `linhas_para_processo`) e para contrato de item único (não chega a ficar redundante porque
+#: "ITEM DE DESPESA" só ganha o sufixo "— Item N" quando o contrato tem mais de um item).
 _CABECALHO = [
-    "PROCESSO", "ITEM DE DESPESA", "UNIDADE", "AÇÃO", "PTRES", "FONTE", "ND", "UGR", "PI",
-    "EMPENHO", "EMPENHAR (R$)",
+    "PROCESSO", "ITEM DE DESPESA", "ITEM LIC.", "UNIDADE", "AÇÃO", "PTRES", "FONTE", "ND",
+    "UGR", "PI", "EMPENHO", "EMPENHAR (R$)",
 ]
 
 
@@ -94,30 +132,155 @@ def processos_disponiveis(df: pd.DataFrame, spec: EspecificacaoRelatorio) -> lis
     return com_ne[spec.coluna_processo].value_counts().index.tolist()
 
 
+_COLUNAS_LINHAS = [
+    "processo", "item_despesa", "item_despesa_base", "unidade_cod", "acao_cod", "ptres",
+    "fonte_cod", "natureza_despesa_cod", "ugr_cod", "pi_cod", "ne_curta", "valor_mensal",
+    "meses_sugeridos", "item_licitacao",
+]
+
+#: colunas intermediárias, usadas só por `_com_sugestao_por_calendario` — descartadas do
+#: resultado final de `linhas_para_processo` (ver docstring de `coluna_valor_empenhado`).
+_COLUNAS_CALENDARIO = ["_valor_empenhado_item", "_inicio_execucao_mes"]
+
+
+def _linha_base(linha: pd.Series, spec: EspecificacaoRelatorio) -> dict:
+    return {
+        "processo": linha[spec.coluna_processo],
+        "unidade_cod": linha["unidade_cod"],
+        "acao_cod": linha["acao_cod"],
+        "ptres": linha["ptres"],
+        "fonte_cod": linha["fonte_cod"],
+        "natureza_despesa_cod": linha["natureza_despesa_cod"],
+        "ugr_cod": linha["ugr_cod"],
+        "pi_cod": linha["pi_cod"],
+        "ne_curta": linha["ne_curta"],
+        # meses_sugeridos é sempre no nível da NE (liquidação não é dividida por item, ver
+        # docstring de `coluna_itens`) — igual em toda linha expandida do mesmo contrato. Pode
+        # ser substituído pela sugestão "por calendário" logo abaixo, ver
+        # `_com_sugestao_por_calendario`.
+        "meses_sugeridos": linha["meses_a_empenhar"],
+        "item_licitacao": None,
+        # "ITEM DE DESPESA" sem o sufixo "— Item N" — usado só pelo modelo detalhado do PDF
+        # (`gerar_pdf_detalhado`), que já tem "ITEM LIC." como coluna própria (pedido
+        # explícito de correção: o sufixo ali ficou redundante com a coluna nova). O editor na
+        # tela e o modelo resumido (sem essa coluna) continuam usando `item_despesa` (com
+        # sufixo) — ver `_linhas_expandidas_por_item`.
+        "item_despesa_base": None,
+        "_valor_empenhado_item": linha.get(spec.coluna_valor_empenhado) if spec.coluna_valor_empenhado else None,
+        "_inicio_execucao_mes": linha.get(spec.coluna_inicio_execucao) if spec.coluna_inicio_execucao else None,
+    }
+
+
+def _linhas_expandidas_por_item(filtrado: pd.DataFrame, spec: EspecificacaoRelatorio) -> list[dict]:
+    """Uma linha por item de licitação do contrato — o item não existe como registro próprio
+    no cadastro (`spec.coluna_itens`, lista de `{"numero","percentual"}` dentro do registro do
+    contrato/NE), só aqui na hora do relatório: `valor_mensal` do item é o valor mensal do
+    contrato inteiro rateado pelo percentual daquele item. "Fornecedor" vira
+    "Fornecedor — Item N" só quando o contrato tem mais de um item (senão o número só
+    acrescentaria ruído a uma informação que já é óbvia). `_valor_empenhado_item` (usado só
+    pela sugestão "por calendário") é rateado pelo mesmo percentual, mesmo critério de
+    `valor_mensal`."""
+
+    linhas = []
+    for _, linha in filtrado.iterrows():
+        itens = linha[spec.coluna_itens]
+        if not isinstance(itens, list) or not itens:
+            itens = [{"numero": 1, "percentual": 100.0}]
+        rotulo_base = str(linha[spec.coluna_item_despesa])
+        valor_mensal_total = linha[spec.coluna_valor_mensal]
+        varios = len(itens) > 1
+        for item in itens:
+            percentual = float(item.get("percentual", 100.0))
+            rotulo = f"{rotulo_base} — Item {item.get('numero')}" if varios else rotulo_base
+            base = _linha_base(linha, spec)
+            base["item_despesa"] = rotulo
+            base["item_despesa_base"] = rotulo_base
+            base["item_licitacao"] = item.get("numero")
+            base["valor_mensal"] = (
+                float(valor_mensal_total) * percentual / 100 if pd.notna(valor_mensal_total) else float("nan")
+            )
+            valor_empenhado_total = base["_valor_empenhado_item"]
+            base["_valor_empenhado_item"] = (
+                float(valor_empenhado_total) * percentual / 100
+                if valor_empenhado_total is not None and pd.notna(valor_empenhado_total) else None
+            )
+            linhas.append(base)
+    return linhas
+
+
+def _com_sugestao_por_calendario(resultado: pd.DataFrame) -> pd.DataFrame:
+    """Substitui `meses_sugeridos` pela sugestão "por calendário" (pedido explícito: "fique
+    pronto para empenhar o que falta para o mês vigente" — ver
+    `necessidade_ate_mes_vigente`) em toda linha com mês de início conhecido; linha sem
+    início conhecido mantém `meses_sugeridos` como estava (execução: empenhado − liquidado).
+    As colunas intermediárias (`_COLUNAS_CALENDARIO`) nunca aparecem no resultado final."""
+
+    if resultado.empty or "_inicio_execucao_mes" not in resultado.columns:
+        return resultado.drop(columns=_COLUNAS_CALENDARIO, errors="ignore")
+
+    meses_calendario, _ = necessidade_ate_mes_vigente(
+        resultado["valor_mensal"], resultado["_valor_empenhado_item"], resultado["_inicio_execucao_mes"],
+    )
+    resultado["meses_sugeridos"] = meses_calendario.where(meses_calendario.notna(), resultado["meses_sugeridos"])
+    return resultado.drop(columns=_COLUNAS_CALENDARIO, errors="ignore")
+
+
 def linhas_para_processo(df: pd.DataFrame, spec: EspecificacaoRelatorio, processo: str) -> pd.DataFrame:
     """Linhas do processo escolhido, no esquema comum do relatório (independente da base de
     origem) — `meses_sugeridos` vem de `meses_a_empenhar` (já calculado na leitura da base),
     ponto de partida para a edição por linha na página, não o valor final. Linhas sem NE
     reconhecível ficam de fora — não há empenho para reforçar (a bolsa/contrato ainda não foi
-    empenhado), mesmo critério de `processos_disponiveis`."""
+    empenhado), mesmo critério de `processos_disponiveis`.
+
+    Um contrato pode virar mais de uma linha aqui — um item de licitação por linha (ver
+    `_linhas_expandidas_por_item`/`coluna_itens`), cada uma com o valor mensal do contrato
+    rateado pelo percentual daquele item, nunca agregados nem colapsados: o relatório precisa
+    mostrar o valor a empenhar de cada item separadamente (pedido explícito). Em Bolsas e
+    Auxílios (sem `coluna_itens`), continua uma linha por processo/NE, sem expansão.
+
+    `meses_sugeridos` pode ser substituído pela sugestão "por calendário" quando o mês de
+    início da execução é conhecido — ver `_com_sugestao_por_calendario`/
+    `necessidade_ate_mes_vigente` (pedido explícito, só afeta a sugestão inicial)."""
 
     filtrado = df[(df[spec.coluna_processo] == processo) & df["ne_curta"].notna()]
-    resultado = pd.DataFrame(
-        {
-            "processo": filtrado[spec.coluna_processo],
-            "item_despesa": filtrado[spec.coluna_item_despesa],
-            "unidade_cod": filtrado["unidade_cod"],
-            "acao_cod": filtrado["acao_cod"],
-            "ptres": filtrado["ptres"],
-            "fonte_cod": filtrado["fonte_cod"],
-            "natureza_despesa_cod": filtrado["natureza_despesa_cod"],
-            "ugr_cod": filtrado["ugr_cod"],
-            "pi_cod": filtrado["pi_cod"],
-            "ne_curta": filtrado["ne_curta"],
-            "valor_mensal": filtrado[spec.coluna_valor_mensal],
-            "meses_sugeridos": filtrado["meses_a_empenhar"],
-        }
-    )
+
+    if spec.coluna_itens and spec.coluna_itens in filtrado.columns:
+        resultado = pd.DataFrame(
+            _linhas_expandidas_por_item(filtrado, spec), columns=[*_COLUNAS_LINHAS, *_COLUNAS_CALENDARIO]
+        )
+    else:
+        resultado = pd.DataFrame(
+            {
+                "processo": filtrado[spec.coluna_processo],
+                "item_despesa": filtrado[spec.coluna_item_despesa],
+                # sem `coluna_itens` nunca tem sufixo "— Item N" pra tirar — mesmo texto de
+                # "item_despesa" (ver docstring de `_linha_base`).
+                "item_despesa_base": filtrado[spec.coluna_item_despesa],
+                "unidade_cod": filtrado["unidade_cod"],
+                "acao_cod": filtrado["acao_cod"],
+                "ptres": filtrado["ptres"],
+                "fonte_cod": filtrado["fonte_cod"],
+                "natureza_despesa_cod": filtrado["natureza_despesa_cod"],
+                "ugr_cod": filtrado["ugr_cod"],
+                "pi_cod": filtrado["pi_cod"],
+                "ne_curta": filtrado["ne_curta"],
+                "valor_mensal": filtrado[spec.coluna_valor_mensal],
+                "meses_sugeridos": filtrado["meses_a_empenhar"],
+                # sem `coluna_itens` (Bolsas e Auxílios) não há número de item — coluna
+                # presente mas sempre nula, pro esquema ficar igual ao de Contratos Contínuos
+                # (`gerar_pdf_detalhado` lê essa coluna pelas duas bases).
+                "item_licitacao": pd.NA,
+                "_valor_empenhado_item": (
+                    filtrado[spec.coluna_valor_empenhado]
+                    if spec.coluna_valor_empenhado and spec.coluna_valor_empenhado in filtrado.columns else pd.NA
+                ),
+                "_inicio_execucao_mes": (
+                    filtrado[spec.coluna_inicio_execucao]
+                    if spec.coluna_inicio_execucao and spec.coluna_inicio_execucao in filtrado.columns else pd.NA
+                ),
+            }
+        )
+    resultado = _com_sugestao_por_calendario(resultado)
     return resultado.reset_index(drop=True)
 
 
@@ -146,12 +309,35 @@ def _formatar_valor(valor: float) -> str:
 #: bem mais longa que as demais colunas), empurrando "EMPENHAR (R$)" para fora da página —
 #: por isso "Item de Despesa" (e "Processo", mais curto mas por segurança) usam `Paragraph`
 #: em vez de string simples, para quebrar linha dentro da largura fixa, não estourá-la.
-_LARGURAS_COLUNA_DETALHADO = [66, 199, 42, 38, 42, 34, 38, 38, 62, 62, 62]
+_LARGURAS_COLUNA_DETALHADO = [66, 175, 36, 42, 38, 42, 34, 38, 38, 62, 62, 62]
 
 #: Modelo "resumido" (ver `gerar_pdf_resumido`): sem Unidade/Empenho, Item de Despesa ganha o
 #: espaço que sobra.
-_CABECALHO_RESUMIDO = ["ITEM DE DESPESA", "AÇÃO", "PTRES", "FONTE", "ND", "PI", "UGR", "EMPENHAR (R$)"]
-_LARGURAS_COLUNA_RESUMIDO = [300, 42, 46, 38, 46, 62, 46, 70]
+#: pedido explícito de correção: o modelo resumido tinha virado quase idêntico ao detalhado (1
+#: linha por item, só 2 colunas a menos) — "tabela dinâmica" aqui significa de volta ao que
+#: era: um rollup orçamentário (Ação/PTRES/Fonte/ND/PI/UGR), sem coluna de fornecedor/item de
+#: despesa — ver `_agrupado_por_classificacao`.
+_CABECALHO_RESUMIDO = ["AÇÃO", "PTRES", "FONTE", "ND", "PI", "UGR", "EMPENHAR (R$)"]
+_LARGURAS_COLUNA_RESUMIDO = [85, 95, 85, 95, 135, 95, 140]
+_COLUNAS_CLASSIFICACAO_RESUMIDO = ["acao_cod", "ptres", "fonte_cod", "natureza_despesa_cod", "pi_cod", "ugr_cod"]
+
+
+def _agrupado_por_classificacao(linhas: pd.DataFrame) -> pd.DataFrame:
+    """Uma linha por combinação única de Ação/PTRES/Fonte/ND/PI/UGR, com "empenhar" somado
+    entre todos os itens/fornecedores daquele grupo — visão orçamentária pura (pedido
+    explícito: "tabela dinâmica", "só com as informações orçamentárias"), diferente das linhas
+    de `linhas_para_processo` (1 por item/fornecedor, usadas pelo editor na tela e pelo modelo
+    detalhado). Ordenada pelas próprias colunas de classificação, não por valor — mesmo
+    critério de leitura de uma Tabela Dinâmica do Excel (agrupada, não ordenada por
+    magnitude)."""
+
+    # min_count=1: grupo cujas linhas são todas NaN (sem despesa mensal cadastrada, ver
+    # `_formatar_valor`) soma NaN, não 0 — sem isso, "sem dado" (que `excluir_linhas_zeradas`
+    # deixa passar de propósito, distinto de zero) virava silenciosamente "0,00" aqui.
+    agrupado = linhas.groupby(_COLUNAS_CLASSIFICACAO_RESUMIDO, dropna=False, as_index=False)["empenhar"].sum(
+        min_count=1
+    )
+    return agrupado.sort_values(_COLUNAS_CLASSIFICACAO_RESUMIDO)
 
 
 def _celula_texto(texto: str, estilo) -> Paragraph:
@@ -199,24 +385,37 @@ def _estilo_tabela(indice_inicio_alinhamento_direita: int) -> TableStyle:
 
 def gerar_pdf_detalhado(spec: EspecificacaoRelatorio, processo: str, linhas: pd.DataFrame) -> bytes:
     """PDF "modelo detalhado" da PROPLAD — uma linha por item, com Processo/Unidade/Empenho
-    repetidos em cada linha. `linhas` já traz a coluna `empenhar` final (após edição por
-    linha na página) — esta função só formata e desenha, não recalcula nada."""
+    repetidos em cada linha, em ordem alfabética por "Item de Despesa" (pedido explícito) —
+    case-insensitive (`str.casefold`, mesmo critério de
+    `app_pages/contratos_continuos.py`::"Carteira de contratos"), sem alterar a ordem da
+    tabela editável na tela nem do modelo resumido (`gerar_pdf_resumido`, não pedido). A
+    ordenação usa `item_despesa` (com sufixo "— Item N", que também ordena os itens de um
+    mesmo fornecedor entre si), mas a célula exibida é `item_despesa_base` (sem o sufixo —
+    pedido explícito de correção: com "ITEM LIC." como coluna própria aqui, o sufixo no nome
+    ficou redundante; o editor na tela e o modelo resumido, sem essa coluna, continuam com o
+    sufixo). `linhas` já traz a coluna `empenhar` final (após edição por linha na página) —
+    esta função só formata e desenha, não recalcula nada."""
 
     buffer, documento, elementos, estilo_celula = _novo_documento(spec, processo)
 
+    linhas = linhas.sort_values("item_despesa", key=lambda coluna: coluna.str.casefold())
+
     dados = [_CABECALHO]
     for linha in linhas.itertuples():
+        item_lic = getattr(linha, "item_licitacao", None)
+        item_despesa_exibido = getattr(linha, "item_despesa_base", None) or linha.item_despesa
         dados.append(
             [
                 _celula_texto(linha.processo, estilo_celula),
-                _celula_texto(linha.item_despesa, estilo_celula),
+                _celula_texto(item_despesa_exibido, estilo_celula),
+                str(int(item_lic)) if pd.notna(item_lic) else "—",
                 str(linha.unidade_cod), str(linha.acao_cod), str(linha.ptres),
                 str(linha.fonte_cod), str(linha.natureza_despesa_cod), str(linha.ugr_cod),
                 str(linha.pi_cod), str(linha.ne_curta), _formatar_valor(float(linha.empenhar)),
             ]
         )
     total = float(linhas["empenhar"].sum())
-    dados.append(["", "", "", "", "", "", "", "", "", "TOTAL", _formatar_valor(total)])
+    dados.append(["", "", "", "", "", "", "", "", "", "", "TOTAL", _formatar_valor(total)])
 
     tabela = Table(dados, colWidths=_LARGURAS_COLUNA_DETALHADO, repeatRows=1)
     tabela.setStyle(_estilo_tabela(indice_inicio_alinhamento_direita=2))
@@ -226,28 +425,36 @@ def gerar_pdf_detalhado(spec: EspecificacaoRelatorio, processo: str, linhas: pd.
 
 
 def gerar_pdf_resumido(spec: EspecificacaoRelatorio, processo: str, linhas: pd.DataFrame) -> bytes:
-    """PDF "modelo resumido" da PROPLAD — Processo aparece uma vez só (no cabeçalho da
-    página, não repetido linha a linha) e as colunas Unidade/Empenho (NE) ficam de fora
-    (pedido explícito, layout de referência sem essas duas colunas). `linhas` já traz a
-    coluna `empenhar` final — esta função só formata e desenha, não recalcula nada."""
+    """PDF "modelo resumido" da PROPLAD — layout de Tabela Dinâmica do Excel impresso (pedido
+    explícito de correção): uma linha por combinação única de Ação/PTRES/Fonte/ND/PI/UGR, com
+    "Empenhar (R$)" somado entre todos os itens/fornecedores daquele grupo — visão
+    orçamentária, não por credor (sem coluna de fornecedor/item de despesa, sem Unidade/
+    Empenho). Processo aparece uma vez só no cabeçalho da página, não repetido linha a linha.
+    `linhas` já traz a coluna `empenhar` final (após edição por linha na página) — esta função
+    só agrupa/soma e desenha, não recalcula o valor de cada linha original (ver
+    `_agrupado_por_classificacao`)."""
 
     buffer, documento, elementos, estilo_celula = _novo_documento(spec, processo)
 
+    agrupado = _agrupado_por_classificacao(linhas)
+
     dados = [_CABECALHO_RESUMIDO]
-    for linha in linhas.itertuples():
+    for linha in agrupado.itertuples():
         dados.append(
             [
-                _celula_texto(linha.item_despesa, estilo_celula),
                 str(linha.acao_cod), str(linha.ptres), str(linha.fonte_cod),
                 str(linha.natureza_despesa_cod), str(linha.pi_cod), str(linha.ugr_cod),
-                _formatar_valor(float(linha.empenhar)),
+                # sem float(...) antes: grupo "sem dado" (min_count=1 em
+                # `_agrupado_por_classificacao`) chega aqui como `None`, não `float('nan')` —
+                # `float(None)` levanta TypeError; `_formatar_valor` já trata `pd.isna` sozinho.
+                _formatar_valor(linha.empenhar),
             ]
         )
-    total = float(linhas["empenhar"].sum())
-    dados.append(["", "", "", "", "", "", "TOTAL", _formatar_valor(total)])
+    total = float(agrupado["empenhar"].sum())
+    dados.append(["", "", "", "", "", "TOTAL", _formatar_valor(total)])
 
     tabela = Table(dados, colWidths=_LARGURAS_COLUNA_RESUMIDO, repeatRows=1)
-    tabela.setStyle(_estilo_tabela(indice_inicio_alinhamento_direita=1))
+    tabela.setStyle(_estilo_tabela(indice_inicio_alinhamento_direita=0))
     elementos.append(tabela)
     documento.build(elementos)
     return buffer.getvalue()

@@ -41,19 +41,63 @@ FILTRO COMBINADO (pedido explícito posterior, aplicado às duas páginas que us
 mecanismo): cada campo agora é um `st.multiselect`, não mais um dropdown "Todos"/valor único
 — reverte a decisão original desta página de usar seleção única "de propósito" (documentada
 antes só no código, nunca neste docstring). Ver `src/ui_filtros_execucao.py` para o porquê.
+
+BUSCA POR ITEM (pedido explícito posterior): a busca livre agora também encontra empenhos
+pelo item/produto/rubrica dentro deles (ex.: "papel filme"), não só pelos campos da NE em si
+— dado que só existe na base MENSAL (`src/tesouro_execucao_mensal.py`, `docs/
+base_execucao_mensal.md`), cobrindo só 2026+, lida de um arquivo fixo em `data/raw/`
+(`CAMINHO_EXECUCAO_MENSAL`) sem importação versionada ainda. `_cached_itens_por_ne` resume,
+por NE, o texto de todos os itens distintos encontrados (`ne_item_desc`); a busca (linha a
+linha em `_dataframe_restrito_a_busca` e no "seguro" `_aplicar_busca` por NE) passa a marcar
+como batendo tanto NE cujos campos de sempre contêm o termo quanto NE cujo texto de itens
+contém — sem essa base disponível (arquivo ausente ou 2023-2025, fora do período coberto), a
+busca continua exatamente como antes. O painel de detalhe (`_render_detalhe`) ganhou uma
+seção listando os itens da NE selecionada, quando existem (aberta por padrão — fechada,
+passava batido).
+
+SELETOR DE NE (pedido explícito posterior): "Notas de Empenho (NE)" é um `st.multiselect`
+próprio desta página (`_opcoes_ne`), fora do mecanismo genérico de filtros (que não suporta
+renderização condicional) — só aparece depois que o usuário escolhe ao menos um Exercício nos
+filtros rápidos, logo abaixo deles (pedido explícito: estava depois do expander "Filtros por
+atributo" antes, passava batido). As opções refletem só os filtros rápidos (Exercício/Ação/
+UGR/GND) neste ponto do script, não os 12 avançados (renderizados depois) — o resultado final
+(após escolher uma NE) ainda cruza com eles, só a lista de opções da caixa em si não se
+restringe por eles.
+
+LINHA DO TEMPO MENSAL (pedido explícito posterior): pop-up (`src.ui_linha_do_tempo.
+abrir_linha_do_tempo`, `st.dialog`) com Empenhado/Liquidado/Pago por mês de uma NE — acionado
+por um botão dentro do painel de detalhe (`_render_detalhe`), separado da seleção de qual NE
+está em detalhe (ver item abaixo). Só aparece para NE com dado na base MENSAL (2026+,
+`_cached_linha_do_tempo` → `src.tesouro_execucao_mensal.linha_do_tempo_por_ne`); some
+silenciosamente para as demais (2023-2025 ou sem a base mensal disponível). O próprio pop-up
+foi extraído para `src/ui_linha_do_tempo.py` (pedido explícito posterior: mesmo formato
+reaproveitado por `app_pages/bolsas_auxilios.py`) — o CSS `.ce-tempo-*` que ele usa continua
+injetado aqui (`_inject_css`), não no módulo compartilhado (Streamlit não carrega CSS
+injetado numa página anterior ao navegar para outra).
+
+CARTÃO CLICÁVEL (pedido explícito posterior): o botão "Ver", antes numa coluna separada de
+cada linha, foi removido — cada NE vira um único `st.button` de largura total (rótulo "NE —
+objeto"), que É o cartão (`_render_cartoes_lista`/`_rotulo_botao_cartao`). Favorecido e
+valores ficam numa linha HTML só informativa abaixo (`_html_linha_lista`), sem clique.
+"Selecionado" usa `type="primary"` (cor de acento nativa do Streamlit), sem CSS próprio.
+
+Tentativa anterior (relatada como quebrada pelo usuário, revertida): um `st.button`
+transparente sobreposto a um `<div>` HTML via CSS `position: absolute`/`opacity: 0`. Passava
+no `AppTest` (que só executa o script Python, não renderiza CSS) mas falhava no navegador
+real — troca de abordagem para um botão nativo, visível, sem nenhum truque de posicionamento,
+que não tem esse risco.
 """
 
 from __future__ import annotations
 
 import html as html_lib
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 from src.design_tokens import (
-    ACCENT,
-    ACCENT_SOFT,
     ACCENT_STRONG,
     BORDER,
     BORDER_SOFT,
@@ -69,15 +113,16 @@ from src.design_tokens import (
 )
 from src.execucao_anual import (
     agregar_por_ne,
-    detalhar_nota_empenho,
     ne_curta as _ne_curta_execucao,
     saldo_por_ne,
 )
 from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
+from src.tesouro_execucao_mensal import ler_execucao_mensal, linha_do_tempo_por_ne
 from src.ui_filtros_execucao import CAMPOS_AVANCADOS_EXECUCAO, CAMPOS_EXECUCAO, CAMPOS_RAPIDOS_EXECUCAO, apply_filters
 from src.ui_filtros_execucao import limpar_filtros as _limpar_filtros_compartilhado
 from src.ui_filtros_execucao import render_filtros_avancados as _render_filtros_avancados_compartilhado
 from src.ui_filtros_execucao import render_filtros_rapidos as _render_filtros_rapidos_compartilhado
+from src.ui_linha_do_tempo import abrir_linha_do_tempo
 from src.ui_theme import format_brl_compact, render_page_header
 
 
@@ -93,15 +138,29 @@ FILTER_FIELDS_RAPIDOS = CAMPOS_RAPIDOS_EXECUCAO
 FILTER_FIELDS_AVANCADOS = CAMPOS_AVANCADOS_EXECUCAO
 FILTER_FIELDS = CAMPOS_EXECUCAO
 
-DIMENSOES_CONSOLIDACAO = {
+# Todas as 16 dimensões dos filtros (rápidos + avançados, `FILTER_FIELDS`) — pedido explícito
+# pra "Consolidação do escopo" cobrir toda opção de filtro disponível, não só um subconjunto
+# escolhido à mão (o que faltava antes: Exercício, Iduso, Resultado Primário Lei, Categoria
+# Econômica, Elemento de Despesa, Natureza de Despesa Detalhada, Subitem, PI, PTRES, UG
+# Executora e UG Responsável). "Ação de Governo" entra primeiro à mão (não a ordem natural de
+# `FILTER_FIELDS`, que começa em "Exercício") só pra preservar a opção padrão de antes desta
+# mudança — trocar o padrão silenciosamente já quebrou um teste que dependia dele ter grupos
+# suficientes pra paginar. "Favorecido" continua por fora de `FILTER_FIELDS` (não é filtro
+# nesta página) mas é útil como consolidação, então fica como extra ao final.
+DIMENSOES_CONSOLIDACAO: dict[str, tuple[str, str | None]] = {
     "Ação de Governo": ("acao_cod", "acao_desc"),
-    "Natureza de Despesa": ("natureza_despesa_cod", "natureza_despesa_desc"),
-    "UGR - Gestão": ("ugr_cod", "ugr_desc"),
-    "Fonte de Recursos": ("fonte_cod", "fonte_desc"),
-    "Grupo de Despesa": ("gnd_cod", "gnd_desc"),
-    "Favorecido": ("ne_favorecido", None),
-    "Número do Processo": ("processo_ne", None),
 }
+for _name, _label, _code_column, _description_column in FILTER_FIELDS:
+    DIMENSOES_CONSOLIDACAO.setdefault(_label, (_code_column, _description_column))
+# Natureza Detalhada e Subitem existem em `agregar_por_ne` só como resumo (uma NE pode ter mais
+# de uma classificação dentro dela — ver `_DIMENSOES_CONSTANTES_POR_NE`/`_resumo_classificacao`
+# em `src/execucao_anual.py`): não há coluna `*_cod`/`*_desc` na base por NE, só
+# `natureza_detalhada_label`/`subitem_resumo`. Sobrescreve as duas entradas herdadas de
+# `FILTER_FIELDS` (que apontam pra colunas que só existem na base linha a linha, não na
+# agregada) para não gerar KeyError ao consolidar por elas.
+DIMENSOES_CONSOLIDACAO["Natureza de Despesa Detalhada"] = ("natureza_detalhada_label", None)
+DIMENSOES_CONSOLIDACAO["Subitem"] = ("subitem_resumo", None)
+DIMENSOES_CONSOLIDACAO["Favorecido"] = ("ne_favorecido", None)
 
 #: dimensões do quadro "Consolidação Orçamentária do Grupo" (pedido explícito) — só as NEs
 #: marcadas na lista, não o recorte de filtros inteiro (isso já é "Consolidação do escopo",
@@ -117,8 +176,14 @@ DIMENSOES_CONSOLIDACAO_GRUPO = {
 
 ORDENS = ("Maior saldo de empenho", "Maior valor empenhado", "Menor % liquidado", "Nº da NE")
 
-QTD_INICIAL_LISTA = 8  # cartões mostrados de início — lista enxuta, não os milhares de NEs do recorte
-QTD_INCREMENTO_LISTA = 8  # quantos cartões a mais cada clique em "Ver mais" revela
+# Pedido explícito: rolagem em vez de clicar em "Ver mais" repetidamente. A lista fica dentro
+# de uma caixa de altura fixa com rolagem própria (`.st-key-ce_list_scroll`, ver `_inject_css`)
+# — até QTD_INICIAL_LISTA cartões são renderizados direto, sem precisar de nenhum clique; até
+# aí, é só rolar. "Ver mais" continua existindo só como rede de segurança acima desse teto,
+# pra nunca renderizar de uma vez as milhares de NEs de um recorte sem filtro nenhum (custo
+# real: cada cartão é um `st.button`, um widget de verdade).
+QTD_INICIAL_LISTA = 200
+QTD_INCREMENTO_LISTA = 200
 
 QTD_INICIAL_CONSOLIDACAO = 8  # grupos mostrados de início na "Consolidação do escopo"
 QTD_INCREMENTO_CONSOLIDACAO = 8
@@ -127,6 +192,11 @@ COLUNAS_BUSCA = [
     "ne_ccor", "ne_descricao", "ne_favorecido", "natureza_detalhada_label",
     "pi_cod", "ptres", "acao_desc", "fonte_desc", "processo_ne",
 ]
+
+#: base MENSAL (só 2026+, ver docs/base_execucao_mensal.md) — arquivo fixo em `data/raw/`,
+#: sem importação versionada ainda (fora do escopo desta etapa). Usada só para a busca por
+#: item; ausência do arquivo não impede o resto da página, só a busca por item.
+CAMINHO_EXECUCAO_MENSAL = Path("data/raw") / "BI CPOC - EXEC. DESPESAS - Mensal.xlsx"
 
 
 def _esc(value: object) -> str:
@@ -141,6 +211,32 @@ def _ne_exibicao(ne_ccor: object, ano: object) -> str:
     if pd.isna(ne_ccor) or pd.isna(ano):
         return "—" if pd.isna(ne_ccor) else str(ne_ccor)
     return _ne_curta_execucao(str(ne_ccor))
+
+
+def _opcoes_ne(dataframe: pd.DataFrame) -> dict[str, str]:
+    """{"rótulo (NE curta — descrição)": ne_ccor} das NEs distintas em `dataframe` — para o
+    seletor "Notas de Empenho (NE)" (pedido explícito: só aparece com Exercício selecionado,
+    ver corpo da página). `dataframe` já deve vir recortado por Exercício e pelos demais
+    filtros; sem isso a lista teria as ~3.700 NEs da base inteira.
+
+    `ne_descricao` só vem preenchida de verdade na linha de tipo "empenho" (nas linhas de item
+    de execução é sempre o marcador "NAO SE APLICA", ver docs/base_execucao_anual.md, seção
+    3) — resolvida à parte por isso, não pelo primeiro valor que `drop_duplicates` encontrar
+    (que podia ser a linha errada e mostrar "NAO SE APLICA" no rótulo)."""
+
+    todas_nes = dataframe[["ne_ccor", "ano"]].dropna(subset=["ne_ccor"]).drop_duplicates(subset=["ne_ccor"])
+    descricoes = (
+        dataframe.loc[dataframe["tipo_linha"] == "empenho", ["ne_ccor", "ne_descricao"]]
+        .drop_duplicates(subset=["ne_ccor"])
+        .set_index("ne_ccor")["ne_descricao"]
+    )
+    mapping: dict[str, str] = {}
+    for _, row in todas_nes.sort_values("ne_ccor").iterrows():
+        rotulo_codigo = _ne_exibicao(row["ne_ccor"], row["ano"])
+        descricao = descricoes.get(row["ne_ccor"])
+        rotulo = f"{rotulo_codigo} — {descricao}" if pd.notna(descricao) and str(descricao).strip() else rotulo_codigo
+        mapping[rotulo] = row["ne_ccor"]
+    return mapping
 
 
 def _num(value: object) -> str:
@@ -160,6 +256,38 @@ def _cached_leitura(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFram
     `importacao_execucao.carregar_atual`), não só o arquivo do manifesto atual."""
 
     return carregar_atual()
+
+
+@st.cache_data(show_spinner="Lendo os itens de empenho (base mensal)...")
+def _cached_itens_por_ne(caminho: str, mtime: float) -> pd.Series:
+    """NE CCor -> texto de todos os itens distintos daquela NE (`ne_item_desc`, separados por
+    " | "), a partir da base MENSAL — usada só para a busca por palavra-chave de item, nunca
+    para valor financeiro (essa base não tem manifesto/importação versionada ainda). `mtime`
+    só participa da chave de cache."""
+
+    dados = ler_execucao_mensal(caminho)
+    reais = dados.loc[dados["tem_item"], ["ne_ccor", "ne_item_desc"]].drop_duplicates()
+    return reais.groupby("ne_ccor")["ne_item_desc"].agg(" | ".join)
+
+
+@st.cache_data(show_spinner="Lendo a linha do tempo mensal...")
+def _cached_linha_do_tempo(caminho: str, mtime: float) -> pd.DataFrame:
+    """Empenhado/Liquidado/Pago por (NE, mês), a partir da base MENSAL — para o pop-up "Linha
+    do tempo mensal" do painel de detalhe. Mesmo arquivo/`mtime` de `_cached_itens_por_ne`
+    (lido de novo aqui, não reaproveitado: cada `st.cache_data` guarda seu próprio resultado
+    por chamada; ambos ficam em cache após a primeira leitura de cada um nesta sessão)."""
+
+    return linha_do_tempo_por_ne(ler_execucao_mensal(caminho))
+
+
+def _nes_por_item(itens_por_ne: pd.Series | None, alvo: str) -> set[str]:
+    """NEs cujo texto de itens contém `alvo` (já em minúsculas) — conjunto vazio se a base
+    mensal não estiver disponível."""
+
+    if itens_por_ne is None or itens_por_ne.empty:
+        return set()
+    mascara = itens_por_ne.str.lower().str.contains(alvo, na=False, regex=False)
+    return set(itens_por_ne[mascara].index)
 
 
 # Mecanismo de filtro (busca + rápidos + avançados) extraído para `src/ui_filtros_execucao.py`
@@ -183,6 +311,10 @@ def _render_filtros_avancados(dataframe: pd.DataFrame, source_key: str, selectio
 
 def _limpar_filtros(source_key: str) -> None:
     _limpar_filtros_compartilhado(FILTER_FIELDS, _PREFIXO_FILTRO, source_key)
+    # "Notas de Empenho (NE)" não é um dos 16 campos do mecanismo compartilhado (é específico
+    # desta página, ver corpo dela) — precisa ser limpo à parte, senão "Limpar filtros"
+    # deixaria uma seleção de NE travada em sessão.
+    st.session_state.pop(f"consulta_empenhos_ne_{source_key}", None)
 
 
 def _inject_css() -> None:
@@ -246,40 +378,29 @@ def _inject_css() -> None:
             text-align: right; font-family: {FONT_BODY}; font-size: {SIZE['value_strong']};
             font-weight: 600; font-variant-numeric: tabular-nums; color: {ACCENT_STRONG};
         }}
-        .ce-list-head, .ce-list-row {{
-            display: grid;
-            grid-template-columns: minmax(220px, 3fr) 110px 110px 120px;
-            gap: 10px; align-items: center;
-        }}
-        .ce-list-head {{
-            padding-bottom: {SPACE['xs']}; border-bottom: 1px solid {BORDER};
-            font-family: {FONT_HEADING}; font-size: {SIZE['micro']};
-            letter-spacing: 0.1em; text-transform: uppercase; color: {TEXT_MUTED};
-        }}
-        .ce-list-row {{
-            padding: 8px 0 8px 8px; border-bottom: 1px solid {BORDER_SOFT};
-            border-left: 3px solid transparent;
-        }}
-        .ce-list-row.is-selected {{ background: {ACCENT_SOFT}; border-left-color: {ACCENT}; }}
-        .ce-list-ne {{
-            font-family: {FONT_HEADING}; font-size: {SIZE['body']};
-            letter-spacing: {TRACK['tight']}; color: {TEXT};
-        }}
-        .ce-list-obj {{
-            font-family: {FONT_BODY}; font-size: {SIZE['small']}; color: {TEXT_MUTED};
-            margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        /* Cartão da lista (pedido explícito: sem botão "Ver" separado, ver
+           `_render_cartoes_lista`) — o `st.button` de cada NE É o cartão, um `st.button`
+           nativo de verdade (não um botão invisível sobreposto a um `<div>` via CSS: essa
+           tentativa anterior funcionava só no teste automatizado, que não renderiza CSS de
+           verdade, e falhava no navegador real). "Selecionado" usa `type="primary"`, nativo
+           do Streamlit — sem CSS próprio pra marcar isso. `.ce-list-info` é só o credor,
+           abaixo do botão, sem clique — pedido explícito: sem valores (Empenhado/Liquidado/
+           Pago) na lista.
+        */
+        .st-key-ce_list_select button {{ justify-content: flex-start; text-align: left; }}
+        .ce-list-info {{
+            padding: 2px 4px 10px 4px; border-bottom: 1px solid {BORDER_SOFT}; margin-bottom: 4px;
         }}
         .ce-list-fav {{
             font-family: {FONT_BODY}; font-size: {SIZE['code']}; color: {TEXT_FAINT};
-            margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }}
-        .ce-list-val {{
-            text-align: right; font-family: {FONT_BODY}; font-size: {SIZE['value']};
-            font-variant-numeric: tabular-nums; color: {TEXT_MUTED};
-        }}
-        .ce-list-val-strong {{
-            text-align: right; font-family: {FONT_BODY}; font-size: {SIZE['value_strong']};
-            font-weight: 600; font-variant-numeric: tabular-nums; color: {ACCENT_STRONG};
+        /* Rolagem (pedido explícito) em vez de "Ver mais" clicado repetidamente: a lista de
+           cartões fica numa caixa de altura fixa (~15 linhas) com rolagem própria — abaixo
+           de ~15 empenhos visíveis, o conteúdo nem chega a estourar essa altura e a barra de
+           rolagem do navegador simplesmente não aparece sozinha (CSS `overflow-y: auto`),
+           sem precisar de lógica condicional própria pra isso. */
+        .st-key-ce_list_scroll {{
+            max-height: 620px; overflow-y: auto; padding-right: 8px; margin-bottom: 4px;
         }}
         .ce-list-pager {{
             text-align: center; margin-bottom: 6px; font-family: {FONT_HEADING};
@@ -290,12 +411,26 @@ def _inject_css() -> None:
         .st-key-ce_list_mais button, .st-key-ce_cons_mais button {{
             padding: 2px 16px; min-height: 0; font-size: 12px; color: {TEXT_MUTED};
         }}
-        .st-key-ce_list_select button {{
-            padding: 0px 9px; min-height: 0; height: 26px; font-size: 11px;
-            color: {TEXT_MUTED}; border-color: {BORDER};
-        }}
-        .st-key-ce_list_select button:hover {{ color: {ACCENT}; border-color: {ACCENT}; }}
         .st-key-ce_list_select [data-testid="stCheckbox"] {{ padding-top: 0; }}
+        .ce-tempo-head, .ce-tempo-row {{
+            display: grid; grid-template-columns: minmax(60px,1fr) minmax(0,140px) minmax(0,140px) minmax(0,140px);
+            gap: 10px; align-items: baseline;
+        }}
+        .ce-tempo-head {{
+            padding-bottom: {SPACE['xs']}; border-bottom: 1px solid {BORDER};
+            font-family: {FONT_HEADING}; font-size: {SIZE['micro']};
+            letter-spacing: 0.1em; text-transform: uppercase; color: {TEXT_MUTED};
+        }}
+        .ce-tempo-row {{ padding: 8px 0; border-bottom: 1px solid {BORDER_SOFT}; }}
+        .ce-tempo-mes {{ font-family: {FONT_HEADING}; font-size: {SIZE['body']}; color: {TEXT}; }}
+        .ce-tempo-val {{
+            text-align: right; font-family: {FONT_BODY}; font-size: {SIZE['value']};
+            font-variant-numeric: tabular-nums; color: {TEXT_MUTED};
+        }}
+        .ce-tempo-val-strong {{
+            text-align: right; font-family: {FONT_BODY}; font-size: {SIZE['value_strong']};
+            font-weight: 600; font-variant-numeric: tabular-nums; color: {ACCENT_STRONG};
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -325,17 +460,18 @@ def _saldo_e_a_pagar(por_ne: pd.DataFrame) -> pd.DataFrame:
     return resultado
 
 
-def _aplicar_busca(por_ne: pd.DataFrame, busca: str) -> pd.DataFrame:
+def _aplicar_busca(por_ne: pd.DataFrame, busca: str, itens_por_ne: pd.Series | None = None) -> pd.DataFrame:
     if not busca:
         return por_ne
     alvo = busca.strip().lower()
     mascara = pd.Series(False, index=por_ne.index)
     for coluna in COLUNAS_BUSCA:
         mascara = mascara | por_ne[coluna].astype("string").str.lower().str.contains(alvo, na=False, regex=False)
+    mascara = mascara | por_ne["ne_ccor"].isin(_nes_por_item(itens_por_ne, alvo))
     return por_ne[mascara]
 
 
-def _dataframe_restrito_a_busca(dataframe: pd.DataFrame, busca: str) -> pd.DataFrame:
+def _dataframe_restrito_a_busca(dataframe: pd.DataFrame, busca: str, itens_por_ne: pd.Series | None = None) -> pd.DataFrame:
     """Linhas (nível de execução, não por NE) das NEs cujo agregado bate com a busca livre —
     usado ANTES de calcular as opções dos filtros rápidos/avançados (`_render_filtros_*`),
     para elas ficarem restritas ao que a busca já reduziu, em vez de sempre oferecerem
@@ -354,40 +490,44 @@ def _dataframe_restrito_a_busca(dataframe: pd.DataFrame, busca: str) -> pd.DataF
     mascara = pd.Series(False, index=dataframe.index)
     for coluna in COLUNAS_BUSCA:
         mascara = mascara | dataframe[coluna].astype("string").str.lower().str.contains(alvo, na=False, regex=False)
-    nes_que_batem = set(dataframe.loc[mascara, "ne_ccor"])
+    nes_que_batem = set(dataframe.loc[mascara, "ne_ccor"]) | _nes_por_item(itens_por_ne, alvo)
     return dataframe[dataframe["ne_ccor"].isin(nes_que_batem)]
 
 
-_LISTA_CABECALHO = "".join(
-    f'<span style="text-align:{alinhamento}">{texto}</span>'
-    for texto, alinhamento in (
-        ("Nota de empenho", "left"), ("Empenhado", "right"),
-        ("Liquidado", "right"), ("Saldo", "right"),
-    )
-)
+def _rotulo_botao_cartao(linha: pd.Series) -> str:
+    """Rótulo do botão de cada cartão (NE + objeto) — rótulo de `st.button` não quebra linha,
+    por isso o objeto é truncado."""
+
+    ne = _ne_exibicao(linha["ne_ccor"], linha["ano"])
+    objeto = str(linha["ne_descricao"]) if pd.notna(linha["ne_descricao"]) else "(sem descrição)"
+    if len(objeto) > 70:
+        objeto = objeto[:67] + "..."
+    return f"{ne} — {objeto}"
 
 
-def _html_linha_lista(linha: pd.Series, selecionado: bool) -> str:
-    objeto = _esc(linha["ne_descricao"]) if pd.notna(linha["ne_descricao"]) else "(sem descrição)"
+def _html_linha_lista(linha: pd.Series) -> str:
+    """Linha só informativa (credor/favorecido), abaixo do botão do cartão — não é mais o alvo
+    do clique (ver `_render_cartoes_lista`). Pedido explícito: sem valores (Empenhado/
+    Liquidado/Pago) na lista — só número, descrição (no rótulo do botão) e credor aqui."""
+
     favorecido = _esc(linha["ne_favorecido"]) if pd.notna(linha["ne_favorecido"]) else "(sem favorecido)"
-    classe = "ce-list-row is-selected" if selecionado else "ce-list-row"
-    return (
-        f'<div class="{classe}">'
-        f'<div><div class="ce-list-ne">{_esc(_ne_exibicao(linha["ne_ccor"], linha["ano"]))}</div>'
-        f'<div class="ce-list-obj">{objeto}</div>'
-        f'<div class="ce-list-fav">{favorecido}</div></div>'
-        f'<span class="ce-list-val">{_num(linha["empenhada"])}</span>'
-        f'<span class="ce-list-val">{_num(linha["liquidada"])}</span>'
-        f'<span class="ce-list-val-strong">{_num(linha["saldo"])}</span>'
-        "</div>"
-    )
+    return f'<div class="ce-list-info"><span class="ce-list-fav">{favorecido}</span></div>'
 
 
-_LISTA_COLUNAS = (0.05, 0.07, 0.88)  # marcar (grupo) | ver (detalhe) | cartão
+_LISTA_COLUNAS = (0.06, 0.94)  # marcar (grupo) | cartão (clicável, seleciona a NE pro detalhe)
 
 
 def _render_cartoes_lista(dados: pd.DataFrame, ne_selecionado: str, source_key: str) -> str | None:
-    """Renderiza os cartões visíveis; devolve a NE clicada em "Ver" (se houve clique).
+    """Renderiza os cartões visíveis; devolve a NE clicada (se houve clique).
+
+    Pedido explícito: sem botão "Ver" separado — cada NE vira um único `st.button` de largura
+    total (o rótulo já mostra NE + objeto), que É o cartão clicável. Tentativa anterior
+    (botão invisível sobreposto a um `<div>` HTML via CSS) funcionava no `AppTest` — que não
+    renderiza CSS de verdade, só executa o script Python — mas falhava no navegador real
+    (relatado pelo usuário): um `st.button` de verdade, sem truque de posicionamento, não tem
+    esse risco. `type="primary"` marca visualmente a NE selecionada com a cor de acento do
+    tema, nativo do Streamlit — não precisa de CSS próprio pra isso. Favorecido e valores
+    ficam numa linha HTML só informativa abaixo do botão (`_html_linha_lista`), sem clique.
 
     A caixa de marcação é um `st.checkbox` independente por NE — sua leitura não passa por
     aqui: o chamador varre `st.session_state` depois de renderizar, porque cartões já
@@ -397,21 +537,23 @@ def _render_cartoes_lista(dados: pd.DataFrame, ne_selecionado: str, source_key: 
     ne_clicada = None
     with st.container(key="ce_list_select"):
         for _, linha in dados.iterrows():
-            col_marca, col_botao, col_cartao = st.columns(_LISTA_COLUNAS, vertical_alignment="center")
+            col_marca, col_cartao = st.columns(_LISTA_COLUNAS, vertical_alignment="center")
             with col_marca:
                 st.checkbox(
                     "Selecionar para o resumo do grupo",
                     key=f"consulta_empenhos_marca_{source_key}_{linha['ne_ccor']}",
                     label_visibility="collapsed",
                 )
-            with col_botao:
-                if st.button("Ver", key=f"consulta_empenhos_ver_{source_key}_{linha['ne_ccor']}"):
-                    ne_clicada = linha["ne_ccor"]
             with col_cartao:
-                st.markdown(
-                    _html_linha_lista(linha, selecionado=linha["ne_ccor"] == ne_selecionado),
-                    unsafe_allow_html=True,
-                )
+                selecionado = linha["ne_ccor"] == ne_selecionado
+                if st.button(
+                    _rotulo_botao_cartao(linha),
+                    key=f"consulta_empenhos_ver_{source_key}_{linha['ne_ccor']}",
+                    type="primary" if selecionado else "secondary",
+                    use_container_width=True,
+                ):
+                    ne_clicada = linha["ne_ccor"]
+                st.markdown(_html_linha_lista(linha), unsafe_allow_html=True)
     return ne_clicada
 
 
@@ -594,7 +736,11 @@ def _render_resumo_grupo(visivel: pd.DataFrame, marcados: set[str], source_key: 
         st.rerun()
 
 
-def _render_detalhe(dataframe: pd.DataFrame, linha: pd.Series) -> None:
+def _render_detalhe(
+    linha: pd.Series,
+    itens_por_ne: pd.Series | None = None,
+    linha_do_tempo: pd.DataFrame | None = None,
+) -> None:
     st.markdown(
         f"""
         <div class="ce-detail-head">
@@ -615,6 +761,12 @@ def _render_detalhe(dataframe: pd.DataFrame, linha: pd.Series) -> None:
         with v2:
             st.metric("Liquidado", format_brl_compact(linha["liquidada"]) if pd.notna(linha["liquidada"]) else "Sem registros")
             st.metric("Saldo de empenho", format_brl_compact(linha["saldo"]))
+
+    if linha_do_tempo is not None and linha["ne_ccor"] in set(linha_do_tempo["ne_ccor"]):
+        if st.button("📈 Linha do tempo mensal", key=f"ce_tempo_{linha['ne_ccor']}", use_container_width=True):
+            tempo_ne = linha_do_tempo[linha_do_tempo["ne_ccor"] == linha["ne_ccor"]]
+            ne_exibicao = _ne_exibicao(linha["ne_ccor"], linha["ano"])
+            abrir_linha_do_tempo(f"Nota de empenho {ne_exibicao} — base mensal (2026+).", tempo_ne)
 
     st.markdown('<div class="ce-section-title">Classificação da despesa</div>', unsafe_allow_html=True)
     st.caption(
@@ -644,13 +796,12 @@ def _render_detalhe(dataframe: pd.DataFrame, linha: pd.Series) -> None:
         f"UGR - Gestão: {linha['ugr_cod']} — {linha['ugr_desc']}"
     )
 
-    with st.expander("Linhas de origem (rastreabilidade)"):
-        origem = detalhar_nota_empenho(dataframe, linha["ne_ccor"])
-        st.dataframe(
-            origem[["linha_origem", "tipo_linha", "ano", "empenhada", "liquidada", "paga"]],
-            hide_index=True,
-            width="stretch",
-        )
+    if itens_por_ne is not None and linha["ne_ccor"] in itens_por_ne.index:
+        # aberto por padrão (pedido explícito) — fechado, passava batido: a NE selecionada ao
+        # abrir a página já tem item mapeado na maioria das vezes, e o usuário não percebia.
+        with st.expander("Itens do empenho (base mensal, 2026+)", expanded=True):
+            for item in itens_por_ne.loc[linha["ne_ccor"]].split(" | "):
+                st.markdown(f"- {_esc(item)}")
 
 
 # ---------------------------------------------------------------------- página
@@ -678,6 +829,23 @@ except Exception as error:
     st.error(f"Não foi possível ler a base de Execução Anual: {error}")
     st.stop()
 
+# Base mensal (2026+) — opcional: sem o arquivo, a busca continua funcionando exatamente como
+# antes (só sem encontrar por palavra-chave de item) e o botão "Linha do tempo mensal" some do
+# painel de detalhe (ver `_render_detalhe`).
+itens_por_ne: pd.Series | None = None
+linha_do_tempo: pd.DataFrame | None = None
+if CAMINHO_EXECUCAO_MENSAL.exists():
+    try:
+        itens_por_ne = _cached_itens_por_ne(
+            str(CAMINHO_EXECUCAO_MENSAL), CAMINHO_EXECUCAO_MENSAL.stat().st_mtime
+        )
+        linha_do_tempo = _cached_linha_do_tempo(
+            str(CAMINHO_EXECUCAO_MENSAL), CAMINHO_EXECUCAO_MENSAL.stat().st_mtime
+        )
+    except Exception:
+        itens_por_ne = None
+        linha_do_tempo = None
+
 source_key = manifesto.sha256[:12]
 
 with acao_limpar:
@@ -690,7 +858,7 @@ with busca_col:
     busca = st.text_input(
         "Busca livre",
         key=f"consulta_empenhos_busca_{source_key}",
-        placeholder="NE, descrição, favorecido, natureza, PI, PTRES…",
+        placeholder="NE, descrição, favorecido, natureza, PI, PTRES, item (2026+)…",
     )
 
 # a busca livre restringe as OPÇÕES dos filtros rápidos/avançados também, não só o resultado
@@ -698,7 +866,7 @@ with busca_col:
 # aparecia sem nenhuma relação com os empenhos exibidos). Por `ne_ccor` (não linha a linha,
 # ver docstring de `_dataframe_restrito_a_busca`), pra não perder linha de item de execução
 # da mesma NE e quebrar a agregação por falta de linha, não por ausência real do dado.
-dataframe_buscado = _dataframe_restrito_a_busca(dataframe, busca)
+dataframe_buscado = _dataframe_restrito_a_busca(dataframe, busca, itens_por_ne)
 if busca and dataframe_buscado.empty:
     # sai aqui, antes do "Nenhum registro corresponde à combinação de filtros selecionada"
     # mais abaixo (que fala de FILTROS DE ATRIBUTO) — a causa da lista vazia é a busca, não
@@ -707,10 +875,45 @@ if busca and dataframe_buscado.empty:
     st.stop()
 
 selections = _render_filtros_rapidos(dataframe_buscado, source_key)
+
+# "Notas de Empenho (NE)" (pedido explícito): só aparece com Exercício selecionado — listar
+# as ~3.700 NEs da base inteira sem esse recorte não seria útil (e ficaria pesado). Logo
+# abaixo dos filtros rápidos (pedido explícito posterior: estava depois do expander "Filtros
+# por atributo", de 12 campos — passava batido, tinha que rolar a página até lá). As opções
+# refletem só os filtros rápidos (Exercício/Ação/UGR/GND) neste ponto, não os 12 avançados
+# (renderizados só depois) — imprecisão aceitável: o resultado final, após escolher uma NE,
+# ainda cruza com os filtros avançados (aplicados a `filtrado` mais abaixo), então nenhuma
+# combinação incoerente chega a aparecer na lista/nos cards, só a lista de opções da própria
+# caixa de NE é que não se restringe por eles.
+ne_key = f"consulta_empenhos_ne_{source_key}"
+ne_selecionadas: list[str] = []
+if "ano" in selections:
+    filtrado_rapido = _apply_filters(dataframe_buscado, selections)
+    mapa_ne = _opcoes_ne(filtrado_rapido)
+    persistido = st.session_state.get(ne_key, [])
+    valido = [rotulo for rotulo in persistido if rotulo in mapa_ne]
+    if valido != persistido:
+        st.session_state[ne_key] = valido
+    rotulos_ne = st.multiselect(
+        "Notas de Empenho (NE)",
+        options=list(mapa_ne),
+        key=ne_key,
+        help="Filtra para uma ou mais NEs específicas do recorte já filtrado pelos filtros rápidos acima.",
+    )
+    ne_selecionadas = [mapa_ne[rotulo] for rotulo in rotulos_ne]
+else:
+    # sem Exercício selecionado, não há lista — e qualquer seleção antiga (de quando havia um
+    # Exercício escolhido) fica sem efeito e some da sessão, para não travar invisível.
+    st.session_state.pop(ne_key, None)
+    st.caption("Selecione um Exercício acima para filtrar por Nota de Empenho (NE) específica.")
+
 with st.expander("Filtros por atributo (12 campos, cruzados) — combinações sem registro não aparecem nas listas"):
     _render_filtros_avancados(dataframe_buscado, source_key, selections)
 
 filtrado = _apply_filters(dataframe_buscado, selections)
+if ne_selecionadas:
+    filtrado = filtrado[filtrado["ne_ccor"].isin(ne_selecionadas)]
+
 if filtrado.empty:
     st.warning("Nenhum registro corresponde à combinação de filtros selecionada.")
     st.stop()
@@ -718,7 +921,7 @@ if filtrado.empty:
 por_ne = _saldo_e_a_pagar(agregar_por_ne(filtrado))
 # `filtrado` já vem restrito à busca (via `dataframe_buscado`) — chamada mantida como rede de
 # segurança (idempotente), não como o filtro principal.
-visivel = _aplicar_busca(por_ne, busca)
+visivel = _aplicar_busca(por_ne, busca, itens_por_ne)
 
 if visivel.empty:
     st.warning("Nenhum empenho encontrado com os filtros informados.")
@@ -804,11 +1007,9 @@ with coluna_principal:
                     st.session_state[f"{_prefixo_marca_lista}{ne}"] = novo_valor
                 st.rerun()
 
-        _, _, col_cabecalho_lista = st.columns(_LISTA_COLUNAS, vertical_alignment="center")
-        with col_cabecalho_lista:
-            st.markdown(f'<div class="ce-list-head">{_LISTA_CABECALHO}</div>', unsafe_allow_html=True)
 
-        ne_clicada = _render_cartoes_lista(dados_visiveis, st.session_state[selecionado_key], source_key)
+        with st.container(key="ce_list_scroll"):
+            ne_clicada = _render_cartoes_lista(dados_visiveis, st.session_state[selecionado_key], source_key)
         if ne_clicada is not None:
             st.session_state[selecionado_key] = ne_clicada
             st.rerun()
@@ -847,7 +1048,7 @@ marcados = {
 
 with coluna_detalhe:
     with st.container(border=True):
-        _render_detalhe(dataframe, selecionado)
+        _render_detalhe(selecionado, itens_por_ne, linha_do_tempo)
 
     with st.container(border=True):
         st.subheader("Resumo do grupo selecionado")

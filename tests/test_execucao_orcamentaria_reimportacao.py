@@ -4,9 +4,10 @@ Orçamentária (Execução Anual)" (movida de `app_pages/execucao_orcamentaria.p
 
 Constrói variantes do arquivo de referência (um exercício fechado alterado,
 um exercício removido, o exercício corrente avançando) para exercitar os
-três caminhos do gate de confirmação. Como a reimportação grava de verdade
-em `data/manifestos/` e `data/raw/`, cada teste faz backup do estado atual
-antes de rodar e restaura tudo em `tearDown` — mesmo que a asserção falhe.
+três caminhos do gate de confirmação. `ESPECIFICACAO_EXECUCAO_ANUAL`/`ESPECIFICACAO_DOTACAO_ANUAL`
+são redirecionadas para um diretório temporário por `tests._reimportacao_isolamento` — nenhum
+teste aqui escreve em `data/raw/`/`data/manifestos/` reais (ver docstring daquele módulo para o
+mecanismo do monkeypatch).
 
 "Atualizar Planilhas" tem mais de um `st.file_uploader` na mesma página (Execução, Dotação,
 e as 4 bases sem reimportação versionada) — os testes selecionam o uploader certo pelo rótulo
@@ -22,29 +23,24 @@ Constrói as variantes a partir de uma FIXTURE CONGELADA (2023-2026, `tests/fixt
 execucao_anual_2026-08-13.xlsx`), não do arquivo realmente ativo em `data/raw/` — composição
 por ano (ver `src/importacao_versionada.py`) significa que uma importação real parcial (ex.:
 só o exercício corrente) pode ficar ativa por tempo indefinido, o que quebraria a construção
-destas variantes se elas dependessem de o ativo ter todos os exercícios no momento em que os
-testes rodarem (aconteceu de verdade nesta sessão). Cada teste importa essa fixture como
-baseline conhecida no próprio `setUp` — o estado real do sistema antes do teste é salvo e
-restaurado do mesmo jeito de sempre, então isso não deixa rastro.
+destas variantes se elas dependessem de o ativo ter todos os exercícios. Cada teste importa
+essa fixture como baseline conhecida no próprio `setUp`, dentro do diretório temporário do
+teste — nunca no estado real do sistema.
 """
 
 from __future__ import annotations
 
 import io
-import shutil
 import unittest
 from pathlib import Path
 
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
-from src.importacao_execucao import Manifesto, importar
+from src.importacao_execucao import Manifesto
+from tests._reimportacao_isolamento import IsolamentoReimportacaoMixin
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DIRETORIO_RAW = PROJECT_ROOT / "data/raw"
-DIRETORIO_ENTRADA = DIRETORIO_RAW / "_entrada"  # pasta compartilhada por todas as bases
-DIRETORIO_MANIFESTOS = PROJECT_ROOT / "data/manifestos"
-MANIFESTO_ATUAL = DIRETORIO_MANIFESTOS / "execucao_anual_atual.json"
 CAMINHO_FIXTURE = PROJECT_ROOT / "tests/fixtures/execucao_anual_2026-08-13.xlsx"
 
 COL_ANO = 36        # posição 0-indexada da coluna "ano" no arquivo bruto
@@ -80,7 +76,7 @@ def _build_variant(
 
 
 @unittest.skipUnless(CAMINHO_FIXTURE.exists(), f"Fixture ausente em {CAMINHO_FIXTURE}")
-class ReimportacaoPageTests(unittest.TestCase):
+class ReimportacaoPageTests(IsolamentoReimportacaoMixin, unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.variant_retroativo = _build_variant(CAMINHO_FIXTURE, modificar_ano=2023, delta=100_000.0)
@@ -88,36 +84,12 @@ class ReimportacaoPageTests(unittest.TestCase):
         cls.variant_avanco = _build_variant(CAMINHO_FIXTURE, modificar_ano=2026, delta=100_000.0)
 
     def setUp(self) -> None:
-        self._manifesto_backup = MANIFESTO_ATUAL.read_bytes() if MANIFESTO_ATUAL.exists() else None
-        self._raw_antes = set(DIRETORIO_RAW.glob("*.xlsx"))
-        self._manifestos_antes = set(DIRETORIO_MANIFESTOS.glob("execucao_anual_*.json"))
-        self._importar_baseline()
+        super().setUp()
+        self.manifesto_atual_path = self.tmp_manifestos / "execucao_anual_atual.json"
+        self.importar_baseline_execucao(CAMINHO_FIXTURE)
         # estado logo após a baseline — é contra isso que as asserções de "nada foi gravado"
-        # comparam durante o teste (não contra o backup pré-teste: setUp já muda o ponteiro
-        # ao importar a baseline, então comparar com o backup original sempre acusaria
-        # diferença, mesmo quando o teste não gravou nada por conta própria).
-        self._manifesto_baseline = MANIFESTO_ATUAL.read_bytes()
-
-    def _importar_baseline(self) -> None:
-        # baseline conhecida (2023-2026) antes de cada teste — não depende de o que já estava
-        # ativo (ver docstring do módulo).
-        caminho = DIRETORIO_RAW / CAMINHO_FIXTURE.name
-        caminho.write_bytes(CAMINHO_FIXTURE.read_bytes())
-        resultado = importar(caminho)
-        assert resultado.ok, resultado.validacao.erros
-
-    def tearDown(self) -> None:
-        if self._manifesto_backup is not None:
-            MANIFESTO_ATUAL.write_bytes(self._manifesto_backup)
-        else:
-            MANIFESTO_ATUAL.unlink(missing_ok=True)
-        for novo in set(DIRETORIO_RAW.glob("*.xlsx")) - self._raw_antes:
-            novo.unlink(missing_ok=True)
-        for novo in set(DIRETORIO_MANIFESTOS.glob("execucao_anual_*.json")) - self._manifestos_antes:
-            novo.unlink(missing_ok=True)
-        staging = DIRETORIO_RAW / "_staging"
-        if staging.exists():
-            shutil.rmtree(staging)
+        # comparam durante o teste.
+        self._manifesto_baseline = self.manifesto_atual_path.read_bytes()
 
     def _open_page(self) -> AppTest:
         app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
@@ -150,7 +122,7 @@ class ReimportacaoPageTests(unittest.TestCase):
         self.assertFalse(checkbox.value)
 
         # nada deve ter sido gravado só de mostrar a prévia
-        self.assertEqual(MANIFESTO_ATUAL.read_bytes(), self._manifesto_baseline)
+        self.assertEqual(self.manifesto_atual_path.read_bytes(), self._manifesto_baseline)
 
     def test_retroactive_change_commits_once_explicitly_confirmed(self) -> None:
         app = self._open_page()
@@ -166,10 +138,10 @@ class ReimportacaoPageTests(unittest.TestCase):
         app.run(timeout=60)
 
         self.assertEqual(len(app.exception), 0)
-        self.assertNotEqual(MANIFESTO_ATUAL.read_bytes(), self._manifesto_backup)
-        manifesto_novo = Manifesto.atual()
+        self.assertNotEqual(self.manifesto_atual_path.read_bytes(), self._manifesto_baseline)
+        manifesto_novo = Manifesto.atual(self.tmp_manifestos)
         self.assertEqual(manifesto_novo.totais_por_ano["2023"]["empenhada"], 762_555_916.88)
-        self.assertTrue((DIRETORIO_RAW / manifesto_novo.arquivo).exists())
+        self.assertTrue((self.tmp_raw / manifesto_novo.arquivo).exists())
 
     def test_removed_exercise_is_informational_and_does_not_block(self) -> None:
         # composição por ano (pedido explícito do usuário): um exercício ausente da extração
@@ -189,8 +161,8 @@ class ReimportacaoPageTests(unittest.TestCase):
         app.run(timeout=60)
 
         self.assertEqual(len(app.exception), 0)
-        self.assertNotEqual(MANIFESTO_ATUAL.read_bytes(), self._manifesto_backup)
-        manifesto_novo = Manifesto.atual()
+        self.assertNotEqual(self.manifesto_atual_path.read_bytes(), self._manifesto_baseline)
+        manifesto_novo = Manifesto.atual(self.tmp_manifestos)
         self.assertNotIn(2023, manifesto_novo.anos)  # não veio NESTA extração
 
     def test_ongoing_exercise_advance_commits_without_gate(self) -> None:
@@ -206,15 +178,15 @@ class ReimportacaoPageTests(unittest.TestCase):
         app.run(timeout=60)
 
         self.assertEqual(len(app.exception), 0)
-        self.assertNotEqual(MANIFESTO_ATUAL.read_bytes(), self._manifesto_backup)
-        manifesto_novo = Manifesto.atual()
+        self.assertNotEqual(self.manifesto_atual_path.read_bytes(), self._manifesto_baseline)
+        manifesto_novo = Manifesto.atual(self.tmp_manifestos)
         self.assertEqual(manifesto_novo.arquivo, "variant_avanco.xlsx")
         self.assertEqual(manifesto_novo.totais_por_ano["2026"]["empenhada"], 754_791_351.80)
-        self.assertTrue((DIRETORIO_RAW / "variant_avanco.xlsx").exists())
+        self.assertTrue((self.tmp_raw / "variant_avanco.xlsx").exists())
 
     def test_uploading_identical_file_reports_nothing_to_save(self) -> None:
-        manifesto_atual = Manifesto.atual()
-        caminho_ativo = DIRETORIO_RAW / manifesto_atual.arquivo
+        manifesto_atual = Manifesto.atual(self.tmp_manifestos)
+        caminho_ativo = self.tmp_raw / manifesto_atual.arquivo
         conteudo_identico = caminho_ativo.read_bytes()
 
         app = self._open_page()
@@ -225,12 +197,12 @@ class ReimportacaoPageTests(unittest.TestCase):
             any("Arquivo idêntico à extração atual" in item.value for item in app.info)
         )
         self.assertFalse(any(b.label in ("Confirmar importação", "Confirmar substituição") for b in app.button))
-        self.assertEqual(MANIFESTO_ATUAL.read_bytes(), self._manifesto_baseline)
+        self.assertEqual(self.manifesto_atual_path.read_bytes(), self._manifesto_baseline)
 
     def test_invalid_extraction_is_blocked_and_reports_errors(self) -> None:
         # Linha sem NE CCor -> erro estrutural determinístico em validar(),
         # independente de magnitudes financeiras.
-        caminho_ativo = DIRETORIO_RAW / Manifesto.atual().arquivo
+        caminho_ativo = self.tmp_raw / Manifesto.atual(self.tmp_manifestos).arquivo
         header = pd.read_excel(caminho_ativo, header=None, nrows=2, dtype=str)
         data = pd.read_excel(caminho_ativo, header=None, skiprows=2, dtype=str)
         COL_NE_CCOR = 34
@@ -246,11 +218,11 @@ class ReimportacaoPageTests(unittest.TestCase):
         textos_erro = [item.value for item in app.error]
         self.assertTrue(any("bloqueada" in t for t in textos_erro))
         self.assertFalse(any(b.label in ("Confirmar importação", "Confirmar substituição") for b in app.button))
-        self.assertEqual(MANIFESTO_ATUAL.read_bytes(), self._manifesto_baseline)
+        self.assertEqual(self.manifesto_atual_path.read_bytes(), self._manifesto_baseline)
 
 
 @unittest.skipUnless(CAMINHO_FIXTURE.exists(), f"Fixture ausente em {CAMINHO_FIXTURE}")
-class PastaDeEntradaTests(unittest.TestCase):
+class PastaDeEntradaTests(IsolamentoReimportacaoMixin, unittest.TestCase):
     """Detecção automática de arquivo em `data/raw/_entrada/` — pasta única, compartilhada com
     a Dotação Anual (ver docstring de `src/ui_reimportacao.py`); mesmo pipeline de
     validação/gate do upload manual, só a origem do arquivo candidato muda (ver
@@ -262,41 +234,26 @@ class PastaDeEntradaTests(unittest.TestCase):
         cls.variant_avanco = _build_variant(CAMINHO_FIXTURE, modificar_ano=2026, delta=100_000.0)
 
     def setUp(self) -> None:
-        self._manifesto_backup = MANIFESTO_ATUAL.read_bytes() if MANIFESTO_ATUAL.exists() else None
-        self._raw_antes = set(DIRETORIO_RAW.glob("*.xlsx"))
-        self._manifestos_antes = set(DIRETORIO_MANIFESTOS.glob("execucao_anual_*.json"))
-        if DIRETORIO_ENTRADA.exists():
-            shutil.rmtree(DIRETORIO_ENTRADA)
-        self._importar_baseline()
+        super().setUp()
+        self.diretorio_entrada = self.tmp_raw / "_entrada"
+        self.manifesto_atual_path = self.tmp_manifestos / "execucao_anual_atual.json"
+        self.importar_baseline_execucao(CAMINHO_FIXTURE)
         # estado logo após a baseline — é contra isso que as asserções de "nada foi gravado"
-        # comparam durante o teste (não contra o backup pré-teste: setUp já muda o ponteiro
-        # ao importar a baseline, então comparar com o backup original sempre acusaria
-        # diferença, mesmo quando o teste não gravou nada por conta própria).
-        self._manifesto_baseline = MANIFESTO_ATUAL.read_bytes()
+        # comparam durante o teste.
+        self._manifesto_baseline = self.manifesto_atual_path.read_bytes()
 
-    def _importar_baseline(self) -> None:
-        # mesma baseline conhecida de ReimportacaoPageTests — ver docstring do módulo.
-        caminho = DIRETORIO_RAW / CAMINHO_FIXTURE.name
-        caminho.write_bytes(CAMINHO_FIXTURE.read_bytes())
-        resultado = importar(caminho)
-        assert resultado.ok, resultado.validacao.erros
+        # baseline de Dotação também precisa existir aqui: o card de Dotação Anual varre a
+        # mesma pasta de entrada compartilhada a cada carregamento (ver
+        # test_arquivo_de_outra_base_na_pasta_compartilhada_e_ignorado) — sem uma extração
+        # anterior, a primeira importação da Dotação nunca é retroativa e seria aplicada
+        # automaticamente, o que mudaria o comportamento esperado daquele teste.
+        from tests.test_dotacao_orcamentaria_reimportacao import _two_years, _workbook_bytes
 
-    def tearDown(self) -> None:
-        if self._manifesto_backup is not None:
-            MANIFESTO_ATUAL.write_bytes(self._manifesto_backup)
-        else:
-            MANIFESTO_ATUAL.unlink(missing_ok=True)
-        for novo in set(DIRETORIO_RAW.glob("*.xlsx")) - self._raw_antes:
-            novo.unlink(missing_ok=True)
-        for novo in set(DIRETORIO_MANIFESTOS.glob("execucao_anual_*.json")) - self._manifestos_antes:
-            novo.unlink(missing_ok=True)
-        for pasta in (DIRETORIO_RAW / "_staging", DIRETORIO_ENTRADA):
-            if pasta.exists():
-                shutil.rmtree(pasta)
+        self.importar_baseline_dotacao(_workbook_bytes(_two_years(5000, 6000)), "dotacao_baseline.xlsx")
 
     def _colocar_na_entrada(self, conteudo: bytes, filename: str) -> None:
-        DIRETORIO_ENTRADA.mkdir(parents=True, exist_ok=True)
-        (DIRETORIO_ENTRADA / filename).write_bytes(conteudo)
+        self.diretorio_entrada.mkdir(parents=True, exist_ok=True)
+        (self.diretorio_entrada / filename).write_bytes(conteudo)
 
     def _open_page(self) -> AppTest:
         app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
@@ -313,13 +270,13 @@ class PastaDeEntradaTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertFalse(any(b.label == "Confirmar importação" for b in app.button))
         self.assertFalse(any(b.label == "Confirmar substituição" for b in app.button))
-        self.assertNotEqual(MANIFESTO_ATUAL.read_bytes(), self._manifesto_backup)
-        manifesto_novo = Manifesto.atual()
+        self.assertNotEqual(self.manifesto_atual_path.read_bytes(), self._manifesto_baseline)
+        manifesto_novo = Manifesto.atual(self.tmp_manifestos)
         self.assertEqual(manifesto_novo.arquivo, "variant_avanco.xlsx")
         self.assertEqual(manifesto_novo.totais_por_ano["2026"]["empenhada"], 754_791_351.80)
         # arquivo consumido da pasta de entrada, não deixado para trás
-        self.assertFalse((DIRETORIO_ENTRADA / "variant_avanco.xlsx").exists())
-        self.assertTrue((DIRETORIO_RAW / "variant_avanco.xlsx").exists())
+        self.assertFalse((self.diretorio_entrada / "variant_avanco.xlsx").exists())
+        self.assertTrue((self.tmp_raw / "variant_avanco.xlsx").exists())
 
     def test_arquivo_retroativo_exige_confirmacao_e_fica_parado_na_entrada(self) -> None:
         self._colocar_na_entrada(self.variant_retroativo, "variant_retroativo.xlsx")
@@ -329,9 +286,9 @@ class PastaDeEntradaTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         confirmar = next(b for b in app.button if b.label == "Confirmar substituição")
         self.assertTrue(confirmar.disabled)
-        self.assertEqual(MANIFESTO_ATUAL.read_bytes(), self._manifesto_baseline)
+        self.assertEqual(self.manifesto_atual_path.read_bytes(), self._manifesto_baseline)
         # nada foi movido até a confirmação
-        self.assertTrue((DIRETORIO_ENTRADA / "variant_retroativo.xlsx").exists())
+        self.assertTrue((self.diretorio_entrada / "variant_retroativo.xlsx").exists())
 
         checkbox = next(c for c in app.checkbox if "confirmo a atualização" in c.label)
         checkbox.check()
@@ -341,9 +298,9 @@ class PastaDeEntradaTests(unittest.TestCase):
         app.run(timeout=60)
 
         self.assertEqual(len(app.exception), 0)
-        self.assertNotEqual(MANIFESTO_ATUAL.read_bytes(), self._manifesto_backup)
-        self.assertFalse((DIRETORIO_ENTRADA / "variant_retroativo.xlsx").exists())
-        self.assertTrue((DIRETORIO_RAW / "variant_retroativo.xlsx").exists())
+        self.assertNotEqual(self.manifesto_atual_path.read_bytes(), self._manifesto_baseline)
+        self.assertFalse((self.diretorio_entrada / "variant_retroativo.xlsx").exists())
+        self.assertTrue((self.tmp_raw / "variant_retroativo.xlsx").exists())
 
     def test_mais_de_um_arquivo_na_entrada_nao_processa_nada(self) -> None:
         self._colocar_na_entrada(self.variant_avanco, "a.xlsx")
@@ -353,9 +310,9 @@ class PastaDeEntradaTests(unittest.TestCase):
 
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any("Há 2 arquivos" in item.value for item in app.warning))
-        self.assertEqual(MANIFESTO_ATUAL.read_bytes(), self._manifesto_baseline)
-        self.assertTrue((DIRETORIO_ENTRADA / "a.xlsx").exists())
-        self.assertTrue((DIRETORIO_ENTRADA / "b.xlsx").exists())
+        self.assertEqual(self.manifesto_atual_path.read_bytes(), self._manifesto_baseline)
+        self.assertTrue((self.diretorio_entrada / "a.xlsx").exists())
+        self.assertTrue((self.diretorio_entrada / "b.xlsx").exists())
 
     def test_arquivo_de_outra_base_na_pasta_compartilhada_e_ignorado(self) -> None:
         # importado aqui, não no topo do arquivo, para deixar explícito que é só usado por
@@ -380,12 +337,12 @@ class PastaDeEntradaTests(unittest.TestCase):
         # Execução foi processado sozinho, sem travar em nenhum gate) já fica provado pelas
         # asserções de manifesto abaixo.
         self.assertFalse(any("Há" in item.value and "arquivos" in item.value for item in app.warning))
-        self.assertNotEqual(MANIFESTO_ATUAL.read_bytes(), self._manifesto_backup)
-        manifesto_novo = Manifesto.atual()
+        self.assertNotEqual(self.manifesto_atual_path.read_bytes(), self._manifesto_baseline)
+        manifesto_novo = Manifesto.atual(self.tmp_manifestos)
         self.assertEqual(manifesto_novo.arquivo, "variant_avanco.xlsx")
         # o arquivo alheio nunca é tocado — nem movido, nem apagado.
-        self.assertTrue((DIRETORIO_ENTRADA / "dotacao_alheia.xlsx").exists())
-        self.assertFalse((DIRETORIO_ENTRADA / "variant_avanco.xlsx").exists())
+        self.assertTrue((self.diretorio_entrada / "dotacao_alheia.xlsx").exists())
+        self.assertFalse((self.diretorio_entrada / "variant_avanco.xlsx").exists())
 
 
 if __name__ == "__main__":

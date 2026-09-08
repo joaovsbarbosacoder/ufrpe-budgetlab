@@ -142,6 +142,58 @@ def apply_filters(dataframe: pd.DataFrame, campos_todos: Sequence[CampoFiltro], 
     return filtered
 
 
+def _todas_selecoes_atuais(
+    dataframe: pd.DataFrame,
+    campos_todos: Sequence[CampoFiltro],
+    prefixo: str,
+    source_key: str,
+) -> dict[str, list[object]]:
+    """Resolve os valores brutos (código, não o rótulo "código — descrição") de tudo que já
+    está selecionado em CADA um dos 16 campos, a partir do que `st.session_state` já guardava
+    antes desta rodada — base do recorte "todos os OUTROS campos" usado por cada campo ao
+    montar suas próprias opções (ver `_disponiveis_excluindo`).
+
+    Existe pra corrigir a cascata de mão única que havia antes: rápidos e avançados eram dois
+    laços separados, um sempre rodando antes do outro, então um campo só era restringido pelos
+    campos desenhados ANTES dele na mesma rodada — ex.: "Exercício" (rápido, primeiro campo)
+    nunca era restringido por "UG Responsável" (avançado, penúltimo campo), então oferecia anos
+    sem nenhum empenho daquela UG Responsável; escolher um desses anos então zerava as opções
+    de UG Responsável e descartava a seleção em silêncio (bug relatado). Resolver aqui, de uma
+    vez, ANTES de desenhar qualquer widget, faz todo campo enxergar os outros 15 por igual,
+    independente de ordem ou de ser rápido/avançado.
+
+    Usa o mapeamento SEM restrição nenhuma (`dataframe` inteiro, só a busca livre já aplicada)
+    pra traduzir rótulo -> código: o rótulo de um código é sempre o mesmo texto não importa o
+    recorte (o recorte só muda QUAIS códigos aparecem, não o texto de um código que já existe
+    na base), então não há circularidade em resolver todo mundo contra a base inteira aqui."""
+
+    resolvido: dict[str, list[object]] = {}
+    for filter_name, _, code_column, description_column in campos_todos:
+        key = f"{prefixo}_{filter_name}_{source_key}"
+        rotulos_persistidos = st.session_state.get(key, [])
+        if not rotulos_persistidos:
+            continue
+        mapping_completo = option_mapping(dataframe, code_column, description_column)
+        valores = [mapping_completo[rotulo] for rotulo in rotulos_persistidos if rotulo in mapping_completo]
+        if valores:
+            resolvido[filter_name] = valores
+    return resolvido
+
+
+def _disponiveis_excluindo(
+    dataframe: pd.DataFrame,
+    campos_todos: Sequence[CampoFiltro],
+    todas_selecoes: dict[str, list[object]],
+    filter_name: str,
+) -> pd.DataFrame:
+    """`dataframe` recortado por TODOS os campos já selecionados, exceto `filter_name` — as
+    opções de um campo nunca devem depender da seleção dele mesmo, senão escolher um valor
+    poderia fazer os outros valores já escolhidos no mesmo campo somem da lista."""
+
+    outras = {nome: valores for nome, valores in todas_selecoes.items() if nome != filter_name}
+    return apply_filters(dataframe, campos_todos, outras)
+
+
 def render_filtros_rapidos(
     dataframe: pd.DataFrame,
     campos_rapidos: Sequence[CampoFiltro],
@@ -150,17 +202,17 @@ def render_filtros_rapidos(
     source_key: str,
 ) -> dict[str, list[object]]:
     """Desenha os filtros rápidos (sempre visíveis, um `st.multiselect` por coluna) — cada
-    campo recalcula suas opções disponíveis com base nas seleções já feitas nos campos
-    anteriores do mesmo bloco (cascata). `campos_todos` (não só `campos_rapidos`) é usado para
-    recortar `dataframe` a cada passo, para casar exatamente com o comportamento original: uma
-    seleção de um filtro avançado feita numa rodada anterior também restringe as opções aqui."""
+    campo mostra só os valores que ainda têm registro dado o que está selecionado em QUALQUER
+    outro campo (`_todas_selecoes_atuais`/`_disponiveis_excluindo`), rápido ou avançado, não só
+    nos campos rápidos desenhados antes dele."""
 
+    todas_selecoes = _todas_selecoes_atuais(dataframe, campos_todos, prefixo, source_key)
     selections: dict[str, list[object]] = {}
     columns = st.columns(len(campos_rapidos))
     for column, (filter_name, label, code_column, description_column) in zip(
         columns, campos_rapidos, strict=True
     ):
-        available = apply_filters(dataframe, campos_todos, selections)
+        available = _disponiveis_excluindo(dataframe, campos_todos, todas_selecoes, filter_name)
         mapping = option_mapping(available, code_column, description_column)
         key = f"{prefixo}_{filter_name}_{source_key}"
         with column:
@@ -179,12 +231,13 @@ def render_filtros_avancados(
     selections: dict[str, list[object]],
 ) -> None:
     """Desenha os filtros avançados (normalmente dentro de um `st.expander` recolhível,
-    decisão de cada página) em 3 colunas — mesma cascata de `render_filtros_rapidos`, sobre as
-    seleções já acumuladas (inclusive as dos filtros rápidos)."""
+    decisão de cada página) em 3 colunas — mesma restrição mútua de `render_filtros_rapidos`,
+    contra todos os outros 15 campos (rápidos inclusive), não só os avançados anteriores."""
 
+    todas_selecoes = _todas_selecoes_atuais(dataframe, campos_todos, prefixo, source_key)
     columns = st.columns(3)
     for index, (filter_name, label, code_column, description_column) in enumerate(campos_avancados):
-        available = apply_filters(dataframe, campos_todos, selections)
+        available = _disponiveis_excluindo(dataframe, campos_todos, todas_selecoes, filter_name)
         mapping = option_mapping(available, code_column, description_column)
         key = f"{prefixo}_{filter_name}_{source_key}"
         with columns[index % 3]:

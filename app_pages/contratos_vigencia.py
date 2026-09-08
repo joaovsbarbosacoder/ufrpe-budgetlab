@@ -539,9 +539,10 @@ else:
     dias_filtro = (0, 0)
 
 fr2 = st.columns(3)
+_opcoes_criticidade = sorted(contratos["criticidade"].unique().tolist(), key=lambda c: _ORDEM_CRITICIDADE.get(c, 99))
 criticidade_filtro = fr2[0].multiselect(
     "Criticidade",
-    options=sorted(contratos["criticidade"].unique().tolist(), key=lambda c: _ORDEM_CRITICIDADE.get(c, 99)),
+    options=_opcoes_criticidade,
     key="cv_f_criticidade",
     placeholder="Todas",
 )

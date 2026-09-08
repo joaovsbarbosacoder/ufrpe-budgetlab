@@ -48,22 +48,70 @@ _THEME_CSS = f"""
     [data-testid="stMetricValue"] {{ font-weight: 650; letter-spacing: -0.02em; color: {TEXT}; }}
     [data-testid="stMetricLabel"] {{ color: {TEXT_MUTED}; font-weight: 600; }}
     [data-testid="stDataFrame"] {{ border: 1px solid {BORDER}; border-radius: {RADIUS}; overflow: hidden; }}
-    /* Barra lateral em modo "trilho de ícones" por padrão (pedido explícito) — estreita o
-       bastante pra caber só o ícone de cada página, expande pra largura confortável ao
-       passar o mouse por cima. min-width/width juntos porque o Streamlit define os dois via
+    /* Barra lateral escondida por padrão (pedido explícito) — só uma fresta de 0,5rem na
+       borda esquerda pra servir de área de hover; expande pra largura confortável ao
+       encostar o mouse nela. min-width/width juntos porque o Streamlit define os dois via
        style inline (ver stSidebar); só max-width não bastava para vencer o width inline. */
     [data-testid="stSidebar"] {{
         background: {SIDEBAR_BG};
         border-right: 1px solid {BORDER};
-        min-width: 4.5rem !important;
-        width: 4.5rem !important;
+        min-width: 0.5rem !important;
+        width: 0.5rem !important;
         transition: width 0.18s ease, min-width 0.18s ease;
     }}
     [data-testid="stSidebar"]:hover {{
         min-width: 21rem !important;
         width: 21rem !important;
     }}
-    [data-testid="stSidebarContent"] {{ overflow-x: hidden; }}
+    /* O conteúdo (ícones, nav, logo) só aparece junto com a expansão — sem isso, a fresta de
+       0,5rem ainda mostraria uma lasca cortada dos ícones por baixo do overflow:hidden. */
+    [data-testid="stSidebarContent"] {{
+        overflow-x: hidden;
+        opacity: 0;
+        transition: opacity 0.12s ease;
+    }}
+    [data-testid="stSidebar"]:hover [data-testid="stSidebarContent"] {{ opacity: 1; }}
+    /* Alça nativa de redimensionar a sidebar (div com cursor:col-resize bem na borda) — some
+       o tamanho normal do trilho, mas arrastá-la sem querer destrava um tamanho intermediário
+       "grudado" e sua barra de destaque (cor de acento) fica sólida por cima da fresta — a
+       barra azul sólida que quebrou o layout. Sem sentido mesmo com o trilho de largura fixa
+       controlada por CSS: o usuário não deveria conseguir redimensionar manualmente. */
+    [data-testid="stSidebar"] div[style*="cursor: col-resize"] {{
+        display: none !important;
+        pointer-events: none !important;
+    }}
+    /* Logo institucional no topo da lateral, injetada via markdown (não usamos st.logo: o
+       componente nativo zera a largura do próprio slot de cabeçalho quando detecta a sidebar
+       estreita — ele decide colapsar medindo a largura real do contêiner no momento do
+       primeiro render, não o estado de :hover, e nunca mais volta a mostrar a imagem depois
+       disso). position:fixed tira a logo do fluxo do conteúdo da sidebar (que só cresce por
+       :hover via CSS, sem disparar o mecanismo de colapso nativo do Streamlit) e a ancora no
+       canto superior esquerdo, sempre visível tanto no trilho estreito quanto expandido;
+       padding-top no nav abre espaço pra ela não ficar por cima do primeiro item ("Início").
+       Tamanho acompanha o :hover do próprio trilho (pedido explícito: pequena quando fechado,
+       maior — proporcional — quando abre): a versão fechada fica bem dentro dos 4.5rem do
+       trilho pra não vazar sobre a borda pro conteúdo principal (5.75rem fixos vazavam ~7px
+       além da borda); a versão expandida usa a folga extra dos 21rem abertos. */
+    .ufrpe-sidebar-logo {{
+        position: fixed;
+        top: 0.85rem;
+        left: 1.05rem;
+        z-index: 999;
+    }}
+    .ufrpe-sidebar-logo img {{
+        height: 3.75rem !important;
+        max-height: 3.75rem !important;
+        width: auto !important;
+        max-width: none !important;
+        display: block;
+        transition: height 0.18s ease, max-height 0.18s ease;
+    }}
+    [data-testid="stSidebar"]:hover .ufrpe-sidebar-logo img {{
+        height: 6.5rem !important;
+        max-height: 6.5rem !important;
+    }}
+    [data-testid="stSidebarNav"] {{ padding-top: 5rem; transition: padding-top 0.18s ease; }}
+    [data-testid="stSidebar"]:hover [data-testid="stSidebarNav"] {{ padding-top: 8rem; }}
     [data-testid="stSidebarNavLink"] {{ border-radius: 10px; }}
     [data-testid="stSidebarNavLink"][aria-current="page"] {{
         background: {ACCENT_SOFT};

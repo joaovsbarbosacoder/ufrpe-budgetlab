@@ -26,6 +26,18 @@ Linha com "Meses a Empenhar" OU "Empenhar (R$)" igual a zero fica de fora do PDF
 explícito — não há o que reforçar), mas continua visível/editável na tela (não é escondida da
 edição, só do relatório final).
 
+ESTADO NÃO SOBREVIVE A FECHAR O POP-UP (pedido explícito): a necessidade mensal
+(`meses_a_empenhar`, calculada por `src/necessidade_empenho.py`) é sempre o padrão de partida
+— uma edição em "Meses a Empenhar"/"Empenhar (R$)" só vale enquanto o mesmo pop-up continua
+aberto. `render_botao_relatorio` apaga esse estado (`_limpar_estado_relatorio`) toda vez que o
+botão que abre o pop-up é clicado — único jeito de "reabrir" (`st.dialog` não avisa quando foi
+fechado), então limpar no clique do botão equivale a limpar no fechamento anterior.
+
+PONTUAÇÃO DE MILHAR nas colunas editáveis (pedido explícito): `st.column_config.NumberColumn`
+aceita `,` (sprintf-js) pra agrupar milhar, mas só no padrão americano ("1,234.57") — colunas
+editáveis não aceitam HTML customizado (só leitura consegue o pt-BR completo de
+`format_brl_full`, "1.234,57", usado no "Total a Empenhar" abaixo da grade).
+
 Contrato público:
     render_botao_relatorio(df, spec, chave) -> None
 """
@@ -130,8 +142,14 @@ def _abrir_relatorio(df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str)
         key=editor_key,
         disabled=["Item de Despesa", "Empenho"],
         column_config={
-            "Meses a Empenhar": st.column_config.NumberColumn(step=0.01, min_value=0.0, format="%.2f"),
-            "Empenhar (R$)": st.column_config.NumberColumn(step=0.01, min_value=0.0, format="R$ %.2f"),
+            # `,` (sprintf-js, não C-printf) agrupa milhar — pedido explícito ("pontuação de
+            # valores"). Só chega a americano (vírgula milhar, ponto decimal: "1,234.57"), não
+            # o pt-BR completo do resto do app (`format_brl_full`, "1.234,57") — `NumberColumn`
+            # de coluna EDITÁVEL não aceita formatação livre por HTML, só o subconjunto
+            # sprintf-js que o Streamlit expõe (sem locale pt-BR nele). Ainda assim melhor que
+            # antes (sem separador nenhum: "94500.00").
+            "Meses a Empenhar": st.column_config.NumberColumn(step=0.01, min_value=0.0, format="%,.2f"),
+            "Empenhar (R$)": st.column_config.NumberColumn(step=0.01, min_value=0.0, format="R$ %,.2f"),
         },
         hide_index=True,
         width="stretch",
@@ -174,6 +192,21 @@ def _abrir_relatorio(df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str)
         )
 
 
+def _limpar_estado_relatorio(chave: str) -> None:
+    """Apaga todo o estado de edição do relatório (valores por processo, geração da grade do
+    editor e as próprias keys do `st.data_editor`) — pedido explícito: o valor editado
+    ("Meses a Empenhar"/"Empenhar (R$)") só vale enquanto o pop-up continua aberto. Ao fechar
+    (X, Esc, clicar fora) e reabrir, os valores voltam ao padrão sugerido pelo sistema
+    (necessidade mensal, `meses_a_empenhar`) — chamada sempre que o botão que abre o pop-up é
+    clicado, já que essa é a única forma de "reabrir" (`st.dialog` não tem um gancho de
+    fechamento próprio)."""
+
+    prefixos = (f"reforco_valores_{chave}_", f"reforco_geracao_{chave}_", f"reforco_editor_{chave}_")
+    for chave_sessao in list(st.session_state.keys()):
+        if any(chave_sessao.startswith(prefixo) for prefixo in prefixos):
+            del st.session_state[chave_sessao]
+
+
 def render_botao_relatorio(df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str) -> None:
     """Botão que abre o pop-up de emissão do relatório — chamar de dentro da página, com o
     DataFrame já lido por ela (não relê a planilha) e uma `chave` distinta por página
@@ -181,4 +214,5 @@ def render_botao_relatorio(df: pd.DataFrame, spec: EspecificacaoRelatorio, chave
     widget)."""
 
     if st.button("📄 Relatório de Reforço de Empenho", key=f"reforco_abrir_{chave}"):
+        _limpar_estado_relatorio(chave)
         _abrir_relatorio(df, spec, chave)

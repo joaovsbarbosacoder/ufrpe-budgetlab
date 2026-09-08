@@ -1,0 +1,28 @@
+{
+  "base": "execucao_anual",
+  "arquivo": "BI CPOC - EXEC. DESPESAS - Por Ano (2).xlsx",
+  "sha256": "113d653a8017577c645e091ca03c1734b8d79a62f8f32f39dc82855b017c96ce",
+  "data_extracao": "2026-08-28T14:49:29",
+  "importado_em": "2026-08-28T14:49:30-03:00",
+  "anos": [
+    2026
+  ],
+  "totais": {
+    "empenhada": 778096919.23,
+    "liquidada": 577989329.58,
+    "paga": 488599243.46
+  },
+  "totais_por_ano": {
+    "2026": {
+      "empenhada": 778096919.23,
+      "liquidada": 577989329.58,
+      "paga": 488599243.46
+    }
+  },
+  "contagens": {
+    "linhas": 1015,
+    "linhas_empenho": 599,
+    "linhas_item_execucao": 416,
+    "notas_empenho_distintas": 506
+  }
+}

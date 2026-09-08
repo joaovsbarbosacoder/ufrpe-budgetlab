@@ -92,7 +92,7 @@ def _preview_reimportacao(
     spec.diretorio_staging.mkdir(parents=True, exist_ok=True)
     staging_path = spec.diretorio_staging / filename
     staging_path.write_bytes(file_content)
-    return spec.importar(staging_path, registrar=False)
+    return spec.importar(staging_path, diretorio_manifestos=spec.diretorio_manifestos, registrar=False)
 
 
 def _formatar_diferenca(valor: float | None) -> str:
@@ -232,18 +232,26 @@ def _processar_candidato(
 
 @st.cache_data(show_spinner=False)
 def _cached_reconhecimento(
-    _importar: Callable[..., ResultadoImportacao], prefixo_base: str, caminho: str, mtime: float
+    _importar: Callable[..., ResultadoImportacao],
+    prefixo_base: str,
+    caminho: str,
+    mtime: float,
+    diretorio_manifestos: str,
 ) -> ResultadoImportacao | None:
     """`_importar` não entra na chave de cache (prefixo `_`, convenção do Streamlit para
     argumento não hasheável) — por isso `prefixo_base` (`spec.prefixo_estado`) PRECISA entrar:
     a pasta de entrada é compartilhada por todas as bases, então o mesmo (caminho, mtime) é
     testado por várias `spec` diferentes; sem `prefixo_base` na chave, o resultado cacheado de
     uma base vazaria para outra que consultasse o mesmo arquivo. `mtime` participa para forçar
-    reler se o arquivo mudar (ex.: alguém substitui o conteúdo sem trocar o nome) — devolve
+    reler se o arquivo mudar (ex.: alguém substitui o conteúdo sem trocar o nome).
+    `diretorio_manifestos` participa porque entra na comparação contra a extração atual
+    (`_importar` usa esse diretório pra achar o manifesto "anterior", ver
+    `src/importacao_versionada.py::importar`) — sem ele na chave, dois specs com diretórios
+    diferentes (ex.: produção vs. teste) poderiam compartilhar cache indevidamente. Devolve
     `None` (não a exceção) quando o arquivo não pertence a esta base, para caber no cache sem
     reexecutar a checagem a cada rerun."""
     try:
-        return _importar(caminho, registrar=False)
+        return _importar(caminho, diretorio_manifestos=diretorio_manifestos, registrar=False)
     except Exception:
         return None
 
@@ -273,7 +281,11 @@ def _render_pasta_de_entrada(spec: EspecificacaoReimportacao, geracao_key: str, 
         with st.spinner("Verificando arquivos na pasta de entrada..."):
             for arquivo in todos:
                 resultado = _cached_reconhecimento(
-                    spec.importar, spec.prefixo_estado, str(arquivo), arquivo.stat().st_mtime
+                    spec.importar,
+                    spec.prefixo_estado,
+                    str(arquivo),
+                    arquivo.stat().st_mtime,
+                    str(spec.diretorio_manifestos),
                 )
                 if resultado is not None:
                     reconhecidos.append((arquivo, resultado))

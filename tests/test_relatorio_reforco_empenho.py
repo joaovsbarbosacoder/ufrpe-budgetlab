@@ -13,6 +13,7 @@ import pandas as pd
 from src.relatorio_reforco_empenho import (
     BOLSAS_AUXILIOS,
     CONTRATOS_CONTINUOS,
+    _agrupado_por_classificacao,
     excluir_linhas_zeradas,
     gerar_pdf_detalhado,
     gerar_pdf_resumido,
@@ -41,20 +42,32 @@ def _bolsas_sintetico() -> pd.DataFrame:
 
 
 def _continuos_sintetico() -> pd.DataFrame:
+    # 1 linha por CONTRATO/NE (não por item — ver docstring de
+    # `src.contratos_continuos_cadastro`): "Tekis" tem 2 itens de licitação, cada um com seu
+    # percentual do valor mensal total do contrato (`itens`); os demais têm 1 item só, 100%.
     return pd.DataFrame(
         {
-            "processo_empenho": ["001370/2026-44", "001370/2026-44", "000214/2026-66"],
-            "fornecedor": ["Associação Paranaense de Cultura - APC", "Brascon Gestão Ambiental Ltda", "Companhia Energética de Pernambuco"],
-            "unidade_cod": ["SEDE", "SEDE", "SEDE"],
-            "acao_cod": ["20TP", "20TP", "20TP"],
-            "ptres": ["169885", "169885", "169886"],
-            "fonte_cod": ["1000", "1000", "1000"],
-            "natureza_despesa_cod": ["339039", "339039", "339039"],
-            "ugr_cod": ["157684", "157684", "157684"],
-            "pi_cod": ["M20TPG01AXN", "M20TPG02AXN", "M20TPG03AXN"],
-            "ne_curta": ["2026NE000100", "2026NE000101", "2026NE000102"],
-            "despesa_mensal": [3000.0, 2000.0, 5000.0],
-            "meses_a_empenhar": [1.5, 0.0, 3.0],
+            "processo_empenho": ["001370/2026-44", "001370/2026-44", "000214/2026-66", "001370/2026-44"],
+            "fornecedor": [
+                "Associação Paranaense de Cultura - APC", "Brascon Gestão Ambiental Ltda",
+                "Companhia Energética de Pernambuco", "Tekis Tecnologias Avançadas Ltda",
+            ],
+            "unidade_cod": ["SEDE"] * 4,
+            "acao_cod": ["20TP"] * 4,
+            "ptres": ["169885", "169885", "169886", "169885"],
+            "fonte_cod": ["1000"] * 4,
+            "natureza_despesa_cod": ["339039"] * 4,
+            "ugr_cod": ["157684"] * 4,
+            "pi_cod": ["M20TPG01AXN", "M20TPG02AXN", "M20TPG03AXN", "M20TPG04AXN"],
+            "ne_curta": ["2026NE000100", "2026NE000101", "2026NE000102", "2026NE000084"],
+            "despesa_mensal": [3000.0, 2000.0, 5000.0, 10000.0],
+            "meses_a_empenhar": [1.5, 0.0, 3.0, 0.000648],
+            "itens": [
+                [{"numero": 1, "percentual": 100.0}],
+                [{"numero": 1, "percentual": 100.0}],
+                [{"numero": 1, "percentual": 100.0}],
+                [{"numero": 1, "percentual": 70.0}, {"numero": 2, "percentual": 30.0}],
+            ],
         }
     )
 
@@ -95,12 +108,32 @@ class TestLinhasParaProcessoBolsas(unittest.TestCase):
 class TestLinhasParaProcessoContinuos(unittest.TestCase):
     def test_item_despesa_vem_do_fornecedor(self):
         linhas = linhas_para_processo(_continuos_sintetico(), CONTRATOS_CONTINUOS, "001370/2026-44")
-        self.assertEqual(len(linhas), 2)
+        self.assertEqual(len(linhas), 4)
         self.assertIn("Brascon Gestão Ambiental Ltda", set(linhas["item_despesa"]))
+
+    def test_contrato_de_1_item_nao_ganha_sufixo_de_item(self):
+        linhas = linhas_para_processo(_continuos_sintetico(), CONTRATOS_CONTINUOS, "000214/2026-66")
+        self.assertEqual(linhas.iloc[0]["item_despesa"], "Companhia Energética de Pernambuco")
 
     def test_valor_mensal_vem_de_despesa_mensal(self):
         linhas = linhas_para_processo(_continuos_sintetico(), CONTRATOS_CONTINUOS, "000214/2026-66")
         self.assertEqual(linhas.iloc[0]["valor_mensal"], 5000.0)
+
+    def test_contrato_com_varios_itens_vira_uma_linha_por_item_com_valor_rateado(self):
+        # pedido explícito: o item não é uma entidade própria no cadastro (1 registro por
+        # contrato/NE) — só vira linha própria aqui, no relatório, ratreando "despesa_mensal"
+        # do contrato pelo percentual de cada item (não colapsado, nem indistinguível).
+        linhas = linhas_para_processo(_continuos_sintetico(), CONTRATOS_CONTINUOS, "001370/2026-44")
+        itens_tekis = linhas[linhas["ne_curta"] == "2026NE000084"]
+        self.assertEqual(len(itens_tekis), 2)
+        valores = dict(zip(itens_tekis["item_despesa"], itens_tekis["valor_mensal"]))
+        self.assertEqual(
+            valores,
+            {"Tekis Tecnologias Avançadas Ltda — Item 1": 7000.0, "Tekis Tecnologias Avançadas Ltda — Item 2": 3000.0},
+        )
+        # meses_sugeridos é sempre no nível da NE (liquidação não é dividida por item) —
+        # idêntico nas duas linhas expandidas do mesmo contrato.
+        self.assertEqual(itens_tekis["meses_sugeridos"].nunique(), 1)
 
 
 class TestExcluirLinhasZeradas(unittest.TestCase):
@@ -156,6 +189,30 @@ class TestGerarPdfDetalhado(unittest.TestCase):
         )
         pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, "000000/0000-00", vazio)
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
+
+class TestAgrupadoPorClassificacao(unittest.TestCase):
+    def test_linhas_com_mesma_classificacao_somam_numa_so(self):
+        # pedido explícito de correção: modelo resumido = "tabela dinâmica" agrupando por
+        # Ação/PTRES/Fonte/ND/PI/UGR e somando "empenhar" — duas linhas de fornecedores/itens
+        # diferentes, mesma classificação orçamentária, viram uma linha só somada.
+        linhas = pd.DataFrame(
+            {
+                "acao_cod": ["20RK", "20RK", "20RK"],
+                "ptres": ["230390", "230390", "230390"],
+                "fonte_cod": ["1000", "1000", "1000"],
+                "natureza_despesa_cod": ["339039", "339039", "339040"],
+                "pi_cod": ["M20RKG01SCN", "M20RKG01SCN", "M20RKG35SCN"],
+                "ugr_cod": ["157909", "157909", "157842"],
+                "empenhar": [1000.0, 500.0, 300.0],
+            }
+        )
+        agrupado = _agrupado_por_classificacao(linhas)
+        self.assertEqual(len(agrupado), 2)
+        linha_339039 = agrupado[agrupado["natureza_despesa_cod"] == "339039"].iloc[0]
+        self.assertEqual(linha_339039["empenhar"], 1500.0)
+        linha_339040 = agrupado[agrupado["natureza_despesa_cod"] == "339040"].iloc[0]
+        self.assertEqual(linha_339040["empenhar"], 300.0)
 
 
 class TestGerarPdfResumido(unittest.TestCase):

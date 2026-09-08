@@ -16,6 +16,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from src.design_tokens import ACCENT, BORDER, NEGATIVE, POSITIVE, TEXT, TEXT_MUTED
 from src.dotacao_anual_analysis import (
     KNOWN_ITEM_INDICATORS,
     apply_dotacao_anual_filters,
@@ -23,6 +24,12 @@ from src.dotacao_anual_analysis import (
     build_item_indicators,
 )
 from src.importacao_dotacao import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
+from src.importacao_execucao import (
+    DIRETORIO_MANIFESTOS_PADRAO as DIRETORIO_MANIFESTOS_EXECUCAO,
+    Manifesto as ManifestoExecucao,
+    NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO,
+    carregar_atual as carregar_execucao_atual,
+)
 from src.ui_theme import (
     format_brl_compact,
     format_brl_full,
@@ -39,6 +46,14 @@ def _cached_leitura(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFram
     `importacao_dotacao.carregar_atual`), não só o arquivo do manifesto atual."""
 
     return carregar_atual()
+
+
+@st.cache_data(show_spinner="Lendo a base de Execução Anual...")
+def _cached_leitura_execucao(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
+    """Mesmo padrão de `_cached_leitura`, mas para a Execução Anual — usada só no bloco
+    "Orçamento x Execução" (abaixo), que cruza as duas bases pelo Exercício."""
+
+    return carregar_execucao_atual()
 
 
 FILTERS = (
@@ -82,6 +97,15 @@ INDICATOR_DISPLAY_ORDER = (
     "dotacao_suplementar",
     "dotacao_cancelada_remanejada",
 )
+
+# UGR da própria UFRPE na Execução Anual (ugr_desc = "UNIVERSIDADE FEDERAL RURAL DE
+# PERNAMBUCO") — a base de Execução também traz empenhos de orçamento descentralizado
+# (emitidos por outras UGRs contra ações/PTRES que a UFRPE também usa, ex.: outras
+# universidades federais). Sem esse filtro o Empenhado do bloco "Orçamento x Execução"
+# fica sistematicamente maior que a Dotação Atualizada da UFRPE (confirmado nos 4 anos em
+# comum entre as duas bases — 2023 a 2026) porque soma execução de fora do escopo
+# orçamentário que a Dotação Anual representa.
+UGR_UFRPE = "15239"
 
 INDICATOR_COLORS = {
     "dotacao_atualizada": "#4C8DFF",
@@ -235,6 +259,192 @@ def _render_year_chart(filtered: pd.DataFrame, source_key: str, ano_extracao: in
     st.plotly_chart(figure, width="stretch", config={"displayModeBar": False})
 
 
+def _pct(value: float | None) -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{value * 100:.1f}%".replace(".", ",")
+
+
+def _render_waterfall_chart(valores: dict[str, float]) -> None:
+    """Formação da Dotação (Inicial→Suplementar→Cancelada/Remanejada→Atualizada) seguida do
+    consumo pela Execução (Empenhado→Liquidado→Pago), num único gráfico em cascata.
+
+    Da "Dotação Atualizada" em diante os marcadores são "total" (valor absoluto real de cada
+    estágio, não um delta calculado) de propósito: Empenhado/Liquidado/Pago vêm de uma base
+    independente (Execução Anual) e não há garantia de que fechem algebricamente com a
+    Dotação — mostrar o valor real de cada estágio evita fabricar uma relação que os dados não
+    sustentam (mesmo cuidado do comentário em `_render_year_chart` sobre os 4 indicadores de
+    Dotação não terem relação algébrica garantida entre si nesta base).
+    """
+
+    labels = [
+        "Dotação Inicial",
+        "Suplementar",
+        "Cancelada/Remanejada",
+        "Dotação Atualizada",
+        "Empenhado",
+        "Liquidado",
+        "Pago",
+    ]
+    # "absolute" (não "total"): fixa o valor real de cada âncora — "total" faria o Plotly
+    # recalcular a barra como soma acumulada dos deltas anteriores, ignorando o valor real
+    # informado (o que já causou uma barra de Empenhado/Liquidado/Pago com altura errada).
+    measures = ["absolute", "relative", "relative", "absolute", "absolute", "absolute", "absolute"]
+    values = [
+        valores["inicial"],
+        valores["suplementar"],
+        valores["cancelada"],
+        valores["atualizada"],
+        valores["empenhado"],
+        valores["liquidado"],
+        valores["pago"],
+    ]
+
+    figure = go.Figure(
+        go.Waterfall(
+            x=labels,
+            measure=measures,
+            y=values,
+            increasing=dict(marker=dict(color=POSITIVE)),
+            decreasing=dict(marker=dict(color=NEGATIVE)),
+            totals=dict(marker=dict(color=ACCENT)),
+            connector=dict(line=dict(color=BORDER, width=1)),
+            text=[format_brl_compact(valor) for valor in values],
+            textposition="outside",
+            textfont=dict(color=TEXT),
+            hovertext=[format_brl_full(valor) for valor in values],
+            hovertemplate="%{x}<br>%{hovertext}<extra></extra>",
+        )
+    )
+    figure.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color=TEXT, family="sans-serif"),
+        showlegend=False,
+        margin=dict(t=30, b=10, l=10, r=10),
+        xaxis=dict(showgrid=False, zeroline=False, color=TEXT_MUTED),
+        yaxis=dict(
+            showgrid=True, gridcolor=BORDER, zeroline=False, tickformat="~s", color=TEXT_MUTED
+        ),
+        height=440,
+    )
+    st.plotly_chart(figure, width="stretch", config={"displayModeBar": False})
+
+
+def _render_orcamento_execucao(
+    dataframe: pd.DataFrame,
+    execucao_dataframe: pd.DataFrame | None,
+    ano_extracao: int,
+    source_key: str,
+) -> None:
+    if execucao_dataframe is None:
+        st.info(
+            "Nenhuma base de Execução Anual foi importada ainda — este bloco cruza Dotação "
+            "x Execução e precisa das duas bases. Importe a Execução Anual em 'Atualizar "
+            "Planilhas' para habilitá-lo."
+        )
+        return
+
+    anos_dotacao = {int(valor) for valor in dataframe["ano_lancamento"].dropna().unique()}
+    anos_execucao = {int(valor) for valor in execucao_dataframe["ano"].dropna().unique()}
+    anos_comuns = sorted(anos_dotacao & anos_execucao, reverse=True)
+    if not anos_comuns:
+        st.info("Nenhum exercício em comum entre Dotação Anual e Execução Anual para cruzar.")
+        return
+
+    indice_padrao = anos_comuns.index(ano_extracao) if ano_extracao in anos_comuns else 0
+    ano = st.selectbox(
+        "Exercício",
+        options=anos_comuns,
+        index=indice_padrao,
+        key=f"dotacao_anual_orcamento_execucao_ano_{source_key}",
+    )
+    if ano == ano_extracao:
+        st.caption(
+            f"⚠ {ano} é o exercício em andamento na data da extração — Empenhado, Liquidado "
+            "e Pago ainda vão crescer até o fechamento."
+        )
+
+    dotacao_ano = dataframe[dataframe["ano_lancamento"] == ano]
+    indicadores = build_item_indicators(dotacao_ano).set_index("item_informacao_codigo")
+
+    def _valor_dotacao(codigo: str) -> float:
+        linha = indicadores.loc[codigo]
+        if int(linha["quantidade_registros"]) == 0:
+            return 0.0
+        return float(linha["valor_movimento_liquido"])
+
+    inicial = _valor_dotacao("dotacao_inicial")
+    suplementar = _valor_dotacao("dotacao_suplementar")
+    cancelada = _valor_dotacao("dotacao_cancelada_remanejada")
+    atualizada = _valor_dotacao("dotacao_atualizada")
+
+    execucao_ano = execucao_dataframe[
+        (execucao_dataframe["ano"] == ano) & (execucao_dataframe["ugr_cod"] == UGR_UFRPE)
+    ]
+    totais_execucao = execucao_ano[["empenhada", "liquidada", "paga"]].sum(min_count=1)
+    empenhado = float(totais_execucao["empenhada"]) if pd.notna(totais_execucao["empenhada"]) else 0.0
+    liquidado = float(totais_execucao["liquidada"]) if pd.notna(totais_execucao["liquidada"]) else 0.0
+    pago = float(totais_execucao["paga"]) if pd.notna(totais_execucao["paga"]) else 0.0
+
+    if empenhado > atualizada + 0.01:
+        # "\\$" escapa o cifrão: dois "R$" na mesma string do st.warning (que renderiza
+        # Markdown) formam um par de delimitadores de LaTeX para o Streamlit, e tudo entre
+        # eles vira fórmula matemática em vez de texto normal.
+        empenhado_texto = format_brl_full(empenhado).replace("$", "\\$")
+        atualizada_texto = format_brl_full(atualizada).replace("$", "\\$")
+        st.warning(
+            f"Empenhado ({empenhado_texto}) supera a Dotação Atualizada "
+            f"({atualizada_texto}) neste exercício — Dotação e Execução são "
+            "bases independentes; confira se os dois escopos são realmente comparáveis "
+            "aqui antes de usar este número."
+        )
+
+    _render_waterfall_chart(
+        {
+            "inicial": inicial,
+            "suplementar": suplementar,
+            "cancelada": cancelada,
+            "atualizada": atualizada,
+            "empenhado": empenhado,
+            "liquidado": liquidado,
+            "pago": pago,
+        }
+    )
+
+    saldo_a_empenhar = atualizada - empenhado
+    saldo_a_liquidar = empenhado - liquidado
+    saldo_a_pagar = liquidado - pago
+    render_metric_grid(
+        [
+            {
+                "label": "Saldo a empenhar",
+                "value": format_brl_compact(saldo_a_empenhar),
+                "subtitle": (
+                    _pct(saldo_a_empenhar / atualizada) + " da Dotação Atualizada"
+                    if atualizada
+                    else None
+                ),
+            },
+            {
+                "label": "Saldo a liquidar",
+                "value": format_brl_compact(saldo_a_liquidar),
+                "subtitle": (
+                    _pct(saldo_a_liquidar / empenhado) + " do Empenhado" if empenhado else None
+                ),
+            },
+            {
+                "label": "Saldo a pagar",
+                "value": format_brl_compact(saldo_a_pagar),
+                "subtitle": (
+                    _pct(saldo_a_pagar / liquidado) + " do Liquidado" if liquidado else None
+                ),
+            },
+        ],
+        columns=3,
+    )
+
+
 render_page_header(
     "Dotação Orçamentária",
     "Visão gerencial da Dotação Anual validada, por ano de lançamento.",
@@ -258,6 +468,17 @@ except Exception as error:
     st.stop()
 
 render_alert("Base de Dotação Anual carregada a partir do manifesto atual.", "success")
+
+manifesto_execucao = ManifestoExecucao.atual()
+execucao_dataframe: pd.DataFrame | None = None
+if manifesto_execucao is not None:
+    caminho_ponteiro_execucao = DIRETORIO_MANIFESTOS_EXECUCAO / NOME_PONTEIRO_EXECUCAO
+    try:
+        execucao_dataframe = _cached_leitura_execucao(
+            str(caminho_ponteiro_execucao), caminho_ponteiro_execucao.stat().st_mtime
+        )
+    except Exception:
+        execucao_dataframe = None
 
 source_key = manifesto.sha256[:12]
 ano_extracao = datetime.fromisoformat(manifesto.data_extracao).year
@@ -307,6 +528,17 @@ with st.container(border=True):
         "diferenciado e ⏳ no rótulo."
     )
     _render_year_chart(filtered, source_key, ano_extracao)
+
+with st.container(border=True):
+    st.subheader("Orçamento x Execução")
+    st.caption(
+        "Formação da Dotação (Inicial → Suplementar → Cancelada/Remanejada → Atualizada) "
+        "seguida do consumo pela Execução (Empenhado → Liquidado → Pago) no exercício "
+        "escolhido. Usa o exercício inteiro, sem os filtros de dimensão à esquerda. A "
+        "Execução considera só a UGR Gestão UFRPE — orçamento descentralizado, executado "
+        "por outras UGRs, fica fora deste comparativo."
+    )
+    _render_orcamento_execucao(dataframe, execucao_dataframe, ano_extracao, source_key)
 
 data_extracao_texto = datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y")
 st.caption(

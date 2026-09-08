@@ -71,6 +71,36 @@ Nota de Empenho, exibindo as linhas de origem (`linha_origem`).
 Layout de origem, regras de reconciliação e decisões de arquitetura estão
 em `docs/base_execucao_anual.md`.
 
+### Emendas Parlamentares
+
+O relatório **Emendas — Acompanhamento** possui leitor específico em
+`src/tesouro_emendas_acompanhamento.py`. Ele preserva as mesclagens reais,
+códigos como texto e a distinção entre nulo, zero e negativo. A granularidade
+é exercício × emenda × PTRES × GND; uma emenda pode possuir vários PTRES.
+
+`src/emendas_parlamentares.py` cruza o cadastro com a Execução Anual por
+`(exercício, RP, PTRES)`. Exercícios anteriores a 2026 permanecem estáticos;
+de 2026 em diante, Empenhado, Liquidado e Pago vêm da Execução quando há
+vínculo. Execução sem emenda identificada e PTRES sem execução são devolvidos
+como lacunas explícitas.
+
+A página **Emendas Parlamentares** usa a carga histórica inicial recebida,
+sem dados fictícios. A importação versionada em `src/importacao_emendas.py`
+compõe as extrações por exercício: a carga inicial conserva todo o histórico,
+enquanto uploads posteriores são aceitos somente com exercícios a partir de
+2026. Assim, uma atualização que traga apenas 2026 substitui somente 2026 e
+mantém 2016–2025 intactos. Cada bruto recebe nome com hash e nunca sobrescreve
+outro upload. O painel também permite cadastro manual de emendas 2026+ com
+múltiplos PTRES e preserva esses registros em `data/emendas/`. Na fila de
+pendências, a execução RP6/RP7/RP8 sem emenda pode ser vinculada a uma emenda
+existente ou a uma nova emenda. Esses vínculos também são limitados a 2026+ e
+usam um log de eventos em `data/emendas/vinculos/`: desfazer acrescenta um
+novo evento, sem apagar o original. Se um relatório posterior passar a trazer
+o mesmo `(exercício, RP, PTRES)`, o dado oficial absorve o vínculo manual sem
+duplicar a execução; conflitos com outra emenda permanecem explícitos.
+
+O contrato completo está em `docs/base_emendas_acompanhamento.md`.
+
 ### Dotação Orçamentária
 
 A página **Dotação Orçamentária** lê `Manifesto.atual()` de
@@ -160,6 +190,7 @@ ufrpe-budgetlab/
 |   |-- dotacao_anual_analysis.py   # Filtros e agregações da Dotação Anual
 |   |-- execucao_anual.py           # Leitura, validação e agregação da Execução Anual (BI PROPLAD)
 |   |-- importacao_dotacao.py       # Especificação da Dotação Anual sobre o núcleo genérico
+|   |-- importacao_emendas.py       # Carga histórica e atualizações 2026+ de Emendas
 |   |-- importacao_execucao.py      # Especificação da Execução Anual sobre o núcleo genérico
 |   |-- importacao_versionada.py    # Núcleo genérico: manifesto, delta, política de confirmação
 |   |-- tesouro_dotacao_anual.py    # Reconhecimento e normalização da Dotação Anual
@@ -192,7 +223,6 @@ A arquitetura deverá acomodar gradualmente:
 - projeção de insuficiência orçamentária;
 - acompanhamento de contratos e bolsas;
 - DEA;
-- emendas parlamentares.
 
 Esses componentes serão incorporados conforme as regras de negócio forem
 definidas, mantendo a interface Streamlit separada do processamento em `src/`.
