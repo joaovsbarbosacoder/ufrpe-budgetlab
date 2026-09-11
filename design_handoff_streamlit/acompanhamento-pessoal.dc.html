@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/industry-544524d1-ceb3-483b-aa85-15183e074c72/styles.css">
+<script src="_ds/industry-544524d1-ceb3-483b-aa85-15183e074c72/_ds_bundle.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap">
+<style>
+  body { margin: 0; background: #f2f2f3; }
+  a { color: var(--color-accent-700); text-decoration: none; }
+  a:hover { color: var(--color-accent-900); }
+  .ap-tbl { border-collapse: collapse; font-size: 12px; white-space: nowrap; }
+  .ap-tbl th, .ap-tbl td { padding: 7px 10px; border-bottom: 1px solid var(--color-divider); }
+  .ap-sticky { position: sticky; left: 0; background: var(--color-bg); z-index: 2; text-align: left; }
+  .ap-group-row td, .ap-group-row th { background: var(--color-neutral-100); font-family: var(--font-heading); }
+  .ap-group-row .ap-sticky { background: var(--color-neutral-100); }
+  .ap-total-row td, .ap-total-row th { background: color-mix(in srgb, var(--color-accent-700) 16%, transparent); font-family: var(--font-heading); }
+  .ap-total-row .ap-sticky { background: color-mix(in srgb, var(--color-accent-700) 16%, transparent); }
+  .ap-child-row td { color: var(--color-neutral-700); }
+  .ap-child-row .ap-sticky { padding-left: 22px; }
+  .ap-proj { color: var(--color-accent-900); }
+  .ap-toggle { cursor: pointer; user-select: none; }
+  .ap-toggle:hover { color: var(--color-accent-700); }
+  .ap-wrap::-webkit-scrollbar { height: 10px; }
+</style>
+<style>
+  :root {
+    --color-bg: #0B1220; --color-text: #E7ECF5; --color-divider: #232E45; --color-surface: #121B2D;
+    --color-neutral-100: #121B2D; --color-neutral-200: #1C2537; --color-neutral-600: #93A1B8; --color-neutral-700: #93A1B8; --color-neutral-900: #0B1220;
+    --color-accent-100: rgba(76,141,255,.12); --color-accent-600: #4C8DFF; --color-accent-700: #4C8DFF; --color-accent-900: #7FB0FF;
+    --font-heading: 'Segoe UI Semibold','Segoe UI',system-ui,sans-serif; --font-body: 'Segoe UI',system-ui,sans-serif;
+  }
+  .corner { display: none !important; }
+  ::-webkit-scrollbar { width: 12px; height: 12px; } ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background-color: #4C8DFF; border-radius: 999px; border: 3px solid #0B1220; background-clip: padding-box; }
+</style>
+</helmet>
+<div style="min-height: 100vh; background: var(--color-bg); color: var(--color-text); font-family: var(--font-body); padding: 0 0 56px 0">
+
+  <div class="nav" style="display: flex; align-items: baseline; justify-content: space-between; gap: 24px; padding: 18px 32px; border-bottom: 1px solid var(--color-divider)">
+    <div style="display: flex; align-items: baseline; gap: 14px">
+      <span class="nav-brand" style="font-family: var(--font-heading); font-weight: 700; font-size: 21px; letter-spacing: 0.06em; text-transform: uppercase">Acompanhamento de Pessoal</span>
+      <span style="font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-neutral-600)">UO 26248 — UFRPE</span>
+    </div>
+    <span style="font-family: var(--font-heading); font-size: 13px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--color-accent-700)">Data-base: 30/04/2026</span>
+  </div>
+
+  <div style="display: flex; align-items: baseline; gap: 26px; flex-wrap: wrap; padding: 20px 32px 0 32px">
+    <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="4">
+      <div style="min-width: 170px">
+        <div style="font-family: var(--font-heading); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--color-neutral-600)">{{ k.rotulo }}</div>
+        <div style="font-family: var(--font-heading); font-size: 26px; line-height: 1.1; font-variant-numeric: tabular-nums; color: {{ k.cor }}">{{ k.valor }}</div>
+      </div>
+    </sc-for>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 10px; padding: 12px 32px; margin-top: 14px; background: color-mix(in srgb, #F85149 12%, transparent); border-top: 1px solid var(--color-divider); border-bottom: 1px solid var(--color-divider); font-size: 12.5px; text-wrap: pretty">
+    <span style="font-family: var(--font-heading); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: #F85149">Alerta</span>
+    <span>Saldo do CPSS — RPPS (Ação 09HB) projeta déficit de {{ saldoCpssDezembro }} até dezembro/2026, mesmo com dotação hoje suficiente para os demais grupos.</span>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 16px; padding: 16px 32px 0 32px; font-size: 11.5px; color: var(--color-neutral-600)">
+    <span><span style="display: inline-block; width: 9px; height: 9px; background: var(--color-text); margin-right: 5px; border-radius: 1px"></span>Executado (Jan–Abr)</span>
+    <span><span style="display: inline-block; width: 9px; height: 9px; background: var(--color-accent-900); margin-right: 5px; border-radius: 1px"></span>Projetado (Mai–Dez)</span>
+    <span style="margin-left: auto">Diferença Exec. Ano Anterior vs. base validada: {{ diferencaReconciliacao }} — ver nota</span>
+  </div>
+
+  <div class="ap-wrap" style="overflow-x: auto; padding: 12px 32px 0 32px">
+    <table class="ap-tbl">
+      <thead>
+        <tr>
+          <th class="ap-sticky" style="text-align: left; font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-neutral-600)">Rubrica</th>
+          <sc-for list="{{ mesesHeader }}" as="m" hint-placeholder-count="12">
+            <th style="text-align: right; font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: {{ m.cor }}">{{ m.rotulo }}</th>
+          </sc-for>
+          <th style="text-align: right; font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-neutral-600)">Total</th>
+          <th style="text-align: right; font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-neutral-600)">Dotação Atual</th>
+          <th style="text-align: right; font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-neutral-600)">Exec. Ano Anterior</th>
+          <th style="text-align: right; font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-accent-900)">Base PLOA 2027</th>
+        </tr>
+      </thead>
+      <tbody>
+        <sc-for list="{{ linhas }}" as="l" hint-placeholder-count="30">
+          <tr class="{{ l.classeLinha }}">
+            <sc-if value="{{ l.ehGrupo }}" hint-placeholder-val="{{ false }}">
+              <th class="ap-sticky ap-toggle" onClick="{{ l.alternar }}">{{ l.seta }} {{ l.nome }}</th>
+            </sc-if>
+            <sc-if value="{{ l.ehGrupo }}" hint-placeholder-val="{{ false }}">
+              <sc-for list="{{ l.valores }}" as="v" hint-placeholder-count="12"><th style="text-align: right; font-variant-numeric: tabular-nums" class="{{ v.classe }}">{{ v.texto }}</th></sc-for>
+            </sc-if>
+            <sc-if value="{{ l.ehFilho }}" hint-placeholder-val="{{ false }}">
+              <td class="ap-sticky">{{ l.nome }}</td>
+            </sc-if>
+            <sc-if value="{{ l.ehFilho }}" hint-placeholder-val="{{ false }}">
+              <sc-for list="{{ l.valores }}" as="v" hint-placeholder-count="12"><td style="text-align: right; font-variant-numeric: tabular-nums" class="{{ v.classe }}">{{ v.texto }}</td></sc-for>
+            </sc-if>
+            <sc-if value="{{ l.ehGrupo }}" hint-placeholder-val="{{ false }}">
+              <th style="text-align: right; font-variant-numeric: tabular-nums">{{ l.total }}</th>
+            </sc-if>
+            <sc-if value="{{ l.ehFilho }}" hint-placeholder-val="{{ false }}">
+              <td style="text-align: right; font-variant-numeric: tabular-nums">{{ l.total }}</td>
+            </sc-if>
+            <sc-if value="{{ l.ehGrupo }}" hint-placeholder-val="{{ false }}">
+              <th style="text-align: right; font-variant-numeric: tabular-nums">{{ l.dotacao }}</th>
+            </sc-if>
+            <sc-if value="{{ l.ehFilho }}" hint-placeholder-val="{{ false }}">
+              <td style="text-align: right; font-variant-numeric: tabular-nums">{{ l.dotacao }}</td>
+            </sc-if>
+            <sc-if value="{{ l.ehGrupo }}" hint-placeholder-val="{{ false }}">
+              <th style="text-align: right; font-variant-numeric: tabular-nums">{{ l.execAnt }}</th>
+            </sc-if>
+            <sc-if value="{{ l.ehFilho }}" hint-placeholder-val="{{ false }}">
+              <td style="text-align: right; font-variant-numeric: tabular-nums">{{ l.execAnt }}</td>
+            </sc-if>
+            <sc-if value="{{ l.ehGrupo }}" hint-placeholder-val="{{ false }}">
+              <th style="text-align: right; font-variant-numeric: tabular-nums; color: var(--color-accent-900)">{{ l.basePloa }}</th>
+            </sc-if>
+            <sc-if value="{{ l.ehFilho }}" hint-placeholder-val="{{ false }}">
+              <td style="text-align: right; font-variant-numeric: tabular-nums; color: var(--color-accent-900)">{{ l.basePloa }}</td>
+            </sc-if>
+          </tr>
+        </sc-for>
+      </tbody>
+    </table>
+  </div>
+
+  <div style="padding: 26px 32px 0 32px">
+    <div style="font-family: var(--font-heading); font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 10px">Saldo remanescente por grupo (dotação − executado/projetado acumulado)</div>
+    <div class="ap-wrap" style="overflow-x: auto">
+      <table class="ap-tbl">
+        <thead>
+          <tr>
+            <th class="ap-sticky" style="text-align: left; font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-neutral-600)">Grupo</th>
+            <sc-for list="{{ mesesHeader }}" as="m" hint-placeholder-count="12">
+              <th style="text-align: right; font-family: var(--font-heading); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-neutral-600)">{{ m.rotulo }}</th>
+            </sc-for>
+          </tr>
+        </thead>
+        <tbody>
+          <sc-for list="{{ saldoLinhas }}" as="s" hint-placeholder-count="6">
+            <tr class="{{ s.classeLinha }}">
+              <td class="ap-sticky">{{ s.nome }}</td>
+              <sc-for list="{{ s.valores }}" as="v" hint-placeholder-count="12"><td style="text-align: right; font-variant-numeric: tabular-nums; color: {{ v.cor }}">{{ v.texto }}</td></sc-for>
+            </tr>
+          </sc-for>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div style="padding: 22px 32px 0 32px; font-size: 11.5px; letter-spacing: 0.06em; color: var(--color-neutral-600); text-wrap: pretty; max-width: 900px">
+    Estrutura e valores reproduzidos do "Relatório Resumido das Despesas de Pessoal" (CEAO/CGO/SPO/MEC), data-base 30/04/2026. "Base PLOA 2027" é o valor do mês de referência (abril) por rubrica — ainda sem aplicar os multiplicadores de projeção (×13,3333 / ×13 / ×12), o 13º salário e a proporção histórica descritos na metodologia; 13º, abono e adiantamento aparecem como "—" nessa coluna porque seguem regra própria, não a de mês de referência. "Exec. Ano Anterior" reconcilia com a soma das rubricas ({{ execAntReconciliado }}); a base de Execução da Despesa já validada no painel aponta {{ execAntValidada }} para o mesmo total — diferença de {{ diferencaReconciliacao }} ainda a esclarecer antes de travar a metodologia.
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const PESSOAL_DATA = {"dataBaseSerial":46142,"ativo":{"group":{"nome":"ATIVO","meses":[33437681,31499012,31916458,33590173,33758686,42612477,34216778,33587012,33510857,33519697,50827306,50081703],"total":442557840,"dotacao":447842098,"execAntValidada":417676367,"execAnt":424163297,"basePloa":31432189},"children":[{"code":"ED_04","nome":"CONTRAT TEMPO DETERMINADO","meses":[338076,392974,426443,411477,393760,590640,393760,393760,393760,393760,590640,393760],"total":5112810,"dotacao":5725326,"execAntValidada":null,"execAnt":5685892,"basePloa":426443},{"code":"ED_07","nome":"CONTRIB PREVIDENCIA PRIVADA","meses":[294919,297411,299287,335300,335971,335971,335971,335971,335971,335971,671942,335971],"total":4250656,"dotacao":3644525,"execAntValidada":null,"execAnt":3990483,"basePloa":299287},{"code":"ED_11/12","nome":"VENC E VANT FIXAS EXCL 13º/FÉRIAS","meses":[30626536,30604484,30658185,32496464,32561457,32561457,32561457,32561457,32561457,32561457,32561457,32561457],"total":384877325,"dotacao":360916212,"execAntValidada":null,"execAnt":367898220,"basePloa":30658185},{"code":"SUB11/12_43","nome":"13º SALARIO - ATIVO","meses":[616382,196396,82084,79478,112120,8719693,0,0,1248,8194,16603093,6181707],"total":32600395,"dotacao":30889216,"execAntValidada":null,"execAnt":30658185,"basePloa":0},{"code":"SUB11/12_44","nome":"ABONO PECUNIÁRIO","meses":[0,0,0,0,0,0,0,0,0,0,0,0],"total":0,"dotacao":0,"execAntValidada":null,"execAnt":0,"basePloa":0},{"code":"SUB11/12_45","nome":"ABONO CONSTITUCIONAL","meses":[1342184,-126178,253766,208557,308447,320872,834267,248893,171490,155783,307728,10057084],"total":14082893,"dotacao":14540386,"execAntValidada":null,"execAnt":14821673,"basePloa":0},{"code":"SUB11/12_46","nome":"ADIANTAMENTO FÉRIAS","meses":[15453,5574,-8679,-3676,0,34804,44392,0,0,17601,43380,504793],"total":653642,"dotacao":515647,"execAntValidada":null,"execAnt":525622,"basePloa":0},{"code":"ED_RGPS","nome":"OBRIG PATRONAIS EXCETO CPSS","meses":[26,26,26,27,26,26,26,26,26,26,52,26],"total":339,"dotacao":0,"execAntValidada":null,"execAnt":338,"basePloa":26},{"code":"ED_16/17","nome":"OUTRAS DESP VARIAVEIS","meses":[40475,65098,45318,19858,42687,42687,42687,42687,42687,42687,42687,42687],"total":512245,"dotacao":332100,"execAntValidada":null,"execAnt":543816,"basePloa":45318},{"code":"ED_91","nome":"SENT JUDICIAL - ATIVO","meses":[4742,3194,2930,5975,4218,6327,4218,4218,4218,4218,6327,4218],"total":54803,"dotacao":84665,"execAntValidada":null,"execAnt":39067,"basePloa":2930},{"code":"ED_92","nome":"DESP EXERC ANTERIORES ATIVO","meses":[158888,60033,157098,36713,0,0,0,0,0,0,0,0],"total":412732,"dotacao":1028290,"execAntValidada":null,"execAnt":0,"basePloa":0},{"code":"ED_94","nome":"INDENIZ TRABALHISTAS","meses":[0,0,0,0,0,0,0,0,0,0,0,0],"total":0,"dotacao":0,"execAntValidada":null,"execAnt":0,"basePloa":0},{"code":"ED_96","nome":"RESSARC PESSOAL REQUISITADO","meses":[0,0,0,0,0,0,0,0,0,0,0,0],"total":0,"dotacao":0,"execAntValidada":null,"execAnt":0,"basePloa":0},{"code":"BPEq","nome":"RESERVA BANCO PROF EQUIVAL","meses":[0,0,0,0,0,0,0,0,0,0,0,0],"total":0,"dotacao":0,"execAntValidada":null,"execAnt":0,"basePloa":0},{"code":"ED_RPPS","nome":"RPPS EMP ESTATAIS","meses":[0,0,0,0,0,0,0,0,0,0,0,0],"total":0,"dotacao":0,"execAntValidada":null,"execAnt":0,"basePloa":0},{"code":"ReservaAtivo","nome":"OUTRAS RESERVAS ATIVO","meses":[0,0,0,0,0,0,0,0,0,0,0,0],"total":0,"dotacao":0,"execAntValidada":null,"execAnt":0,"basePloa":0},{"code":"CV19","nome":"CTU'S COVID-19","meses":[0,0,0,0,0,0,0,0,0,0,0,0],"total":0,"dotacao":0,"execAntValidada":null,"execAnt":0,"basePloa":0}]},"inativo":{"group":{"nome":"INATIVO","meses":[16554712,16509835,16527271,17390246,17424992,26137489,17424992,17424992,17424992,17424992,26137488,17480125],"total":223862126,"dotacao":238144286,"execAntValidada":212740946,"execAnt":214669676,"basePloa":16513052},"children":[{"code":"ED_01/03","nome":"INATIVOS/PENS EXCL 13º","meses":[16513223,16450050,16471563,17348712,17383409,17383409,17383409,17383409,17383409,17383409,17383409,17383409],"total":205850820,"dotacao":195727460,"execAntValidada":null,"execAnt":197658756,"basePloa":16471563},{"code":"SUB01/03_13º","nome":"13º SALARIO - INATIVOS/PENS","meses":[0,0,0,0,0,8691705,0,0,0,0,8691704,55133],"total":17438542,"dotacao":16333524,"execAntValidada":null,"execAnt":16471563,"basePloa":0},{"code":"ED_91","nome":"SENT JUDICIAL - INATIVO","meses":[41489,41489,41489,41534,41583,62375,41583,41583,41583,41583,62375,41583],"total":540249,"dotacao":545334,"execAntValidada":null,"execAnt":539357,"basePloa":41489},{"code":"ED_92","nome":"DESP EXERC ANTERIORES INATIVO","meses":[0,18296,14219,0,0,0,0,0,0,0,0,0],"total":32515,"dotacao":134628,"execAntValidada":null,"execAnt":0,"basePloa":0},{"code":"ED_94","nome":"INDENIZAÇÕES TRABALHISTAS","meses":[0,0,0,0,0,0,0,0,0,0,0,0],"total":0,"dotacao":0,"execAntValidada":null,"execAnt":0,"basePloa":0},{"code":"ReservaInativo","nome":"OUTRAS RESERVAS INATIVO","meses":[0,0,0,0,0,0,0,0,0,0,0,0],"total":0,"dotacao":0,"execAntValidada":null,"execAnt":0,"basePloa":0}]},"beneficioEspecial":{"group":{"nome":"BENEFÍCIO ESPECIAL","meses":[0,0,0,0,0,0,0,0,0,0,0,0],"total":0,"dotacao":0,"execAntValidada":14651,"execAnt":0,"basePloa":0},"children":[{"code":"ED_01/03_BenEsp","nome":"BENEFÍCIO ESPECIAL LEI 12.618/2012 - INATIVO","meses":[0,0,0,0,0,0,0,0,0,0,0,0],"total":0,"dotacao":0,"execAntValidada":null,"execAnt":0,"basePloa":0}]},"precat":{"group":{"nome":"PRECAT E SENT EMP PUBLICA","meses":[0,0,0,0,0,0,0,0,0,0,0,0],"total":0,"dotacao":0,"execAntValidada":0,"execAnt":0,"basePloa":0},"children":[{"code":"ED_SENTJUD","nome":"DESP. PRIMÁRIAS","meses":[0,0,0,0,0,0,0,0,0,0,0,0],"total":0,"dotacao":0,"execAntValidada":null,"execAnt":0,"basePloa":0}]},"subtotalPrimarias":{"nome":"SUBTOTAL DESP PRIMÁRIAS","meses":[49992393,48008847,48443729,50980419,51183678,68749966,51641770,51012004,50935849,50944689,76964794,67561828],"total":666419966,"dotacao":686001035,"execAntValidada":630417313,"execAnt":638832973,"basePloa":47945241},"rpps":{"group":{"nome":"RPPS - AÇÃO 09HB","meses":[7873633,7720155,7862067,8381298,8423204,8423204,8423204,8423204,8423204,8423204,16846408,8423204],"total":107645989,"dotacao":106294048,"execAntValidada":102652088,"execAnt":102206871,"basePloa":7862067},"children":[{"code":"ED_RPPS","nome":"CPSS FOLHA NORMAL","meses":[7873633,7720155,7862067,8381298,8423204,8423204,8423204,8423204,8423204,8423204,16846408,8423204],"total":107645989,"dotacao":102652088,"execAntValidada":null,"execAnt":102206871,"basePloa":7862067},{"code":"BPEqRPPS","nome":"CPSS BANCO PROF EQUIVALENTE","meses":[0,0,0,0,0,0,0,0,0,0,0,0],"total":0,"dotacao":0,"execAntValidada":null,"execAnt":0,"basePloa":0},{"code":"ReservaRPPS","nome":"CPSS OUTRAS RESERVAS","meses":[0,0,0,0,0,0,0,0,0,0,0,0],"total":0,"dotacao":0,"execAntValidada":null,"execAnt":0,"basePloa":0}]},"subtotalFinanceiras":{"nome":"SUBTOTAL DESP FINANCEIRAS","meses":[7873633,7720155,7862067,8381298,8423204,8423204,8423204,8423204,8423204,8423204,16846408,8423204],"total":107645989,"dotacao":106294048,"execAntValidada":102652088,"execAnt":102206871,"basePloa":7862067},"total":{"nome":"TOTAL","meses":[57866026,55729002,56305796,59361717,59606882,77173170,60064974,59435208,59359053,59367893,93811202,75985032],"total":774065955,"dotacao":792295083,"execAntValidada":733069401,"execAnt":741039844,"basePloa":55807308},"saldos":{"ativos":{"nome":"SALDO ATIVOS","meses":[414404417,382905405,350988947,317398774,283640088,241027611,206810833,173223821,139712964,106193267,55365961,5284258]},"inativos":{"nome":"SALDO INATIVOS","meses":[221589574,205079739,188552468,171162222,153737230,127599741,110174749,92749757,75324765,57899773,31762285,14282160]},"beneficioEspecial":{"nome":"SALDO BENEFÍCIO ESPECIAL","meses":[14651,14651,14651,14651,14651,14651,14651,14651,14651,14651,14651,14651]},"precat":{"nome":"SALDO PRECAT E SENT EMP PUBLICA","meses":[0,0,0,0,0,0,0,0,0,0,0,0]},"cpss":{"nome":"SALDO CPSS - AÇÃO 09HB","meses":[98420415,90700260,82838193,74456895,66033691,57610487,49187283,40764079,32340875,23917671,7071263,-1351941]},"total":{"nome":"SALDO TOTAL","meses":[734429057,678700055,622394259,563032542,503425660,426252490,366187516,306752308,247393255,188025362,94214160,18229128]}}};
+
+const MESES_NOMES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+const EXEC_COUNT = 4; // Jan-Abr executado, Mai-Dez projetado
+const RED = '#F85149', GREEN = '#3FB950';
+
+function brl(v) {
+  if (v === null || v === undefined) return '—';
+  const neg = v < 0;
+  return (neg ? '−' : '') + 'R$ ' + new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 }).format(Math.abs(Math.round(v)));
+}
+
+class Component extends DCLogic {
+  state = { colapsados: {} };
+
+  toggle(chave) {
+    this.setState({ colapsados: { ...this.state.colapsados, [chave]: !this.state.colapsados[chave] } });
+  }
+
+  valoresLinha(meses) {
+    return meses.map((v, i) => ({ texto: brl(v), classe: i >= EXEC_COUNT ? 'ap-proj' : '' }));
+  }
+
+  linhaGrupo(chave, g, classeExtra) {
+    const colapsado = !!this.state.colapsados[chave];
+    return {
+      ehGrupo: true, nome: g.nome, seta: colapsado ? '▸' : '▾',
+      valores: this.valoresLinha(g.meses), total: brl(g.total), dotacao: brl(g.dotacao),
+      execAnt: brl(g.execAnt), basePloa: g.basePloa ? brl(g.basePloa) : '—',
+      classeLinha: 'ap-group-row ' + (classeExtra || ''), alternar: () => this.toggle(chave)
+    };
+  }
+
+  linhaFilho(c) {
+    return {
+      ehGrupo: false, ehFilho: true, nome: `${c.nome}${c.code ? ' · ' + c.code : ''}`,
+      valores: this.valoresLinha(c.meses), total: brl(c.total), dotacao: brl(c.dotacao),
+      execAnt: brl(c.execAnt), basePloa: c.basePloa ? brl(c.basePloa) : '—',
+      classeLinha: 'ap-child-row'
+    };
+  }
+
+  renderVals() {
+    const d = PESSOAL_DATA;
+    const mesesHeader = MESES_NOMES.map((rotulo, i) => ({ rotulo, cor: i >= EXEC_COUNT ? 'var(--color-accent-900)' : 'var(--color-neutral-600)' }));
+
+    let linhas = [];
+    const addGrupo = (chave, grupoData, comFilhos) => {
+      linhas.push(this.linhaGrupo(chave, grupoData.group || grupoData));
+      if (comFilhos && !this.state.colapsados[chave]) {
+        grupoData.children.forEach(c => linhas.push(this.linhaFilho(c)));
+      }
+    };
+    addGrupo('ativo', d.ativo, true);
+    addGrupo('inativo', d.inativo, true);
+    addGrupo('beneficioEspecial', d.beneficioEspecial, true);
+    addGrupo('precat', d.precat, true);
+    linhas.push(this.linhaGrupo('subtotalPrimarias', d.subtotalPrimarias, 'ap-total-row'));
+    addGrupo('rpps', d.rpps, true);
+    linhas.push(this.linhaGrupo('subtotalFinanceiras', d.subtotalFinanceiras, 'ap-total-row'));
+    linhas.push(this.linhaGrupo('total', d.total, 'ap-total-row'));
+
+    const saldoLinhas = [
+      { chave: 'ativos', label: 'Saldo Ativos' }, { chave: 'inativos', label: 'Saldo Inativos' },
+      { chave: 'beneficioEspecial', label: 'Saldo Benefício Especial' }, { chave: 'precat', label: 'Saldo Precatórios' },
+      { chave: 'cpss', label: 'Saldo CPSS — RPPS' }, { chave: 'total', label: 'Saldo Total' }
+    ].map(({ chave, label }) => {
+      const s = d.saldos[chave];
+      return {
+        nome: label, classeLinha: chave === 'total' ? 'ap-total-row' : '',
+        valores: s.meses.map(v => ({ texto: brl(v), cor: v < 0 ? RED : (chave === 'total' || chave === 'cpss') ? GREEN : 'var(--color-text)' }))
+      };
+    });
+
+    const kpis = [
+      { rotulo: 'Executado + projetado 2026', valor: brl(d.total.total), cor: 'var(--color-text)' },
+      { rotulo: 'Dotação atual', valor: brl(d.total.dotacao), cor: 'var(--color-accent-900)' },
+      { rotulo: 'Execução 2025', valor: brl(d.total.execAnt), cor: 'var(--color-neutral-600)' },
+      { rotulo: 'Saldo total em dezembro', valor: brl(d.saldos.total.meses[11]), cor: GREEN },
+    ];
+
+    return {
+      kpis, mesesHeader, linhas, saldoLinhas,
+      saldoCpssDezembro: brl(Math.abs(d.saldos.cpss.meses[11])),
+      execAntReconciliado: brl(d.total.execAnt), execAntValidada: brl(d.total.execAntValidada),
+      diferencaReconciliacao: brl(d.total.execAnt - d.total.execAntValidada)
+    };
+  }
+}
+</script>
+</body>
+</html>

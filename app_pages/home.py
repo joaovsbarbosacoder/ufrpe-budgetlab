@@ -3,7 +3,9 @@
 import streamlit as st
 
 from src.design_tokens import NEGATIVE, WARNING
-from src.prazos_orcamentarios import carregar_prazos, prazos_com_criticidade
+from src.prazos_orcamentarios import (
+    CRITICIDADE_ATRASADO, CRITICIDADE_VENCENDO, carregar_prazos, prazos_com_criticidade,
+)
 from src.ui_theme import render_page_header
 
 render_page_header(
@@ -23,19 +25,19 @@ def _render_card_prazos() -> None:
     if prazos.empty:
         return
     pendentes = prazos[~prazos["concluido"]]
-    vencidos = int((pendentes["criticidade"] == "Vencido").sum())
-    em_alerta = int((pendentes["criticidade"] == "Em alerta").sum())
-    if not vencidos and not em_alerta:
+    atrasados = int((pendentes["criticidade"] == CRITICIDADE_ATRASADO).sum())
+    vencendo = int((pendentes["criticidade"] == CRITICIDADE_VENCENDO).sum())
+    if not atrasados and not vencendo:
         return
 
-    cor = NEGATIVE if vencidos else WARNING
+    cor = NEGATIVE if atrasados else WARNING
     with st.container(border=True):
         st.markdown(f"<span style='color:{cor};font-weight:600'>⏰ Prazos Orçamentários</span>", unsafe_allow_html=True)
         partes = []
-        if vencidos:
-            partes.append(f"**{vencidos}** vencido(s)")
-        if em_alerta:
-            partes.append(f"**{em_alerta}** em alerta")
+        if atrasados:
+            partes.append(f"**{atrasados}** atrasado(s)")
+        if vencendo:
+            partes.append(f"**{vencendo}** vencendo")
         st.markdown(" · ".join(partes))
         st.page_link("app_pages/painel_prazos.py", label="Ver painel de prazos", icon=":material/arrow_forward:")
 

@@ -22,7 +22,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.design_tokens import ACCENT, ACCENT_STRONG, BORDER, POSITIVE, TEXT, TEXT_MUTED
+from src import design_tokens
 from src.ui_theme import format_brl_full
 
 MESES_ABREV = {
@@ -43,13 +43,18 @@ def abrir_linha_do_tempo(legenda: str, tempo: pd.DataFrame) -> None:
     para uma única NE. `legenda` aparece como `st.caption` no topo do pop-up (livre — cada
     página decide o que identificar: NE completa, bolsa/programa, etc.)."""
 
+    # Cores lidas como atributo do módulo (não `from design_tokens import ACCENT`, que
+    # ficaria travada no tema de quando este módulo de apoio foi carregado pela primeira
+    # vez no processo — ver docstring de `design_tokens.py`) para acompanhar o alternador
+    # de tema claro/escuro a cada abertura deste pop-up.
+    d = design_tokens
     st.caption(legenda)
     tempo = tempo.sort_values("ano_mes")
     rotulos = [rotulo_ano_mes(am) for am in tempo["ano_mes"]]
 
     figure = go.Figure()
     for coluna, nome, cor in (
-        ("empenhada", "Empenhado", ACCENT), ("liquidada", "Liquidado", ACCENT_STRONG), ("paga", "Pago", POSITIVE),
+        ("empenhada", "Empenhado", d.ACCENT), ("liquidada", "Liquidado", d.ACCENT_STRONG), ("paga", "Pago", d.POSITIVE),
     ):
         valores = [float(v) for v in tempo[coluna]]
         figure.add_bar(
@@ -60,10 +65,10 @@ def abrir_linha_do_tempo(legenda: str, tempo: pd.DataFrame) -> None:
     figure.update_layout(
         barmode="group",
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=TEXT, family="sans-serif"),
+        font=dict(color=d.TEXT, family="sans-serif"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        xaxis=dict(type="category", showgrid=False, zeroline=False, color=TEXT_MUTED),
-        yaxis=dict(showgrid=True, gridcolor=BORDER, zeroline=False, tickformat="~s", color=TEXT_MUTED),
+        xaxis=dict(type="category", showgrid=False, zeroline=False, color=d.TEXT_MUTED),
+        yaxis=dict(showgrid=True, gridcolor=d.BORDER, zeroline=False, tickformat="~s", color=d.TEXT_MUTED),
         height=360, margin=dict(t=40, b=10, l=10, r=10),
     )
     st.plotly_chart(figure, width="stretch", config={"displayModeBar": False})

@@ -1,34 +1,52 @@
-"""Painel de Prazos Orçamentários — cadastro manual de datas, com alerta por proximidade.
+"""Gerenciamento de Prazos — cadastro manual de datas, com alerta por proximidade.
+
+Layout redesenhado em 10/09/2026 a partir de `LAYOUT.md` (anexado pelo usuário, protótipo
+`Gerenciamento de Prazos.dc.html`): cabeçalho com botão "+ Novo prazo", faixa de KPIs, uma
+linha de filtros sempre visível (busca + tipo + responsável + prioridade + status), grade de
+cards (3 colunas fixas — Streamlit não tem `auto-fit` nativo) e formulário em `st.dialog`
+(equivalente mais próximo do drawer lateral do protótipo).
 
 Pedido explícito: NÃO deriva de Contratos (vigência/termo final) nem de Bolsas (necessidade
-de reforço de empenho) — o usuário cadastra o próprio prazo (ex.: prestação de contas, envio
-de relatório, prazo de empenho de uma fonte específica), tipicamente uma vez no início do
+de reforço de empenho) — o usuário cadastra o próprio prazo, tipicamente uma vez no início do
 exercício, e a tela avisa conforme a data se aproxima. Leitura/gravação em
-`src/prazos_orcamentarios.py`; esta página só monta o formulário e a lista.
+`src/prazos_orcamentarios.py`; esta página só monta a interface.
 
 Persistido em disco (`data/prazos_orcamentarios/`, um JSON por prazo) — decisão confirmada
 com o usuário (regra do projeto: nenhuma persistência nova sem aprovação explícita, ver
 AGENTS.md) para o cadastro sobreviver a reiniciar o app ao longo do exercício.
 
-Cada prazo tem sua própria antecedência de alerta (`dias_antecedencia`, pedido explícito) —
-não uma régua fixa: "Em alerta" significa dentro dos N dias que o próprio prazo escolheu, não
-um limiar igual pra todo mundo (ver `src.prazos_orcamentarios._classificar`).
+DECISÃO CONFIRMADA (10/09/2026, via AskUserQuestion, não presumida): o layout de referência
+sugeria um limiar FIXO de 7 dias para "Vencendo". O usuário optou por MANTER a antecedência
+própria de cada prazo (`dias_antecedencia`, pedido explícito anterior — "licitação precisa de
+meses de aviso, tarefa simples de dias") — só os RÓTULOS de criticidade vieram do layout novo
+("Em dia"/"Vencendo"/"Atrasado"/"Concluído"), a regra por trás (`_classificar` em
+`prazos_orcamentarios.py`) continua a mesma de antes.
 
-Resumo de alerta também aparece em `app_pages/home.py` (card só visível quando há vencido/em
-alerta — pedido explícito), lendo os mesmos dados por `carregar_prazos`/`prazos_com_criticidade`.
+Clique no card inteiro não abre o formulário (Streamlit não tem `onClick` em container
+arbitrário) — um botão "Editar" discreto dentro do card faz esse papel; o checkbox de
+conclusão é um controle separado e imediato (grava e re-executa assim que muda).
+
+Resumo de alerta também aparece em `app_pages/home.py` (card só visível quando há
+atrasado/vencendo — pedido explícito), lendo os mesmos dados por
+`carregar_prazos`/`prazos_com_criticidade` — os rótulos usados lá foram atualizados junto.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pandas as pd
 import streamlit as st
 
-from src.design_tokens import FONT_HEADING, NEGATIVE, POSITIVE, TEXT_MUTED, WARNING
+from src.design_tokens import ACCENT, FONT_HEADING, NEGATIVE, POSITIVE, TEXT_MUTED, WARNING
 from src.prazos_orcamentarios import (
+    CRITICIDADE_ATRASADO,
+    CRITICIDADE_CONCLUIDO,
+    CRITICIDADE_EM_DIA,
+    CRITICIDADE_VENCENDO,
     DIAS_ANTECEDENCIA_PADRAO,
     DIRETORIO_PADRAO,
+    PRIORIDADES_PRAZO,
+    TIPOS_PRAZO,
+    ErroPrazoOrcamentario,
     atualizar,
     carregar_prazos,
     excluir,
@@ -39,8 +57,17 @@ from src.prazos_orcamentarios import (
 from src.ui_theme import render_alert, render_metric_grid, render_page_header
 
 CRITICIDADE_COR = {
-    "Vencido": NEGATIVE, "Em alerta": WARNING, "No prazo": POSITIVE, "Concluído": TEXT_MUTED,
+    CRITICIDADE_ATRASADO: NEGATIVE, CRITICIDADE_VENCENDO: WARNING,
+    CRITICIDADE_EM_DIA: POSITIVE, CRITICIDADE_CONCLUIDO: TEXT_MUTED,
 }
+_TODOS_TIPOS = "Todos os tipos"
+_TODOS_RESPONSAVEIS = "Todos"
+_TODAS_PRIORIDADES = "Todas"
+_STATUS_PENDENTES = "Pendentes"
+_STATUS_CONCLUIDOS = "Concluídos"
+_STATUS_TODOS = "Todos"
+
+_CHAVES_FILTRO = ("pp_filtro_busca", "pp_filtro_tipo", "pp_filtro_responsavel", "pp_filtro_prioridade")
 
 
 def _dash(valor: object) -> str:
@@ -60,6 +87,12 @@ def _inject_css() -> None:
             letter-spacing: .04em; text-transform: uppercase; padding: 2px 7px;
             border-radius: 3px;
         }}
+        .pp-tipo {{
+            font-family: {FONT_HEADING}; font-size: 11px; letter-spacing: .05em;
+            text-transform: uppercase; color: {ACCENT};
+        }}
+        .pp-titulo {{ font-weight: 600; margin: 2px 0 6px; }}
+        .pp-desc {{ color: {TEXT_MUTED}; font-size: 12.5px; margin-bottom: 8px; }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -70,168 +103,238 @@ def _badge(texto: str, cor: str) -> str:
     return f"<span class='pp-badge' style='background:{cor}22;color:{cor}'>{texto}</span>"
 
 
-def _render_formulario_novo_prazo() -> None:
-    with st.form("pp_novo_prazo", clear_on_submit=True):
-        c1, c2, c3 = st.columns([3, 1, 1])
-        titulo = c1.text_input("Título do prazo", placeholder="ex.: Prestação de contas — Convênio 12/2026")
-        data_prazo = c2.date_input("Data", value=None, format="DD/MM/YYYY")
-        dias_antecedencia = c3.number_input(
-            "Avisar com (dias)", min_value=0, value=DIAS_ANTECEDENCIA_PADRAO, step=5,
-            help="Quantos dias antes do prazo você quer começar a receber alerta.",
-        )
-        c4, c5 = st.columns(2)
-        responsavel = c4.text_input("Responsável (opcional)")
-        descricao = c5.text_input("Observação (opcional)")
-        if st.form_submit_button("Cadastrar prazo", icon=":material/add_alert:"):
-            if not titulo.strip() or data_prazo is None:
-                st.error("Informe ao menos o título e a data do prazo.")
-            else:
-                salvar(novo_prazo(titulo, data_prazo, descricao, responsavel, int(dias_antecedencia)))
+def _texto_vencimento(row) -> str:
+    if row["concluido"]:
+        return "Concluído"
+    dias = int(row["dias_para_vencer"])
+    data_fmt = row["data_prazo"].strftime("%d/%m/%Y")
+    if dias < 0:
+        return f"Venceu há {abs(dias)}d — {data_fmt}"
+    return f"Vence em {dias}d — {data_fmt}"
+
+
+def _truncar(texto: str, tamanho: int = 90) -> str:
+    texto = texto.strip()
+    return texto if len(texto) <= tamanho else texto[:tamanho].rstrip() + "…"
+
+
+def _formulario(prazo_existente) -> None:
+    """Campos comuns do formulário de prazo — chamado tanto por `_dialogo_novo` quanto por
+    `_dialogo_editar` (só o título do `st.dialog` muda; Streamlit exige um texto estático por
+    decorator, não dá pra ter um único dialog com título dinâmico)."""
+
+    prefixo = f"pp_form_{prazo_existente['id']}" if prazo_existente is not None else "pp_form_novo"
+    titulo = st.text_input(
+        "Título do prazo", value=prazo_existente["titulo"] if prazo_existente is not None else "",
+        placeholder="ex.: Prestação de contas — Convênio 12/2026", key=f"{prefixo}_titulo",
+    )
+    c1, c2 = st.columns(2)
+    tipo = c1.selectbox(
+        "Tipo", TIPOS_PRAZO,
+        index=TIPOS_PRAZO.index(prazo_existente["tipo"]) if prazo_existente is not None else 1,
+        key=f"{prefixo}_tipo",
+    )
+    categoria = c2.text_input(
+        "Categoria", value=prazo_existente["categoria"] if prazo_existente is not None else "",
+        placeholder="ex.: SIAFI, PROPLAD", key=f"{prefixo}_categoria",
+    )
+    c3, c4 = st.columns(2)
+    data_prazo = c3.date_input(
+        "Vencimento", value=prazo_existente["data_prazo"] if prazo_existente is not None else None,
+        format="DD/MM/YYYY", key=f"{prefixo}_data",
+    )
+    prioridade = c4.selectbox(
+        "Prioridade", PRIORIDADES_PRAZO,
+        index=PRIORIDADES_PRAZO.index(prazo_existente["prioridade"]) if prazo_existente is not None else 1,
+        key=f"{prefixo}_prioridade",
+    )
+    dias_antecedencia = st.number_input(
+        "Avisar com (dias de antecedência)", min_value=0,
+        value=int(prazo_existente["dias_antecedencia"]) if prazo_existente is not None else DIAS_ANTECEDENCIA_PADRAO,
+        step=5, key=f"{prefixo}_antecedencia",
+        help="Quantos dias antes do vencimento este prazo específico deve entrar em \"Vencendo\".",
+    )
+    responsavel = st.text_input(
+        "Responsável", value=prazo_existente["responsavel"] if prazo_existente is not None else "",
+        key=f"{prefixo}_responsavel",
+    )
+    descricao = st.text_area(
+        "Descrição", value=prazo_existente["descricao"] if prazo_existente is not None else "",
+        key=f"{prefixo}_descricao",
+    )
+    concluido = st.checkbox(
+        "Concluído", value=bool(prazo_existente["concluido"]) if prazo_existente is not None else False,
+        key=f"{prefixo}_concluido",
+    )
+
+    if prazo_existente is not None:
+        col_excluir, _, col_salvar = st.columns([1, 2, 1])
+        with col_excluir.popover("Excluir", use_container_width=True):
+            st.write(f"Excluir **{prazo_existente['titulo']}** definitivamente?")
+            if st.button("Confirmar exclusão", key=f"{prefixo}_confirmar_exclusao"):
+                excluir(prazo_existente["id"])
                 st.rerun()
+    else:
+        col_salvar = st.container()
+
+    if col_salvar.button("Salvar", key=f"{prefixo}_salvar", type="primary",
+                          use_container_width=True, icon=":material/save:"):
+        try:
+            candidato = novo_prazo(titulo, data_prazo, descricao, responsavel,
+                                    int(dias_antecedencia), tipo, categoria, prioridade)
+        except ErroPrazoOrcamentario as erro:
+            st.error(str(erro))
+            return
+        candidato["concluido"] = bool(concluido)
+        if prazo_existente is not None:
+            candidato["id"] = prazo_existente["id"]
+            candidato["criado_em"] = prazo_existente["criado_em"]
+            atualizar(candidato)
+        else:
+            salvar(candidato)
+        st.rerun()
 
 
-def _prazo_bruto_editavel(row: pd.Series) -> dict:
-    """`row` vem de `prazos_com_criticidade` (colunas derivadas `dias_para_vencer`/
-    `criticidade` incluídas, `data_prazo` como `datetime.date`, `concluido`/`dias_antecedencia`
-    possivelmente numpy — json.dumps não serializa nenhum desses tipos numpy, então este dict
-    só tem os campos que `atualizar`/`salvar` esperam gravar, já convertidos."""
-
-    bruto = dict(row.drop(labels=["dias_para_vencer", "criticidade"]))
-    bruto["data_prazo"] = row["data_prazo"].isoformat()
-    bruto["concluido"] = bool(row["concluido"])
-    bruto["dias_antecedencia"] = int(row["dias_antecedencia"])
-    return bruto
+@st.dialog("Novo prazo")
+def _dialogo_novo() -> None:
+    _formulario(None)
 
 
 @st.dialog("Editar prazo")
-def _abrir_editar(row: pd.Series) -> None:
-    k = f"pp_edit_{row['id']}"
-    titulo = st.text_input("Título do prazo", value=row["titulo"], key=f"{k}_titulo")
-    c1, c2 = st.columns(2)
-    data_prazo = c1.date_input("Data", value=row["data_prazo"], format="DD/MM/YYYY", key=f"{k}_data")
-    dias_antecedencia = c2.number_input(
-        "Avisar com (dias)", min_value=0, value=int(row["dias_antecedencia"]), step=5, key=f"{k}_antecedencia",
-        help="Quantos dias antes do prazo você quer começar a receber alerta.",
-    )
-    c3, c4 = st.columns(2)
-    # `responsavel`/`descricao` sempre chegam como string (possivelmente vazia — ver
-    # `novo_prazo`), nunca NaN/None: não precisam do tratamento de `_dash` usado na listagem.
-    responsavel = c3.text_input("Responsável (opcional)", value=row["responsavel"], key=f"{k}_resp")
-    descricao = c4.text_input("Observação (opcional)", value=row["descricao"], key=f"{k}_desc")
-    if st.button("Salvar alterações", key=f"{k}_salvar", icon=":material/save:"):
-        if not titulo.strip() or data_prazo is None:
-            st.error("Informe ao menos o título e a data do prazo.")
-        else:
-            bruto = _prazo_bruto_editavel(row)
-            bruto["titulo"] = titulo.strip()
-            bruto["data_prazo"] = data_prazo.isoformat()
-            bruto["dias_antecedencia"] = int(dias_antecedencia)
-            bruto["responsavel"] = responsavel.strip()
-            bruto["descricao"] = descricao.strip()
-            atualizar(bruto)
-            st.rerun()
+def _dialogo_editar(row) -> None:
+    _formulario(row)
 
 
-def _acoes_prazo(row: pd.Series) -> None:
-    c1, c2, c3, c4 = st.columns(4)
-    rotulo_concluir = "Reabrir" if row["concluido"] else "Concluir"
-    if c1.button(rotulo_concluir, key=f"pp_toggle_{row['id']}", use_container_width=True):
-        bruto = _prazo_bruto_editavel(row)
-        bruto["concluido"] = not bruto["concluido"]
-        atualizar(bruto)
-        st.rerun()
-    if c2.button("Editar", key=f"pp_editar_{row['id']}", use_container_width=True):
-        _abrir_editar(row)
-    if c3.button("Duplicar", key=f"pp_duplicar_{row['id']}", use_container_width=True):
-        # cópia começa sempre pendente (concluido=False), mesmo duplicando um prazo já
-        # concluído — o caso mais comum de duplicar é justamente reabrir a mesma exigência
-        # para o próximo ciclo (ex.: prestação de contas anual), não repetir uma já feita.
-        salvar(
-            novo_prazo(
-                f"{row['titulo']} (cópia)", row["data_prazo"], row["descricao"], row["responsavel"],
-                int(row["dias_antecedencia"]),
+def _render_card(row) -> None:
+    cor = CRITICIDADE_COR.get(row["criticidade"], TEXT_MUTED)
+    chave_card = f"pp_card_{row['id']}"
+    with st.container(border=True, key=chave_card):
+        if row["concluido"]:
+            st.markdown(
+                f"<style>.st-key-{chave_card} {{opacity:.55;}}</style>", unsafe_allow_html=True,
             )
+        c1, c2 = st.columns([1, 4])
+        concluido_novo = c1.checkbox(
+            "Concluído", value=bool(row["concluido"]), key=f"pp_check_{row['id']}",
+            label_visibility="collapsed",
         )
-        st.rerun()
-    with c4.popover("Excluir", use_container_width=True):
-        st.write(f"Excluir **{row['titulo']}** definitivamente?")
-        if st.button("Confirmar exclusão", key=f"pp_excluir_{row['id']}"):
-            excluir(row["id"])
+        c2.markdown(f"<div style='text-align:right'>{_badge(row['criticidade'], cor)}</div>", unsafe_allow_html=True)
+        if concluido_novo != row["concluido"]:
+            candidato = dict(row.drop(labels=["dias_para_vencer", "criticidade"]))
+            candidato["data_prazo"] = row["data_prazo"].isoformat()
+            candidato["concluido"] = bool(concluido_novo)
+            candidato["dias_antecedencia"] = int(row["dias_antecedencia"])
+            atualizar(candidato)
             st.rerun()
 
+        rotulo_tipo = row["tipo"] + (f" · {row['categoria']}" if row["categoria"] else "")
+        st.markdown(f"<div class='pp-tipo'>{rotulo_tipo}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='pp-titulo'>{row['titulo']}</div>", unsafe_allow_html=True)
+        if row["descricao"]:
+            st.markdown(f"<div class='pp-desc'>{_truncar(row['descricao'])}</div>", unsafe_allow_html=True)
 
-def _render_lista(prazos: pd.DataFrame) -> None:
-    for _, row in prazos.iterrows():
-        cor = CRITICIDADE_COR.get(row["criticidade"], TEXT_MUTED)
-        with st.container(border=True):
-            c1, c2 = st.columns([3, 1])
-            c1.markdown(f"**{row['titulo']}**")
-            c2.markdown(f"<div style='text-align:right'>{_badge(row['criticidade'], cor)}</div>", unsafe_allow_html=True)
-
-            c3, c4, c5, c6 = st.columns(4)
-            c3.markdown("<span class='pp-label'>Data</span>", unsafe_allow_html=True)
-            c3.write(row["data_prazo"].strftime("%d/%m/%Y"))
-            c4.markdown("<span class='pp-label'>Dias</span>", unsafe_allow_html=True)
-            dias = row["dias_para_vencer"]
-            c4.write(f"Vencido há {abs(int(dias))}d" if dias < 0 else f"{int(dias)}d")
-            c5.markdown("<span class='pp-label'>Avisar com</span>", unsafe_allow_html=True)
-            c5.write(f"{int(row['dias_antecedencia'])}d de antecedência")
-            c6.markdown("<span class='pp-label'>Responsável</span>", unsafe_allow_html=True)
-            c6.write(_dash(row["responsavel"]))
-
-            if _dash(row["descricao"]) != "—":
-                st.caption(row["descricao"])
-
-            _acoes_prazo(row)
+        c3, c4 = st.columns(2)
+        c3.markdown(f"<span style='font-size:12px'>{_dash(row['responsavel'])}</span>", unsafe_allow_html=True)
+        c4.markdown(
+            f"<div style='text-align:right;font-size:12px;color:{cor}'>{_texto_vencimento(row)}</div>",
+            unsafe_allow_html=True,
+        )
+        if st.button("Editar", key=f"pp_editar_{row['id']}", use_container_width=True, icon=":material/edit:"):
+            _dialogo_editar(row)
 
 
 # ---------------------------------------------------------------------- página
-render_page_header(
-    "Painel de Prazos Orçamentários",
-    "Cadastre um prazo do exercício e acompanhe o alerta conforme a data se aproxima.",
-    "Prazos",
-)
 _inject_css()
 
-st.markdown("#### Novo prazo")
-_render_formulario_novo_prazo()
+col_titulo, col_botao = st.columns([5, 1], vertical_alignment="bottom")
+with col_titulo:
+    render_page_header(
+        "Gerenciamento de Prazos",
+        "Cadastre um prazo do exercício e acompanhe o alerta conforme a data se aproxima.",
+        "Prazos",
+    )
+with col_botao:
+    if st.button("+ Novo prazo", type="primary", use_container_width=True, icon=":material/add_alert:"):
+        _dialogo_novo()
 
 prazos_brutos = carregar_prazos()
 prazos = prazos_com_criticidade(prazos_brutos)
 
 if prazos.empty:
-    st.info("Nenhum prazo cadastrado ainda — use o formulário acima para começar.")
+    st.info("Nenhum prazo cadastrado ainda — use \"+ Novo prazo\" para começar.")
     st.stop()
 
 pendentes = prazos[~prazos["concluido"]]
-vencidos = int((pendentes["criticidade"] == "Vencido").sum())
-em_alerta = int((pendentes["criticidade"] == "Em alerta").sum())
+atrasados = int((pendentes["criticidade"] == CRITICIDADE_ATRASADO).sum())
+vencendo = int((pendentes["criticidade"] == CRITICIDADE_VENCENDO).sum())
 
-if vencidos:
-    render_alert(f"{vencidos} prazo(s) vencido(s) sem conclusão.", "error")
-elif em_alerta:
-    render_alert(f"{em_alerta} prazo(s) em alerta — dentro da antecedência escolhida para cada um.", "warning")
+if atrasados:
+    render_alert(f"{atrasados} prazo(s) atrasado(s) sem conclusão.", "error")
+elif vencendo:
+    render_alert(f"{vencendo} prazo(s) vencendo — dentro da antecedência escolhida para cada um.", "warning")
 else:
-    render_alert("Nenhum prazo pendente vencido ou dentro da antecedência de alerta.", "success")
+    render_alert("Nenhum prazo pendente atrasado ou dentro da antecedência de alerta.", "success")
 
 render_metric_grid(
     [
-        {"label": "Prazos cadastrados", "value": str(len(prazos))},
-        {"label": "Vencidos", "value": str(vencidos)},
-        {"label": "Em alerta", "value": str(em_alerta)},
+        {"label": "Prazos pendentes", "value": str(len(pendentes))},
+        {"label": "Atrasados", "value": str(atrasados)},
+        {"label": "Vencendo", "value": str(vencendo)},
         {"label": "Concluídos", "value": str(int(prazos["concluido"].sum()))},
     ],
     columns=4,
 )
 
-st.markdown("#### Prazos")
-mostrar_concluidos = st.checkbox("Mostrar concluídos", key="pp_mostrar_concluidos")
-visiveis = prazos if mostrar_concluidos else prazos[~prazos["concluido"]]
+# --- filtros (sempre visíveis, uma linha) -----------------------------------
+opcoes_responsavel = sorted({r for r in prazos["responsavel"] if r})
 
-if visiveis.empty:
-    st.caption("Nenhum prazo pendente — todos os cadastrados já foram concluídos.")
+c1, c2, c3, c4, c5 = st.columns([2, 1, 1, 1, 1], vertical_alignment="bottom")
+busca = c1.text_input("Busca", key="pp_filtro_busca", placeholder="Título ou categoria...")
+tipo_filtro = c2.selectbox("Tipo", [_TODOS_TIPOS, *TIPOS_PRAZO], key="pp_filtro_tipo")
+responsavel_filtro = c3.selectbox("Responsável", [_TODOS_RESPONSAVEIS, *opcoes_responsavel], key="pp_filtro_responsavel")
+prioridade_filtro = c4.selectbox("Prioridade", [_TODAS_PRIORIDADES, *PRIORIDADES_PRAZO], key="pp_filtro_prioridade")
+if c5.button("Limpar", use_container_width=True):
+    for chave in _CHAVES_FILTRO:
+        st.session_state.pop(chave, None)
+    st.rerun()
+
+status_tab = st.segmented_control(
+    "Status", [_STATUS_PENDENTES, _STATUS_CONCLUIDOS, _STATUS_TODOS],
+    default=_STATUS_PENDENTES, key="pp_status_tab", label_visibility="collapsed",
+)
+status_tab = status_tab or _STATUS_PENDENTES
+
+if status_tab == _STATUS_PENDENTES:
+    base_status = prazos[~prazos["concluido"]]
+elif status_tab == _STATUS_CONCLUIDOS:
+    base_status = prazos[prazos["concluido"]]
 else:
-    _render_lista(visiveis)
+    base_status = prazos
+
+visiveis = base_status
+if busca.strip():
+    termo = busca.strip().lower()
+    visiveis = visiveis[
+        visiveis["titulo"].str.lower().str.contains(termo, regex=False)
+        | visiveis["categoria"].str.lower().str.contains(termo, regex=False)
+    ]
+if tipo_filtro != _TODOS_TIPOS:
+    visiveis = visiveis[visiveis["tipo"] == tipo_filtro]
+if responsavel_filtro != _TODOS_RESPONSAVEIS:
+    visiveis = visiveis[visiveis["responsavel"] == responsavel_filtro]
+if prioridade_filtro != _TODAS_PRIORIDADES:
+    visiveis = visiveis[visiveis["prioridade"] == prioridade_filtro]
+
+st.caption(f"{len(visiveis)} de {len(base_status)} prazos exibidos")
+
+# --- grade de cards -----------------------------------------------------------
+if visiveis.empty:
+    st.info("Nenhum prazo encontrado para os filtros atuais.")
+else:
+    colunas = st.columns(3)
+    for indice, (_, row) in enumerate(visiveis.iterrows()):
+        with colunas[indice % 3]:
+            _render_card(row)
 
 st.caption(
     f"Cadastro manual, persistido em '{DIRETORIO_PADRAO}' — sobrevive a reiniciar o app. "

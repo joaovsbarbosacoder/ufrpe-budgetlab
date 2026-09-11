@@ -1,0 +1,802 @@
+import unittest
+
+import pandas as pd
+
+from src.despesas_pessoal import (
+    ACAO_ATIVO,
+    ACAO_ASSISTENCIA_MEDICA,
+    ACAO_BENEFICIOS_OBRIGATORIOS,
+    ACAO_INATIVO,
+    ACAO_RPPS,
+    GRUPO_ATIVO,
+    GRUPO_INATIVO,
+    GRUPO_OUTROS_BENEFICIOS,
+    GRUPO_RPPS,
+    MULTIPLICADOR_12,
+    MULTIPLICADOR_13,
+    MULTIPLICADOR_13_3333,
+    REGRA_DECIMO_TERCEIRO,
+    REGRA_MULTIPLICADOR,
+    REGRA_PROPORCAO_HISTORICA,
+    REGRA_SENTENCA_POR_GRUPO,
+    REGRA_ZERO,
+    MES_ANTECIPACAO_DECIMO_TERCEIRO,
+    MES_PARCELA_DECIMO_TERCEIRO,
+    aplicar_overrides,
+    classificar_grupo,
+    consolidar_por_elemento,
+    consolidar_relatorio_ativo,
+    comparar_com_dotacao,
+    dotacao_atualizada_por_grupo,
+    dotacao_atualizada_por_plano_orcamentario,
+    execucao_ano_anterior,
+    filtrar_escopo,
+    grade_mensal,
+    grade_mensal_beneficios,
+    multiplicador_efetivo,
+    projetar,
+    regra_para_natureza,
+    saldo_remanescente,
+    substituir_beneficios_por_plano_orcamentario,
+    ultimo_mes_fechado,
+    valor_mes_referencia,
+)
+
+
+class TestClassificarGrupo(unittest.TestCase):
+    def test_mapeia_as_5_acoes_do_escopo(self):
+        self.assertEqual(classificar_grupo(ACAO_ATIVO), GRUPO_ATIVO)
+        self.assertEqual(classificar_grupo(ACAO_INATIVO), GRUPO_INATIVO)
+        self.assertEqual(classificar_grupo(ACAO_RPPS), GRUPO_RPPS)
+        self.assertEqual(classificar_grupo(ACAO_ASSISTENCIA_MEDICA), GRUPO_OUTROS_BENEFICIOS)
+        self.assertEqual(classificar_grupo(ACAO_BENEFICIOS_OBRIGATORIOS), GRUPO_OUTROS_BENEFICIOS)
+
+    def test_acao_fora_do_escopo_devolve_none(self):
+        self.assertIsNone(classificar_grupo("20RK"))
+
+    def test_nulo_devolve_none(self):
+        self.assertIsNone(classificar_grupo(pd.NA))
+        self.assertIsNone(classificar_grupo(None))
+
+
+class TestRegraParaNatureza(unittest.TestCase):
+    def test_contratacao_temporaria_e_13_3333(self):
+        regra = regra_para_natureza("319004", "31900413")
+        # 31900413 é o 13º da contratação temporária — a EXCEÇÃO (decimo_terceiro)
+        # vence a regra "mãe" (x13,3333) da natureza 319004.
+        self.assertEqual(regra.tipo, REGRA_DECIMO_TERCEIRO)
+
+    def test_contratacao_temporaria_regular_e_13_3333(self):
+        regra = regra_para_natureza("319004", "31900401")
+        self.assertEqual(regra.tipo, REGRA_MULTIPLICADOR)
+        self.assertEqual(regra.multiplicador, MULTIPLICADOR_13_3333)
+
+    def test_obrigacoes_patronais_rgps_e_13(self):
+        regra = regra_para_natureza("319013", "31901301")
+        self.assertEqual(regra.multiplicador, MULTIPLICADOR_13)
+
+    def test_obrigacoes_patronais_rpps_e_13(self):
+        regra = regra_para_natureza("319113", "31911303")
+        self.assertEqual(regra.multiplicador, MULTIPLICADOR_13)
+
+    def test_vencimentos_regulares_e_12(self):
+        regra = regra_para_natureza("319011", "31901101")
+        self.assertEqual(regra.tipo, REGRA_MULTIPLICADOR)
+        self.assertEqual(regra.multiplicador, MULTIPLICADOR_12)
+
+    def test_13o_salario_de_ativos_vence_a_regra_mae_de_vencimentos(self):
+        regra = regra_para_natureza("319011", "31901143")
+        self.assertEqual(regra.tipo, REGRA_DECIMO_TERCEIRO)
+
+    def test_ferias_constitucional_e_proporcao_historica(self):
+        regra = regra_para_natureza("319011", "31901145")
+        self.assertEqual(regra.tipo, REGRA_PROPORCAO_HISTORICA)
+
+    def test_ferias_antecipada_e_proporcao_historica(self):
+        regra = regra_para_natureza("319011", "31901146")
+        self.assertEqual(regra.tipo, REGRA_PROPORCAO_HISTORICA)
+
+    def test_exercicios_anteriores_e_zero(self):
+        regra = regra_para_natureza("319092", "31909201")
+        self.assertEqual(regra.tipo, REGRA_ZERO)
+
+    def test_sentencas_judiciais_e_regra_por_grupo(self):
+        regra = regra_para_natureza("319091", "31909101")
+        self.assertEqual(regra.tipo, REGRA_SENTENCA_POR_GRUPO)
+
+    def test_ed94_indenizacoes_trabalhistas_defensivo(self):
+        regra = regra_para_natureza("319094", "31909401")
+        self.assertEqual(regra.multiplicador, MULTIPLICADOR_12)
+
+    def test_ed96_ressarcimento_defensivo(self):
+        regra = regra_para_natureza("319096", "31909601")
+        self.assertEqual(regra.multiplicador, MULTIPLICADOR_13_3333)
+
+    def test_auxilio_alimentacao_e_12(self):
+        regra = regra_para_natureza("339046", "33904601")
+        self.assertEqual(regra.multiplicador, MULTIPLICADOR_12)
+
+    def test_natureza_desconhecida_devolve_none(self):
+        self.assertIsNone(regra_para_natureza("999999", "99999901"))
+
+
+class TestMultiplicadorEfetivo(unittest.TestCase):
+    def test_sentenca_ativo_e_13_3333(self):
+        regra = regra_para_natureza("319091", "x")
+        self.assertAlmostEqual(multiplicador_efetivo(regra, GRUPO_ATIVO), MULTIPLICADOR_13_3333)
+
+    def test_sentenca_inativo_e_13(self):
+        regra = regra_para_natureza("319091", "x")
+        self.assertEqual(multiplicador_efetivo(regra, GRUPO_INATIVO), MULTIPLICADOR_13)
+
+    def test_multiplicador_direto_ignora_grupo(self):
+        regra = regra_para_natureza("319004", "x")
+        self.assertEqual(multiplicador_efetivo(regra, GRUPO_RPPS), MULTIPLICADOR_13_3333)
+
+    def test_regra_sem_multiplicador_direto_levanta_erro(self):
+        regra = regra_para_natureza("319092", "x")
+        with self.assertRaises(ValueError):
+            multiplicador_efetivo(regra, GRUPO_ATIVO)
+
+
+def _linha_execucao(acao_cod, natureza_despesa_cod, natureza_detalhada_cod, **extra):
+    base = dict(
+        acao_cod=acao_cod,
+        acao_desc="",
+        natureza_despesa_cod=natureza_despesa_cod,
+        natureza_despesa_desc=f"NATUREZA {natureza_despesa_cod}",
+        natureza_detalhada_cod=natureza_detalhada_cod,
+        natureza_detalhada_desc=f"DETALHE {natureza_detalhada_cod}",
+    )
+    base.update(extra)
+    return base
+
+
+class TestFiltrarEscopo(unittest.TestCase):
+    def test_mantem_so_as_5_acoes_e_anexa_grupo(self):
+        df = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101"),
+            _linha_execucao(ACAO_INATIVO, "319001", "31900101"),
+            _linha_execucao("20RK", "339030", "33903001"),  # fora do escopo
+        ])
+        resultado = filtrar_escopo(df)
+        self.assertEqual(len(resultado), 2)
+        self.assertListEqual(sorted(resultado["grupo"].tolist()), [GRUPO_ATIVO, GRUPO_INATIVO])
+
+
+class TestValorMesReferenciaEExecucaoAnoAnterior(unittest.TestCase):
+    def _base_mensal(self):
+        linhas = []
+        for ano_mes in (202608, 202609):
+            linhas.append(_linha_execucao(
+                ACAO_ATIVO, "319011", "31901101",
+                tipo_linha="item_execucao", ano_mes=ano_mes, liquidada=1000.0 + ano_mes, paga=0.0,
+            ))
+        # linha de tipo "empenho" não deve entrar na soma de Liquidada/Paga
+        linhas.append(_linha_execucao(
+            ACAO_ATIVO, "319011", "31901101",
+            tipo_linha="empenho", ano_mes=202609, liquidada=pd.NA, paga=pd.NA,
+        ))
+        return pd.DataFrame(linhas)
+
+    def test_valor_mes_referencia_usa_liquidada_do_mes_pedido(self):
+        resultado = valor_mes_referencia(self._base_mensal(), 202609)
+        self.assertEqual(len(resultado), 1)
+        self.assertAlmostEqual(float(resultado.iloc[0]["valor_mes_referencia"]), 1000.0 + 202609)
+
+    def test_execucao_ano_anterior_usa_empenhada_do_ano_pedido(self):
+        df = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", ano=2025, empenhada=500000.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", ano=2026, empenhada=999999.0),
+        ])
+        resultado = execucao_ano_anterior(df, 2025)
+        self.assertEqual(len(resultado), 1)
+        self.assertAlmostEqual(float(resultado.iloc[0]["execucao_ano_anterior"]), 500000.0)
+
+
+class TestUltimoMesFechado(unittest.TestCase):
+    def test_ignora_mes_com_liquidada_zerada(self):
+        df = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202608, liquidada=500.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202609, liquidada=0.0, paga=0.0),
+        ])
+        self.assertEqual(ultimo_mes_fechado(df), 202608)
+
+    def test_sem_nenhum_mes_com_movimento_devolve_none(self):
+        df = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202608, liquidada=0.0, paga=0.0),
+        ])
+        self.assertIsNone(ultimo_mes_fechado(df))
+
+    def test_rola_para_o_exercicio_seguinte_quando_a_base_mensal_cruza_dois_anos(self):
+        # Pedido do usuário (10/09/2026: "quero que o sistema perdure por mais anos... 2027,
+        # 2028..."): se a mesma extração mensal passar a trazer o novo exercício junto com o
+        # anterior (ex. DEZ/2026 + JAN/2027 no mesmo arquivo — ver docs/base_execucao_mensal.md,
+        # pendência já documentada), o "último mês fechado" tem que rolar pro ano novo assim
+        # que ele tiver movimento real, não travar no ano anterior.
+        df = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202612, liquidada=500.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202701, liquidada=520.0, paga=0.0),
+        ])
+        self.assertEqual(ultimo_mes_fechado(df), 202701)
+
+
+class TestProjetar(unittest.TestCase):
+    """Cenário sintético cobrindo as 5 regras + o caso "sem regra" nos dois níveis de
+    rigor (núcleo SPO = erro; ações extras do usuário = alerta + padrão x12)."""
+
+    def _mensal(self):
+        linhas = [
+            # Ativo: vencimentos regulares (x12) + 13º (x1) + férias constitucional (proporção histórica)
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202608, liquidada=100000.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901143", tipo_linha="item_execucao", ano_mes=202608, liquidada=8000.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901145", tipo_linha="item_execucao", ano_mes=202608, liquidada=3000.0, paga=0.0),
+            # Ativo: sentença judicial (deve virar x13,3333, não x13)
+            _linha_execucao(ACAO_ATIVO, "319091", "31909101", tipo_linha="item_execucao", ano_mes=202608, liquidada=2000.0, paga=0.0),
+            # Inativo: sentença judicial (deve virar x13)
+            _linha_execucao(ACAO_INATIVO, "319091", "31909101", tipo_linha="item_execucao", ano_mes=202608, liquidada=1500.0, paga=0.0),
+            # Inativo: exercícios anteriores (projeção sempre zero, mesmo tendo valor no mês)
+            _linha_execucao(ACAO_INATIVO, "319092", "31909201", tipo_linha="item_execucao", ano_mes=202608, liquidada=999.0, paga=0.0),
+            # Extra do usuário (212B): rubrica não mapeada explicitamente -> alerta + padrão x12
+            _linha_execucao(ACAO_BENEFICIOS_OBRIGATORIOS, "339999", "33999901", tipo_linha="item_execucao", ano_mes=202608, liquidada=4000.0, paga=0.0),
+        ]
+        return pd.DataFrame(linhas)
+
+    def _anual(self):
+        linhas = [
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", ano=2025, empenhada=1_100_000.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901145", ano=2025, empenhada=33_000.0),
+        ]
+        return pd.DataFrame(linhas)
+
+    def test_multiplicador_simples_sentenca_ativo(self):
+        resultado = projetar(self._mensal(), self._anual(), 202608, 2027)
+        linha = resultado.linhas[
+            (resultado.linhas["grupo"] == GRUPO_ATIVO) & (resultado.linhas["natureza_despesa_cod"] == "319091")
+        ].iloc[0]
+        self.assertAlmostEqual(float(linha["projecao"]), 2000.0 * MULTIPLICADOR_13_3333)
+
+    def test_multiplicador_simples_sentenca_inativo(self):
+        resultado = projetar(self._mensal(), self._anual(), 202608, 2027)
+        linha = resultado.linhas[
+            (resultado.linhas["grupo"] == GRUPO_INATIVO) & (resultado.linhas["natureza_despesa_cod"] == "319091")
+        ].iloc[0]
+        self.assertAlmostEqual(float(linha["projecao"]), 1500.0 * MULTIPLICADOR_13)
+
+    def test_exercicios_anteriores_projeta_zero_mesmo_com_valor_no_mes(self):
+        resultado = projetar(self._mensal(), self._anual(), 202608, 2027)
+        linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319092"].iloc[0]
+        self.assertEqual(float(linha["projecao"]), 0.0)
+
+    def test_decimo_terceiro_e_uma_vez_o_mes_de_referencia(self):
+        resultado = projetar(self._mensal(), self._anual(), 202608, 2027)
+        linha = resultado.linhas[resultado.linhas["natureza_detalhada_cod"] == "31901143"].iloc[0]
+        self.assertAlmostEqual(float(linha["projecao"]), 8000.0)
+
+    def test_proporcao_historica_aplica_proporcao_do_ano_anterior_sobre_vencimentos_projetados(self):
+        resultado = projetar(self._mensal(), self._anual(), 202608, 2027)
+        linha = resultado.linhas[resultado.linhas["natureza_detalhada_cod"] == "31901145"].iloc[0]
+        # proporção 2025: 33.000 / 1.100.000 = 0,03
+        # vencimentos projetados do grupo Ativo: 100.000 (mês ref, natureza 319011) x 12 = 1.200.000
+        # projeção esperada: 0,03 x 1.200.000 = 36.000
+        self.assertAlmostEqual(float(linha["projecao"]), 36_000.0, places=2)
+
+    def test_rubrica_nao_mapeada_em_acao_extra_gera_alerta_e_aplica_x12(self):
+        resultado = projetar(self._mensal(), self._anual(), 202608, 2027)
+        linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "339999"].iloc[0]
+        self.assertAlmostEqual(float(linha["projecao"]), 4000.0 * MULTIPLICADOR_12)
+        self.assertTrue(any("339999" in alerta for alerta in resultado.alertas))
+        self.assertTrue(resultado.ok)  # alerta não é erro
+
+    def test_rubrica_nao_mapeada_no_nucleo_spo_gera_erro_e_nao_projeta(self):
+        mensal = self._mensal()
+        # injeta uma natureza desconhecida numa das 3 ações NÚCLEO (não extra)
+        extra = _linha_execucao(ACAO_RPPS, "319999", "31999901", tipo_linha="item_execucao", ano_mes=202608, liquidada=777.0, paga=0.0)
+        mensal = pd.concat([mensal, pd.DataFrame([extra])], ignore_index=True)
+        resultado = projetar(mensal, self._anual(), 202608, 2027)
+        self.assertFalse(resultado.ok)
+        self.assertTrue(any("319999" in erro for erro in resultado.erros))
+        linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319999"].iloc[0]
+        # `None` vira NaN ao entrar numa coluna numérica do DataFrame — comportamento
+        # normal do pandas, não um bug: o teste confere "sem valor", não `is None`.
+        self.assertTrue(pd.isna(linha["projecao"]))
+
+
+def _linha_dotacao(acao_codigo, item_informacao_codigo, ano_lancamento, valor_movimento_liquido,
+                    plano_orcamentario_codigo=None):
+    return dict(
+        acao_codigo=acao_codigo, item_informacao_codigo=item_informacao_codigo,
+        ano_lancamento=ano_lancamento, valor_movimento_liquido=valor_movimento_liquido,
+        plano_orcamentario_codigo=plano_orcamentario_codigo,
+    )
+
+
+class TestDotacaoAtualizadaPorGrupo(unittest.TestCase):
+    def test_soma_so_dotacao_atualizada_do_ano_pedido_dentro_do_escopo(self):
+        df = pd.DataFrame([
+            _linha_dotacao(ACAO_ATIVO, "dotacao_atualizada", 2026, 400_000.0),
+            _linha_dotacao(ACAO_ATIVO, "dotacao_inicial", 2026, 350_000.0),  # não é "atualizada" — ignorado
+            _linha_dotacao(ACAO_ATIVO, "dotacao_atualizada", 2025, 999_999.0),  # ano errado — ignorado
+            _linha_dotacao(ACAO_INATIVO, "dotacao_atualizada", 2026, 200_000.0),
+            _linha_dotacao("20RK", "dotacao_atualizada", 2026, 111_111.0),  # fora do escopo — ignorado
+        ])
+        resultado = dotacao_atualizada_por_grupo(df, 2026)
+        self.assertAlmostEqual(float(resultado[GRUPO_ATIVO]), 400_000.0)
+        self.assertAlmostEqual(float(resultado[GRUPO_INATIVO]), 200_000.0)
+        self.assertNotIn("fora_do_escopo", resultado.index)
+
+
+class TestDotacaoAtualizadaPorPlanoOrcamentario(unittest.TestCase):
+    """Pedido do usuário (10/09/2026): a Dotação Anual TEM a dimensão Plano
+    Orçamentário — dá pra comparar dotação x projeção nesse nível, só para as 2 ações
+    de Outros Benefícios."""
+
+    def test_mesmo_codigo_po_em_acoes_diferentes_nao_se_mistura(self):
+        # "0001" é "Assistência Médica" em 2004 mas "Assistência Pré-Escolar" em
+        # 212B — achado real na base (ver docstring de `dotacao_atualizada_por_plano_orcamentario`).
+        df = pd.DataFrame([
+            _linha_dotacao(ACAO_ASSISTENCIA_MEDICA, "dotacao_atualizada", 2026, 500_000.0, plano_orcamentario_codigo="0001"),
+            _linha_dotacao(ACAO_BENEFICIOS_OBRIGATORIOS, "dotacao_atualizada", 2026, 300_000.0, plano_orcamentario_codigo="0001"),
+        ])
+        resultado = dotacao_atualizada_por_plano_orcamentario(df, 2026)
+        self.assertAlmostEqual(float(resultado[(ACAO_ASSISTENCIA_MEDICA, "0001")]), 500_000.0)
+        self.assertAlmostEqual(float(resultado[(ACAO_BENEFICIOS_OBRIGATORIOS, "0001")]), 300_000.0)
+
+    def test_exclui_linhas_regra_de_ouro(self):
+        df = pd.DataFrame([
+            _linha_dotacao(ACAO_BENEFICIOS_OBRIGATORIOS, "dotacao_atualizada", 2026, 300_000.0, plano_orcamentario_codigo="0005"),
+            _linha_dotacao(ACAO_BENEFICIOS_OBRIGATORIOS, "dotacao_atualizada", 2026, 999_999.0, plano_orcamentario_codigo="RO05"),
+        ])
+        resultado = dotacao_atualizada_por_plano_orcamentario(df, 2026)
+        self.assertAlmostEqual(float(resultado[(ACAO_BENEFICIOS_OBRIGATORIOS, "0005")]), 300_000.0)
+        self.assertNotIn((ACAO_BENEFICIOS_OBRIGATORIOS, "RO05"), resultado.index)
+
+    def test_acoes_fora_de_outros_beneficios_sao_ignoradas(self):
+        df = pd.DataFrame([
+            _linha_dotacao(ACAO_ATIVO, "dotacao_atualizada", 2026, 1_000_000.0, plano_orcamentario_codigo="0001"),
+        ])
+        resultado = dotacao_atualizada_por_plano_orcamentario(df, 2026)
+        self.assertTrue(resultado.empty)
+
+
+class TestCompararComDotacao(unittest.TestCase):
+    """Objetivo central do módulo (pedido explícito do usuário): dotação suficiente ou
+    não, por grupo."""
+
+    def _mensal_simples(self, valor_ativo=100_000.0, valor_inativo=100_000.0):
+        return pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202608, liquidada=valor_ativo, paga=0.0),
+            _linha_execucao(ACAO_INATIVO, "319001", "31900101", tipo_linha="item_execucao", ano_mes=202608, liquidada=valor_inativo, paga=0.0),
+        ])
+
+    def test_grupo_com_dotacao_maior_que_projecao_e_suficiente(self):
+        mensal = self._mensal_simples(valor_ativo=10_000.0)  # projeção: 10.000 x 12 = 120.000
+        dotacao = pd.DataFrame([
+            _linha_dotacao(ACAO_ATIVO, "dotacao_atualizada", 2026, 200_000.0),  # > projeção
+            _linha_dotacao(ACAO_INATIVO, "dotacao_atualizada", 2026, 5_000.0),  # < projeção (100.000 x 12)
+        ])
+        # sem naturezas de proporção histórica neste cenário — anual vazio (mas com as
+        # colunas certas, senão `filtrar_escopo` levanta KeyError num DataFrame sem
+        # nenhuma coluna) é suficiente pra `execucao_ano_anterior` não achar nada.
+        anual_vazio = pd.DataFrame(columns=[
+            "acao_cod", "ano", "natureza_despesa_cod", "natureza_despesa_desc",
+            "natureza_detalhada_cod", "natureza_detalhada_desc", "empenhada",
+        ])
+        resultado = projetar(mensal, anual_vazio, 202608, 2027)
+        comparacao = comparar_com_dotacao(resultado, dotacao, 2026)
+
+        linha_ativo = comparacao[comparacao["grupo"] == GRUPO_ATIVO].iloc[0]
+        self.assertTrue(bool(linha_ativo["suficiente"]))
+        self.assertGreater(float(linha_ativo["diferenca"]), 0)
+
+        linha_inativo = comparacao[comparacao["grupo"] == GRUPO_INATIVO].iloc[0]
+        self.assertFalse(bool(linha_inativo["suficiente"]))
+        self.assertLess(float(linha_inativo["diferenca"]), 0)
+
+
+class TestGradeMensal(unittest.TestCase):
+    """Grade Jan-Dez: mês já na base mensal usa o valor real; mês futuro usa a
+    projeção, com a parcela de 13º/multiplicador extra concentrada em jun/nov
+    (decisão 6, confirmada pelo usuário)."""
+
+    def _mensal(self):
+        # Ativo, vencimentos regulares (x12): só Jan-Ago têm dado real; Set-Dez são
+        # futuros e devem repetir o valor de referência (Ago = 202608 = 50.000,00).
+        linhas = [
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202601 + i, liquidada=50_000.0 + i, paga=0.0)
+            for i in range(8)  # 202601..202608
+        ]
+        # Ativo, contratação temporária (x13,3333) — mesmo recorte, só p/ conferir a
+        # parcela extra concentrada em jun/nov nos meses futuros.
+        linhas.append(_linha_execucao(ACAO_ATIVO, "319004", "31900401", tipo_linha="item_execucao", ano_mes=202608, liquidada=9_000.0, paga=0.0))
+        return pd.DataFrame(linhas)
+
+    def _anual_vazio(self):
+        return pd.DataFrame(columns=[
+            "acao_cod", "ano", "natureza_despesa_cod", "natureza_despesa_desc",
+            "natureza_detalhada_cod", "natureza_detalhada_desc", "empenhada",
+        ])
+
+    def test_mes_ja_executado_usa_valor_real_nao_projecao(self):
+        resultado = grade_mensal(self._mensal(), self._anual_vazio(), 2026, 202608)
+        linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319011"].iloc[0]
+        # Jan (índice 0) = 50.000,00 real, não repetição do mês de referência (Ago).
+        self.assertAlmostEqual(linha["meses"][0], 50_000.0)
+        self.assertAlmostEqual(linha["meses"][7], 50_007.0)  # Ago real = 50.000+7
+
+    def test_mes_futuro_de_rubrica_x12_repete_valor_de_referencia_sem_bump(self):
+        resultado = grade_mensal(self._mensal(), self._anual_vazio(), 2026, 202608)
+        linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319011"].iloc[0]
+        valor_ref = 50_007.0  # Ago (mês de referência)
+        # Set (índice 8) é futuro e não é mês de 13º/parcela extra — repete liso.
+        self.assertAlmostEqual(linha["meses"][8], valor_ref)
+
+    def test_mes_futuro_x13_3333_concentra_extra_em_junho_e_novembro(self):
+        resultado = grade_mensal(self._mensal(), self._anual_vazio(), 2026, 202608)
+        linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319004"].iloc[0]
+        valor_ref = 9_000.0
+        extra_total = valor_ref * (MULTIPLICADOR_13_3333 - 12.0)
+        # jun e nov já passaram (mês de referência é agosto) — este cenário não tem
+        # meses futuros de jun/nov pra testar o bump diretamente aqui; testa então que
+        # um mês futuro comum (dezembro) fica no valor liso, sem receber o extra.
+        self.assertAlmostEqual(linha["meses"][11], valor_ref)  # Dez: sem bump
+
+    def test_decimo_terceiro_futuro_concentrado_meio_a_meio_em_junho_e_novembro(self):
+        # mês de referência bem cedo no ano (fevereiro) pra jun/nov ainda serem futuros.
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202601, liquidada=100.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901143", tipo_linha="item_execucao", ano_mes=202601, liquidada=100.0, paga=0.0),  # 13º, Jan real
+        ])
+        resultado = grade_mensal(mensal, self._anual_vazio(), 2026, 202601)
+        linha13 = resultado.linhas[resultado.linhas["natureza_detalhada_cod"] == "31901143"].iloc[0]
+        self.assertAlmostEqual(linha13["meses"][MES_ANTECIPACAO_DECIMO_TERCEIRO - 1], 50.0)
+        self.assertAlmostEqual(linha13["meses"][MES_PARCELA_DECIMO_TERCEIRO - 1], 50.0)
+        # meses futuros que não são jun/nov ficam em zero (não é um valor recorrente
+        # todo mês, só nos dois meses de pagamento).
+        self.assertAlmostEqual(linha13["meses"][2], 0.0)  # Março
+
+    def test_regra_zero_fica_zero_em_todos_os_meses_futuros(self):
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_INATIVO, "319092", "31909201", tipo_linha="item_execucao", ano_mes=202601, liquidada=999.0, paga=0.0),
+        ])
+        resultado = grade_mensal(mensal, self._anual_vazio(), 2026, 202601)
+        linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319092"].iloc[0]
+        self.assertAlmostEqual(linha["meses"][0], 999.0)  # Jan: real
+        self.assertAlmostEqual(linha["meses"][5], 0.0)  # Jun: projetado, regra zero
+
+    def test_dois_exercicios_na_mesma_base_mensal_nao_vazam_um_no_outro(self):
+        # Pedido do usuário (10/09/2026: "quero que o sistema perdure por mais anos... 2027,
+        # 2028..."): se a extração mensal um dia trouxer DEZ/2026 e JAN/2027 juntas no mesmo
+        # arquivo (cenário já documentado como pendência em docs/base_execucao_mensal.md),
+        # pedir a grade de 2026 não pode incluir nada de 2027, e vice-versa.
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202612, liquidada=10_000.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202701, liquidada=99_999.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202702, liquidada=99_999.0, paga=0.0),
+        ])
+        grade_2026 = grade_mensal(mensal, self._anual_vazio(), 2026, 202612)
+        linha_2026 = grade_2026.linhas[grade_2026.linhas["natureza_despesa_cod"] == "319011"].iloc[0]
+        self.assertAlmostEqual(linha_2026["meses"][11], 10_000.0)  # dezembro de 2026: real
+        self.assertTrue(all(v is None for v in linha_2026["meses"][:11]))  # nada de 2027 aqui
+
+        grade_2027 = grade_mensal(mensal, self._anual_vazio(), 2027, 202702)
+        linha_2027 = grade_2027.linhas[grade_2027.linhas["natureza_despesa_cod"] == "319011"].iloc[0]
+        self.assertAlmostEqual(linha_2027["meses"][0], 99_999.0)  # janeiro de 2027: real
+        self.assertAlmostEqual(linha_2027["meses"][1], 99_999.0)  # fevereiro de 2027: real
+        self.assertNotAlmostEqual(linha_2027["meses"][0], 10_000.0)  # não herdou o valor de dez/2026
+
+
+class TestAplicarOverrides(unittest.TestCase):
+    def _grade_simples(self):
+        # mês de referência = fevereiro (202602): Jan/Fev são reais, Mar em diante são
+        # futuros e portanto editáveis.
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202601, liquidada=100.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202602, liquidada=110.0, paga=0.0),
+        ])
+        anual_vazio = pd.DataFrame(columns=[
+            "acao_cod", "ano", "natureza_despesa_cod", "natureza_despesa_desc",
+            "natureza_detalhada_cod", "natureza_detalhada_desc", "empenhada",
+        ])
+        return grade_mensal(mensal, anual_vazio, 2026, 202602)
+
+    def test_override_em_mes_futuro_substitui_o_valor_projetado(self):
+        grade = self._grade_simples()
+        chave = (GRUPO_ATIVO, "319011", "31901101")
+        resultado = aplicar_overrides(grade, {chave: {5: 999_999.0}})  # Maio, futuro
+        linha = resultado.linhas[resultado.linhas["natureza_detalhada_cod"] == "31901101"].iloc[0]
+        self.assertAlmostEqual(linha["meses"][4], 999_999.0)
+
+    def test_override_em_mes_ja_real_e_ignorado(self):
+        grade = self._grade_simples()
+        chave = (GRUPO_ATIVO, "319011", "31901101")
+        # Fevereiro (índice 1) já é real (110.0) — override não deve valer.
+        resultado = aplicar_overrides(grade, {chave: {2: -1.0}})
+        linha = resultado.linhas[resultado.linhas["natureza_detalhada_cod"] == "31901101"].iloc[0]
+        self.assertAlmostEqual(linha["meses"][1], 110.0)
+
+    def test_grade_original_nao_e_alterada_in_place(self):
+        grade = self._grade_simples()
+        valor_original_maio = grade.linhas.iloc[0]["meses"][4]
+        chave = (GRUPO_ATIVO, "319011", "31901101")
+        aplicar_overrides(grade, {chave: {5: 12345.0}})
+        self.assertEqual(grade.linhas.iloc[0]["meses"][4], valor_original_maio)
+
+
+class TestConsolidarPorElemento(unittest.TestCase):
+    """Pedido explícito do usuário: "Rubrica × Mês" não deve descer até o nível de
+    sub-detalhe (natureza detalhada) — só até ELEMENTO, exceto 13º/proporção
+    histórica, que continuam em linha própria (mesma referência visual anexada)."""
+
+    def _grade_com_varios_sub_detalhes(self):
+        # 3 naturezas detalhadas DIFERENTES dentro do MESMO elemento (319011,
+        # vencimentos regulares — regra x12) + 1 linha de 13º (regra própria).
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202601, liquidada=100.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901131", tipo_linha="item_execucao", ano_mes=202601, liquidada=50.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901109", tipo_linha="item_execucao", ano_mes=202601, liquidada=20.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901143", tipo_linha="item_execucao", ano_mes=202601, liquidada=8.0, paga=0.0),  # 13º
+        ])
+        anual_vazio = pd.DataFrame(columns=[
+            "acao_cod", "ano", "natureza_despesa_cod", "natureza_despesa_desc",
+            "natureza_detalhada_cod", "natureza_detalhada_desc", "empenhada",
+        ])
+        return grade_mensal(mensal, anual_vazio, 2026, 202601)
+
+    def test_naturezas_regulares_do_mesmo_elemento_viram_uma_so_linha(self):
+        grade = self._grade_com_varios_sub_detalhes()
+        consolidada = consolidar_por_elemento(grade)
+        linhas_319011 = consolidada.linhas[consolidada.linhas["natureza_despesa_cod"] == "319011"]
+        # as 3 naturezas "regulares" (31901101/31901131/31901109) viram 1 linha; o 13º
+        # (31901143) continua separado -> total de 2 linhas para a natureza 319011.
+        self.assertEqual(len(linhas_319011), 2)
+
+    def test_soma_das_naturezas_regulares_bate_com_a_soma_original(self):
+        grade = self._grade_com_varios_sub_detalhes()
+        consolidada = consolidar_por_elemento(grade)
+        linha_regular = consolidada.linhas[
+            (consolidada.linhas["natureza_despesa_cod"] == "319011") & (consolidada.linhas["regra_aplicada"] == REGRA_MULTIPLICADOR)
+        ].iloc[0]
+        self.assertAlmostEqual(linha_regular["meses"][0], 100.0 + 50.0 + 20.0)
+
+    def test_linha_de_13o_continua_separada_e_intacta(self):
+        grade = self._grade_com_varios_sub_detalhes()
+        consolidada = consolidar_por_elemento(grade)
+        linha_13 = consolidada.linhas[consolidada.linhas["regra_aplicada"] == REGRA_DECIMO_TERCEIRO]
+        self.assertEqual(len(linha_13), 1)
+        self.assertAlmostEqual(linha_13.iloc[0]["meses"][0], 8.0)
+
+    def test_totais_por_grupo_nao_mudam_com_a_consolidacao(self):
+        grade = self._grade_com_varios_sub_detalhes()
+        consolidada = consolidar_por_elemento(grade)
+        total_original = grade.total_por_grupo_por_mes().loc[GRUPO_ATIVO, 1]
+        total_consolidado = consolidada.total_por_grupo_por_mes().loc[GRUPO_ATIVO, 1]
+        self.assertAlmostEqual(total_original, total_consolidado)
+
+    def test_modalidade_direta_e_intra_orcamentaria_do_mesmo_elemento_viram_uma_linha(self):
+        # 319004 (direta) e 319104 (intra-orçamentária) são o MESMO elemento (04) —
+        # só o dígito de modalidade muda (3-1-90-04 vs 3-1-91-04). Achado ao restringir
+        # a aba Ativo ao layout do relatório-modelo (10/09/2026): antes desta correção,
+        # apareciam como 2 linhas "ED_04" diferentes.
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319004", "319004", tipo_linha="item_execucao", ano_mes=202601, liquidada=100.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319104", "319104", tipo_linha="item_execucao", ano_mes=202601, liquidada=30.0, paga=0.0),
+        ])
+        anual_vazio = pd.DataFrame(columns=[
+            "acao_cod", "ano", "natureza_despesa_cod", "natureza_despesa_desc",
+            "natureza_detalhada_cod", "natureza_detalhada_desc", "empenhada",
+        ])
+        grade = grade_mensal(mensal, anual_vazio, 2026, 202601)
+        consolidada = consolidar_por_elemento(grade)
+        self.assertEqual(len(consolidada.linhas), 1)
+        linha = consolidada.linhas.iloc[0]
+        self.assertEqual(linha["natureza_despesa_cod"], "319004")  # modalidade direta é a representante
+        self.assertAlmostEqual(linha["meses"][0], 130.0)
+
+
+_ANUAL_VAZIO = pd.DataFrame(columns=[
+    "acao_cod", "ano", "natureza_despesa_cod", "natureza_despesa_desc",
+    "natureza_detalhada_cod", "natureza_detalhada_desc", "empenhada",
+])
+
+
+class TestConsolidarRelatorioAtivo(unittest.TestCase):
+    """Layout fixo pedido pelo usuário (10/09/2026, foto do relatório-modelo anexada):
+    só a aba Ativo é restrita a ED_04/07/11-12/13(RGPS)/16-17/91/92/94/96, com 11 e 12
+    fundidos numa única linha e só 4 sub-rubricas (13º/Abono Pecuniário/Abono
+    Constitucional/Adiantamento de Férias) soltas dentro dela."""
+
+    def _grade(self, linhas_mensal, ano_mes=202601):
+        mensal = pd.DataFrame(linhas_mensal)
+        grade = grade_mensal(mensal, _ANUAL_VAZIO, ano_mes // 100, ano_mes)
+        return consolidar_relatorio_ativo(consolidar_por_elemento(grade))
+
+    def test_elementos_11_e_12_viram_uma_linha_11_12(self):
+        resultado = self._grade([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202601, liquidada=100.0, paga=0.0),
+        ])
+        linha = resultado.linhas[resultado.linhas["grupo"] == GRUPO_ATIVO]
+        self.assertEqual(list(linha["natureza_despesa_cod"]), ["11/12"])
+        self.assertAlmostEqual(linha.iloc[0]["meses"][0], 100.0)
+
+    def test_subitens_43_44_45_46_continuam_separados_dentro_de_11_12(self):
+        resultado = self._grade([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202601, liquidada=100.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901143", tipo_linha="item_execucao", ano_mes=202601, liquidada=8.0, paga=0.0),  # 13º
+            _linha_execucao(ACAO_ATIVO, "319011", "31901144", tipo_linha="item_execucao", ano_mes=202601, liquidada=3.0, paga=0.0),  # abono pecuniário
+            _linha_execucao(ACAO_ATIVO, "319011", "31901145", tipo_linha="item_execucao", ano_mes=202601, liquidada=2.0, paga=0.0),  # abono constitucional
+            _linha_execucao(ACAO_ATIVO, "319011", "31901146", tipo_linha="item_execucao", ano_mes=202601, liquidada=1.0, paga=0.0),  # adiantamento férias
+        ])
+        linhas = resultado.linhas[resultado.linhas["grupo"] == GRUPO_ATIVO]
+        # 1 linha "11/12" (só o regular) + 4 sub-rubricas soltas = 5 linhas no total.
+        self.assertEqual(len(linhas), 5)
+        codigos_detalhados = set(linhas["natureza_detalhada_cod"])
+        self.assertEqual(codigos_detalhados, {"11/12", "31901143", "31901144", "31901145", "31901146"})
+        linha_11_12 = linhas[linhas["natureza_despesa_cod"] == "11/12"].iloc[0]
+        self.assertAlmostEqual(linha_11_12["meses"][0], 100.0)  # só o regular, sub-rubricas não entram aqui
+
+    def test_13o_de_contrato_temporario_funde_de_volta_em_ed_04(self):
+        resultado = self._grade([
+            _linha_execucao(ACAO_ATIVO, "319004", "319004", tipo_linha="item_execucao", ano_mes=202601, liquidada=100.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319004", "31900413", tipo_linha="item_execucao", ano_mes=202601, liquidada=8.0, paga=0.0),  # 13º contrato temp.
+        ])
+        linhas = resultado.linhas[resultado.linhas["grupo"] == GRUPO_ATIVO]
+        # nenhuma linha própria para o 13º do contrato temporário — soma dentro de ED_04.
+        self.assertEqual(len(linhas), 1)
+        self.assertEqual(linhas.iloc[0]["natureza_despesa_cod"], "04")
+        self.assertAlmostEqual(linhas.iloc[0]["meses"][0], 108.0)
+
+    def test_elemento_fora_da_lista_fixa_vai_para_outros_com_alerta(self):
+        # 319001 tem regra própria (x12), mas o elemento 01 não está na lista fixa do
+        # relatório-modelo para a aba Ativo — não pode sumir, tem que aparecer em
+        # "Outros / Não Classificado" com um alerta visível.
+        resultado = self._grade([
+            _linha_execucao(ACAO_ATIVO, "319001", "319001", tipo_linha="item_execucao", ano_mes=202601, liquidada=42.0, paga=0.0),
+        ])
+        linhas = resultado.linhas[resultado.linhas["grupo"] == GRUPO_ATIVO]
+        self.assertEqual(list(linhas["natureza_despesa_cod"]), ["outros"])
+        self.assertAlmostEqual(linhas.iloc[0]["meses"][0], 42.0)
+        self.assertTrue(any("outros" in a.lower() or "Outros" in a for a in resultado.alertas))
+
+    def test_grupos_fora_de_ativo_nao_sao_alterados(self):
+        resultado = self._grade([
+            _linha_execucao(ACAO_INATIVO, "319001", "319001", tipo_linha="item_execucao", ano_mes=202601, liquidada=77.0, paga=0.0),
+        ])
+        linhas = resultado.linhas[resultado.linhas["grupo"] == GRUPO_INATIVO]
+        self.assertEqual(len(linhas), 1)
+        self.assertEqual(linhas.iloc[0]["natureza_despesa_cod"], "319001")  # não passa pela curadoria de Ativo
+
+
+class TestGradeMensalBeneficios(unittest.TestCase):
+    """Pedido do usuário (10/09/2026): evidenciar Outros Benefícios por PLANO
+    ORÇAMENTÁRIO, não por elemento de despesa — achado real na base: um PO mistura
+    naturezas com regras de projeção diferentes entre si, e a MESMA natureza aparece
+    em POs diferentes (ex. 339004 em "Assistência Pré-Escolar" e em "Auxílio-
+    Transporte")."""
+
+    def _grade(self, linhas_mensal, ano_mes=202601):
+        mensal = pd.DataFrame(linhas_mensal)
+        return grade_mensal_beneficios(mensal, _ANUAL_VAZIO, ano_mes // 100, ano_mes)
+
+    def test_po_soma_naturezas_com_regras_diferentes(self):
+        # 339004 (x13,3333) + 339008 (x12) no MESMO PO "0001" — devem virar 1 linha só.
+        resultado = self._grade([
+            _linha_execucao(ACAO_BENEFICIOS_OBRIGATORIOS, "339004", "339004",
+                             tipo_linha="item_execucao", ano_mes=202601, liquidada=120.0, paga=0.0,
+                             po_cod="0001", po_desc="ASSISTENCIA PRE-ESCOLAR", acao_desc="BENEFICIOS OBRIGATORIOS"),
+            _linha_execucao(ACAO_BENEFICIOS_OBRIGATORIOS, "339008", "339008",
+                             tipo_linha="item_execucao", ano_mes=202601, liquidada=50.0, paga=0.0,
+                             po_cod="0001", po_desc="ASSISTENCIA PRE-ESCOLAR", acao_desc="BENEFICIOS OBRIGATORIOS"),
+        ])
+        linhas = resultado.linhas
+        self.assertEqual(len(linhas), 1)
+        linha = linhas.iloc[0]
+        self.assertEqual(linha["natureza_despesa_cod"], ACAO_BENEFICIOS_OBRIGATORIOS)
+        self.assertEqual(linha["natureza_detalhada_cod"], "0001")
+        self.assertEqual(linha["natureza_detalhada_desc"], "ASSISTENCIA PRE-ESCOLAR")
+        self.assertAlmostEqual(linha["meses"][0], 170.0)
+
+    def test_mesma_natureza_em_pos_diferentes_nao_se_mistura(self):
+        resultado = self._grade([
+            _linha_execucao(ACAO_BENEFICIOS_OBRIGATORIOS, "339004", "339004",
+                             tipo_linha="item_execucao", ano_mes=202601, liquidada=120.0, paga=0.0,
+                             po_cod="0001", po_desc="ASSISTENCIA PRE-ESCOLAR", acao_desc=""),
+            _linha_execucao(ACAO_BENEFICIOS_OBRIGATORIOS, "339004", "339004",
+                             tipo_linha="item_execucao", ano_mes=202601, liquidada=80.0, paga=0.0,
+                             po_cod="0003", po_desc="AUXILIO-TRANSPORTE", acao_desc=""),
+        ])
+        linhas = resultado.linhas.set_index("natureza_detalhada_cod")
+        self.assertEqual(len(linhas), 2)
+        self.assertAlmostEqual(linhas.loc["0001", "meses"][0], 120.0)
+        self.assertAlmostEqual(linhas.loc["0003", "meses"][0], 80.0)
+
+    def test_natureza_sem_regra_gera_alerta_por_po_nao_erro(self):
+        resultado = self._grade([
+            _linha_execucao(ACAO_ASSISTENCIA_MEDICA, "339093", "33909308",
+                             tipo_linha="item_execucao", ano_mes=202601, liquidada=100.0, paga=0.0,
+                             po_cod="0001", po_desc="ASSISTENCIA MEDICA", acao_desc=""),
+        ])
+        self.assertEqual(resultado.erros, [])
+        self.assertEqual(len(resultado.alertas), 1)
+        self.assertIn("PO 0001", resultado.alertas[0])
+        self.assertAlmostEqual(resultado.linhas.iloc[0]["meses"][0], 100.0)
+
+    def test_mes_futuro_projeta_por_natureza_antes_de_somar_por_po(self):
+        # referência = jan/202601; fev é mês futuro sem bump de 13º (só jun/nov) — cada
+        # natureza projeta pela própria regra e só DEPOIS soma por PO.
+        resultado = self._grade([
+            _linha_execucao(ACAO_BENEFICIOS_OBRIGATORIOS, "339004", "339004",
+                             tipo_linha="item_execucao", ano_mes=202601, liquidada=120.0, paga=0.0,
+                             po_cod="0001", po_desc="X", acao_desc=""),
+            _linha_execucao(ACAO_BENEFICIOS_OBRIGATORIOS, "339008", "339008",
+                             tipo_linha="item_execucao", ano_mes=202601, liquidada=50.0, paga=0.0,
+                             po_cod="0001", po_desc="X", acao_desc=""),
+        ])
+        linha = resultado.linhas.iloc[0]
+        self.assertAlmostEqual(linha["meses"][1], 170.0)
+
+
+class TestSubstituirBeneficiosPorPlanoOrcamentario(unittest.TestCase):
+    def test_troca_beneficios_mantem_ativo_intacto(self):
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "319011", tipo_linha="item_execucao", ano_mes=202601, liquidada=1000.0, paga=0.0),
+            _linha_execucao(ACAO_BENEFICIOS_OBRIGATORIOS, "339046", "339046", tipo_linha="item_execucao", ano_mes=202601, liquidada=200.0, paga=0.0,
+                             po_cod="0005", po_desc="AUXILIO-ALIMENTACAO", acao_desc=""),
+        ])
+        grade = consolidar_relatorio_ativo(consolidar_por_elemento(grade_mensal(mensal, _ANUAL_VAZIO, 2026, 202601)))
+        resultado = substituir_beneficios_por_plano_orcamentario(grade, mensal, _ANUAL_VAZIO)
+
+        ativo = resultado.linhas[resultado.linhas["grupo"] == GRUPO_ATIVO]
+        self.assertEqual(len(ativo), 1)
+        self.assertEqual(ativo.iloc[0]["natureza_despesa_cod"], "11/12")  # curadoria do Ativo intacta
+
+        beneficios = resultado.linhas[resultado.linhas["grupo"] == GRUPO_OUTROS_BENEFICIOS]
+        self.assertEqual(len(beneficios), 1)
+        self.assertEqual(beneficios.iloc[0]["natureza_detalhada_cod"], "0005")  # por PO, não mais por elemento (339046)
+
+    def test_total_de_beneficios_preservado_na_troca(self):
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_BENEFICIOS_OBRIGATORIOS, "339046", "339046", tipo_linha="item_execucao", ano_mes=202601, liquidada=200.0, paga=0.0,
+                             po_cod="0005", po_desc="X", acao_desc=""),
+            _linha_execucao(ACAO_BENEFICIOS_OBRIGATORIOS, "339049", "339049", tipo_linha="item_execucao", ano_mes=202601, liquidada=30.0, paga=0.0,
+                             po_cod="0003", po_desc="Y", acao_desc=""),
+        ])
+        grade = consolidar_relatorio_ativo(consolidar_por_elemento(grade_mensal(mensal, _ANUAL_VAZIO, 2026, 202601)))
+        total_antes = grade.total_por_grupo_por_mes().loc[GRUPO_OUTROS_BENEFICIOS, 1]
+        resultado = substituir_beneficios_por_plano_orcamentario(grade, mensal, _ANUAL_VAZIO)
+        total_depois = resultado.total_por_grupo_por_mes().loc[GRUPO_OUTROS_BENEFICIOS, 1]
+        self.assertAlmostEqual(total_antes, total_depois)
+
+    def test_alerta_antigo_por_natureza_e_substituido_pelo_de_po(self):
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_ASSISTENCIA_MEDICA, "339093", "33909308", tipo_linha="item_execucao", ano_mes=202601, liquidada=10.0, paga=0.0,
+                             po_cod="0001", po_desc="X", acao_desc=""),
+        ])
+        grade = consolidar_relatorio_ativo(consolidar_por_elemento(grade_mensal(mensal, _ANUAL_VAZIO, 2026, 202601)))
+        self.assertTrue(any("grupo outros_beneficios" in a for a in grade.alertas))
+        resultado = substituir_beneficios_por_plano_orcamentario(grade, mensal, _ANUAL_VAZIO)
+        self.assertFalse(any("grupo outros_beneficios" in a for a in resultado.alertas))
+        self.assertTrue(any("PO 0001" in a for a in resultado.alertas))
+
+
+class TestSaldoRemanescente(unittest.TestCase):
+    def test_saldo_acumula_mes_a_mes_e_pode_ficar_negativo(self):
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202601, liquidada=40_000.0, paga=0.0),
+        ])
+        anual_vazio = pd.DataFrame(columns=[
+            "acao_cod", "ano", "natureza_despesa_cod", "natureza_despesa_desc",
+            "natureza_detalhada_cod", "natureza_detalhada_desc", "empenhada",
+        ])
+        grade = grade_mensal(mensal, anual_vazio, 2026, 202601)
+        # dotação pequena o bastante pra estourar antes do fim do ano (12 x 40.000 = 480.000).
+        dotacao = pd.Series({GRUPO_ATIVO: 100_000.0})
+        saldo = saldo_remanescente(grade, dotacao)
+        linha = saldo[saldo["grupo"] == GRUPO_ATIVO].iloc[0]
+        self.assertAlmostEqual(linha["meses"][0], 100_000.0 - 40_000.0)  # após Jan
+        self.assertAlmostEqual(linha["meses"][1], 100_000.0 - 80_000.0)  # após Fev
+        self.assertLess(linha["meses"][11], 0)  # estoura antes de dezembro
+
+
+if __name__ == "__main__":
+    unittest.main()

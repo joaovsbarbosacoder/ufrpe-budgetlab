@@ -13,6 +13,8 @@ from pathlib import Path
 
 from src.prazos_orcamentarios import (
     DIAS_ANTECEDENCIA_PADRAO,
+    PRIORIDADE_PADRAO,
+    TIPO_PADRAO,
     ErroPrazoOrcamentario,
     atualizar,
     carregar_prazos,
@@ -37,6 +39,29 @@ class TestNovoPrazo(unittest.TestCase):
     def test_antecedencia_usa_padrao_quando_nao_informada(self):
         prazo = novo_prazo("Prazo A", date(2026, 12, 1))
         self.assertEqual(prazo["dias_antecedencia"], DIAS_ANTECEDENCIA_PADRAO)
+
+    def test_tipo_categoria_prioridade_usam_padrao_quando_nao_informados(self):
+        prazo = novo_prazo("Prazo A", date(2026, 12, 1))
+        self.assertEqual(prazo["tipo"], TIPO_PADRAO)
+        self.assertEqual(prazo["categoria"], "")
+        self.assertEqual(prazo["prioridade"], PRIORIDADE_PADRAO)
+
+    def test_tipo_categoria_prioridade_sao_gravados(self):
+        prazo = novo_prazo(
+            "Prazo A", date(2026, 12, 1), tipo="Calendário anual",
+            categoria="SIAFI", prioridade="Essencial",
+        )
+        self.assertEqual(prazo["tipo"], "Calendário anual")
+        self.assertEqual(prazo["categoria"], "SIAFI")
+        self.assertEqual(prazo["prioridade"], "Essencial")
+
+    def test_tipo_invalido_e_rejeitado(self):
+        with self.assertRaises(ErroPrazoOrcamentario):
+            novo_prazo("Prazo A", date(2026, 12, 1), tipo="Outro Tipo")
+
+    def test_prioridade_invalida_e_rejeitada(self):
+        with self.assertRaises(ErroPrazoOrcamentario):
+            novo_prazo("Prazo A", date(2026, 12, 1), prioridade="Urgentíssimo")
 
     def test_titulo_vazio_e_rejeitado(self):
         with self.assertRaises(ErroPrazoOrcamentario):
@@ -132,7 +157,7 @@ class TestPrazosComCriticidade(unittest.TestCase):
     def test_vencido_independe_da_antecedencia(self):
         prazo = novo_prazo("Vencido", date(2026, 8, 1), dias_antecedencia=5)
         resultado = prazos_com_criticidade([prazo], hoje=self.HOJE)
-        self.assertEqual(resultado.iloc[0]["criticidade"], "Vencido")
+        self.assertEqual(resultado.iloc[0]["criticidade"], "Atrasado")
 
     def test_mesmos_dias_para_vencer_com_antecedencias_diferentes(self):
         # ambos vencem em 40 dias (13/10/2026) a partir de 03/09/2026
@@ -140,18 +165,18 @@ class TestPrazosComCriticidade(unittest.TestCase):
         longa = novo_prazo("Antecedencia longa", date(2026, 10, 13), dias_antecedencia=60)
         resultado = prazos_com_criticidade([curta, longa], hoje=self.HOJE)
         por_titulo = resultado.set_index("titulo")["criticidade"]
-        self.assertEqual(por_titulo["Antecedencia curta"], "No prazo")
-        self.assertEqual(por_titulo["Antecedencia longa"], "Em alerta")
+        self.assertEqual(por_titulo["Antecedencia curta"], "Em dia")
+        self.assertEqual(por_titulo["Antecedencia longa"], "Vencendo")
 
-    def test_dentro_da_antecedencia_e_em_alerta(self):
+    def test_dentro_da_antecedencia_e_vencendo(self):
         prazo = novo_prazo("Alerta", date(2026, 9, 20), dias_antecedencia=30)  # 17 dias
         resultado = prazos_com_criticidade([prazo], hoje=self.HOJE)
-        self.assertEqual(resultado.iloc[0]["criticidade"], "Em alerta")
+        self.assertEqual(resultado.iloc[0]["criticidade"], "Vencendo")
 
-    def test_fora_da_antecedencia_e_no_prazo(self):
+    def test_fora_da_antecedencia_e_em_dia(self):
         prazo = novo_prazo("Tranquilo", date(2027, 3, 1), dias_antecedencia=30)
         resultado = prazos_com_criticidade([prazo], hoje=self.HOJE)
-        self.assertEqual(resultado.iloc[0]["criticidade"], "No prazo")
+        self.assertEqual(resultado.iloc[0]["criticidade"], "Em dia")
 
     def test_concluido_sobrepoe_criticidade_mesmo_se_vencido(self):
         prazo = novo_prazo("Feito", date(2026, 1, 1))
@@ -165,6 +190,15 @@ class TestPrazosComCriticidade(unittest.TestCase):
         del prazo["dias_antecedencia"]
         resultado = prazos_com_criticidade([prazo], hoje=self.HOJE)
         self.assertEqual(resultado.iloc[0]["dias_antecedencia"], DIAS_ANTECEDENCIA_PADRAO)
+
+    def test_registro_antigo_sem_tipo_categoria_prioridade_usa_padrao(self):
+        # simula um prazo gravado antes do layout "Gerenciamento de Prazos" (10/09/2026)
+        prazo = novo_prazo("Prazo A", date(2026, 9, 20))
+        del prazo["tipo"], prazo["categoria"], prazo["prioridade"]
+        resultado = prazos_com_criticidade([prazo], hoje=self.HOJE)
+        self.assertEqual(resultado.iloc[0]["tipo"], TIPO_PADRAO)
+        self.assertEqual(resultado.iloc[0]["categoria"], "")
+        self.assertEqual(resultado.iloc[0]["prioridade"], PRIORIDADE_PADRAO)
 
     def test_ordena_nao_concluidos_primeiro_por_urgencia(self):
         vencido = novo_prazo("Vencido", date(2026, 8, 1))

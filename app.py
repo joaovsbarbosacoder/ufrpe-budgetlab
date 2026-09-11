@@ -3,7 +3,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from src.ui_theme import apply_theme
+from src.ui_theme import apply_theme, render_theme_toggle
 
 _LOGO_B64 = base64.b64encode(Path("assets/ufrpe_logo.png").read_bytes()).decode()
 
@@ -14,6 +14,7 @@ st.set_page_config(
 )
 
 apply_theme()
+render_theme_toggle()
 
 st.sidebar.markdown(
     f'<div class="ufrpe-sidebar-logo">'
@@ -66,6 +67,11 @@ page = st.navigation(
                 title="Bolsas e Auxílios",
                 icon="🎓",
             ),
+            st.Page(
+                "app_pages/despesas_pessoal.py",
+                title="Despesas de Pessoal",
+                icon="🧑‍🏫",
+            ),
             # Adaptadas do handoff de design (README em uploads/) — layout final, dado
             # fictício/placeholder de propósito (ver docstring de cada página): critérios de
             # alerta e cadastro de emendas ainda não foram definidos/validados com a PROPLAD.
@@ -81,7 +87,7 @@ page = st.navigation(
             ),
             st.Page(
                 "app_pages/painel_prazos.py",
-                title="Prazos Orçamentários",
+                title="Gerenciamento de Prazos",
                 icon="⏰",
             ),
         ],

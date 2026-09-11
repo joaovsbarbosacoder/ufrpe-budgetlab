@@ -98,6 +98,19 @@ class TestBlocosMensais(unittest.TestCase):
         primeira = len(COLUNAS_DIMENSAO)
         self.assertEqual(blocos, [(primeira, 2026, 1), (primeira + 3, 2026, 2), (primeira + 6, 2026, 3)])
 
+    def test_detecta_meses_atravessando_exercicios(self):
+        # Fecha a pendência documentada em docs/base_execucao_mensal.md: `_blocos_mensais`
+        # já lê o ano de cada rótulo individualmente (não presume um único ano pro arquivo
+        # inteiro) — este teste prova isso com uma extração sintética que atravessa dois
+        # exercícios (DEZ/2026 seguido de JAN/2027 no MESMO arquivo), pedido do usuário
+        # (10/09/2026: "quero que o sistema perdure por mais anos... 2027, 2028...").
+        blocos = _blocos_mensais(self._linha1(["NOV/2026", "DEZ/2026", "JAN/2027", "FEV/2027"]))
+        primeira = len(COLUNAS_DIMENSAO)
+        self.assertEqual(blocos, [
+            (primeira, 2026, 11), (primeira + 3, 2026, 12),
+            (primeira + 6, 2027, 1), (primeira + 9, 2027, 2),
+        ])
+
     def test_sem_nenhum_bloco_e_erro(self):
         with self.assertRaises(ErroLayoutBase):
             _blocos_mensais([None] * len(COLUNAS_DIMENSAO))

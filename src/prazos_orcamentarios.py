@@ -19,10 +19,25 @@ gostaria de estar recebendo alertas"), porque prazos diferentes pedem antecedên
 diferentes (ex.: uma licitação precisa de meses de aviso; uma tarefa simples, de dias). Por
 isso a classificação aqui é própria (`_classificar`), não mais
 `src.contratos_vigencia.classificar_criticidade` (que usa uma régua fixa de 60/120 dias —
-fazia sentido só enquanto a criticidade não era configurável por item).
+fazia sentido só enquanto a criticidade não era configurável por item). Reconfirmado em
+10/09/2026 ao adotar o layout "Gerenciamento de Prazos" (`LAYOUT.md` anexado pelo usuário,
+que sugeria um limiar fixo de 7 dias): o usuário optou por MANTER a antecedência própria por
+prazo em vez de trocar pelo limiar fixo do layout — só os RÓTULOS de criticidade
+("Em dia"/"Vencendo"/"Atrasado"/"Concluído") vieram do layout novo, a REGRA por trás
+continua a mesma.
+
+`tipo`/`categoria`/`prioridade` (campos novos, mesmo pedido de 10/09/2026 — layout
+"Gerenciamento de Prazos"): `tipo` distingue prazo fixo do calendário do exercício
+("Calendário anual") de tarefa do dia a dia ("Solicitação"); `categoria` é texto livre
+(ex. "SIAFI", "PROPLAD"); `prioridade` não afeta a criticidade (que já vem da data/
+antecedência) — é só um campo informativo de cadastro, como no layout de referência.
+Registro gravado ANTES destes 3 campos existirem é tratado como legado: `prazos_com_
+criticidade` preenche com o padrão (`TIPO_PADRAO`/`""`/`PRIORIDADE_PADRAO`), mesmo
+princípio já usado para `dias_antecedencia` ausente.
 
 Contrato público:
-    novo_prazo(titulo, data_prazo, descricao="", responsavel="", dias_antecedencia=30) -> dict
+    novo_prazo(titulo, data_prazo, descricao="", responsavel="", dias_antecedencia=30,
+               tipo=TIPO_PADRAO, categoria="", prioridade=PRIORIDADE_PADRAO) -> dict
     salvar(prazo, diretorio=DIRETORIO_PADRAO) -> Path
     atualizar(prazo, diretorio=DIRETORIO_PADRAO) -> Path
     excluir(identificador, diretorio=DIRETORIO_PADRAO) -> None
@@ -45,10 +60,21 @@ DIRETORIO_PADRAO = Path("data/prazos_orcamentarios")
 #: antecedência padrão (dias) sugerida no cadastro quando o usuário não escolhe outra.
 DIAS_ANTECEDENCIA_PADRAO = 30
 
+#: layout "Gerenciamento de Prazos" (10/09/2026) — dois tipos de prazo: fixo do calendário
+#: do exercício, ou tarefa do dia a dia.
+TIPOS_PRAZO = ("Calendário anual", "Solicitação")
+TIPO_PADRAO = "Solicitação"
+
+#: só informativo no cadastro — não entra na regra de criticidade (que já vem da data e da
+#: antecedência própria do prazo).
+PRIORIDADES_PRAZO = ("Essencial", "Importante", "Desejável")
+PRIORIDADE_PADRAO = "Importante"
+
 #: colunas do DataFrame vazio devolvido por `prazos_com_criticidade` quando não há cadastro —
 #: mesmo esquema de quando há dados, para quem consome não precisar tratar caso especial.
 _COLUNAS = (
     "id", "titulo", "data_prazo", "descricao", "responsavel", "dias_antecedencia",
+    "tipo", "categoria", "prioridade",
     "concluido", "criado_em", "atualizado_em", "dias_para_vencer", "criticidade",
 )
 
@@ -67,6 +93,9 @@ def novo_prazo(
     descricao: str = "",
     responsavel: str = "",
     dias_antecedencia: int = DIAS_ANTECEDENCIA_PADRAO,
+    tipo: str = TIPO_PADRAO,
+    categoria: str = "",
+    prioridade: str = PRIORIDADE_PADRAO,
 ) -> dict:
     """Monta um registro novo (ainda não gravado — ver `salvar`). `id` sempre novo, mesmo que
     o título repita um prazo já cadastrado (não há chave natural: dois prazos podem ter o
@@ -79,6 +108,10 @@ def novo_prazo(
         raise ErroPrazoOrcamentario("Data do prazo inválida.")
     if isinstance(dias_antecedencia, bool) or not isinstance(dias_antecedencia, int) or dias_antecedencia < 0:
         raise ErroPrazoOrcamentario("Dias de antecedência deve ser um número inteiro não negativo.")
+    if tipo not in TIPOS_PRAZO:
+        raise ErroPrazoOrcamentario(f"Tipo de prazo inválido: {tipo!r}.")
+    if prioridade not in PRIORIDADES_PRAZO:
+        raise ErroPrazoOrcamentario(f"Prioridade inválida: {prioridade!r}.")
 
     agora = _agora_iso()
     return {
@@ -88,6 +121,9 @@ def novo_prazo(
         "descricao": descricao.strip(),
         "responsavel": responsavel.strip(),
         "dias_antecedencia": dias_antecedencia,
+        "tipo": tipo,
+        "categoria": categoria.strip(),
+        "prioridade": prioridade,
         "concluido": False,
         "criado_em": agora,
         "atualizado_em": agora,
@@ -154,16 +190,25 @@ def carregar_prazos(diretorio: str | Path = DIRETORIO_PADRAO) -> list[dict]:
     ]
 
 
+#: rótulos do layout "Gerenciamento de Prazos" (10/09/2026) — a REGRA por trás continua a
+#: antecedência própria de cada prazo (não um limiar fixo de 7 dias, ver docstring do
+#: módulo); só o texto exibido veio do layout novo.
+CRITICIDADE_ATRASADO = "Atrasado"
+CRITICIDADE_VENCENDO = "Vencendo"
+CRITICIDADE_EM_DIA = "Em dia"
+CRITICIDADE_CONCLUIDO = "Concluído"
+
+
 def _classificar(dias_para_vencer: int, dias_antecedencia: int) -> str:
-    """Vencido (passou da data) / Em alerta (dentro da antecedência escolhida para ESTE
-    prazo) / No prazo (fora da antecedência ainda). Não há "Crítico"/"Atenção" fixos: quem
-    decide o quão cedo avisar é o `dias_antecedencia` de cada prazo, não uma régua global."""
+    """Atrasado (passou da data) / Vencendo (dentro da antecedência escolhida para ESTE
+    prazo) / Em dia (fora da antecedência ainda). Não há limiar fixo global: quem decide o
+    quão cedo avisar é o `dias_antecedencia` de cada prazo."""
 
     if dias_para_vencer < 0:
-        return "Vencido"
+        return CRITICIDADE_ATRASADO
     if dias_para_vencer <= dias_antecedencia:
-        return "Em alerta"
-    return "No prazo"
+        return CRITICIDADE_VENCENDO
+    return CRITICIDADE_EM_DIA
 
 
 def prazos_com_criticidade(prazos: list[dict], hoje: date | None = None) -> pd.DataFrame:
@@ -171,10 +216,13 @@ def prazos_com_criticidade(prazos: list[dict], hoje: date | None = None) -> pd.D
     partir de `hoje` (padrão `date.today()`, parametrizável para os testes ficarem
     determinísticos) — nunca de um campo gravado, para não desatualizar sozinho.
 
-    `criticidade` é "Vencido"/"Em alerta"/"No prazo" a partir da antecedência própria de
+    `criticidade` é "Atrasado"/"Vencendo"/"Em dia" a partir da antecedência própria de
     cada prazo (`dias_antecedencia`, ver `_classificar`) — dois prazos com o mesmo
     `dias_para_vencer` podem ter criticidades diferentes se pediram antecedências diferentes.
     Prazo já `concluido` sempre mostra "Concluído", mesmo com a data já vencida.
+
+    Registro gravado antes de `dias_antecedencia`/`tipo`/`categoria`/`prioridade` existirem
+    (cadastro legado) recebe o padrão de cada campo, nunca quebra a leitura.
 
     Ordena por: não concluídos primeiro, depois por dias até vencer (vencidos primeiro; sem
     data — não deveria acontecer, mas não é motivo pra quebrar a tela — por último)."""
@@ -187,12 +235,21 @@ def prazos_com_criticidade(prazos: list[dict], hoje: date | None = None) -> pd.D
     if "dias_antecedencia" not in dataframe.columns:
         dataframe["dias_antecedencia"] = DIAS_ANTECEDENCIA_PADRAO
     dataframe["dias_antecedencia"] = dataframe["dias_antecedencia"].fillna(DIAS_ANTECEDENCIA_PADRAO).astype(int)
+    if "tipo" not in dataframe.columns:
+        dataframe["tipo"] = TIPO_PADRAO
+    dataframe["tipo"] = dataframe["tipo"].fillna(TIPO_PADRAO)
+    if "categoria" not in dataframe.columns:
+        dataframe["categoria"] = ""
+    dataframe["categoria"] = dataframe["categoria"].fillna("")
+    if "prioridade" not in dataframe.columns:
+        dataframe["prioridade"] = PRIORIDADE_PADRAO
+    dataframe["prioridade"] = dataframe["prioridade"].fillna(PRIORIDADE_PADRAO)
     dataframe["data_prazo"] = pd.to_datetime(dataframe["data_prazo"]).dt.date
     dataframe["dias_para_vencer"] = dataframe["data_prazo"].apply(lambda d: (d - hoje).days)
     dataframe["criticidade"] = [
         _classificar(dias, antecedencia)
         for dias, antecedencia in zip(dataframe["dias_para_vencer"], dataframe["dias_antecedencia"])
     ]
-    dataframe.loc[dataframe["concluido"], "criticidade"] = "Concluído"
+    dataframe.loc[dataframe["concluido"], "criticidade"] = CRITICIDADE_CONCLUIDO
 
     return dataframe.sort_values(["concluido", "dias_para_vencer"], na_position="last").reset_index(drop=True)

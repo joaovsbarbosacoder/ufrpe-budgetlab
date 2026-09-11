@@ -16,7 +16,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.design_tokens import ACCENT, BORDER, NEGATIVE, POSITIVE, TEXT, TEXT_MUTED
+from src.design_tokens import ACCENT, BG, BORDER, NEGATIVE, POSITIVE, SURFACE, TEXT, TEXT_MUTED
 from src.dotacao_anual_analysis import (
     KNOWN_ITEM_INDICATORS,
     apply_dotacao_anual_filters,
@@ -220,7 +220,7 @@ def _render_year_chart(filtered: pd.DataFrame, source_key: str, ano_extracao: in
                 size=[17 if andamento else 13 for andamento in em_andamento],
                 symbol=["diamond" if andamento else "circle" for andamento in em_andamento],
                 color=color,
-                line=dict(width=2, color="#0B1220"),
+                line=dict(width=2, color=BG),
             ),
             fill="tozeroy",
             fillcolor=_with_alpha(color, 0.16),
@@ -236,23 +236,23 @@ def _render_year_chart(filtered: pd.DataFrame, source_key: str, ano_extracao: in
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         margin=dict(t=30, b=10, l=10, r=10),
-        font=dict(color="#E7ECF5", family="sans-serif"),
+        font=dict(color=TEXT, family="sans-serif"),
         xaxis=dict(
             showgrid=False,
             zeroline=False,
-            color="#93A1B8",
+            color=TEXT_MUTED,
             type="category",
             tickvals=years,
             ticktext=rotulos_eixo,
         ),
         yaxis=dict(
             showgrid=True,
-            gridcolor="#1B2536",
+            gridcolor=BORDER,
             zeroline=False,
             tickformat="~s",
-            color="#93A1B8",
+            color=TEXT_MUTED,
         ),
-        hoverlabel=dict(bgcolor="#121B2D", font_color="#E7ECF5", bordercolor=color),
+        hoverlabel=dict(bgcolor=SURFACE, font_color=TEXT, bordercolor=color),
         height=420,
         showlegend=False,
     )

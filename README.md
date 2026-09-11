@@ -134,11 +134,42 @@ isoladamente. Valor nulo (célula ausente na origem) aparece como "—"; valor
 zero aparece como `0` — os dois estados nunca são confundidos. O seletor de
 Ano marca o exercício em andamento com "⏳".
 
+### Despesas de Pessoal
+
+A página **Despesas de Pessoal** usa a estrutura do HTML
+`design_handoff_streamlit/acompanhamento-pessoal.dc.html`: cabeçalho com data-base,
+quatro indicadores, faixa de situação, tabela única de rubricas com grupos
+expandidos na própria tabela e tabela de saldos mensais. A primeira coluna fica
+fixa durante a rolagem horizontal. Os valores são das bases locais, não do exemplo
+de design. O componente usa HTML/CSS/JavaScript local, sem dependência do runtime
+externo do arquivo de referência.
+
+Clique no nome de um grupo para recolher ou expandir suas rubricas; na data-base
+para escolher o mês e o exercício da dotação; e em um valor projetado de rubrica
+para editá-lo. As edições ficam em memória, na sessão e na referência escolhida,
+e podem ser restauradas pelo rodapé. Meses executados permanecem protegidos.
+
+A fonte do realizado é a Liquidada da Execução Mensal. As regras existentes
+em `src/despesas_pessoal.py` alimentam os meses futuros. Execução Anual e Dotação
+Anual são lidas pelos seus manifestos; a Mensal ainda usa o arquivo local
+`data/raw/BI CPOC - EXEC. DESPESAS - Mensal.xlsx`. As datas das extrações são
+independentes e ficam informadas no rodapé.
+
+Dotação por rubrica aparece como “—”, pois a base não oferece essa dimensão.
+Benefício Especial e Precatórios preservam os lugares previstos no layout, com
+mapeamento pendente e valores ausentes, sem inventar zeros ou reclassificar dados.
+Outros Benefícios conserva as ações 2004/212B. A execução histórica exibida nas
+rubricas é comparada ao total da base anual no mesmo escopo, com diferença explícita.
+13º e férias aparecem sem Base PLOA individual, conforme o layout; o grupo conserva
+a soma do mês de referência. Os cálculos de férias e 13º existentes não foram
+revisados nesta mudança de apresentação.
+
 ### Limitações atuais
 
 - não há soma, reconciliação ou identidade rígida entre itens de dotação;
-- nenhuma página cruza Dotação com Execução hoje — a integração está
-  suspensa pela ambiguidade temporal entre as bases (granularidade mês x
+- o acompanhamento de pessoal compara sua projeção com a Dotação Atualizada;
+  isso não constitui uma reconciliação entre extrações de mesma data.
+  A integração geral entre bases continua limitada pela ambiguidade temporal (granularidade mês x
   ano nas exportações mensais do Tesouro Gerencial, hoje fora do projeto;
   ausência de um "as of" comum entre extrações de bases diferentes); ver
   `docs/base_execucao_anual.md`;
