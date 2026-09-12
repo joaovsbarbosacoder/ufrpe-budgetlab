@@ -121,10 +121,28 @@ Diferenças deliberadas em relação aos handoffs anteriores:
   * Quadro "Empenhado × Liquidado" (pedido explícito) — mesmo layout HTML do Resumo
     Consolidado (`.cc-resumo-*`, mesma minimização "Ver mais"), comparando por NE o valor
     empenhado total contra o liquidado (`indice_liquidado_por_ne_curta`, novo em
-    `src/execucao_anual.py`), abrangendo todos os contratos filtrados — inclusive os sem NE
-    (aparecem com "sem NE" no lugar de liquidado/saldo). O saldo mostrado é o mesmo
-    `saldo_execucao` (empenhada − liquidada) já usado no resto da página, só rotulado "Sobra"
-    (≥ 0) ou "Insuficiência" (< 0, liquidado passou do empenhado) — não é uma conta nova.
+    `src/execucao_anual.py`, ou `indice_liquidado_competencia` quando a base de competência
+    está disponível — ver LIQUIDADO POR COMPETÊNCIA abaixo), abrangendo todos os contratos
+    filtrados — inclusive os sem NE (aparecem com "sem NE" no lugar de liquidado/saldo). O
+    saldo mostrado é o mesmo `saldo_execucao` (empenhada − liquidada por LANÇAMENTO, sempre
+    via Execução Anual — não muda com a competência, é o saldo formal usado também na
+    divergência contra o saldo colado da planilha/TG) já usado no resto da página, só rotulado
+    "Sobra" (≥ 0) ou "Insuficiência" (< 0, liquidado passou do empenhado) — não é uma conta
+    nova. Com Liquidado por competência, as três colunas do quadro (Empenhado, Liquidado,
+    Saldo) deixam de bater aritmeticamente entre si (Saldo não é mais Empenhado − Liquidado
+    exibido) — pedido explícito do usuário, mesmo assim: mostrar o Liquidado mais correto
+    (competência) importa mais aqui do que a soma bater, mas o quadro deixa isso visível (nota
+    abaixo do cabeçalho) para não parecer um erro de conta.
+
+LIQUIDADO POR COMPETÊNCIA (pedido explícito posterior, ver `app_pages/consulta_empenhos.py`
+para o desenho original): "Necessidade de Empenho" no cartão, o pop-up "Linha do tempo
+mensal" do Resumo Consolidado, e o quadro "Empenhado × Liquidado" acima trocam o Liquidado
+por mês/total de LANÇAMENTO (Execução Anual/Mensal) pelo de COMPETÊNCIA (mês de referência —
+`src/liquidacao_competencia.py`) quando `data/raw/Liquidação por Competência.xlsx` está
+disponível; sem o arquivo, os três voltam ao comportamento anterior (liquidado por
+lançamento), mesma lógica de ausência silenciosa das outras bases de trabalho desta página.
+`saldo_execucao`/divergência contra a planilha (TG) NUNCA usam competência — são conceitos de
+saldo formal, sempre por lançamento.
 """
 
 from __future__ import annotations
@@ -179,6 +197,7 @@ from src.importacao_dotacao import carregar_atual as carregar_dotacao_atual
 from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, Manifesto
 from src.importacao_execucao import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO
 from src.importacao_execucao import carregar_atual as carregar_execucao_atual
+from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne, liquidado_por_ne_e_mes
 from src.necessidade_empenho import calcular_necessidade_empenho
 from src.relatorio_reforco_empenho import CONTRATOS_CONTINUOS as RELATORIO_CONTRATOS_CONTINUOS
 from src.tesouro_execucao_mensal import (
@@ -186,7 +205,7 @@ from src.tesouro_execucao_mensal import (
     linha_do_tempo_por_ne,
     primeiro_mes_com_empenho_por_ne,
 )
-from src.ui_linha_do_tempo import MESES_ABREV, abrir_linha_do_tempo
+from src.ui_linha_do_tempo import MESES_ABREV, abrir_linha_do_tempo, renderizar_linha_do_tempo
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
 from src.ui_theme import format_brl_compact, render_metric_grid, render_page_header
 
@@ -195,6 +214,12 @@ CAMINHO_PAGAMENTOS = DIRETORIO_DADOS_BRUTOS / "CONTRATOS - CONTROLE 2020 - Pagam
 #: mesmo arquivo usado por app_pages/consulta_empenhos.py/bolsas_auxilios.py para a linha do
 #: tempo mensal — base MENSAL (só 2026+), sem importação versionada ainda.
 CAMINHO_EXECUCAO_MENSAL = Path("data/raw") / "BI CPOC - EXEC. DESPESAS - Mensal.xlsx"
+#: mesmo arquivo usado por app_pages/consulta_empenhos.py (ver ali o porquê da troca) — usada
+#: aqui para "Necessidade de Empenho" (ver `com_saldo_execucao`, parâmetro
+#: `indice_liquidado_competencia`). Ausência do arquivo não impede o resto da página: a conta
+#: volta a usar o liquidado por lançamento da Execução Anual (comportamento anterior a este
+#: pedido).
+CAMINHO_LIQUIDACAO_COMPETENCIA = Path("data/raw") / "Liquidação por Competência.xlsx"
 
 COLUNAS_BUSCA = [
     "contrato_numero", "fornecedor", "tipo_despesa", "tipo_contrato", "acao_cod",
@@ -222,6 +247,33 @@ def _cached_linha_do_tempo(caminho: str, mtime: float) -> pd.DataFrame:
     chave de cache."""
 
     tempo = linha_do_tempo_por_ne(ler_execucao_mensal(caminho))
+    tempo["ne_curta"] = tempo["ne_ccor"].apply(_ne_curta_execucao)
+    return tempo
+
+
+@st.cache_data(show_spinner="Lendo a Liquidação por Competência...")
+def _cached_indice_liquidado_competencia(caminho: str, mtime: float) -> pd.Series:
+    """Total liquidado por competência (todos os meses somados, ver
+    `src.liquidacao_competencia.liquidado_por_ne`), indexado pela forma curta da NE — pronto
+    pra `com_saldo_execucao(..., indice_liquidado_competencia=...)`. `mtime` só participa da
+    chave de cache."""
+
+    totais = liquidado_por_ne(ler_liquidacao_competencia(caminho))
+    return pd.Series(totais.to_numpy(), index=[_ne_curta_execucao(ne) for ne in totais.index])
+
+
+@st.cache_data(show_spinner="Lendo a Liquidação por Competência (mensal)...")
+def _cached_liquidacao_competencia_por_mes(caminho: str, mtime: float) -> pd.DataFrame:
+    """Liquidado por (NE, mês de referência/competência), com `ne_curta` acrescentada — para
+    o pop-up "Linha do tempo mensal" do Resumo Consolidado (mesma troca de
+    `app_pages/consulta_empenhos.py`: Liquidado por mês de competência em vez de por mês de
+    lançamento — ver `_tempo_com_liquidacao_por_competencia`). Lido separado de
+    `_cached_indice_liquidado_competencia` (mesmo arquivo, granularidade diferente): cada
+    `st.cache_data` guarda seu próprio resultado, mesmo padrão de `_cached_itens_por_ne`/
+    `_cached_linha_do_tempo` em `app_pages/consulta_empenhos.py`. `mtime` só participa da
+    chave de cache."""
+
+    tempo = liquidado_por_ne_e_mes(ler_liquidacao_competencia(caminho))
     tempo["ne_curta"] = tempo["ne_ccor"].apply(_ne_curta_execucao)
     return tempo
 
@@ -648,7 +700,12 @@ def _render_card(
             meses_liquidados = float(linha["meses_liquidados_execucao"])
             r4[0].markdown("<div class='cc-label'>Meses Empenhados (Execução Anual)</div>", unsafe_allow_html=True)
             r4[0].markdown(f"<div class='cc-calc'>{_num(meses_empenhados)}</div>", unsafe_allow_html=True)
-            r4[1].markdown("<div class='cc-label'>Meses Liquidados (Execução Anual)</div>", unsafe_allow_html=True)
+            rotulo_liquidados = (
+                "Meses Liquidados (Competência)"
+                if bool(linha["liquidado_via_competencia"])
+                else "Meses Liquidados (Execução Anual)"
+            )
+            r4[1].markdown(f"<div class='cc-label'>{rotulo_liquidados}</div>", unsafe_allow_html=True)
             r4[1].markdown(f"<div class='cc-calc'>{_num(meses_liquidados)}</div>", unsafe_allow_html=True)
             meses_empenhados_persistir = _ou_zero(linha["meses_empenhados"])
             meses_liquidados_persistir = _ou_zero(linha["meses_liquidados"])
@@ -789,7 +846,7 @@ def _render_card(
                 for chave_extra in (
                     "despesa_anual", "meses_a_empenhar", "valor_a_empenhar", "saldo_execucao",
                     "diverge_saldo", "valor_empenhado_execucao", "diverge_valor_empenhado",
-                    "valor_liquidado_execucao", "valor_empenhado_planilha_total_ne",
+                    "valor_liquidado_execucao", "liquidado_via_competencia", "valor_empenhado_planilha_total_ne",
                     "despesa_mensal_total_ne", "meses_empenhados_execucao", "meses_liquidados_execucao",
                     "necessidade_via", "meses_pagos", "ultimo_mes_pago", "contrato_normalizado",
                     "tem_varios_itens", "inicio_execucao_efetivo", "valor_empenhado_autoritativo",
@@ -867,14 +924,19 @@ def _render_novo_contrato(ano_exercicio: int, source_key: str) -> None:
                     st.rerun()
 
 
-def _texto_meses_pagos(meses_pagos: object, ultimo_mes_pago: object) -> str:
-    """"7 · ago/26" a partir de `meses_pagos`/`ultimo_mes_pago` (`com_meses_pagos`) — "sem
-    dado" quando o contrato não tem correspondência confiável na planilha de Pagamentos
-    (não é "0 meses": ausência de dado, não pagamento zero — ver `com_meses_pagos`)."""
+def _texto_meses_liquidados(meses_liquidados: object, ultimo_mes_liquidado: object) -> str:
+    """"7 · ago/26" a partir de `meses_liquidados`/`ultimo_mes_liquidado`
+    (`_meses_liquidados_por_ne_curta`, Liquidação por Competência) — "sem dado" quando a NE não
+    tem nenhum mês de competência com liquidação > 0 (não é "0 meses": ausência de dado, não
+    liquidação zero). Usada só nas colunas "Meses Liquidados" do Resumo Consolidado/Empenhado
+    × Liquidado (pedido explícito posterior: antes essa coluna vinha da planilha separada de
+    Pagamentos — "Meses Pagos" — e virou este critério de competência; o detalhe "Meses Pagos
+    (Pagamentos)" dentro de cada cartão continua vindo de `com_meses_pagos`, sem mudança, é uma
+    métrica diferente)."""
 
-    if pd.isna(meses_pagos):
+    if pd.isna(meses_liquidados):
         return "sem dado"
-    return f"{_num(meses_pagos)} · {_fmt_mes(ultimo_mes_pago)}"
+    return f"{_num(meses_liquidados)} · {_fmt_mes(ultimo_mes_liquidado)}"
 
 
 def _html_valor_resumo(valor: object, forte: bool = False) -> str:
@@ -892,8 +954,167 @@ _LARGURAS_RESUMO = [2.2, 1, 1, 1.2, 1]
 QTD_INICIAL_RESUMO = 3
 
 
+def _tempo_com_liquidacao_por_competencia(
+    tempo_ne: pd.DataFrame, ne_curta_valor: str, competencia_por_ne_mes: pd.DataFrame
+) -> pd.DataFrame:
+    """Troca a coluna `liquidada` de `tempo_ne` (mês de LANÇAMENTO, Execução Mensal) pela
+    liquidação por COMPETÊNCIA (mês de referência) da mesma NE — mesma lógica de
+    `app_pages/consulta_empenhos.py::_tempo_com_liquidacao_por_competencia`, adaptada aqui
+    pra indexar por `ne_curta` (não `ne_ccor`): esta página já trabalha com a forma curta em
+    toda parte (cadastro nativo não guarda o `ne_ccor` completo). `empenhada`/`paga`
+    continuam vindo da Execução Mensal, sem mudança; NE sem nenhuma linha de competência
+    mostra Liquidado 0 em todo mês, sem cair de volta pro valor de lançamento (mesma decisão
+    de v1 da Consulta de Empenhos)."""
+
+    base = tempo_ne[["ano_mes", "empenhada", "paga"]]
+    competencia_ne = competencia_por_ne_mes.loc[
+        competencia_por_ne_mes["ne_curta"] == ne_curta_valor, ["ano_mes", "valor"]
+    ].rename(columns={"valor": "liquidada"})
+
+    combinado = pd.merge(base, competencia_ne, on="ano_mes", how="outer")
+    combinado[["empenhada", "liquidada", "paga"]] = combinado[["empenhada", "liquidada", "paga"]].fillna(0.0)
+    return combinado.sort_values("ano_mes").reset_index(drop=True)
+
+
+_COLUNAS_MESES_LIQUIDADOS = ["ne_curta", "meses_liquidados", "ultimo_mes_liquidado"]
+
+
+def _meses_liquidados_por_ne_curta(liquidacao_competencia_por_mes: pd.DataFrame | None) -> pd.DataFrame:
+    """Quantidade de meses com Liquidação por Competência > 0, e o mais recente deles, por NE
+    curta — pedido explícito posterior: a coluna "Meses Pagos" do Resumo Consolidado/Empenhado
+    × Liquidado virou "Meses Liquidados", trocando a fonte da planilha separada de Pagamentos
+    (`com_meses_pagos`) pela Liquidação por Competência — o que interessa ali agora é quantos
+    meses a NE já teve liquidação apurada por competência, não quantos meses tiveram pagamento
+    registrado. O detalhe "Meses Pagos (Pagamentos)" dentro de cada cartão (r5 do expander)
+    continua vindo de `com_meses_pagos`, sem mudança — é uma métrica diferente, fora do escopo
+    deste pedido.
+
+    Mês com `valor` líquido ≤ 0 (só estorno, sem liquidação nova apurada naquele mês) não conta
+    como "mês liquidado" — critério deliberado, para não contar como liquidação um mês que só
+    teve cancelamento. Sem a base de competência (arquivo ausente), devolve um DataFrame vazio
+    — toda NE cai em "sem dado" (`_texto_meses_liquidados`), mesma ausência silenciosa do resto
+    da página."""
+
+    if liquidacao_competencia_por_mes is None:
+        return pd.DataFrame(columns=_COLUNAS_MESES_LIQUIDADOS)
+
+    positivos = liquidacao_competencia_por_mes[liquidacao_competencia_por_mes["valor"] > 0]
+    if positivos.empty:
+        return pd.DataFrame(columns=_COLUNAS_MESES_LIQUIDADOS)
+
+    agrupado = positivos.groupby("ne_curta")["ano_mes"].agg(meses_liquidados="count", ultimo_ano_mes="max").reset_index()
+    agrupado["ultimo_mes_liquidado"] = pd.to_datetime(agrupado["ultimo_ano_mes"].astype(int).astype(str), format="%Y%m")
+    return agrupado[_COLUNAS_MESES_LIQUIDADOS]
+
+
+def _render_linhas_resumo(
+    linhas: list[tuple],
+    tempo_por_ne_curta: pd.DataFrame | None,
+    liquidacao_competencia_por_mes: pd.DataFrame | None,
+    nes_com_tempo: set[str],
+    source_key: str,
+    key_prefix: str,
+) -> tuple[str, pd.DataFrame] | None:
+    """Cabeçalho + uma linha por item de `linhas` (mesmas colunas do Resumo Consolidado) —
+    compartilhado entre a visão inline do card (só as `QTD_INICIAL_RESUMO` primeiras) e o
+    pop-up "Ver mais" (`_abrir_resumo_completo`, todas as linhas), pedido explícito posterior,
+    pra não duplicar a lógica de linha clicável/legenda da "Linha do tempo mensal" nos dois
+    lugares. `key_prefix` diferencia as chaves dos botões entre as duas superfícies (a mesma
+    NE pode aparecer nas duas ao mesmo tempo — card por trás, pop-up por cima).
+
+    NÃO abre o pop-up "Linha do tempo mensal" sozinha — devolve `(legenda, tempo_ne)` quando
+    alguma linha foi clicada nesta execução (`None` caso contrário) e deixa o chamador decidir
+    como mostrar: `abrir_linha_do_tempo` (pop-up de verdade) quando o chamador está fora de
+    qualquer dialog, ou `renderizar_linha_do_tempo` embutida na tela quando o chamador já está
+    dentro de um pop-up aberto — Streamlit não permite dialog dentro de dialog (ver
+    `_abrir_resumo_completo`, que usa a segunda opção)."""
+
+    cabecalho = st.columns(_LARGURAS_RESUMO)
+    cabecalho[0].markdown('<div class="cc-resumo-col-label">Fornecedor / Contrato</div>', unsafe_allow_html=True)
+    cabecalho[1].markdown('<div class="cc-resumo-col-label" style="text-align:right">Valor Empenhado</div>', unsafe_allow_html=True)
+    cabecalho[2].markdown('<div class="cc-resumo-col-label" style="text-align:right">Saldo</div>', unsafe_allow_html=True)
+    cabecalho[3].markdown('<div class="cc-resumo-col-label" style="text-align:right">Necessidade até Dez.</div>', unsafe_allow_html=True)
+    cabecalho[4].markdown('<div class="cc-resumo-col-label" style="text-align:right">Meses Liquidados</div>', unsafe_allow_html=True)
+
+    clicado: tuple[str, pd.DataFrame] | None = None
+    for fornecedor, contrato_numero, ne_curta_linha, valor_empenhado, saldo, necessidade, meses_liquidados, ultimo_mes_liquidado in linhas:
+        rotulo = f"{_dash(fornecedor)} — {_dash(contrato_numero)}"
+        clicavel = pd.notna(ne_curta_linha) and ne_curta_linha in nes_com_tempo
+        linha = st.columns(_LARGURAS_RESUMO, vertical_alignment="center")
+        if clicavel:
+            if linha[0].button(rotulo, key=f"{key_prefix}_tempo_{source_key}_{ne_curta_linha}", use_container_width=True):
+                tempo_ne = tempo_por_ne_curta[tempo_por_ne_curta["ne_curta"] == ne_curta_linha]
+                if liquidacao_competencia_por_mes is not None:
+                    tempo_ne = _tempo_com_liquidacao_por_competencia(
+                        tempo_ne, ne_curta_linha, liquidacao_competencia_por_mes
+                    )
+                    legenda = (
+                        f"{_dash(fornecedor)} (NE {ne_curta_linha}) — Empenhado e Pago por mês de "
+                        "lançamento (Execução Mensal); Liquidado por mês de competência (Liquidação "
+                        "por Competência), não por mês de lançamento."
+                    )
+                else:
+                    legenda = f"{_dash(fornecedor)} (NE {ne_curta_linha}) — base mensal (2026+)."
+                clicado = (legenda, tempo_ne)
+        else:
+            linha[0].markdown(f'<div class="cc-resumo-nome-simples">{_esc(rotulo)}</div>', unsafe_allow_html=True)
+        linha[1].markdown(_html_valor_resumo(valor_empenhado), unsafe_allow_html=True)
+        linha[2].markdown(_html_valor_resumo(saldo), unsafe_allow_html=True)
+        linha[3].markdown(_html_valor_resumo(necessidade, forte=True), unsafe_allow_html=True)
+        linha[4].markdown(f'<div class="cc-resumo-cell">{_texto_meses_liquidados(meses_liquidados, ultimo_mes_liquidado)}</div>', unsafe_allow_html=True)
+    return clicado
+
+
+def _render_rodape_resumo(valor_empenhado_total: float, saldo_total: float, necessidade_total: float) -> None:
+    rodape = st.columns(_LARGURAS_RESUMO)
+    rodape[0].markdown('<div class="cc-resumo-foot-label">Total</div>', unsafe_allow_html=True)
+    rodape[1].markdown(_html_valor_resumo(valor_empenhado_total), unsafe_allow_html=True)
+    rodape[2].markdown(_html_valor_resumo(saldo_total), unsafe_allow_html=True)
+    rodape[3].markdown(_html_valor_resumo(necessidade_total, forte=True), unsafe_allow_html=True)
+    rodape[4].markdown("", unsafe_allow_html=True)
+
+
+@st.dialog("Resumo Consolidado — todas as NEs/contratos", width="large")
+def _abrir_resumo_completo(
+    linhas: list[tuple],
+    totais: tuple[float, float, float],
+    tempo_por_ne_curta: pd.DataFrame | None,
+    liquidacao_competencia_por_mes: pd.DataFrame | None,
+    nes_com_tempo: set[str],
+    source_key: str,
+) -> None:
+    """Pop-up com TODAS as linhas do Resumo Consolidado (pedido explícito posterior: "Ver
+    mais" deixou de expandir a lista dentro do próprio card — virou este pop-up, mesmo padrão
+    de `abrir_linha_do_tempo`/`src/ui_linha_do_tempo.py`). Reaproveita `_render_linhas_resumo`
+    (mesmas colunas/mesma NE clicável do card) e `_render_rodape_resumo` (mesmos totais do
+    conjunto inteiro, já calculados por `_render_resumo_consolidado`, não recalculados aqui).
+
+    Clicar numa NE aqui mostra "Linha do tempo mensal" EMBUTIDA logo abaixo da tabela, com
+    `renderizar_linha_do_tempo` — não `abrir_linha_do_tempo`: Streamlit proíbe abrir um
+    `st.dialog` dentro de outro já aberto (`StreamlitAPIException: Dialogs may not be nested
+    inside other dialogs` — bug visto na prática antes desta correção). Clicar noutra NE troca
+    o que aparece embutido; fechar o pop-up (X) e reabrir "Ver mais" limpa a seleção."""
+
+    valor_empenhado_total, saldo_total, necessidade_total = totais
+    st.caption(f"{len(linhas)} {'NE/contrato' if len(linhas) == 1 else 'NEs/contratos'}")
+    clicado = _render_linhas_resumo(
+        linhas, tempo_por_ne_curta, liquidacao_competencia_por_mes, nes_com_tempo, source_key,
+        key_prefix="cc_resumo_completo",
+    )
+    _render_rodape_resumo(valor_empenhado_total, saldo_total, necessidade_total)
+    if clicado is not None:
+        legenda, tempo_ne = clicado
+        st.divider()
+        renderizar_linha_do_tempo(legenda, tempo_ne)
+
+
 def _render_resumo_consolidado(
-    filtrado: pd.DataFrame, meses_restantes: int, tempo_por_ne_curta: pd.DataFrame | None, source_key: str,
+    filtrado: pd.DataFrame,
+    meses_restantes: int,
+    tempo_por_ne_curta: pd.DataFrame | None,
+    source_key: str,
+    liquidacao_competencia_por_mes: pd.DataFrame | None = None,
+    meses_liquidados_por_ne: pd.DataFrame | None = None,
 ) -> None:
     """Card único, visível de início (antes de abrir qualquer cartão), listando — uma linha
     por NE, não por item de licitação nem um total agregado — o valor empenhado, o saldo e a
@@ -910,9 +1131,39 @@ def _render_resumo_consolidado(
     HTML) quando clicável — HTML puro não dispara evento Python — daí o cartão também ter
     virado `st.container(border=True)` (ver `_inject_css`).
 
-    Minimizado por padrão (`QTD_INICIAL_RESUMO`, pedido explícito) — só as linhas visíveis
-    são limitadas por "Ver mais"; os totais do card (cabeçalho e rodapé) somam sempre o
-    conjunto inteiro (`por_ne`/`sem_ne` completos), não só o que está à mostra."""
+    Liquidado por COMPETÊNCIA no pop-up (pedido explícito posterior, mesma troca de
+    `app_pages/consulta_empenhos.py`): com `liquidacao_competencia_por_mes` disponível, o
+    Liquidado mostrado no pop-up vem do mês de referência/competência, não mais do mês de
+    lançamento — ver `_tempo_com_liquidacao_por_competencia`. Sem a base de competência, o
+    pop-up volta ao comportamento anterior (Liquidado por lançamento).
+
+    Saldo/Necessidade até Dezembro por COMPETÊNCIA (pedido explícito posterior — via
+    `dataframe`/`filtrado`, que já chega com `valor_liquidado_execucao`/
+    `liquidado_via_competencia` de `com_saldo_execucao`, não um parâmetro novo aqui): por NE
+    com competência apurada, `saldo_para_necessidade` = Empenhado − Liquidado por
+    COMPETÊNCIA, e é esse valor (não `saldo_execucao`) que aparece na coluna "Saldo" e alimenta
+    "Necessidade até Dezembro" — as duas colunas deste card continuam batendo entre si. NE sem
+    competência apurada (arquivo ausente, ou nenhuma linha ainda para aquela NE) cai no
+    `saldo_execucao` de sempre (Execução Anual, por lançamento), nunca mistura as duas dentro
+    do mesmo NE. Antes este card usava sempre `saldo_execucao`, inconsistente com o resto da
+    página (que já mostrava Liquidado por competência) — corrigido a pedido do usuário.
+
+    Minimizado por padrão (`QTD_INICIAL_RESUMO`, pedido explícito) — o card sempre mostra só
+    as `QTD_INICIAL_RESUMO` primeiras linhas; os totais do card (cabeçalho e rodapé) somam
+    sempre o conjunto inteiro (`por_ne`/`sem_ne` completos), não só o que está à mostra.
+
+    "Ver mais" abre um pop-up com a lista completa (`_abrir_resumo_completo`, pedido explícito
+    posterior — antes expandia a lista dentro do próprio card; virou pop-up para não empurrar
+    o resto da página pra baixo com dezenas de linhas). Card e pop-up reaproveitam a mesma
+    renderização de linha (`_render_linhas_resumo`) e de rodapé (`_render_rodape_resumo`).
+
+    Coluna "Meses Liquidados" (pedido explícito posterior — antes "Meses Pagos", vinda da
+    planilha separada de Pagamentos): agora vem de `meses_liquidados_por_ne`
+    (`_meses_liquidados_por_ne_curta`, Liquidação por Competência) — quantos meses a NE já tem
+    de liquidação apurada por competência, não quantos meses tiveram pagamento registrado."""
+
+    if meses_liquidados_por_ne is None:
+        meses_liquidados_por_ne = pd.DataFrame(columns=_COLUNAS_MESES_LIQUIDADOS)
 
     com_ne = filtrado.dropna(subset=["ne_curta"])
     sem_ne = filtrado[filtrado["ne_curta"].isna()].copy()
@@ -923,14 +1174,29 @@ def _render_resumo_consolidado(
         despesa_mensal=("despesa_mensal", "sum"),
         valor_empenhado_execucao=("valor_empenhado_execucao", "first"),
         valor_empenhado_planilha_total_ne=("valor_empenhado_planilha_total_ne", "first"),
+        valor_liquidado_execucao=("valor_liquidado_execucao", "first"),
+        liquidado_via_competencia=("liquidado_via_competencia", "first"),
         saldo_execucao=("saldo_execucao", "first"),
         saldo_colado_planilha=("saldo_colado_planilha", "first"),
-        meses_pagos=("meses_pagos", "first"),
-        ultimo_mes_pago=("ultimo_mes_pago", "first"),
     ).reset_index()
+    por_ne = por_ne.merge(meses_liquidados_por_ne, on="ne_curta", how="left")
     por_ne["valor_empenhado_exibido"] = por_ne["valor_empenhado_execucao"].fillna(por_ne["valor_empenhado_planilha_total_ne"])
-    saldo_por_ne_fallback = por_ne["saldo_execucao"].fillna(por_ne["saldo_colado_planilha"]).fillna(0.0)
-    por_ne["necessidade"] = (por_ne["despesa_mensal"] * meses_restantes - saldo_por_ne_fallback).clip(lower=0)
+
+    # Saldo usado na Necessidade até Dezembro (pedido explícito posterior): por NE com
+    # competência apurada (`liquidado_via_competencia` E `valor_liquidado_execucao` notna —
+    # ver `com_saldo_execucao`), Empenhado − Liquidado por COMPETÊNCIA, não por lançamento;
+    # sem competência para aquela NE (arquivo ausente, ou NE sem nenhuma linha apurada ainda),
+    # cai no `saldo_execucao` de sempre (Execução Anual, por lançamento) — mesmo critério de
+    # fallback por linha já usado em `com_saldo_execucao`, nunca mistura as duas dentro do
+    # mesmo NE. Diferente do quadro "Empenhado × Liquidado" (saldo sempre por lançamento, ali
+    # por ser o saldo formal comparado contra o TG): aqui não há essa comparação, então o
+    # saldo pode acompanhar a fonte mais correta do Liquidado sem gerar contradição visível.
+    usa_competencia_na_necessidade = por_ne["liquidado_via_competencia"].fillna(False) & por_ne["valor_liquidado_execucao"].notna()
+    saldo_competencia = por_ne["valor_empenhado_exibido"] - por_ne["valor_liquidado_execucao"]
+    saldo_lancamento_fallback = por_ne["saldo_execucao"].fillna(por_ne["saldo_colado_planilha"]).fillna(0.0)
+    por_ne["saldo_para_necessidade"] = saldo_competencia.where(usa_competencia_na_necessidade, saldo_lancamento_fallback)
+    por_ne["necessidade"] = (por_ne["despesa_mensal"] * meses_restantes - por_ne["saldo_para_necessidade"]).clip(lower=0)
+    algum_ne_via_competencia = bool(usa_competencia_na_necessidade.any())
 
     sem_ne["valor_empenhado_exibido"] = sem_ne["valor_empenhado"]
     sem_ne["necessidade"] = (sem_ne["despesa_mensal"] * meses_restantes).clip(lower=0)
@@ -938,13 +1204,13 @@ def _render_resumo_consolidado(
     linhas = [
         (
             row["fornecedor"], row["contrato_numero"], row["ne_curta"], row["valor_empenhado_exibido"],
-            row["saldo_execucao"], row["necessidade"], row["meses_pagos"], row["ultimo_mes_pago"],
+            row["saldo_para_necessidade"], row["necessidade"], row["meses_liquidados"], row["ultimo_mes_liquidado"],
         )
         for _, row in por_ne.sort_values("necessidade", ascending=False).iterrows()
     ] + [
         (
             row["fornecedor"], row["contrato_numero"], pd.NA, row["valor_empenhado_exibido"],
-            pd.NA, row["necessidade"], row["meses_pagos"], row["ultimo_mes_pago"],
+            pd.NA, row["necessidade"], pd.NA, pd.NA,
         )
         for _, row in sem_ne.sort_values("necessidade", ascending=False).iterrows()
     ]
@@ -954,9 +1220,8 @@ def _render_resumo_consolidado(
     total_linhas = len(por_ne) + len(sem_ne)
     nes_com_tempo = set(tempo_por_ne_curta["ne_curta"]) if tempo_por_ne_curta is not None else set()
 
-    mostrar_todos_key = f"cc_resumo_mostrar_todos_{source_key}"
-    mostrar_todos = st.session_state.get(mostrar_todos_key, False)
-    visiveis = linhas if mostrar_todos else linhas[:QTD_INICIAL_RESUMO]
+    saldo_total = por_ne["saldo_para_necessidade"].sum()
+    visiveis = linhas[:QTD_INICIAL_RESUMO]
 
     with st.container(border=True, key="cc_resumo_card"):
         st.markdown(
@@ -977,51 +1242,34 @@ def _render_resumo_consolidado(
             """,
             unsafe_allow_html=True,
         )
-        cabecalho = st.columns(_LARGURAS_RESUMO)
-        cabecalho[0].markdown('<div class="cc-resumo-col-label">Fornecedor / Contrato</div>', unsafe_allow_html=True)
-        cabecalho[1].markdown('<div class="cc-resumo-col-label" style="text-align:right">Valor Empenhado</div>', unsafe_allow_html=True)
-        cabecalho[2].markdown('<div class="cc-resumo-col-label" style="text-align:right">Saldo</div>', unsafe_allow_html=True)
-        cabecalho[3].markdown('<div class="cc-resumo-col-label" style="text-align:right">Necessidade até Dez.</div>', unsafe_allow_html=True)
-        cabecalho[4].markdown('<div class="cc-resumo-col-label" style="text-align:right">Meses Pagos</div>', unsafe_allow_html=True)
+        if algum_ne_via_competencia:
+            st.caption(
+                "Saldo/Necessidade usa Liquidado por competência (mês de referência) para as NEs com "
+                "competência já apurada; sem competência para a NE, continua por lançamento (Execução Anual)."
+            )
+        clicado = _render_linhas_resumo(
+            visiveis, tempo_por_ne_curta, liquidacao_competencia_por_mes, nes_com_tempo, source_key,
+            key_prefix="cc_resumo",
+        )
+        _render_rodape_resumo(valor_empenhado_total, saldo_total, necessidade_total)
 
-        for fornecedor, contrato_numero, ne_curta_linha, valor_empenhado, saldo, necessidade, meses_pagos, ultimo_mes_pago in visiveis:
-            rotulo = f"{_dash(fornecedor)} — {_dash(contrato_numero)}"
-            clicavel = pd.notna(ne_curta_linha) and ne_curta_linha in nes_com_tempo
-            linha = st.columns(_LARGURAS_RESUMO, vertical_alignment="center")
-            if clicavel:
-                if linha[0].button(rotulo, key=f"cc_resumo_tempo_{source_key}_{ne_curta_linha}", use_container_width=True):
-                    tempo_ne = tempo_por_ne_curta[tempo_por_ne_curta["ne_curta"] == ne_curta_linha]
-                    legenda = f"{_dash(fornecedor)} (NE {ne_curta_linha}) — base mensal (2026+)."
-                    abrir_linha_do_tempo(legenda, tempo_ne)
-            else:
-                linha[0].markdown(f'<div class="cc-resumo-nome-simples">{_esc(rotulo)}</div>', unsafe_allow_html=True)
-            linha[1].markdown(_html_valor_resumo(valor_empenhado), unsafe_allow_html=True)
-            linha[2].markdown(_html_valor_resumo(saldo), unsafe_allow_html=True)
-            linha[3].markdown(_html_valor_resumo(necessidade, forte=True), unsafe_allow_html=True)
-            linha[4].markdown(f'<div class="cc-resumo-cell">{_texto_meses_pagos(meses_pagos, ultimo_mes_pago)}</div>', unsafe_allow_html=True)
+    if clicado is not None:
+        abrir_linha_do_tempo(*clicado)
 
-        rodape = st.columns(_LARGURAS_RESUMO)
-        rodape[0].markdown('<div class="cc-resumo-foot-label">Total</div>', unsafe_allow_html=True)
-        rodape[1].markdown(_html_valor_resumo(valor_empenhado_total), unsafe_allow_html=True)
-        rodape[2].markdown(_html_valor_resumo(_somar_unico_por_ne(filtrado, "saldo_execucao")), unsafe_allow_html=True)
-        rodape[3].markdown(_html_valor_resumo(necessidade_total, forte=True), unsafe_allow_html=True)
-        rodape[4].markdown("", unsafe_allow_html=True)
-
-    if not mostrar_todos and total_linhas > QTD_INICIAL_RESUMO:
+    if total_linhas > QTD_INICIAL_RESUMO:
         st.caption(f"Mostrando {QTD_INICIAL_RESUMO} de {total_linhas} linhas no resumo")
         if st.button("Ver mais", key=f"cc_resumo_ver_mais_{source_key}"):
-            st.session_state[mostrar_todos_key] = True
-            st.rerun()
+            _abrir_resumo_completo(
+                linhas, (valor_empenhado_total, saldo_total, necessidade_total),
+                tempo_por_ne_curta, liquidacao_competencia_por_mes, nes_com_tempo, source_key,
+            )
     elif total_linhas:
         st.caption(f"Mostrando todas as {total_linhas} linhas no resumo")
-        if total_linhas > QTD_INICIAL_RESUMO and st.button("Ver menos", key=f"cc_resumo_ver_menos_{source_key}"):
-            st.session_state[mostrar_todos_key] = False
-            st.rerun()
 
 
 def _html_linha_empenhado_liquidado(
     principal: object, secundario: object, empenhado: object, liquidado: object, saldo: object,
-    meses_pagos: object = pd.NA, ultimo_mes_pago: object = pd.NA,
+    meses_liquidados: object = pd.NA, ultimo_mes_liquidado: object = pd.NA,
 ) -> str:
     empenhado_texto = "sem NE" if pd.isna(empenhado) else _brl(empenhado)
     if pd.isna(saldo):
@@ -1038,21 +1286,37 @@ def _html_linha_empenhado_liquidado(
         f'<span class="cc-resumo-val">{empenhado_texto}</span>'
         f'<span class="cc-resumo-val">{liquidado_texto}</span>'
         f"{saldo_html}"
-        f'<span class="cc-resumo-val">{_texto_meses_pagos(meses_pagos, ultimo_mes_pago)}</span>'
+        f'<span class="cc-resumo-val">{_texto_meses_liquidados(meses_liquidados, ultimo_mes_liquidado)}</span>'
         "</div>"
     )
 
 
-def _render_empenhado_liquidado(filtrado: pd.DataFrame, indice_liquidado: pd.Series, source_key: str) -> None:
+def _render_empenhado_liquidado(
+    filtrado: pd.DataFrame, indice_liquidado: pd.Series, source_key: str,
+    meses_liquidados_por_ne: pd.DataFrame, via_competencia: bool = False,
+) -> None:
     """Quadro comparando, por NE, o valor empenhado total contra o liquidado (pedido
     explícito) — mesmo layout do Resumo Consolidado acima (`.cc-resumo-*`), abrangendo TODOS
     os contratos filtrados, inclusive os sem NE (aparecem com "sem NE" no lugar de
     liquidado/saldo, já que não há NE para buscar na Execução Anual).
 
-    O saldo é o mesmo `saldo_execucao` (empenhada − liquidada) já usado no resto da página —
-    não uma conta nova —, só reapresentado aqui lado a lado com o valor liquidado e rotulado
-    "Sobra" (saldo ≥ 0, ainda há espaço no empenho) ou "Insuficiência" (saldo < 0, liquidado
-    passou do empenhado — precisa de reforço de empenho)."""
+    `indice_liquidado`/`via_competencia` (pedido explícito posterior — ver LIQUIDADO POR
+    COMPETÊNCIA na docstring do módulo): Liquidação por Competência quando disponível,
+    Execução Anual (por lançamento) como fallback — mesma fonte de `com_saldo_execucao`.
+
+    O saldo é o mesmo `saldo_execucao` (empenhada − liquidada por LANÇAMENTO, sempre via
+    Execução Anual — nunca muda com `via_competencia`) já usado no resto da página, não uma
+    conta nova —, só reapresentado aqui lado a lado com o valor liquidado e rotulado "Sobra"
+    (saldo ≥ 0, ainda há espaço no empenho) ou "Insuficiência" (saldo < 0, liquidado passou do
+    empenhado — precisa de reforço de empenho). Com `via_competencia=True` as três colunas
+    deixam de bater aritmeticamente (Saldo não é Empenhado − Liquidado exibido) — decisão
+    explícita do usuário: o Liquidado mais correto importa mais que a soma fechar; uma nota
+    abaixo do cabeçalho avisa disso.
+
+    Coluna "Meses Liquidados" (pedido explícito posterior — antes "Meses Pagos", vinda da
+    planilha separada de Pagamentos): vem de `meses_liquidados_por_ne`
+    (`_meses_liquidados_por_ne_curta`, Liquidação por Competência) — mesma troca da coluna
+    equivalente no Resumo Consolidado, pela mesma razão."""
 
     com_ne = filtrado.dropna(subset=["ne_curta"])
     sem_ne = filtrado[filtrado["ne_curta"].isna()]
@@ -1063,20 +1327,19 @@ def _render_empenhado_liquidado(filtrado: pd.DataFrame, indice_liquidado: pd.Ser
         valor_empenhado_execucao=("valor_empenhado_execucao", "first"),
         valor_empenhado_planilha_total_ne=("valor_empenhado_planilha_total_ne", "first"),
         saldo_execucao=("saldo_execucao", "first"),
-        meses_pagos=("meses_pagos", "first"),
-        ultimo_mes_pago=("ultimo_mes_pago", "first"),
     ).reset_index()
+    por_ne = por_ne.merge(meses_liquidados_por_ne, on="ne_curta", how="left")
     por_ne["empenhado_exibido"] = por_ne["valor_empenhado_execucao"].fillna(por_ne["valor_empenhado_planilha_total_ne"])
     por_ne["liquidado"] = por_ne["ne_curta"].map(indice_liquidado)
 
     linhas = [
         (
             row["fornecedor"], row["contrato_numero"], row["empenhado_exibido"], row["liquidado"],
-            row["saldo_execucao"], row["meses_pagos"], row["ultimo_mes_pago"],
+            row["saldo_execucao"], row["meses_liquidados"], row["ultimo_mes_liquidado"],
         )
         for _, row in por_ne.sort_values("saldo_execucao", na_position="last").iterrows()
     ] + [
-        (row["fornecedor"], row["contrato_numero"], row["valor_empenhado"], pd.NA, pd.NA, row["meses_pagos"], row["ultimo_mes_pago"])
+        (row["fornecedor"], row["contrato_numero"], row["valor_empenhado"], pd.NA, pd.NA, pd.NA, pd.NA)
         for _, row in sem_ne.iterrows()
     ]
 
@@ -1092,6 +1355,20 @@ def _render_empenhado_liquidado(filtrado: pd.DataFrame, indice_liquidado: pd.Ser
 
     rotulo_total = "Sobra" if saldo_total >= 0 else "Insuficiência"
     cor_total = POSITIVE if saldo_total >= 0 else NEGATIVE
+    rotulo_liquidado = "Liquidado (Competência)" if via_competencia else "Liquidado (Execução Anual)"
+    # Sem indentação/quebra de linha própria de propósito: um `st.markdown` com HTML
+    # interpreta 4+ espaços no início de uma linha como bloco de código (regra do Markdown,
+    # não do Streamlit) — uma string de várias linhas indentada aqui aparecia crua na tela em
+    # vez de renderizada (bug já visto: o HTML do aviso apareceu como texto solto no card).
+    nota_competencia = (
+        '<div class="cc-resumo-metric-label" style="margin:4px 0 8px 0">'
+        "Liquidado por competência (mês de referência) — Saldo continua Empenhado − Liquidado "
+        "por lançamento (Execução Anual, mesmo saldo formal do resto da página); as duas colunas "
+        "não somam entre si."
+        "</div>"
+        if via_competencia
+        else ""
+    )
 
     st.markdown(
         f"""
@@ -1109,13 +1386,14 @@ def _render_empenhado_liquidado(filtrado: pd.DataFrame, indice_liquidado: pd.Ser
               </div>
             </div>
           </div>
+          {nota_competencia}
           <div class="cc-resumo-scroll">
             <div class="cc-resumo-head-row">
               <span>Fornecedor / Contrato</span>
               <span style="text-align:right">Empenhado</span>
-              <span style="text-align:right">Liquidado</span>
+              <span style="text-align:right">{rotulo_liquidado}</span>
               <span style="text-align:right">Saldo</span>
-              <span style="text-align:right">Meses Pagos</span>
+              <span style="text-align:right">Meses Liquidados</span>
             </div>
             {linhas_html}
             <div class="cc-resumo-foot">
@@ -1422,6 +1700,30 @@ if CAMINHO_EXECUCAO_MENSAL.exists():
     except Exception:
         tempo_por_ne_curta = None
 
+# Liquidação por Competência, para "Necessidade de Empenho" (ver com_saldo_execucao) —
+# opcional: sem o arquivo, a conta volta a usar o liquidado por lançamento da Execução Anual
+# (comportamento anterior a este pedido).
+indice_liquidado_competencia: pd.Series | None = None
+liquidacao_competencia_por_mes: pd.DataFrame | None = None
+if CAMINHO_LIQUIDACAO_COMPETENCIA.exists():
+    try:
+        indice_liquidado_competencia = _cached_indice_liquidado_competencia(
+            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime
+        )
+        liquidacao_competencia_por_mes = _cached_liquidacao_competencia_por_mes(
+            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime
+        )
+    except Exception:
+        indice_liquidado_competencia = None
+        liquidacao_competencia_por_mes = None
+
+# "Meses Liquidados" do Resumo Consolidado/Empenhado × Liquidado (pedido explícito posterior
+# — antes "Meses Pagos", vinda da planilha de Pagamentos): quantos meses cada NE já tem de
+# liquidação apurada por competência — ver `_meses_liquidados_por_ne_curta`. Vazio (toda NE
+# "sem dado") quando a base de competência está indisponível, mesma lógica de ausência
+# silenciosa de sempre.
+meses_liquidados_por_ne = _meses_liquidados_por_ne_curta(liquidacao_competencia_por_mes)
+
 # Dotação Anual, para o quadro "Cobertura Orçamentária por PTRES" — diferente da Execução
 # Anual (obrigatória acima), essa base é só um complemento: sem ela, o quadro não aparece,
 # mas o resto da tela (cartões, resumo, saldo via Execução) continua funcionando normal.
@@ -1455,7 +1757,7 @@ else:
     )
 
 dataframe = _aplicar_edicoes_da_sessao(dataframe, source_key)
-dataframe = com_saldo_execucao(dataframe, por_ne_execucao)
+dataframe = com_saldo_execucao(dataframe, por_ne_execucao, indice_liquidado_competencia)
 dataframe = com_meses_pagos(dataframe, meses_pagos_por_contrato_df)
 
 # "Início da Execução" (mês do primeiro empenho de cada NE, auto-detectado da base mensal) e
@@ -1503,8 +1805,18 @@ render_metric_grid(
     columns=4,
 )
 
-_render_resumo_consolidado(filtrado, _meses_restantes_no_ano(), tempo_por_ne_curta, source_key)
-_render_empenhado_liquidado(filtrado, indice_liquidado_por_ne_curta(por_ne_execucao), source_key)
+_render_resumo_consolidado(
+    filtrado, _meses_restantes_no_ano(), tempo_por_ne_curta, source_key, liquidacao_competencia_por_mes,
+    meses_liquidados_por_ne,
+)
+if indice_liquidado_competencia is not None:
+    _render_empenhado_liquidado(
+        filtrado, indice_liquidado_competencia, source_key, meses_liquidados_por_ne, via_competencia=True
+    )
+else:
+    _render_empenhado_liquidado(
+        filtrado, indice_liquidado_por_ne_curta(por_ne_execucao), source_key, meses_liquidados_por_ne
+    )
 
 if dotacao_dimensoes is not None:
     st.subheader("Cobertura Orçamentária por PTRES")

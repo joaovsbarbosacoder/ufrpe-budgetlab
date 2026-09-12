@@ -1,13 +1,13 @@
 """Atualização das planilhas de trabalho sem reimportação versionada (Contratos Contínuos,
-Bolsas e Auxílios, Contratos — Vigência, Contratos — Pagamentos) — ver AGENTS.md, seção
-"Fixtures de teste vs. dados de trabalho".
+Bolsas e Auxílios, Contratos — Vigência, Contratos — Pagamentos, Execução Mensal, Liquidação
+por Competência) — ver AGENTS.md, seção "Fixtures de teste vs. dados de trabalho".
 
 Camada: regra específica desta funcionalidade, não leitor de base (reaproveita o `ler_*` de
 cada base só para validar layout, nunca reimplementa a leitura), não interface (não importa
 Streamlit — ver `app_pages/atualizar_planilhas.py` para a UI).
 
 Diferente de `src/importacao_versionada.py`/`src/ui_reimportacao.py` (Dotação/Execução
-Anual): essas 4 bases não têm manifesto nem detecção de delta/retroatividade — são planilhas
+Anual): essas 6 bases não têm manifesto nem detecção de delta/retroatividade — são planilhas
 de trabalho mantidas manualmente, substituídas inteiras a cada atualização, sem aviso prévio
 de layout (ver AGENTS.md). `substituir_planilha` só faz duas coisas: valida o arquivo novo
 com o leitor da própria base antes de aceitar (nunca adivinha um layout novo — se o leitor
@@ -33,6 +33,8 @@ from src.bolsas_auxilios import ler_bolsas_auxilios
 from src.contratos_continuos import ler_contratos_continuos
 from src.contratos_pagamentos import ler_pagamentos
 from src.contratos_vigencia import ler_contratos_vigencia
+from src.liquidacao_competencia import ler_liquidacao_competencia
+from src.tesouro_execucao_mensal import ler_execucao_mensal
 
 DIRETORIO_DADOS_BRUTOS = Path("data/raw")
 
@@ -46,7 +48,7 @@ class EspecificacaoBase:
     validar: Callable[[Path], pd.DataFrame]
 
 
-#: as 4 planilhas de trabalho sem reimportação versionada (ver docstring do módulo).
+#: as 6 planilhas de trabalho sem reimportação versionada (ver docstring do módulo).
 #: "Contratos — Pagamentos" não tem página de análise no menu hoje (tirada por pedido
 #: explícito, ver app.py), mas continua entrando aqui — ainda alimenta "Meses Pagos" em
 #: Contratos Contínuos, então precisa poder ser atualizada mesmo sem tela própria.
@@ -78,6 +80,26 @@ ESPECIFICACOES: dict[str, EspecificacaoBase] = {
         caminho=DIRETORIO_DADOS_BRUTOS / "CONTRATOS - CONTROLE 2020 - Pagamentos.xlsx",
         extensao="xlsx",
         validar=ler_pagamentos,
+    ),
+    "execucao_mensal": EspecificacaoBase(
+        chave="execucao_mensal",
+        nome="Execução Mensal",
+        # mesmo caminho fixo referenciado por app_pages/execucao_mensal.py e
+        # app_pages/consulta_empenhos.py (CAMINHO_EXECUCAO_MENSAL) — atualizar aqui já
+        # alimenta as duas telas, sem precisar duplicar a constante.
+        caminho=DIRETORIO_DADOS_BRUTOS / "BI CPOC - EXEC. DESPESAS - Mensal.xlsx",
+        extensao="xlsx",
+        validar=ler_execucao_mensal,
+    ),
+    "liquidacao_competencia": EspecificacaoBase(
+        chave="liquidacao_competencia",
+        nome="Liquidação por Competência",
+        # mesmo caminho fixo referenciado por app_pages/consulta_empenhos.py
+        # (CAMINHO_LIQUIDACAO_COMPETENCIA) — usada hoje só na Linha do Tempo Mensal daquela
+        # página (ver src/liquidacao_competencia.py sobre o escopo reduzido desta base).
+        caminho=DIRETORIO_DADOS_BRUTOS / "Liquidação por Competência.xlsx",
+        extensao="xlsx",
+        validar=ler_liquidacao_competencia,
     ),
 }
 

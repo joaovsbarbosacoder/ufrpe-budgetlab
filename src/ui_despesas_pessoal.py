@@ -11,6 +11,7 @@ import math
 from pathlib import Path
 
 import pandas as pd
+from streamlit.components.v2 import component
 
 from src import design_tokens as tokens
 from src.despesas_pessoal import (
@@ -22,6 +23,12 @@ from src.despesas_pessoal import (
 )
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets" / "despesas_pessoal"
+_COMPONENTE_PESSOAL = component(
+    "ufrpe_acompanhamento_pessoal",
+    html='<div id="pessoal"></div>',
+    css=(ASSETS / "painel.css").read_text(encoding="utf-8"),
+    js=(ASSETS / "painel.js").read_text(encoding="utf-8"),
+)
 GRUPOS = {
     GRUPO_ATIVO: "ATIVO", GRUPO_INATIVO: "INATIVO",
     GRUPO_RPPS: "RPPS — AÇÃO 09HB", GRUPO_OUTROS_BENEFICIOS: "OUTROS BENEFÍCIOS",
@@ -207,15 +214,11 @@ def validar_edicao(evento, grade):
 
 
 def render_painel(dados):
-    from streamlit.components.v2 import component
-    # Registra uma vez por módulo; os dados e cores seguem a sessão em cada render.
-    global _componente
-    if _componente is None:
-        _componente = component("ufrpe_acompanhamento_pessoal", html='<div id="pessoal"></div>',
-                                css=(ASSETS / "painel.css").read_text(encoding="utf-8"),
-                                js=(ASSETS / "painel.js").read_text(encoding="utf-8"))
-    return _componente(data=dados, key="dp_painel", on_edicao_change=lambda: None,
-                       on_filtros_change=lambda: None, on_restaurar_change=lambda: None)
-
-
-_componente = None
+    """Monta a instância CCv2 já registrada no carregamento do módulo."""
+    return _COMPONENTE_PESSOAL(
+        data=dados,
+        key="dp_painel",
+        on_edicao_change=lambda: None,
+        on_filtros_change=lambda: None,
+        on_restaurar_change=lambda: None,
+    )

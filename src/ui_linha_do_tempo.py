@@ -13,7 +13,13 @@ NE/CCor nem bolsa: só recebe o DataFrame já pronto (colunas `ano_mes`, `empenh
 completa numa, "programa (NE curta)" na outra).
 
 Contrato público:
-    abrir_linha_do_tempo(legenda, tempo) -> None   (decorado com @st.dialog, abre um pop-up)
+    abrir_linha_do_tempo(legenda, tempo) -> None       (decorado com @st.dialog, abre um pop-up)
+    renderizar_linha_do_tempo(legenda, tempo) -> None  (mesmo conteúdo, sem @st.dialog — para
+                                                         quem precisa encaixar dentro de um
+                                                         pop-up já aberto; ver uso em
+                                                         `app_pages/contratos_continuos.py`,
+                                                         "Streamlit não permite dialog dentro
+                                                         de dialog")
 """
 
 from __future__ import annotations
@@ -36,12 +42,19 @@ def rotulo_ano_mes(ano_mes: int) -> str:
     return f"{MESES_ABREV.get(mes, mes)}/{ano}"
 
 
-@st.dialog("Linha do tempo mensal", width="large")
-def abrir_linha_do_tempo(legenda: str, tempo: pd.DataFrame) -> None:
-    """`tempo`: uma linha por mês (`ano_mes`, `empenhada`, `liquidada`, `paga`) — já pronta,
+def renderizar_linha_do_tempo(legenda: str, tempo: pd.DataFrame) -> None:
+    """Mesmo conteúdo de `abrir_linha_do_tempo` (gráfico + grade), sem o `@st.dialog` — para
+    quem precisa encaixar isso dentro de um pop-up que JÁ está aberto (Streamlit proíbe dialog
+    dentro de dialog, `StreamlitAPIException: Dialogs may not be nested inside other dialogs`;
+    ver `app_pages/contratos_continuos.py::_abrir_resumo_completo`, que mostra a linha do
+    tempo embutida no próprio pop-up "Ver mais" em vez de abrir um segundo pop-up). Todo
+    chamador que NÃO está dentro de um dialog já aberto deve usar `abrir_linha_do_tempo`
+    (abaixo), não esta função diretamente — só ela dá o comportamento de pop-up de verdade.
+
+    `tempo`: uma linha por mês (`ano_mes`, `empenhada`, `liquidada`, `paga`) — já pronta,
     normalmente o resultado de `src.tesouro_execucao_mensal.linha_do_tempo_por_ne` filtrado
-    para uma única NE. `legenda` aparece como `st.caption` no topo do pop-up (livre — cada
-    página decide o que identificar: NE completa, bolsa/programa, etc.)."""
+    para uma única NE. `legenda` aparece como `st.caption` no topo (livre — cada página decide
+    o que identificar: NE completa, bolsa/programa, etc.)."""
 
     # Cores lidas como atributo do módulo (não `from design_tokens import ACCENT`, que
     # ficaria travada no tema de quando este módulo de apoio foi carregado pela primeira
@@ -97,3 +110,11 @@ def abrir_linha_do_tempo(legenda: str, tempo: pd.DataFrame) -> None:
         "Empenhado já deduplicado entre Naturezas Detalhadas/Subitens diferentes da mesma NE "
         "(ver docs/base_execucao_mensal.md) — não é a soma direta das linhas de item."
     )
+
+
+@st.dialog("Linha do tempo mensal", width="large")
+def abrir_linha_do_tempo(legenda: str, tempo: pd.DataFrame) -> None:
+    """Abre `renderizar_linha_do_tempo` num pop-up de verdade — use esta função (não aquela
+    diretamente) sempre que o chamador NÃO estiver dentro de outro dialog já aberto."""
+
+    renderizar_linha_do_tempo(legenda, tempo)

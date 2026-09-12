@@ -145,3 +145,46 @@ class TestPainelPessoal(unittest.TestCase):
         self.assertEqual(montagens[-1]["grupos"][0]["children"][0]["meses"][8], -123.45)
         self.assertTrue(montagens[-1]["temEdicoes"])
         self.assertEqual(self.mensal.iloc[0].liquidada, 100)
+
+
+class TestContratoVisualDoHandoff(unittest.TestCase):
+    """Trava a estrutura observável do HTML recebido, sem congelar os dados do exemplo."""
+
+    @classmethod
+    def setUpClass(cls):
+        raiz = Path(__file__).resolve().parents[1]
+        cls.referencia = (raiz / "design_handoff_streamlit/acompanhamento-pessoal.dc.html").read_text(encoding="utf-8")
+        cls.css = (raiz / "assets/despesas_pessoal/painel.css").read_text(encoding="utf-8")
+        cls.js = (raiz / "assets/despesas_pessoal/painel.js").read_text(encoding="utf-8")
+
+    def test_preserva_ordem_das_secoes_principais(self):
+        referencia = ['class="nav"', 'list="{{ kpis }}"', '>Alerta</span>', "Executado (Jan–Abr)",
+                      '<div class="ap-wrap"', "Saldo remanescente", "Estrutura e valores"]
+        implementacao = ['<header class="ap-nav"', '<div class="ap-kpis"', '<div class="ap-alert"',
+                         '<div class="ap-legend"', '<div class="ap-wrap ap-main-wrap"',
+                         '<section class="ap-saldo"', '<footer class="ap-notes"']
+        self.assertEqual(sorted(self.referencia.find(v) for v in referencia), [self.referencia.find(v) for v in referencia])
+        self.assertEqual(sorted(self.js.find(v) for v in implementacao), [self.js.find(v) for v in implementacao])
+
+    def test_medidas_e_comportamentos_centrais_sao_os_do_handoff(self):
+        for trecho in (
+            "padding: 18px 32px", "font-size: 21px", "letter-spacing: .06em",
+            "padding: 7px 10px", "font-size: 12px", "position: sticky",
+            "left: 0", "overflow-x: auto", "padding: 26px 32px 0",
+        ):
+            with self.subTest(trecho=trecho):
+                self.assertIn(trecho, self.css)
+
+    def test_tabelas_tem_17_e_13_colunas_e_grupos_expandem_inline(self):
+        self.assertIn("monthHeaders(false)", self.js)
+        self.assertIn("contextCells(g,tag)", self.js)
+        self.assertIn("monthHeaders(true)", self.js)
+        self.assertIn('data-parent="${esc(d.grupos[gi].key)}"', self.js)
+        self.assertIn("collapsed[key] = !collapsed[key]", self.js)
+
+    def test_componente_usa_somente_api_v2_e_escopo_parent_element(self):
+        self.assertIn("export default function(component)", self.js)
+        self.assertIn("parentElement", self.js)
+        for proibido in ("components.v1", "Streamlit.setComponentValue", "window.Streamlit", "window.parent.postMessage"):
+            with self.subTest(proibido=proibido):
+                self.assertNotIn(proibido, self.js)

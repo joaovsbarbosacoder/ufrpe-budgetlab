@@ -1,9 +1,11 @@
 """Testes de src/atualizar_planilhas.py — validação de layout antes de aceitar, backup da
 versão anterior com carimbo de data/hora, e nenhuma escrita quando a validação falha.
 
-Usa as fixtures congeladas das 4 bases (ver AGENTS.md), mas todo teste que grava arquivo
-constrói seu próprio `EspecificacaoBase` apontando pra um diretório temporário — nunca pra
-`data/raw/` real, mesmo reaproveitando `ESPECIFICACOES` só para os testes de estrutura.
+Usa as fixtures congeladas das 6 bases (4 delas em AGENTS.md; Execução Mensal e Liquidação
+por Competência têm a própria nota equivalente em tests/test_tesouro_execucao_mensal.py e
+tests/test_liquidacao_competencia.py), mas todo teste que grava arquivo constrói seu próprio
+`EspecificacaoBase` apontando pra um diretório temporário — nunca pra `data/raw/` real, mesmo
+reaproveitando `ESPECIFICACOES` só para os testes de estrutura.
 """
 
 from __future__ import annotations
@@ -19,6 +21,8 @@ from src.atualizar_planilhas import ESPECIFICACOES, EspecificacaoBase, substitui
 from src.bolsas_auxilios import NOME_ABA, ler_bolsas_auxilios
 
 FIXTURE_BOLSAS = Path("tests/fixtures/bolsas_auxilios_2026-08-13.xlsx")
+FIXTURE_EXECUCAO_MENSAL = Path("tests/fixtures/execucao_mensal_2026-09-03.xlsx")
+FIXTURE_LIQUIDACAO_COMPETENCIA = Path("tests/fixtures/liquidacao_competencia_2026-09-11.xlsx")
 
 
 def _variante_bolsas_com_layout_invalido(caminho: Path, destino: Path) -> Path:
@@ -37,17 +41,36 @@ def _variante_bolsas_com_layout_invalido(caminho: Path, destino: Path) -> Path:
 
 
 class TestEspecificacoes(unittest.TestCase):
-    """As 4 bases sem reimportação versionada precisam estar cadastradas — ver AGENTS.md,
+    """As 6 bases sem reimportação versionada precisam estar cadastradas — ver AGENTS.md,
     seção "Fixtures de teste vs. dados de trabalho"."""
 
-    def test_quatro_bases_cadastradas(self):
-        self.assertEqual(len(ESPECIFICACOES), 4)
-        for chave in ("contratos_continuos", "bolsas_auxilios", "contratos_vigencia", "contratos_pagamentos"):
+    def test_seis_bases_cadastradas(self):
+        self.assertEqual(len(ESPECIFICACOES), 6)
+        for chave in (
+            "contratos_continuos", "bolsas_auxilios", "contratos_vigencia",
+            "contratos_pagamentos", "execucao_mensal", "liquidacao_competencia",
+        ):
             self.assertIn(chave, ESPECIFICACOES)
 
     def test_extensao_bate_com_o_sufixo_do_arquivo_atual(self):
         for spec in ESPECIFICACOES.values():
             self.assertEqual(spec.caminho.suffix, f".{spec.extensao}")
+
+    @unittest.skipUnless(
+        FIXTURE_EXECUCAO_MENSAL.exists(), f"Fixture ausente em {FIXTURE_EXECUCAO_MENSAL}"
+    )
+    def test_spec_execucao_mensal_valida_a_fixture_congelada(self):
+        spec = ESPECIFICACOES["execucao_mensal"]
+        lido = spec.validar(FIXTURE_EXECUCAO_MENSAL)
+        self.assertGreater(len(lido), 0)
+
+    @unittest.skipUnless(
+        FIXTURE_LIQUIDACAO_COMPETENCIA.exists(), f"Fixture ausente em {FIXTURE_LIQUIDACAO_COMPETENCIA}"
+    )
+    def test_spec_liquidacao_competencia_valida_a_fixture_congelada(self):
+        spec = ESPECIFICACOES["liquidacao_competencia"]
+        lido = spec.validar(FIXTURE_LIQUIDACAO_COMPETENCIA)
+        self.assertGreater(len(lido), 0)
 
 
 @unittest.skipUnless(FIXTURE_BOLSAS.exists(), f"Fixture ausente em {FIXTURE_BOLSAS}")

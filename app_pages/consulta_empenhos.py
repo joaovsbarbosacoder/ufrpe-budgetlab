@@ -75,6 +75,19 @@ reaproveitado por `app_pages/bolsas_auxilios.py`) — o CSS `.ce-tempo-*` que el
 injetado aqui (`_inject_css`), não no módulo compartilhado (Streamlit não carrega CSS
 injetado numa página anterior ao navegar para outra).
 
+LIQUIDADO POR COMPETÊNCIA NA LINHA DO TEMPO (pedido explícito posterior, só nesta página —
+`app_pages/bolsas_auxilios.py` continua com Liquidado por lançamento): a coluna Liquidado do
+pop-up passa a vir de `src/liquidacao_competencia.py` (mês de referência/competência), não
+mais da Execução Mensal (mês de LANÇAMENTO — quando o processo formal de liquidação ocorreu,
+não necessariamente o mês a que a despesa se refere). Empenhado/Pago continuam da Execução
+Mensal, sem mudança. `_tempo_com_liquidacao_por_competencia` faz a troca; sem a base de
+competência disponível (arquivo ausente), a linha do tempo volta ao comportamento anterior
+(Liquidado por lançamento) — mesma lógica de ausência silenciosa da base mensal. NE sem
+nenhuma linha de competência (mas com dado na Execução Mensal) mostra Liquidado 0 em todo
+mês — decisão explícita da v1: não reconcilia com o total liquidado da NE, não cai de volta
+para o valor de lançamento (ver docs/BudgetLab_competencia_por_empenho.md para o desenho
+completo, do qual só esta peça foi implementada até agora).
+
 CARTÃO CLICÁVEL (pedido explícito posterior): o botão "Ver", antes numa coluna separada de
 cada linha, foi removido — cada NE vira um único `st.button` de largura total (rótulo "NE —
 objeto"), que É o cartão (`_render_cartoes_lista`/`_rotulo_botao_cartao`). Favorecido e
@@ -117,6 +130,7 @@ from src.execucao_anual import (
     saldo_por_ne,
 )
 from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
+from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne_e_mes
 from src.tesouro_execucao_mensal import ler_execucao_mensal, linha_do_tempo_por_ne
 from src.ui_filtros_execucao import CAMPOS_AVANCADOS_EXECUCAO, CAMPOS_EXECUCAO, CAMPOS_RAPIDOS_EXECUCAO, apply_filters
 from src.ui_filtros_execucao import limpar_filtros as _limpar_filtros_compartilhado
@@ -198,6 +212,16 @@ COLUNAS_BUSCA = [
 #: item; ausência do arquivo não impede o resto da página, só a busca por item.
 CAMINHO_EXECUCAO_MENSAL = Path("data/raw") / "BI CPOC - EXEC. DESPESAS - Mensal.xlsx"
 
+#: base de Liquidação por Competência (ver src/liquidacao_competencia.py) — mesmo caminho
+#: fixo referenciado pela spec `liquidacao_competencia` em `src/atualizar_planilhas.py`.
+#: Usada só na "Linha do tempo mensal" desta página (pedido explícito): troca o Liquidado por
+#: mês de LANÇAMENTO (Execução Mensal, o que a NE registrou como liquidado naquele mês) pelo
+#: Liquidado por mês de REFERÊNCIA/competência (a que mês a despesa de fato se refere) — hoje
+#: a Execução Mensal não sabe dizer isso, só quando o processo formal de liquidação ocorreu.
+#: Ausência do arquivo não impede o resto da página: a linha do tempo volta ao comportamento
+#: anterior (Liquidado por lançamento).
+CAMINHO_LIQUIDACAO_COMPETENCIA = Path("data/raw") / "Liquidação por Competência.xlsx"
+
 
 def _esc(value: object) -> str:
     return html_lib.escape(str(value))
@@ -278,6 +302,14 @@ def _cached_linha_do_tempo(caminho: str, mtime: float) -> pd.DataFrame:
     por chamada; ambos ficam em cache após a primeira leitura de cada um nesta sessão)."""
 
     return linha_do_tempo_por_ne(ler_execucao_mensal(caminho))
+
+
+@st.cache_data(show_spinner="Lendo a Liquidação por Competência...")
+def _cached_liquidacao_competencia(caminho: str, mtime: float) -> pd.DataFrame:
+    """Liquidado por (NE, mês de referência/competência) — ver
+    `_tempo_com_liquidacao_por_competencia`. `mtime` só participa da chave de cache."""
+
+    return liquidado_por_ne_e_mes(ler_liquidacao_competencia(caminho))
 
 
 def _nes_por_item(itens_por_ne: pd.Series | None, alvo: str) -> set[str]:
@@ -736,10 +768,41 @@ def _render_resumo_grupo(visivel: pd.DataFrame, marcados: set[str], source_key: 
         st.rerun()
 
 
+def _tempo_com_liquidacao_por_competencia(
+    tempo_ne: pd.DataFrame, ne_ccor: str, competencia_por_ne_mes: pd.DataFrame
+) -> pd.DataFrame:
+    """Troca a coluna `liquidada` de `tempo_ne` (mês de LANÇAMENTO, Execução Mensal) pela
+    liquidação por COMPETÊNCIA (mês de referência) da mesma NE — pedido explícito do usuário:
+    a Execução Mensal só sabe dizer quando a liquidação foi formalmente lançada, não a que mês
+    a despesa se refere. `empenhada`/`paga` continuam vindo da Execução Mensal, sem mudança.
+
+    Sem nenhuma linha de competência para esta NE (a NE existe na Execução Mensal mas não na
+    base de competência — "ausência total" no vocabulário de docs/
+    BudgetLab_competencia_por_empenho.md, item 4), Liquidado aparece como 0 em todo mês: é a
+    leitura correta ("nenhuma competência apurada ainda para esta NE"), não um erro — não cai
+    de volta para o valor de lançamento, que misturaria as duas métricas (decisão explícita:
+    v1 mostra só a série de competência, sem tentar reconciliar com o liquidado total da NE).
+
+    Domínio de meses é a UNIÃO dos dois eixos (lançamento ∪ referência) — os meses não
+    coincidem necessariamente (ver item 1 do documento: "as duas bases não medem o mesmo eixo
+    de tempo"), então um mês só em um dos dois lados aparece com 0 no outro, nunca é
+    descartado."""
+
+    base = tempo_ne[["ano_mes", "empenhada", "paga"]]
+    competencia_ne = competencia_por_ne_mes.loc[
+        competencia_por_ne_mes["ne_ccor"] == ne_ccor, ["ano_mes", "valor"]
+    ].rename(columns={"valor": "liquidada"})
+
+    combinado = pd.merge(base, competencia_ne, on="ano_mes", how="outer")
+    combinado[["empenhada", "liquidada", "paga"]] = combinado[["empenhada", "liquidada", "paga"]].fillna(0.0)
+    return combinado.sort_values("ano_mes").reset_index(drop=True)
+
+
 def _render_detalhe(
     linha: pd.Series,
     itens_por_ne: pd.Series | None = None,
     linha_do_tempo: pd.DataFrame | None = None,
+    liquidacao_competencia: pd.DataFrame | None = None,
 ) -> None:
     st.markdown(
         f"""
@@ -766,7 +829,16 @@ def _render_detalhe(
         if st.button("📈 Linha do tempo mensal", key=f"ce_tempo_{linha['ne_ccor']}", use_container_width=True):
             tempo_ne = linha_do_tempo[linha_do_tempo["ne_ccor"] == linha["ne_ccor"]]
             ne_exibicao = _ne_exibicao(linha["ne_ccor"], linha["ano"])
-            abrir_linha_do_tempo(f"Nota de empenho {ne_exibicao} — base mensal (2026+).", tempo_ne)
+            if liquidacao_competencia is not None:
+                tempo_ne = _tempo_com_liquidacao_por_competencia(tempo_ne, linha["ne_ccor"], liquidacao_competencia)
+                legenda = (
+                    f"Nota de empenho {ne_exibicao} — Empenhado e Pago por mês de lançamento "
+                    "(Execução Mensal); Liquidado por mês de competência (Liquidação por "
+                    "Competência), não por mês de lançamento."
+                )
+            else:
+                legenda = f"Nota de empenho {ne_exibicao} — base mensal (2026+)."
+            abrir_linha_do_tempo(legenda, tempo_ne)
 
     st.markdown('<div class="ce-section-title">Classificação da despesa</div>', unsafe_allow_html=True)
     st.caption(
@@ -845,6 +917,18 @@ if CAMINHO_EXECUCAO_MENSAL.exists():
     except Exception:
         itens_por_ne = None
         linha_do_tempo = None
+
+# Liquidação por Competência — mesma lógica de ausência silenciosa que a base mensal acima:
+# sem o arquivo, a linha do tempo volta a mostrar Liquidado por mês de lançamento
+# (comportamento anterior a este pedido), sem quebrar a página.
+liquidacao_competencia: pd.DataFrame | None = None
+if CAMINHO_LIQUIDACAO_COMPETENCIA.exists():
+    try:
+        liquidacao_competencia = _cached_liquidacao_competencia(
+            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime
+        )
+    except Exception:
+        liquidacao_competencia = None
 
 source_key = manifesto.sha256[:12]
 
@@ -1048,7 +1132,7 @@ marcados = {
 
 with coluna_detalhe:
     with st.container(border=True):
-        _render_detalhe(selecionado, itens_por_ne, linha_do_tempo)
+        _render_detalhe(selecionado, itens_por_ne, linha_do_tempo, liquidacao_competencia)
 
     with st.container(border=True):
         st.subheader("Resumo do grupo selecionado")

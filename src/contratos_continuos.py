@@ -26,7 +26,7 @@ Execução Anual já validada do projeto.
 
 Contrato público:
     ler_contratos_continuos(caminho) -> pd.DataFrame
-    com_saldo_execucao(df, por_ne_execucao) -> pd.DataFrame
+    com_saldo_execucao(df, por_ne_execucao, indice_liquidado_competencia=None) -> pd.DataFrame
     com_meses_pagos(df, meses_pagos) -> pd.DataFrame
 """
 
@@ -170,7 +170,11 @@ def _diverge(execucao: pd.Series, planilha: pd.Series, tolerancia: float = 0.01)
     return resultado
 
 
-def com_saldo_execucao(df: pd.DataFrame, por_ne_execucao: pd.DataFrame) -> pd.DataFrame:
+def com_saldo_execucao(
+    df: pd.DataFrame,
+    por_ne_execucao: pd.DataFrame,
+    indice_liquidado_competencia: pd.Series | None = None,
+) -> pd.DataFrame:
     """Acrescenta, via `ne_curta`, dois pares de campos buscados na Execução Anual já
     validada do projeto: `saldo_execucao`/`diverge_saldo` (contra `saldo_colado_planilha`,
     sempre no nível da NE nos dois lados) e `valor_empenhado_execucao`/
@@ -192,15 +196,29 @@ def com_saldo_execucao(df: pd.DataFrame, por_ne_execucao: pd.DataFrame) -> pd.Da
     Também recalcula `meses_a_empenhar`/`valor_a_empenhar` (a "Necessidade de Empenho") a
     partir da Execução Anual em vez das colunas manuais `meses_empenhados`/`meses_liquidados`
     da planilha, para todo contrato cuja NE já foi encontrada acima: `valor_liquidado_execucao`
-    (novo campo, via `indice_liquidado_por_ne_curta`) e `valor_empenhado_execucao` ÷
-    `despesa_mensal_total_ne` (despesa mensal somada por NE, mesmo motivo do rateio acima)
-    viram `meses_liquidados_execucao`/`meses_empenhados_execucao` — fração exata, sem
-    arredondar (decisão confirmada com o usuário). Assim a Necessidade de Empenho atualiza
-    sozinha a cada reimportação de Execução Anual, sem precisar tocar na planilha de Contratos
-    Contínuos. Contrato sem NE, ou com NE ainda não encontrada na Execução carregada, mantém
+    (novo campo) e `valor_empenhado_execucao` ÷ `despesa_mensal_total_ne` (despesa mensal
+    somada por NE, mesmo motivo do rateio acima) viram
+    `meses_liquidados_execucao`/`meses_empenhados_execucao` — fração exata, sem arredondar
+    (decisão confirmada com o usuário). Assim a Necessidade de Empenho atualiza sozinha a cada
+    reimportação de Execução Anual, sem precisar tocar na planilha de Contratos Contínuos.
+    Contrato sem NE, ou com NE ainda não encontrada na Execução carregada, mantém
     `meses_empenhados`/`meses_liquidados` da planilha (fallback inalterado) — `necessidade_via`
     (novo campo) marca "execucao" ou "planilha" conforme a fonte usada em cada linha, para a
     interface deixar isso visível.
+
+    `indice_liquidado_competencia` (opcional, pedido explícito do usuário): quando informado
+    (Série `ne_curta` -> total por Liquidação por Competência, ver
+    `src.liquidacao_competencia.liquidado_por_ne` + `execucao_anual.ne_curta`),
+    `valor_liquidado_execucao` vem dele em vez da Execução Anual (mês de LANÇAMENTO) — a
+    Execução Anual só sabe dizer quando a liquidação foi formalmente lançada, não a que mês a
+    despesa se refere; a competência é a fonte mais correta para "quanto já foi de fato
+    incorrido". NE sem nenhuma linha de competência fica nula em `valor_liquidado_execucao`
+    (mesmo tratamento de "sem correspondência" de sempre — cai em `tem_base_para_calculo`
+    abaixo, volta pros campos manuais da planilha, nunca usa o valor de lançamento como
+    substituto silencioso). `None` (arquivo de competência indisponível) preserva o
+    comportamento anterior a este pedido (Execução Anual). `liquidado_via_competencia` (novo
+    campo, booleano constante no resultado) sinaliza qual fonte foi usada, para a interface
+    ajustar o rótulo mostrado.
     """
     resultado = df.copy()
 
@@ -211,8 +229,12 @@ def com_saldo_execucao(df: pd.DataFrame, por_ne_execucao: pd.DataFrame) -> pd.Da
     indice_valor_empenhado = indice_valor_empenhado_por_ne_curta(por_ne_execucao)
     resultado["valor_empenhado_execucao"] = resultado["ne_curta"].map(indice_valor_empenhado)
 
-    indice_liquidado = indice_liquidado_por_ne_curta(por_ne_execucao)
-    resultado["valor_liquidado_execucao"] = resultado["ne_curta"].map(indice_liquidado)
+    resultado["liquidado_via_competencia"] = indice_liquidado_competencia is not None
+    if indice_liquidado_competencia is not None:
+        resultado["valor_liquidado_execucao"] = resultado["ne_curta"].map(indice_liquidado_competencia)
+    else:
+        indice_liquidado = indice_liquidado_por_ne_curta(por_ne_execucao)
+        resultado["valor_liquidado_execucao"] = resultado["ne_curta"].map(indice_liquidado)
 
     soma_planilha_por_ne = resultado.dropna(subset=["ne_curta"]).groupby("ne_curta")["valor_empenhado"].sum()
     resultado["valor_empenhado_planilha_total_ne"] = resultado["ne_curta"].map(soma_planilha_por_ne)

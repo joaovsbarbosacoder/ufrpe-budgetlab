@@ -70,9 +70,9 @@ _render_card_versionado("Dotação Orçamentária (Dotação Anual)", ManifestoD
 
 st.subheader("Planilhas de trabalho")
 st.caption(
-    "Contratos Contínuos, Bolsas e Auxílios, Contratos — Vigência e Contratos — Pagamentos — "
-    "sem reimportação versionada: cada envio substitui o arquivo inteiro, com a versão "
-    "anterior preservada em data/raw/_backup/."
+    "Contratos Contínuos, Bolsas e Auxílios, Contratos — Vigência, Contratos — Pagamentos, "
+    "Execução Mensal e Liquidação por Competência — sem reimportação versionada: cada envio "
+    "substitui o arquivo inteiro, com a versão anterior preservada em data/raw/_backup/."
 )
 
 

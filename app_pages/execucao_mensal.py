@@ -2,9 +2,11 @@
 
 Complementar à página "Execução Orçamentária" (base ANUAL, 2023-2026) — não a substitui.
 Lê `src/tesouro_execucao_mensal.py`, um arquivo fixo em `data/raw/` (`CAMINHO_EXECUCAO_MENSAL`,
-mesmo caminho usado por `app_pages/consulta_empenhos.py` para a busca por item), sem
-importação versionada/manifesto ainda (fora do escopo desta etapa — ver
-docs/base_execucao_mensal.md, seção 7).
+mesmo caminho usado por `app_pages/consulta_empenhos.py` para a busca por item), sem manifesto
+versionado (fora do escopo — ver docs/base_execucao_mensal.md, seção 7). Atualizável pela
+página "Atualizar Planilhas" como planilha de trabalho (`src/atualizar_planilhas.py`, spec
+`execucao_mensal`) — substituição direta com backup por carimbo de data/hora, sem detecção de
+delta/retroatividade.
 
 Empenhado usa sempre `valor_empenhado_por_bloco()` (nunca a soma direta das linhas): o valor
 de um (NE, Natureza Detalhada, Subitem, mês) repete em cada linha de item daquele bloco —

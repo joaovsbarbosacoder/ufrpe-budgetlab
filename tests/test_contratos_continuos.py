@@ -299,6 +299,66 @@ class TestNecessidadeViaExecucaoAnual(unittest.TestCase):
         self.assertAlmostEqual(resultado.loc[0, "valor_a_empenhar"], 0.0)
 
 
+class TestLiquidadoViaCompetencia(unittest.TestCase):
+    """`com_saldo_execucao(..., indice_liquidado_competencia=...)` — pedido explícito do
+    usuário: "Necessidade de Empenho" passa a usar a Liquidação por Competência em vez da
+    Execução Anual (mês de lançamento) para `valor_liquidado_execucao`, quando disponível."""
+
+    def _por_ne(self, linhas: list[tuple[str, float, float]]) -> pd.DataFrame:
+        registros = [
+            {"ne_ccor": "00000000000" + curta, "empenhada": empenhada, "liquidada": liquidada, "saldo": empenhada - liquidada}
+            for curta, empenhada, liquidada in linhas
+        ]
+        return pd.DataFrame(registros, columns=["ne_ccor", "empenhada", "liquidada", "saldo"])
+
+    def _df(self, linhas: list[dict]) -> pd.DataFrame:
+        base = {
+            "ne_curta": pd.NA, "despesa_mensal": 0.0, "valor_empenhado": 0.0,
+            "saldo_colado_planilha": 0.0, "meses_empenhados": 0.0, "meses_liquidados": 0.0,
+        }
+        df = pd.DataFrame([{**base, **linha} for linha in linhas])
+        df["meses_a_empenhar"], df["valor_a_empenhar"] = calcular_necessidade_empenho(
+            df["meses_empenhados"], df["meses_liquidados"], df["despesa_mensal"]
+        )
+        return df
+
+    def test_sem_indice_competencia_usa_execucao_como_antes(self):
+        df = self._df([{
+            "ne_curta": "2026NE000001", "despesa_mensal": 1000.0,
+            "meses_empenhados": 99.0, "meses_liquidados": 99.0,
+        }])
+        resultado = com_saldo_execucao(df, self._por_ne([("2026NE000001", 5000.0, 2500.0)]))
+        self.assertFalse(bool(resultado.loc[0, "liquidado_via_competencia"]))
+        self.assertAlmostEqual(resultado.loc[0, "valor_liquidado_execucao"], 2500.0)
+        self.assertAlmostEqual(resultado.loc[0, "meses_liquidados_execucao"], 2.5)
+
+    def test_com_indice_competencia_ne_encontrada_substitui_o_liquidado(self):
+        df = self._df([{"ne_curta": "2026NE000001", "despesa_mensal": 1000.0}])
+        por_ne = self._por_ne([("2026NE000001", 5000.0, 2500.0)])  # liquidada da Execução: 2500
+        indice_competencia = pd.Series({"2026NE000001": 4000.0})  # competência diverge do lançamento
+        resultado = com_saldo_execucao(df, por_ne, indice_competencia)
+        self.assertTrue(bool(resultado.loc[0, "liquidado_via_competencia"]))
+        self.assertAlmostEqual(resultado.loc[0, "valor_liquidado_execucao"], 4000.0)
+        self.assertAlmostEqual(resultado.loc[0, "meses_liquidados_execucao"], 4.0)
+        self.assertEqual(resultado.loc[0, "necessidade_via"], "execucao")
+
+    def test_com_indice_competencia_ne_ausente_cai_para_planilha(self):
+        # NE existe na Execução Anual (tem saldo/empenhado), mas não tem nenhuma linha de
+        # competência apurada — não deve usar o valor de lançamento como substituto
+        # silencioso: cai no mesmo fallback de "sem correspondência" de sempre (planilha).
+        df = self._df([{
+            "ne_curta": "2026NE000002", "despesa_mensal": 1000.0,
+            "meses_empenhados": 3.0, "meses_liquidados": 1.0,
+        }])
+        por_ne = self._por_ne([("2026NE000002", 5000.0, 2500.0)])
+        indice_competencia = pd.Series({"2026NE000999": 4000.0}, dtype="float64")  # outra NE, não esta
+        resultado = com_saldo_execucao(df, por_ne, indice_competencia)
+        self.assertTrue(bool(resultado.loc[0, "liquidado_via_competencia"]))
+        self.assertTrue(pd.isna(resultado.loc[0, "valor_liquidado_execucao"]))
+        self.assertEqual(resultado.loc[0, "necessidade_via"], "planilha")
+        self.assertAlmostEqual(resultado.loc[0, "valor_a_empenhar"], 2000.0)
+
+
 class TestComMesesPagos(unittest.TestCase):
     """`com_meses_pagos` — indicador independente vindo da planilha de Pagamentos, casado por
     número de contrato normalizado (não pela NE). Dados sintéticos (não depende de fixture de
