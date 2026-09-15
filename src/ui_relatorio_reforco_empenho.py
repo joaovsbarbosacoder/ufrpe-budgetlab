@@ -97,13 +97,26 @@ def _abrir_relatorios(df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str
         # propósito (fecharia o pop-up, ver docstring do módulo): a variável local `tipo_id` é
         # atualizada no próprio clique, então o conteúdo do relatório já aparece neste mesmo
         # run, sem exigir um segundo clique.
-        st.caption("Escolha o relatório que deseja emitir.")
-        for tipo in _TIPOS:
-            if st.button(f"📄 {tipo.rotulo_escolha}", key=f"reforco_escolher_{chave}_{tipo.id}", width="stretch"):
-                st.session_state[tipo_key] = tipo.id
-                tipo_id = tipo.id
+        #
+        # `st.empty()` (bug real observado em produção, print de tela: com um `st.caption` +
+        # `st.button` soltos, direto no corpo da função, os dois botões de escolha continuavam
+        # desenhados na tela ACIMA do conteúdo do relatório já escolhido, no MESMO run em que a
+        # escolha acontece — Streamlit não tem como "apagar" um elemento já desenhado neste
+        # run a não ser through um placeholder). Escrevendo a escolha dentro de
+        # `picker_placeholder.container()` e chamando `picker_placeholder.empty()` assim que
+        # uma escolha é feita, os dois botões somem do resultado final deste run antes dele
+        # terminar — sem isso, o usuário via os dois relatórios "empilhados" e a grade do
+        # relatório escolhido parecia vazia/perdida no meio do resto da tela.
+        picker_placeholder = st.empty()
+        with picker_placeholder.container():
+            st.caption("Escolha o relatório que deseja emitir.")
+            for tipo in _TIPOS:
+                if st.button(f"📄 {tipo.rotulo_escolha}", key=f"reforco_escolher_{chave}_{tipo.id}", width="stretch"):
+                    st.session_state[tipo_key] = tipo.id
+                    tipo_id = tipo.id
         if tipo_id is None:
             return
+        picker_placeholder.empty()
 
     tipo = TIPO_REFORCO if tipo_id == "reforco" else TIPO_ANULACAO
     st.divider()
