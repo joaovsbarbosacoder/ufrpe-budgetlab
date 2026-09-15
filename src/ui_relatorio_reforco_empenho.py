@@ -5,12 +5,9 @@ página separada condensando as duas bases).
 
 UM BOTÃO SÓ, DOIS RELATÓRIOS (pedido explícito posterior — antes só existia o Reforço): o
 botão abre um pop-up que primeiro pergunta qual relatório emitir (`TIPO_REFORCO`/
-`TIPO_ANULACAO`, `src/relatorio_reforco_empenho.py`) e, escolhido, renderiza o mesmo tipo de
-conteúdo (tabela editável + os dois PDFs) parametrizado por `TipoRelatorio` — mesma mecânica,
-só rótulos/valor inicial diferentes entre os dois; o ESCOPO das linhas também difere (pedido
-explícito, exclusivo da Anulação): Reforço escolhe um Processo antes de mostrar a tabela
-(`linhas_para_processo`); Anulação mostra direto TODOS os empenhos da base, sem seletor de
-Processo (`linhas_todos_os_empenhos`) — ver docstring de `_render_conteudo_relatorio`. Os dois
+`TIPO_ANULACAO`, `src/relatorio_reforco_empenho.py`) e, escolhido, renderiza o mesmo
+conteúdo (seletor de processo + tabela editável + os dois PDFs) parametrizado por
+`TipoRelatorio` — mesma mecânica, só rótulos/valor inicial diferentes entre os dois. Os dois
 passos (escolha do tipo, depois o conteúdo) vivem dentro do MESMO `@st.dialog` — trocar de
 tela NÃO chama `st.rerun()` (que, de dentro de um dialog já aberto, FECHA o pop-up inteiro —
 ver mais abaixo); a escolha só grava `st.session_state` e deixa o rerun natural do clique do
@@ -77,7 +74,6 @@ from src.relatorio_reforco_empenho import (
     gerar_pdf_detalhado,
     gerar_pdf_resumido,
     linhas_para_processo,
-    linhas_todos_os_empenhos,
     processos_disponiveis,
 )
 from src.ui_theme import format_brl_full
@@ -117,39 +113,21 @@ def _abrir_relatorios(df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str
 def _render_conteudo_relatorio(
     df: pd.DataFrame, spec: EspecificacaoRelatorio, tipo: TipoRelatorio, chave: str
 ) -> None:
-    """Seletor de processo (só no Reforço) + tabela editável + os dois PDFs — conteúdo
-    compartilhado entre Reforço e Anulação (`_abrir_relatorios`, acima), parametrizado por
-    `tipo`. Toda key de `st.session_state`/widget inclui `tipo.id` para as duas telas nunca
-    colidirem quando o mesmo processo/escopo é usado nos dois relatórios dentro da mesma
-    sessão.
+    """Seletor de processo + tabela editável + os dois PDFs — conteúdo compartilhado entre
+    Reforço e Anulação (`_abrir_relatorios`, acima), parametrizado por `tipo`. Toda key de
+    `st.session_state`/widget inclui `tipo.id` para as duas telas nunca colidirem quando o
+    mesmo processo é usado nos dois relatórios dentro da mesma sessão."""
 
-    ESCOPO DIFERE ENTRE OS DOIS TIPOS (pedido explícito, exclusivo da Anulação): "diferente do
-    de reforço... apareça todos os empenhos para que eu possa colocar, caso seja necessário, o
-    valor a ser anulado" — Reforço continua escolhendo um Processo primeiro
-    (`linhas_para_processo`, pedido de reforço nasce organizado por processo administrativo);
-    Anulação NÃO tem esse seletor — mostra `linhas_todos_os_empenhos` (todas as NEs de todos os
-    processos da base de uma vez), já que anular saldo normalmente é encontrado navegando
-    tudo, não escolhendo um processo de antemão. Sem o seletor, a coluna "Processo" (que só
-    aparece no PDF, não na tela, no Reforço — redundante ali porque já está fixo no cabeçalho)
-    vira uma coluna a mais na tabela editável da Anulação, só leitura, pra ajudar a localizar o
-    empenho certo em meio a todos os outros."""
+    processos = processos_disponiveis(df, spec)
+    if not processos:
+        st.warning("Nenhum processo com empenho reconhecível nesta base.")
+        return
 
-    if tipo.id == "reforco":
-        processos = processos_disponiveis(df, spec)
-        if not processos:
-            st.warning("Nenhum processo com empenho reconhecível nesta base.")
-            return
-        processo = st.selectbox("Processo", processos, key=f"reforco_processo_{chave}_{tipo.id}")
-        linhas = linhas_para_processo(df, spec, processo)
-        escopo = processo
-    else:
-        processo = None
-        linhas = linhas_todos_os_empenhos(df, spec)
-        escopo = "todos"
+    processo = st.selectbox("Processo", processos, key=f"reforco_processo_{chave}_{tipo.id}")
 
+    linhas = linhas_para_processo(df, spec, processo)
     if linhas.empty:
-        mensagem = "Nenhuma linha de empenho para este processo." if processo else "Nenhum empenho reconhecível nesta base."
-        st.warning(mensagem)
+        st.warning("Nenhuma linha de empenho para este processo.")
         return
 
     # `\$` escapado: dois "R$" no mesmo texto viravam um par de delimitadores de fórmula
@@ -168,7 +146,7 @@ def _render_conteudo_relatorio(
     # recriado do zero a cada execução do script, só na primeira vez que este processo é
     # aberto). Valor inicial difere por tipo (pedido explícito, ver docstring do módulo):
     # Reforço sugere a partir de `meses_sugeridos`; Anulação começa sempre zerada.
-    estado_key = f"reforco_valores_{chave}_{tipo.id}_{escopo}"
+    estado_key = f"reforco_valores_{chave}_{tipo.id}_{processo}"
     if estado_key not in st.session_state:
         if tipo.id == "reforco":
             meses_iniciais = linhas["meses_sugeridos"].round(2)
@@ -191,9 +169,9 @@ def _render_conteudo_relatorio(
     # acabou de commitar (Enter/Tab), já disponível nesta mesma execução: não precisa de
     # `st.rerun()` (que, dentro de `@st.dialog`, fecha o pop-up — bug real observado, ver
     # docstring do módulo).
-    geracao_key = f"reforco_geracao_{chave}_{tipo.id}_{escopo}"
+    geracao_key = f"reforco_geracao_{chave}_{tipo.id}_{processo}"
     geracao = st.session_state.setdefault(geracao_key, 0)
-    editor_key = f"reforco_editor_{chave}_{tipo.id}_{escopo}_{geracao}"
+    editor_key = f"reforco_editor_{chave}_{tipo.id}_{processo}_{geracao}"
 
     delta = st.session_state.get(editor_key, {})
     houve_edicao_de_meses = False
@@ -212,24 +190,20 @@ def _render_conteudo_relatorio(
     if houve_edicao_de_meses:
         geracao += 1
         st.session_state[geracao_key] = geracao
-        editor_key = f"reforco_editor_{chave}_{tipo.id}_{escopo}_{geracao}"
+        editor_key = f"reforco_editor_{chave}_{tipo.id}_{processo}_{geracao}"
 
-    # "Processo" só entra como coluna na tabela quando não há seletor de Processo acima dela
-    # (Anulação, ver docstring) — no Reforço seria redundante (já fixo no seletor logo acima).
-    colunas_tabela = {}
-    if processo is None:
-        colunas_tabela["Processo"] = linhas["processo"].to_numpy()
-    colunas_tabela["Item de Despesa"] = linhas["item_despesa"].to_numpy()
-    colunas_tabela["Empenho"] = linhas["ne_curta"].to_numpy()
-    colunas_tabela[tipo.rotulo_coluna_meses] = valores["meses"].to_numpy()
-    colunas_tabela[tipo.rotulo_coluna_valor] = valores["empenhar"].to_numpy()
-    tabela_editor = pd.DataFrame(colunas_tabela)
-
-    colunas_desabilitadas = ["Item de Despesa", "Empenho"] + (["Processo"] if processo is None else [])
+    tabela_editor = pd.DataFrame(
+        {
+            "Item de Despesa": linhas["item_despesa"].to_numpy(),
+            "Empenho": linhas["ne_curta"].to_numpy(),
+            tipo.rotulo_coluna_meses: valores["meses"].to_numpy(),
+            tipo.rotulo_coluna_valor: valores["empenhar"].to_numpy(),
+        }
+    )
     st.data_editor(
         tabela_editor,
         key=editor_key,
-        disabled=colunas_desabilitadas,
+        disabled=["Item de Despesa", "Empenho"],
         column_config={
             # `,` (sprintf-js, não C-printf) agrupa milhar — pedido explícito ("pontuação de
             # valores"). Só chega a americano (vírgula milhar, ponto decimal: "1,234.57"), não
@@ -257,11 +231,8 @@ def _render_conteudo_relatorio(
     linhas_para_pdf = excluir_linhas_zeradas(linhas_finais)
 
     # dois modelos em uso pela PROPLAD (ver docstring de src/relatorio_reforco_empenho.py) —
-    # os dois precisam ser emitidos, não é escolha de um ou outro. Sem Processo (Anulação), o
-    # nome do arquivo usa `escopo` ("todos") em vez do processo — não há um processo único pra
-    # nomear o arquivo, e `gerar_pdf_*` já recebe `processo=None` (omite a linha "Processo:"
-    # do cabeçalho do PDF, ver docstring de `_novo_documento`).
-    nome_arquivo = processo.replace("/", "-") if processo else escopo
+    # os dois precisam ser emitidos, não é escolha de um ou outro.
+    nome_arquivo = processo.replace("/", "-")
     col_detalhado, col_resumido = st.columns(2)
     with col_detalhado:
         st.download_button(
@@ -271,7 +242,7 @@ def _render_conteudo_relatorio(
             mime="application/pdf",
             type="primary",
             width="stretch",
-            key=f"reforco_download_detalhado_{chave}_{tipo.id}_{escopo}",
+            key=f"reforco_download_detalhado_{chave}_{tipo.id}_{processo}",
         )
     with col_resumido:
         st.download_button(
@@ -280,7 +251,7 @@ def _render_conteudo_relatorio(
             file_name=f"{tipo.prefixo_arquivo}_resumido_{nome_arquivo}.pdf",
             mime="application/pdf",
             width="stretch",
-            key=f"reforco_download_resumido_{chave}_{tipo.id}_{escopo}",
+            key=f"reforco_download_resumido_{chave}_{tipo.id}_{processo}",
         )
 
 
