@@ -54,6 +54,7 @@ Contrato público:
     EspecificacaoRelatorio (dataclass) — BOLSAS_AUXILIOS / CONTRATOS_CONTINUOS, prontas
     TipoRelatorio (dataclass) — TIPO_REFORCO / TIPO_ANULACAO, prontos
     linhas_para_processo(df, spec, processo) -> pd.DataFrame
+    linhas_todos_os_empenhos(df, spec) -> pd.DataFrame
     excluir_linhas_zeradas(linhas) -> pd.DataFrame
     gerar_pdf_detalhado(spec, tipo, processo, linhas) -> bytes
     gerar_pdf_resumido(spec, tipo, processo, linhas) -> bytes
@@ -298,7 +299,9 @@ def linhas_para_processo(df: pd.DataFrame, spec: EspecificacaoRelatorio, process
     origem) — `meses_sugeridos` vem de `meses_a_empenhar` (já calculado na leitura da base),
     ponto de partida para a edição por linha na página, não o valor final. Linhas sem NE
     reconhecível ficam de fora — não há empenho para reforçar (a bolsa/contrato ainda não foi
-    empenhado), mesmo critério de `processos_disponiveis`.
+    empenhado), mesmo critério de `processos_disponiveis`. Usada pelo Reforço (ver
+    `linhas_todos_os_empenhos`, logo abaixo, para a Anulação — pedido explícito de não filtrar
+    por processo nesse caso).
 
     Um contrato pode virar mais de uma linha aqui — um item de licitação por linha (ver
     `_linhas_expandidas_por_item`/`coluna_itens`), cada uma com o valor mensal do contrato
@@ -311,6 +314,27 @@ def linhas_para_processo(df: pd.DataFrame, spec: EspecificacaoRelatorio, process
     `necessidade_ate_mes_vigente` (pedido explícito, só afeta a sugestão inicial)."""
 
     filtrado = df[(df[spec.coluna_processo] == processo) & df["ne_curta"].notna()]
+    return _linhas_do_filtrado(filtrado, spec)
+
+
+def linhas_todos_os_empenhos(df: pd.DataFrame, spec: EspecificacaoRelatorio) -> pd.DataFrame:
+    """Linhas de TODOS os processos/NEs da base — mesmo esquema de `linhas_para_processo`, só
+    sem o filtro por um processo escolhido. Pedido explícito do usuário, exclusivo do
+    Relatório de Anulação de Saldo de Empenho: "diferente do de reforço... apareça todos os
+    empenhos para que eu possa colocar, caso seja necessário, o valor a ser anulado" — anular
+    saldo normalmente é encontrado navegando TODOS os empenhos (qualquer um pode ter saldo
+    sobrando), não escolhendo um processo administrativo primeiro como no Reforço (onde o
+    pedido já nasce organizado por processo). Linhas sem NE reconhecível ficam de fora, mesmo
+    critério de `linhas_para_processo`/`processos_disponiveis`."""
+
+    filtrado = df[df["ne_curta"].notna()]
+    return _linhas_do_filtrado(filtrado, spec)
+
+
+def _linhas_do_filtrado(filtrado: pd.DataFrame, spec: EspecificacaoRelatorio) -> pd.DataFrame:
+    """Corpo comum de `linhas_para_processo`/`linhas_todos_os_empenhos` — monta o esquema
+    comum do relatório a partir de um DataFrame já filtrado (por processo ou não, indiferente
+    aqui) com NE reconhecível."""
 
     if spec.coluna_itens and spec.coluna_itens in filtrado.columns:
         resultado = pd.DataFrame(
@@ -418,13 +442,19 @@ def _celula_texto(texto: str, estilo) -> Paragraph:
 
 
 def _novo_documento(
-    spec: EspecificacaoRelatorio, tipo: TipoRelatorio, processo: str
+    spec: EspecificacaoRelatorio, tipo: TipoRelatorio, processo: str | None
 ) -> tuple[BytesIO, SimpleDocTemplate, list, object]:
     """Base comum aos dois modelos de PDF — página paisagem, cabeçalho com título/base/tipo, e
     o estilo de célula usado nas colunas de texto livre (quebra de linha dentro da largura
     fixa da coluna, ver `_LARGURAS_COLUNA_*`). `tipo.titulo_relatorio` ("REFORÇO DE EMPENHO"/
     "ANULAÇÃO DE SALDO DE EMPENHO") aparece como uma terceira linha de cabeçalho, embaixo de
-    `titulo_base` — só isso muda entre os dois tipos de relatório neste cabeçalho."""
+    `titulo_base` — só isso muda entre os dois tipos de relatório neste cabeçalho.
+
+    `processo=None` (pedido explícito, exclusivo da Anulação: `linhas_todos_os_empenhos`, sem
+    um processo escolhido) omite a linha "Processo: ..." — a coluna "PROCESSO", já presente em
+    cada linha do modelo detalhado, continua identificando de qual processo cada item veio; o
+    modelo resumido, que nunca teve coluna de Processo, simplesmente fica sem essa referência
+    quando as linhas vierem de mais de um processo."""
 
     buffer = BytesIO()
     documento = SimpleDocTemplate(
@@ -440,9 +470,10 @@ def _novo_documento(
         Paragraph(spec.titulo_orgao, estilos["Heading3"]),
         Paragraph(spec.titulo_base, estilos["Heading3"]),
         Paragraph(tipo.titulo_relatorio, estilos["Heading4"]),
-        Paragraph(f"Processo: {processo}", estilos["Normal"]),
-        Spacer(1, 8),
     ]
+    if processo is not None:
+        elementos.append(Paragraph(f"Processo: {processo}", estilos["Normal"]))
+    elementos.append(Spacer(1, 8))
     return buffer, documento, elementos, estilo_celula
 
 
@@ -461,7 +492,9 @@ def _estilo_tabela(indice_inicio_alinhamento_direita: int) -> TableStyle:
     )
 
 
-def gerar_pdf_detalhado(spec: EspecificacaoRelatorio, tipo: TipoRelatorio, processo: str, linhas: pd.DataFrame) -> bytes:
+def gerar_pdf_detalhado(
+    spec: EspecificacaoRelatorio, tipo: TipoRelatorio, processo: str | None, linhas: pd.DataFrame
+) -> bytes:
     """PDF "modelo detalhado" da PROPLAD — uma linha por item, com Processo/Unidade/Empenho
     repetidos em cada linha, em ordem alfabética por "Item de Despesa" (pedido explícito) —
     case-insensitive (`str.casefold`, mesmo critério de
@@ -504,7 +537,9 @@ def gerar_pdf_detalhado(spec: EspecificacaoRelatorio, tipo: TipoRelatorio, proce
     return buffer.getvalue()
 
 
-def gerar_pdf_resumido(spec: EspecificacaoRelatorio, tipo: TipoRelatorio, processo: str, linhas: pd.DataFrame) -> bytes:
+def gerar_pdf_resumido(
+    spec: EspecificacaoRelatorio, tipo: TipoRelatorio, processo: str | None, linhas: pd.DataFrame
+) -> bytes:
     """PDF "modelo resumido" da PROPLAD — layout de Tabela Dinâmica do Excel impresso (pedido
     explícito de correção): uma linha por combinação única de Ação/PTRES/Fonte/ND/PI/UGR, com
     o valor da última coluna somado entre todos os itens/fornecedores daquele grupo — visão

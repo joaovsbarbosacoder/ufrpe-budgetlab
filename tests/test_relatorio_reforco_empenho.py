@@ -20,6 +20,7 @@ from src.relatorio_reforco_empenho import (
     gerar_pdf_detalhado,
     gerar_pdf_resumido,
     linhas_para_processo,
+    linhas_todos_os_empenhos,
     processos_disponiveis,
 )
 
@@ -138,6 +139,28 @@ class TestLinhasParaProcessoContinuos(unittest.TestCase):
         self.assertEqual(itens_tekis["meses_sugeridos"].nunique(), 1)
 
 
+class TestLinhasTodosOsEmpenhos(unittest.TestCase):
+    """`linhas_todos_os_empenhos` — pedido explícito exclusivo da Anulação: mesmo esquema de
+    `linhas_para_processo`, sem o filtro por um processo escolhido."""
+
+    def test_reune_linhas_de_todos_os_processos_com_ne(self):
+        # 3 linhas com NE reconhecível no total: 2 em "001167/2026-78", 1 em "002429/2026-11"
+        # (ver _bolsas_sintetico) — "SEM NE AINDA"/"SEM NE" ficam de fora, mesmo critério de
+        # linhas_para_processo/processos_disponiveis.
+        linhas = linhas_todos_os_empenhos(_bolsas_sintetico(), BOLSAS_AUXILIOS)
+        self.assertEqual(len(linhas), 3)
+        self.assertEqual(set(linhas["processo"]), {"001167/2026-78", "002429/2026-11"})
+        self.assertNotIn("SEM NE AINDA", set(linhas["item_despesa"]))
+        self.assertNotIn("SEM NE", set(linhas["item_despesa"]))
+
+    def test_expande_por_item_de_licitacao_entre_processos_diferentes(self):
+        # Mesmo comportamento de linhas_para_processo para Contratos Contínuos (expansão por
+        # item), só que abrangendo os dois processos da base sintética de uma vez.
+        linhas = linhas_todos_os_empenhos(_continuos_sintetico(), CONTRATOS_CONTINUOS)
+        self.assertEqual(len(linhas), 5)  # 3 contratos de 1 item + Tekis (2 itens) = 5
+        self.assertEqual(set(linhas["processo"]), {"001370/2026-44", "000214/2026-66"})
+
+
 class TestExcluirLinhasZeradas(unittest.TestCase):
     def _linhas(self, meses: list[float], empenhar: list[float]) -> pd.DataFrame:
         return pd.DataFrame({"item_despesa": [f"item{i}" for i in range(len(meses))], "meses": meses, "empenhar": empenhar})
@@ -201,6 +224,16 @@ class TestGerarPdfDetalhado(unittest.TestCase):
         pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, TIPO_ANULACAO, "001167/2026-78", linhas)
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
 
+    def test_pdf_sem_processo_unico_e_valido(self):
+        # Anulação sem seletor de Processo (pedido explícito: "apareça todos os empenhos") —
+        # linhas de mais de um processo juntas, `processo=None` (omite a linha "Processo:" do
+        # cabeçalho; cada linha já mostra o próprio processo na coluna "PROCESSO").
+        linhas = linhas_todos_os_empenhos(_bolsas_sintetico(), BOLSAS_AUXILIOS)
+        linhas = linhas.assign(empenhar=[3000.0, 0.0, 1000.0])
+
+        pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, TIPO_ANULACAO, None, linhas)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
 
 class TestAgrupadoPorClassificacao(unittest.TestCase):
     def test_linhas_com_mesma_classificacao_somam_numa_so(self):
@@ -258,6 +291,13 @@ class TestGerarPdfResumido(unittest.TestCase):
         linhas = linhas.assign(empenhar=[3000.0, 0.0])
 
         pdf_bytes = gerar_pdf_resumido(BOLSAS_AUXILIOS, TIPO_ANULACAO, "001167/2026-78", linhas)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
+    def test_pdf_sem_processo_unico_e_valido(self):
+        linhas = linhas_todos_os_empenhos(_bolsas_sintetico(), BOLSAS_AUXILIOS)
+        linhas = linhas.assign(empenhar=[3000.0, 0.0, 1000.0])
+
+        pdf_bytes = gerar_pdf_resumido(BOLSAS_AUXILIOS, TIPO_ANULACAO, None, linhas)
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
 
 
