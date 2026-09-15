@@ -11,21 +11,26 @@ pop-up e a tela de escolha do relatório (Reforço/Anulação) aparece sem erro,
 botões esperados.
 
 LIMITAÇÃO CONHECIDA DE `AppTest` (não é bug do app — verificado com um repro mínimo antes de
-aceitar essa lacuna): a tela de CONTEÚDO de cada relatório (seletor de Processo, tabela,
-downloads), que só aparece depois de clicar num botão DENTRO do próprio pop-up, não é
-alcançável por este teste. `@st.dialog`, no Streamlit real, reinvoca a função decorada
-automaticamente a cada rerun disparado por um widget dentro dele já aberto, sem o código
-externo precisar chamá-la de novo (confirmado pelo comportamento documentado do "Ver mais" em
-`app_pages/contratos_continuos.py`, nunca coberto por `AppTest` por esse mesmo motivo) —
-`AppTest`, que roda o script em modo "bare" sem essa reinvocação automática, não reproduz esse
-comportamento: só a PRIMEIRA invocação (a que reage de verdade ao clique do botão que abre o
-pop-up) é executada; um clique simulado num botão que só existe DENTRO do dialog já aberto não
-faz `AppTest` reinvocar a função. Pré-semear `st.session_state` antes do clique de abertura
-também não escapa disso, porque `_limpar_estado_relatorio` (chamada nesse mesmo clique, de
-propósito, para sempre voltar à tela de escolha numa abertura nova) apaga qualquer valor
-pré-semeado antes da função de conteúdo chegar a lê-lo. A tela de conteúdo em si (mesmo
-`st.data_editor`/mecânica de edição do Reforço original, só parametrizada por `TipoRelatorio`)
-foi conferida manualmente no app rodando.
+aceitar essa lacuna): a tela de CONTEÚDO de cada relatório dentro do pop-up "Relatórios"
+completo (`_abrir_relatorios`, escolha + conteúdo no MESMO dialog), que só aparece depois de
+clicar num botão DENTRO do próprio pop-up já aberto, não é alcançável por ESTE helper
+específico (`_abrir_pagina_e_clicar`, abaixo). `@st.dialog`, no Streamlit real, reinvoca a
+função decorada automaticamente a cada rerun disparado por um widget dentro dele já aberto,
+sem o código externo precisar chamá-la de novo (confirmado pelo comportamento documentado do
+"Ver mais" em `app_pages/contratos_continuos.py`, nunca coberto por `AppTest` por esse mesmo
+motivo) — `AppTest`, que roda o script em modo "bare" sem essa reinvocação automática, não
+reproduz esse comportamento: só a PRIMEIRA invocação (a que reage de verdade ao clique do
+botão que abre o pop-up) é executada; um clique simulado num botão que só existe DENTRO do
+dialog já aberto não faz `AppTest` reinvocar a função.
+
+A tela de CONTEÚDO em si (a grade feita à mão, `_render_conteudo_relatorio`) TEM cobertura
+própria — `TestGradeFeitaAMao`, mais abaixo — chamando essa função diretamente (sem passar
+pelo dialog/picker, mesma técnica de `tests/test_relatorio_reforco_empenho.py` para funções
+internas), com dado sintético (não depende do cadastro real). Essa é a mesma grade que
+substituiu o `st.data_editor` original — removido por um bug real visto em produção: a grade
+nativa ficava permanentemente em branco dentro deste `st.dialog` no navegador real, apesar do
+dado certo confirmado chegando até o front-end (inspeção direta do Arrow transmitido pelo
+servidor) — nunca reproduzido a partir do servidor/`AppTest`, só visível no navegador real.
 
 Seleciona sempre o exercício mais ANTIGO (`min(anos)`) antes de abrir o relatório — o mais
 recente pode ter sido criado via "Duplicar" (execução em branco, sem NE nenhuma ainda) e nesse
@@ -38,6 +43,7 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+import pandas as pd
 from streamlit.testing.v1 import AppTest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +100,103 @@ class TestBotaoRelatorioEmContratosContinuos(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any("Reforço" in b.label for b in app.button))
         self.assertTrue(any("Anulação" in b.label for b in app.button))
+
+
+def _bolsas_sintetico() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "processo": ["001167/2026-78", "001167/2026-78"],
+            "programa_bolsa": ["PADPG", "ESO"],
+            "unidade_cod": ["PRPG", "PREG"],
+            "acao_cod": ["20GK", "20GK"],
+            "ptres": ["230389", "230389"],
+            "fonte_cod": ["1000", "1000"],
+            "natureza_despesa_cod": ["339018", "339018"],
+            "ugr_cod": ["151931", "157684"],
+            "pi_cod": ["M20GKO94AXN", "M20GKG19AXN"],
+            "ne_curta": ["2026NE000020", "2026NE000056"],
+            "valor_mensal": [15750.0, 2500.0],
+            "meses_a_empenhar": [0.9, 1.0],
+        }
+    )
+
+
+def _app_fn(tipo_id: str, processo_key: str) -> None:
+    """Corpo do app simulado (ver `_renderiza_conteudo`) — `AppTest.from_function` exige uma
+    função "executável isoladamente" (sem depender de closures sobre variáveis externas), daí
+    receber `tipo_id` (string) em vez do próprio `TipoRelatorio` e os imports todos aqui
+    dentro."""
+
+    from src.relatorio_reforco_empenho import BOLSAS_AUXILIOS, TIPO_ANULACAO, TIPO_REFORCO
+    from src.ui_relatorio_reforco_empenho import _render_conteudo_relatorio
+    from tests.test_ui_relatorio_reforco_empenho import _bolsas_sintetico
+
+    tipo = TIPO_REFORCO if tipo_id == "reforco" else TIPO_ANULACAO
+    _render_conteudo_relatorio(_bolsas_sintetico(), BOLSAS_AUXILIOS, tipo, processo_key)
+
+
+def _renderiza_conteudo(tipo_id: str, processo_key: str = "teste") -> AppTest:
+    """Chama `_render_conteudo_relatorio` diretamente, sem passar pelo dialog/picker (mesma
+    técnica de `tests/test_relatorio_reforco_empenho.py` para funções internas) — com dado
+    sintético, não depende do cadastro real. `AppTest.from_function` monta um app de uma
+    função Python só para este teste, sem precisar de um arquivo `.py` à parte."""
+
+    app = AppTest.from_function(_app_fn, args=(tipo_id, processo_key))
+    app.run()
+    return app
+
+
+class TestGradeFeitaAMao(unittest.TestCase):
+    """Grade de edição feita à mão (`st.columns` + `st.number_input`, uma célula por widget)
+    que substituiu o `st.data_editor` — ver docstring do módulo sobre o motivo. Testada aqui
+    de verdade (com interação simulada, não só presença de widgets), coisa que o
+    `st.data_editor` antigo nunca teve (bloqueado pela limitação de `AppTest` com dialogs)."""
+
+    def test_reforco_sugere_valor_inicial_a_partir_de_meses_sugeridos(self) -> None:
+        app = _renderiza_conteudo("reforco")
+
+        self.assertEqual(len(app.exception), 0)
+        meses = [ni for ni in app.number_input if ni.label == "Meses a Empenhar"]
+        self.assertEqual(len(meses), 2)
+        self.assertAlmostEqual(meses[0].value, 0.9, places=2)
+
+    def test_anulacao_comeca_zerada(self) -> None:
+        app = _renderiza_conteudo("anulacao")
+
+        self.assertEqual(len(app.exception), 0)
+        meses = [ni for ni in app.number_input if ni.label == "Meses a Anular"]
+        valores = [ni for ni in app.number_input if ni.label == "ANULAR (R$)"]
+        self.assertTrue(all(m.value == 0.0 for m in meses))
+        self.assertTrue(all(v.value == 0.0 for v in valores))
+        self.assertEqual(app.metric[0].value, "R$ 0,00")
+
+    def test_editar_meses_recalcula_valor_sem_atraso(self) -> None:
+        app = _renderiza_conteudo("anulacao")
+        meses = [ni for ni in app.number_input if ni.label == "Meses a Anular"]
+        meses[0].set_value(2.0).run()
+
+        self.assertEqual(len(app.exception), 0)
+        valores = [ni for ni in app.number_input if ni.label == "ANULAR (R$)"]
+        # valor_mensal da linha 0 no fixture sintético é 15750.0 -> 2 meses = 31500.0
+        self.assertAlmostEqual(valores[0].value, 31500.0, places=2)
+        self.assertEqual(app.metric[0].value, "R$ 31.500,00")
+
+    def test_editar_valor_direto_nao_mexe_em_meses_e_persiste(self) -> None:
+        app = _renderiza_conteudo("anulacao")
+        valores = [ni for ni in app.number_input if ni.label == "ANULAR (R$)"]
+        valores[1].set_value(999.0).run()
+
+        self.assertEqual(len(app.exception), 0)
+        meses = [ni for ni in app.number_input if ni.label == "Meses a Anular"]
+        valores2 = [ni for ni in app.number_input if ni.label == "ANULAR (R$)"]
+        self.assertEqual(meses[1].value, 0.0)
+        self.assertAlmostEqual(valores2[1].value, 999.0, places=2)
+
+        # editar "Meses" de novo na MESMA linha ainda sobrescreve o valor digitado direto.
+        meses[1].set_value(1.0).run()
+        valores3 = [ni for ni in app.number_input if ni.label == "ANULAR (R$)"]
+        # valor_mensal da linha 1 no fixture sintético é 2500.0
+        self.assertAlmostEqual(valores3[1].value, 2500.0, places=2)
 
 
 if __name__ == "__main__":

@@ -17,22 +17,21 @@ clique).
 Uma tabela só por relatório (pedido explícito — nada de tabela de referência + tabela de
 edição separadas): Item de Despesa / Empenho (só leitura) e Meses a Empenhar|Anular / Rótulo
 de valor (R$) (as duas editáveis, pedido explícito — as duas são campos personalizáveis, não
-só "Meses").
+só "Meses"). GRADE FEITA À MÃO (`st.columns` + `st.number_input` por linha, uma linha do
+`st.dialog` por vez) — NÃO `st.data_editor` (bug real visto em produção, corrigido: a grade
+nativa ficava permanentemente em branco no navegador dentro deste `st.dialog`, sem exceção
+nenhuma e com o dado certo confirmado chegando até o front-end — ver `_render_conteudo_relatorio`
+para os detalhes). Mesmo padrão já usado em outras telas do projeto (ex. `despesas_pessoal`)
+que evitam esse componente nativo por limitação semelhante.
 
 Regra de prioridade entre as duas colunas editáveis (pedido explícito): editar a coluna de
 meses SEMPRE recalcula a coluna de valor (= meses × valor mensal da linha), mesmo que a
 célula já tivesse um valor digitado à mão antes — a edição de meses vence. Editar o valor
 direto fica valendo como está (sem alterar a coluna de meses) até a próxima vez que a coluna
-de meses for editada nessa mesma linha.
-
-Implementado com um contador de "geração" que troca a key do `st.data_editor` quando há
-edição da coluna de meses — sem trocar a key, a célula de valor fica travada no valor com que
-o widget nasceu, ignorando qualquer novo `tabela_editor` que passarmos depois. O delta da
-edição é lido da key ATUAL logo no início desta função (resposta à interação que o usuário
-acabou de commitar com Enter/Tab), e a troca de key acontece ANTES de desenhar o widget —
-tudo dentro do MESMO rerun que o commit do usuário já disparou, sem precisar de `st.rerun()`
-(que, chamado de dentro de `@st.dialog`, FECHA o pop-up inteiro em vez de só re-renderizar —
-bug real observado antes desta versão).
+de meses for editada nessa mesma linha. Implementado com `on_change` no `st.number_input` de
+meses (`_recalcular_valor_por_meses`) — roda ANTES do script recomeçar do topo, então o campo
+de valor já nasce com o número recalculado na mesma execução (sem o atraso de um rerun que um
+recálculo feito só depois de desenhar os dois widgets teria).
 
 Linha com meses OU valor igual a zero fica de fora do PDF (pedido explícito — não há o que
 lançar), mas continua visível/editável na tela (não é escondida da edição, só do relatório
@@ -51,10 +50,11 @@ que abre o pop-up é clicado — único jeito de "reabrir" (`st.dialog` não avi
 fechado), então limpar no clique do botão equivale a limpar no fechamento anterior; reabrir
 sempre volta à tela de escolha do relatório.
 
-PONTUAÇÃO DE MILHAR nas colunas editáveis (pedido explícito): `st.column_config.NumberColumn`
-aceita `,` (sprintf-js) pra agrupar milhar, mas só no padrão americano ("1,234.57") — colunas
-editáveis não aceitam HTML customizado (só leitura consegue o pt-BR completo de
-`format_brl_full`, "1.234,57", usado no `st.metric` de total abaixo da grade).
+SEM PONTUAÇÃO DE MILHAR nas colunas editáveis (`st.number_input` não formata o valor exibido
+com separador nenhum, "94500.00") — só leitura consegue o pt-BR completo de `format_brl_full`
+("1.234,57"), usado no `st.metric` de total abaixo da grade. Mesma limitação que o
+`st.data_editor` já tinha (nem "1,234.57" americano, nem "1.234,57" pt-BR, dentro da própria
+célula editável).
 
 Contrato público:
     render_botao_relatorio(df, spec, chave) -> None
@@ -79,6 +79,22 @@ from src.relatorio_reforco_empenho import (
 from src.ui_theme import format_brl_full
 
 _TIPOS = (TIPO_REFORCO, TIPO_ANULACAO)
+
+#: proporções das 4 colunas da grade feita à mão (`_render_conteudo_relatorio`) — Item de
+#: Despesa ganha o espaço que sobra (nomes de fornecedor/programa variam bastante de tamanho),
+#: Empenho (NE) e as duas colunas numéricas ficam mais estreitas.
+_PROPORCOES_LINHA = [3.2, 1.6, 1.1, 1.4]
+
+
+def _recalcular_valor_por_meses(meses_key: str, valor_key: str, valor_mensal: float) -> None:
+    """`on_change` do `st.number_input` de meses — recalcula e grava o valor em R$ ANTES do
+    campo "Valor" ser desenhado nesta mesma execução (callbacks de `on_change` rodam antes do
+    script recomeçar do topo — diferente de detectar a mudança só depois de já ter desenhado
+    os dois widgets, o que deixaria "Valor" um rerun atrasado). Editar "Valor" diretamente não
+    passa por aqui — fica valendo como foi digitado até a próxima edição de "Meses" nessa
+    mesma linha (pedido explícito, mesma regra de prioridade de antes)."""
+
+    st.session_state[valor_key] = round(st.session_state[meses_key] * valor_mensal, 2)
 
 
 @st.dialog("Relatórios", width="large")
@@ -154,89 +170,69 @@ def _render_conteudo_relatorio(
         "zero não entra no PDF."
     )
 
-    # `valores` é o estado de verdade (meses/empenhar por linha), independente do que o
-    # widget mostra — precisa sobreviver a reruns sem se perder (por isso mora aqui, não é
-    # recriado do zero a cada execução do script, só na primeira vez que este processo é
-    # aberto). Valor inicial difere por tipo (pedido explícito, ver docstring do módulo):
-    # Reforço sugere a partir de `meses_sugeridos`; Anulação começa sempre zerada.
-    estado_key = f"reforco_valores_{chave}_{tipo.id}_{processo}"
-    if estado_key not in st.session_state:
-        if tipo.id == "reforco":
-            meses_iniciais = linhas["meses_sugeridos"].round(2)
-        else:
-            meses_iniciais = pd.Series(0.0, index=linhas.index)
-        st.session_state[estado_key] = pd.DataFrame(
-            {
-                "meses": meses_iniciais,
-                "empenhar": (meses_iniciais * linhas["valor_mensal"]).round(2),
-            }
+    # Grade feita à mão (`st.columns` + `st.number_input` por linha) — NÃO `st.data_editor`
+    # (pedido explícito, correção de um bug real visto em produção: o `st.data_editor` dentro
+    # deste `st.dialog` ficava permanentemente em branco no navegador real — sem exceção
+    # nenhuma, com o dado certo confirmado chegando até o front-end via inspeção direta do
+    # Arrow transmitido pelo servidor, mas a grade nunca desenhava as células visualmente;
+    # aparenta ser um bug do próprio componente nativo nesta versão do Streamlit dentro de um
+    # dialog, não reproduzível a partir do servidor). Mesmo padrão já usado em outras telas do
+    # projeto (ex. `despesas_pessoal`) que evitam esse componente por limitação semelhante —
+    # "nunca misturar grade HTML com widget nativo tentando ocupar uma célula dela: ou tudo é
+    # `st.columns`/widgets nativos, ou tudo é HTML" (mesma lição já documentada ali) — aqui é
+    # tudo `st.columns`.
+    #
+    # Cada célula editável é um widget PRÓPRIO (`st.number_input`, key fixa por linha/coluna —
+    # `f"{prefixo_linha}_meses_{i}"`/`f"{prefixo_linha}_valor_{i}"`), não uma grade única — isso
+    # elimina de vez o truque de "geração" que o `st.data_editor` exigia: um widget comum já
+    # respeita um novo valor colocado em `st.session_state[sua_key]` ANTES dele ser instanciado
+    # na mesma execução (diferente do `data_editor`, que ignorava um `tabela_editor` novo
+    # enquanto a key não mudasse). "Meses" usa `on_change` (`_recalcular_valor_por_meses`) pra
+    # recalcular e já deixar "Valor" com o número certo ANTES dele ser desenhado nesta mesma
+    # execução — sem isso, o valor recalculado só apareceria visível um rerun depois.
+    prefixo_linha = f"reforco_linha_{chave}_{tipo.id}_{processo}"
+    linhas_indexadas = linhas.reset_index(drop=True)
+
+    cabecalho = st.columns(_PROPORCOES_LINHA)
+    cabecalho[0].caption("Item de Despesa")
+    cabecalho[1].caption("Empenho")
+    cabecalho[2].caption(tipo.rotulo_coluna_meses)
+    cabecalho[3].caption(tipo.rotulo_coluna_valor)
+
+    meses_finais = []
+    valores_finais = []
+    for i, linha in enumerate(linhas_indexadas.itertuples()):
+        meses_key = f"{prefixo_linha}_meses_{i}"
+        valor_key = f"{prefixo_linha}_valor_{i}"
+        valor_mensal_linha = float(linha.valor_mensal) if pd.notna(linha.valor_mensal) else 0.0
+
+        # Semente inicial (só na primeira execução deste processo/tipo — depois, o próprio
+        # `st.session_state` do widget é quem manda). Difere por tipo (pedido explícito, ver
+        # docstring do módulo): Reforço sugere a partir de `meses_sugeridos`; Anulação começa
+        # sempre zerada.
+        if meses_key not in st.session_state:
+            meses_inicial = round(float(linha.meses_sugeridos), 2) if tipo.id == "reforco" else 0.0
+            st.session_state[meses_key] = meses_inicial
+        if valor_key not in st.session_state:
+            st.session_state[valor_key] = round(st.session_state[meses_key] * valor_mensal_linha, 2)
+
+        linha_cols = st.columns(_PROPORCOES_LINHA, vertical_alignment="center")
+        linha_cols[0].write(linha.item_despesa)
+        linha_cols[1].write(linha.ne_curta)
+        linha_cols[2].number_input(
+            tipo.rotulo_coluna_meses, key=meses_key, min_value=0.0, step=0.01, format="%.2f",
+            label_visibility="collapsed", on_change=_recalcular_valor_por_meses,
+            args=(meses_key, valor_key, valor_mensal_linha),
         )
-    valores = st.session_state[estado_key]
+        linha_cols[3].number_input(
+            tipo.rotulo_coluna_valor, key=valor_key, min_value=0.0, step=0.01, format="%.2f",
+            label_visibility="collapsed",
+        )
 
-    # `geração` troca a key do editor quando uma edição da coluna de meses pede um recálculo
-    # visível na própria grade — sem trocar a key, a célula de valor fica travada no valor com
-    # que o widget nasceu, ignorando qualquer novo `tabela_editor` que passarmos depois (o
-    # `st.data_editor` só respeita o argumento inicial + o que o próprio usuário editou NAQUELA
-    # key; um valor recalculado por nós não é "o que o usuário editou"). O delta é lido da key
-    # ATUAL, ANTES de decidir a key desta renderização — é a resposta à interação que o usuário
-    # acabou de commitar (Enter/Tab), já disponível nesta mesma execução: não precisa de
-    # `st.rerun()` (que, dentro de `@st.dialog`, fecha o pop-up — bug real observado, ver
-    # docstring do módulo).
-    geracao_key = f"reforco_geracao_{chave}_{tipo.id}_{processo}"
-    geracao = st.session_state.setdefault(geracao_key, 0)
-    editor_key = f"reforco_editor_{chave}_{tipo.id}_{processo}_{geracao}"
+        meses_finais.append(st.session_state[meses_key])
+        valores_finais.append(st.session_state[valor_key])
 
-    delta = st.session_state.get(editor_key, {})
-    houve_edicao_de_meses = False
-    for posicao, mudancas in delta.get("edited_rows", {}).items():
-        if tipo.rotulo_coluna_meses in mudancas:
-            novo_meses = float(mudancas[tipo.rotulo_coluna_meses])
-            valor_mensal_linha = float(linhas.iloc[posicao]["valor_mensal"])
-            valores.iat[posicao, valores.columns.get_loc("meses")] = novo_meses
-            valores.iat[posicao, valores.columns.get_loc("empenhar")] = round(novo_meses * valor_mensal_linha, 2)
-            houve_edicao_de_meses = True
-        elif tipo.rotulo_coluna_valor in mudancas:
-            valores.iat[posicao, valores.columns.get_loc("empenhar")] = float(mudancas[tipo.rotulo_coluna_valor])
-
-    st.session_state[estado_key] = valores
-
-    if houve_edicao_de_meses:
-        geracao += 1
-        st.session_state[geracao_key] = geracao
-        editor_key = f"reforco_editor_{chave}_{tipo.id}_{processo}_{geracao}"
-
-    tabela_editor = pd.DataFrame(
-        {
-            "Item de Despesa": linhas["item_despesa"].to_numpy(),
-            "Empenho": linhas["ne_curta"].to_numpy(),
-            tipo.rotulo_coluna_meses: valores["meses"].to_numpy(),
-            tipo.rotulo_coluna_valor: valores["empenhar"].to_numpy(),
-        }
-    )
-    st.data_editor(
-        tabela_editor,
-        key=editor_key,
-        disabled=["Item de Despesa", "Empenho"],
-        column_config={
-            # `,` (sprintf-js, não C-printf) agrupa milhar — pedido explícito ("pontuação de
-            # valores"). Só chega a americano (vírgula milhar, ponto decimal: "1,234.57"), não
-            # o pt-BR completo do resto do app (`format_brl_full`, "1.234,57") — `NumberColumn`
-            # de coluna EDITÁVEL não aceita formatação livre por HTML, só o subconjunto
-            # sprintf-js que o Streamlit expõe (sem locale pt-BR nele). Ainda assim melhor que
-            # antes (sem separador nenhum: "94500.00").
-            tipo.rotulo_coluna_meses: st.column_config.NumberColumn(step=0.01, min_value=0.0, format="%,.2f"),
-            tipo.rotulo_coluna_valor: st.column_config.NumberColumn(step=0.01, min_value=0.0, format="R$ %,.2f"),
-        },
-        hide_index=True,
-        width="stretch",
-    )
-
-    # sempre a partir de `valores` (o estado que acabamos de reconciliar acima), nunca do
-    # retorno cru do widget — ver docstring do módulo sobre o atraso de um clique na célula.
-    linhas_finais = linhas.assign(
-        meses=valores["meses"].to_numpy(),
-        empenhar=valores["empenhar"].to_numpy(),
-    )
+    linhas_finais = linhas_indexadas.assign(meses=meses_finais, empenhar=valores_finais)
 
     total = float(linhas_finais["empenhar"].sum())
     st.metric(tipo.rotulo_total, format_brl_full(total))
@@ -269,16 +265,17 @@ def _render_conteudo_relatorio(
 
 
 def _limpar_estado_relatorio(chave: str) -> None:
-    """Apaga todo o estado de edição do relatório (tipo escolhido, valores por processo,
-    geração da grade do editor e as próprias keys do `st.data_editor`) — pedido explícito: o
-    valor editado só vale enquanto o pop-up continua aberto. Ao fechar (X, Esc, clicar fora,
-    ou "← Voltar") e reabrir, os valores voltam ao padrão de cada tipo e a tela de escolha
-    reaparece — chamada sempre que o botão que abre o pop-up é clicado, já que essa é a única
-    forma de "reabrir" (`st.dialog` não tem um gancho de fechamento próprio)."""
+    """Apaga todo o estado de edição do relatório (tipo escolhido + as keys de cada
+    `st.number_input` de cada linha, uma por célula editável — ver `_render_conteudo_relatorio`)
+    — pedido explícito: o valor editado só vale enquanto o pop-up continua aberto. Ao fechar
+    (X, Esc, clicar fora, ou "← Voltar") e reabrir, os valores voltam ao padrão de cada tipo e
+    a tela de escolha reaparece — chamada sempre que o botão que abre o pop-up é clicado, já
+    que essa é a única forma de "reabrir" (`st.dialog` não tem um gancho de fechamento
+    próprio)."""
 
-    prefixos = (f"reforco_valores_{chave}_", f"reforco_geracao_{chave}_", f"reforco_editor_{chave}_")
+    prefixo = f"reforco_linha_{chave}_"
     for chave_sessao in list(st.session_state.keys()):
-        if any(chave_sessao.startswith(prefixo) for prefixo in prefixos):
+        if chave_sessao.startswith(prefixo):
             del st.session_state[chave_sessao]
     st.session_state.pop(f"reforco_tipo_{chave}", None)
 
