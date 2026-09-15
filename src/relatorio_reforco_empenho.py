@@ -1,9 +1,26 @@
 """
-Relatório de Reforço de Empenho (Bolsas e Auxílios / Contratos Contínuos).
+Relatório de Reforço de Empenho / Anulação de Saldo de Empenho (Bolsas e Auxílios /
+Contratos Contínuos).
 
 Camada: regra de negócio de relatório — monta a tabela no formato usado pela PROPLAD para
-pedidos de reforço de empenho e gera os DOIS modelos de PDF em uso (ver histórico da
-conversa para os PDFs de referência — dois modelos distintos, os dois precisam ser emitidos):
+pedidos de reforço OU anulação (cancelamento) de empenho, para os DOIS TIPOS de relatório
+(pedido explícito posterior: mesmo modelo/mecânica do Reforço, só que para anular saldo em
+vez de reforçar — ver `TipoRelatorio` mais abaixo, que parametriza o que muda entre os dois:
+título/rótulo de coluna/nome de arquivo, nada da estrutura em si). Diferente de
+`EspecificacaoRelatorio` (que varia por BASE: Bolsas × Contratos Contínuos), `TipoRelatorio`
+varia por TIPO de relatório, independente da base — as duas dimensões são ortogonais
+(`gerar_pdf_detalhado`/`gerar_pdf_resumido` recebem as duas).
+
+Anulação de Saldo de Empenho NÃO tem sugestão automática de valor (pedido explícito do
+usuário: "sem sugestão automática — todas as linhas começam zeradas") — diferente do Reforço
+(que sugere a partir de `meses_a_empenhar`/"por calendário"), quem emite decide quanto anular
+linha a linha. Essa escolha vive na camada de UI (`src/ui_relatorio_reforco_empenho.py`, seed
+de `st.session_state`), não aqui — `linhas_para_processo` continua calculando
+`meses_sugeridos` do mesmo jeito para as duas bases; a UI é quem decide se usa isso (Reforço)
+ou ignora e começa em zero (Anulação).
+
+Os DOIS modelos de PDF em uso (ver histórico da conversa para os PDFs de referência — dois
+modelos distintos, os dois precisam ser emitidos, para os dois tipos de relatório):
 
   * "Detalhado" (`gerar_pdf_detalhado`) — Processo, Item de Despesa, Item Lic., Unidade, Ação,
     PTRES, Fonte, ND, UGR, PI, Empenho, Empenhar (R$); Processo/Unidade/Empenho repetidos em
@@ -35,10 +52,11 @@ mesma linha.
 
 Contrato público:
     EspecificacaoRelatorio (dataclass) — BOLSAS_AUXILIOS / CONTRATOS_CONTINUOS, prontas
+    TipoRelatorio (dataclass) — TIPO_REFORCO / TIPO_ANULACAO, prontos
     linhas_para_processo(df, spec, processo) -> pd.DataFrame
     excluir_linhas_zeradas(linhas) -> pd.DataFrame
-    gerar_pdf_detalhado(spec, processo, linhas) -> bytes
-    gerar_pdf_resumido(spec, processo, linhas) -> bytes
+    gerar_pdf_detalhado(spec, tipo, processo, linhas) -> bytes
+    gerar_pdf_resumido(spec, tipo, processo, linhas) -> bytes
 """
 
 from __future__ import annotations
@@ -111,16 +129,66 @@ CONTRATOS_CONTINUOS = EspecificacaoRelatorio(
     coluna_inicio_execucao="inicio_execucao_efetivo",
 )
 
-#: colunas do esquema comum do relatório, já com o nome final de exibição — nesta ordem.
-#: "ITEM LIC." (pedido explícito: "o item da licitação tem que ser uma coluna do modelo
-#: detalhado") — só no modelo detalhado; o modelo resumido (`_CABECALHO_RESUMIDO`) não pediu
-#: essa coluna. Em branco para Bolsas e Auxílios (sem esse conceito, ver `item_licitacao` em
-#: `linhas_para_processo`) e para contrato de item único (não chega a ficar redundante porque
-#: "ITEM DE DESPESA" só ganha o sufixo "— Item N" quando o contrato tem mais de um item).
-_CABECALHO = [
-    "PROCESSO", "ITEM DE DESPESA", "ITEM LIC.", "UNIDADE", "AÇÃO", "PTRES", "FONTE", "ND",
-    "UGR", "PI", "EMPENHO", "EMPENHAR (R$)",
-]
+@dataclass(frozen=True)
+class TipoRelatorio:
+    """O que varia entre os dois relatórios que reaproveitam este mesmo módulo — Reforço de
+    Empenho e Anulação de Saldo de Empenho (pedido explícito posterior: "mesmo modelo" do
+    Reforço, só que visando anular saldo em vez de reforçar) — independente da BASE (Bolsas ×
+    Contratos Contínuos, essa é `EspecificacaoRelatorio`, acima). Nada da estrutura do
+    relatório muda entre os dois tipos, só rótulos de coluna/título/nome de arquivo — ver
+    `TIPO_REFORCO`/`TIPO_ANULACAO` logo abaixo, os dois já prontos."""
+
+    id: str
+    #: linha extra no cabeçalho do PDF, embaixo de `titulo_base` (ver `_novo_documento`) —
+    #: maiúsculo, mesmo estilo de `titulo_base`.
+    titulo_relatorio: str
+    #: rótulo do botão de escolha do relatório (`src/ui_relatorio_reforco_empenho.py`) — mesmo
+    #: texto de `titulo_relatorio`, só que em capitalização de leitura normal (não maiúsculo).
+    rotulo_escolha: str
+    #: última coluna das duas tabelas (detalhado/resumido) — "EMPENHAR (R$)"/"ANULAR (R$)".
+    rotulo_coluna_valor: str
+    #: rótulo da coluna editável de meses na tela (`src/ui_relatorio_reforco_empenho.py`) —
+    #: "Meses a Empenhar"/"Meses a Anular".
+    rotulo_coluna_meses: str
+    #: rótulo do `st.metric` de total na tela — "Total a Empenhar"/"Total a Anular".
+    rotulo_total: str
+    #: prefixo do nome do arquivo baixado — "reforco_empenho"/"anulacao_saldo_empenho".
+    prefixo_arquivo: str
+
+
+TIPO_REFORCO = TipoRelatorio(
+    id="reforco",
+    titulo_relatorio="REFORÇO DE EMPENHO",
+    rotulo_escolha="Reforço de Empenho",
+    rotulo_coluna_valor="EMPENHAR (R$)",
+    rotulo_coluna_meses="Meses a Empenhar",
+    rotulo_total="Total a Empenhar",
+    prefixo_arquivo="reforco_empenho",
+)
+
+TIPO_ANULACAO = TipoRelatorio(
+    id="anulacao",
+    titulo_relatorio="ANULAÇÃO DE SALDO DE EMPENHO",
+    rotulo_escolha="Anulação de Saldo de Empenho (Cancelamento)",
+    rotulo_coluna_valor="ANULAR (R$)",
+    rotulo_coluna_meses="Meses a Anular",
+    rotulo_total="Total a Anular",
+    prefixo_arquivo="anulacao_saldo_empenho",
+)
+
+
+def _cabecalho_detalhado(tipo: TipoRelatorio) -> list[str]:
+    """Colunas do modelo detalhado, já com o nome final de exibição — nesta ordem. "ITEM
+    LIC." (pedido explícito: "o item da licitação tem que ser uma coluna do modelo
+    detalhado") — só no modelo detalhado; o modelo resumido (`_cabecalho_resumido`) não pediu
+    essa coluna. Em branco para Bolsas e Auxílios (sem esse conceito, ver `item_licitacao` em
+    `linhas_para_processo`) e para contrato de item único (não chega a ficar redundante porque
+    "ITEM DE DESPESA" só ganha o sufixo "— Item N" quando o contrato tem mais de um item)."""
+
+    return [
+        "PROCESSO", "ITEM DE DESPESA", "ITEM LIC.", "UNIDADE", "AÇÃO", "PTRES", "FONTE", "ND",
+        "UGR", "PI", "EMPENHO", tipo.rotulo_coluna_valor,
+    ]
 
 
 def processos_disponiveis(df: pd.DataFrame, spec: EspecificacaoRelatorio) -> list[str]:
@@ -287,8 +355,10 @@ def linhas_para_processo(df: pd.DataFrame, spec: EspecificacaoRelatorio, process
 def excluir_linhas_zeradas(linhas: pd.DataFrame) -> pd.DataFrame:
     """Remove linhas com `meses` OU `empenhar` igual a zero (pedido explícito) — zero não é
     "sem dado" (`NaN`, que continua na saída — ver `_formatar_valor`), é "não há o que
-    reforçar aqui", então não deve entrar no PDF final. A tela de edição continua mostrando
-    essas linhas (a exclusão é só para gerar o relatório, ver `render_botao_relatorio`)."""
+    reforçar/anular aqui" (mesmo critério para os dois tipos de relatório — em Anulação, toda
+    linha começa zerada por padrão, ver `TIPO_ANULACAO`, então só entra no PDF quem foi
+    editado), então não deve entrar no PDF final. A tela de edição continua mostrando essas
+    linhas (a exclusão é só para gerar o relatório, ver `render_botao_relatorio`)."""
 
     return linhas[(linhas["meses"] != 0) & (linhas["empenhar"] != 0)]
 
@@ -317,7 +387,10 @@ _LARGURAS_COLUNA_DETALHADO = [66, 175, 36, 42, 38, 42, 34, 38, 38, 62, 62, 62]
 #: linha por item, só 2 colunas a menos) — "tabela dinâmica" aqui significa de volta ao que
 #: era: um rollup orçamentário (Ação/PTRES/Fonte/ND/PI/UGR), sem coluna de fornecedor/item de
 #: despesa — ver `_agrupado_por_classificacao`.
-_CABECALHO_RESUMIDO = ["AÇÃO", "PTRES", "FONTE", "ND", "PI", "UGR", "EMPENHAR (R$)"]
+def _cabecalho_resumido(tipo: TipoRelatorio) -> list[str]:
+    return ["AÇÃO", "PTRES", "FONTE", "ND", "PI", "UGR", tipo.rotulo_coluna_valor]
+
+
 _LARGURAS_COLUNA_RESUMIDO = [85, 95, 85, 95, 135, 95, 140]
 _COLUNAS_CLASSIFICACAO_RESUMIDO = ["acao_cod", "ptres", "fonte_cod", "natureza_despesa_cod", "pi_cod", "ugr_cod"]
 
@@ -344,10 +417,14 @@ def _celula_texto(texto: str, estilo) -> Paragraph:
     return Paragraph(str(texto), estilo)
 
 
-def _novo_documento(spec: EspecificacaoRelatorio, processo: str) -> tuple[BytesIO, SimpleDocTemplate, list, object]:
-    """Base comum aos dois modelos de PDF — página paisagem, cabeçalho com título/base, e o
-    estilo de célula usado nas colunas de texto livre (quebra de linha dentro da largura fixa
-    da coluna, ver `_LARGURAS_COLUNA_*`)."""
+def _novo_documento(
+    spec: EspecificacaoRelatorio, tipo: TipoRelatorio, processo: str
+) -> tuple[BytesIO, SimpleDocTemplate, list, object]:
+    """Base comum aos dois modelos de PDF — página paisagem, cabeçalho com título/base/tipo, e
+    o estilo de célula usado nas colunas de texto livre (quebra de linha dentro da largura
+    fixa da coluna, ver `_LARGURAS_COLUNA_*`). `tipo.titulo_relatorio` ("REFORÇO DE EMPENHO"/
+    "ANULAÇÃO DE SALDO DE EMPENHO") aparece como uma terceira linha de cabeçalho, embaixo de
+    `titulo_base` — só isso muda entre os dois tipos de relatório neste cabeçalho."""
 
     buffer = BytesIO()
     documento = SimpleDocTemplate(
@@ -362,6 +439,7 @@ def _novo_documento(spec: EspecificacaoRelatorio, processo: str) -> tuple[BytesI
     elementos = [
         Paragraph(spec.titulo_orgao, estilos["Heading3"]),
         Paragraph(spec.titulo_base, estilos["Heading3"]),
+        Paragraph(tipo.titulo_relatorio, estilos["Heading4"]),
         Paragraph(f"Processo: {processo}", estilos["Normal"]),
         Spacer(1, 8),
     ]
@@ -383,7 +461,7 @@ def _estilo_tabela(indice_inicio_alinhamento_direita: int) -> TableStyle:
     )
 
 
-def gerar_pdf_detalhado(spec: EspecificacaoRelatorio, processo: str, linhas: pd.DataFrame) -> bytes:
+def gerar_pdf_detalhado(spec: EspecificacaoRelatorio, tipo: TipoRelatorio, processo: str, linhas: pd.DataFrame) -> bytes:
     """PDF "modelo detalhado" da PROPLAD — uma linha por item, com Processo/Unidade/Empenho
     repetidos em cada linha, em ordem alfabética por "Item de Despesa" (pedido explícito) —
     case-insensitive (`str.casefold`, mesmo critério de
@@ -394,13 +472,15 @@ def gerar_pdf_detalhado(spec: EspecificacaoRelatorio, processo: str, linhas: pd.
     pedido explícito de correção: com "ITEM LIC." como coluna própria aqui, o sufixo no nome
     ficou redundante; o editor na tela e o modelo resumido, sem essa coluna, continuam com o
     sufixo). `linhas` já traz a coluna `empenhar` final (após edição por linha na página) —
-    esta função só formata e desenha, não recalcula nada."""
+    esta função só formata e desenha, não recalcula nada. `tipo` só troca o rótulo da última
+    coluna e a linha de título (Reforço/Anulação, ver `_novo_documento`) — a estrutura em si é
+    idêntica para os dois."""
 
-    buffer, documento, elementos, estilo_celula = _novo_documento(spec, processo)
+    buffer, documento, elementos, estilo_celula = _novo_documento(spec, tipo, processo)
 
     linhas = linhas.sort_values("item_despesa", key=lambda coluna: coluna.str.casefold())
 
-    dados = [_CABECALHO]
+    dados = [_cabecalho_detalhado(tipo)]
     for linha in linhas.itertuples():
         item_lic = getattr(linha, "item_licitacao", None)
         item_despesa_exibido = getattr(linha, "item_despesa_base", None) or linha.item_despesa
@@ -424,21 +504,22 @@ def gerar_pdf_detalhado(spec: EspecificacaoRelatorio, processo: str, linhas: pd.
     return buffer.getvalue()
 
 
-def gerar_pdf_resumido(spec: EspecificacaoRelatorio, processo: str, linhas: pd.DataFrame) -> bytes:
+def gerar_pdf_resumido(spec: EspecificacaoRelatorio, tipo: TipoRelatorio, processo: str, linhas: pd.DataFrame) -> bytes:
     """PDF "modelo resumido" da PROPLAD — layout de Tabela Dinâmica do Excel impresso (pedido
     explícito de correção): uma linha por combinação única de Ação/PTRES/Fonte/ND/PI/UGR, com
-    "Empenhar (R$)" somado entre todos os itens/fornecedores daquele grupo — visão
+    o valor da última coluna somado entre todos os itens/fornecedores daquele grupo — visão
     orçamentária, não por credor (sem coluna de fornecedor/item de despesa, sem Unidade/
     Empenho). Processo aparece uma vez só no cabeçalho da página, não repetido linha a linha.
     `linhas` já traz a coluna `empenhar` final (após edição por linha na página) — esta função
     só agrupa/soma e desenha, não recalcula o valor de cada linha original (ver
-    `_agrupado_por_classificacao`)."""
+    `_agrupado_por_classificacao`). `tipo` só troca o rótulo da última coluna e a linha de
+    título (Reforço/Anulação, ver `_novo_documento`)."""
 
-    buffer, documento, elementos, estilo_celula = _novo_documento(spec, processo)
+    buffer, documento, elementos, estilo_celula = _novo_documento(spec, tipo, processo)
 
     agrupado = _agrupado_por_classificacao(linhas)
 
-    dados = [_CABECALHO_RESUMIDO]
+    dados = [_cabecalho_resumido(tipo)]
     for linha in agrupado.itertuples():
         dados.append(
             [

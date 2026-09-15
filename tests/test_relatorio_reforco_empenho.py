@@ -13,6 +13,8 @@ import pandas as pd
 from src.relatorio_reforco_empenho import (
     BOLSAS_AUXILIOS,
     CONTRATOS_CONTINUOS,
+    TIPO_ANULACAO,
+    TIPO_REFORCO,
     _agrupado_por_classificacao,
     excluir_linhas_zeradas,
     gerar_pdf_detalhado,
@@ -166,7 +168,7 @@ class TestGerarPdfDetalhado(unittest.TestCase):
         linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
         linhas = linhas.assign(empenhar=linhas["meses_sugeridos"] * linhas["valor_mensal"])
 
-        pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, "001167/2026-78", linhas)
+        pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, TIPO_REFORCO, "001167/2026-78", linhas)
 
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
         self.assertGreater(len(pdf_bytes), 500)
@@ -177,7 +179,7 @@ class TestGerarPdfDetalhado(unittest.TestCase):
         linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
         linhas = linhas.assign(empenhar=[float("nan"), 5000.0])
 
-        pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, "001167/2026-78", linhas)
+        pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, TIPO_REFORCO, "001167/2026-78", linhas)
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
 
     def test_pdf_de_relatorio_vazio_nao_quebra(self):
@@ -187,7 +189,16 @@ class TestGerarPdfDetalhado(unittest.TestCase):
                 "natureza_despesa_cod", "ugr_cod", "pi_cod", "ne_curta", "empenhar",
             ]
         )
-        pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, "000000/0000-00", vazio)
+        pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, TIPO_REFORCO, "000000/0000-00", vazio)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
+    def test_pdf_de_anulacao_e_valido(self):
+        # Mesmo modelo do Reforço, só que com TIPO_ANULACAO — pedido explícito de escopo
+        # (relatório de Anulação de Saldo de Empenho, mesma mecânica/layout do Reforço).
+        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
+        linhas = linhas.assign(empenhar=[3000.0, 0.0])
+
+        pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, TIPO_ANULACAO, "001167/2026-78", linhas)
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
 
 
@@ -220,7 +231,7 @@ class TestGerarPdfResumido(unittest.TestCase):
         linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
         linhas = linhas.assign(empenhar=linhas["meses_sugeridos"] * linhas["valor_mensal"])
 
-        pdf_bytes = gerar_pdf_resumido(BOLSAS_AUXILIOS, "001167/2026-78", linhas)
+        pdf_bytes = gerar_pdf_resumido(BOLSAS_AUXILIOS, TIPO_REFORCO, "001167/2026-78", linhas)
 
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
         self.assertGreater(len(pdf_bytes), 500)
@@ -229,7 +240,7 @@ class TestGerarPdfResumido(unittest.TestCase):
         linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
         linhas = linhas.assign(empenhar=[float("nan"), 5000.0])
 
-        pdf_bytes = gerar_pdf_resumido(BOLSAS_AUXILIOS, "001167/2026-78", linhas)
+        pdf_bytes = gerar_pdf_resumido(BOLSAS_AUXILIOS, TIPO_REFORCO, "001167/2026-78", linhas)
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
 
     def test_pdf_de_relatorio_vazio_nao_quebra(self):
@@ -239,7 +250,14 @@ class TestGerarPdfResumido(unittest.TestCase):
                 "natureza_despesa_cod", "ugr_cod", "pi_cod", "ne_curta", "empenhar",
             ]
         )
-        pdf_bytes = gerar_pdf_resumido(BOLSAS_AUXILIOS, "000000/0000-00", vazio)
+        pdf_bytes = gerar_pdf_resumido(BOLSAS_AUXILIOS, TIPO_REFORCO, "000000/0000-00", vazio)
+        self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
+    def test_pdf_de_anulacao_e_valido(self):
+        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
+        linhas = linhas.assign(empenhar=[3000.0, 0.0])
+
+        pdf_bytes = gerar_pdf_resumido(BOLSAS_AUXILIOS, TIPO_ANULACAO, "001167/2026-78", linhas)
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
 
 
