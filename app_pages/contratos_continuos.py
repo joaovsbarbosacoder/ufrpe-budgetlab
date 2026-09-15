@@ -205,7 +205,7 @@ from src.tesouro_execucao_mensal import (
     linha_do_tempo_por_ne,
     primeiro_mes_com_empenho_por_ne,
 )
-from src.ui_linha_do_tempo import MESES_ABREV, abrir_linha_do_tempo, renderizar_linha_do_tempo
+from src.ui_linha_do_tempo import MESES_ABREV, abrir_linha_do_tempo
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
 from src.ui_theme import format_brl_compact, render_metric_grid, render_page_header
 
@@ -1024,8 +1024,8 @@ def _render_linhas_resumo(
 
     NÃO abre o pop-up "Linha do tempo mensal" sozinha — devolve `(legenda, tempo_ne)` quando
     alguma linha foi clicada nesta execução (`None` caso contrário) e deixa o chamador decidir
-    como mostrar: `abrir_linha_do_tempo` (pop-up de verdade) quando o chamador está fora de
-    qualquer dialog, ou `renderizar_linha_do_tempo` embutida na tela quando o chamador já está
+    como abrir: `abrir_linha_do_tempo` direto (pop-up de verdade) quando o chamador está fora
+    de qualquer dialog, ou via `st.session_state` + `st.rerun()` quando o chamador já está
     dentro de um pop-up aberto — Streamlit não permite dialog dentro de dialog (ver
     `_abrir_resumo_completo`, que usa a segunda opção)."""
 
@@ -1089,11 +1089,14 @@ def _abrir_resumo_completo(
     (mesmas colunas/mesma NE clicável do card) e `_render_rodape_resumo` (mesmos totais do
     conjunto inteiro, já calculados por `_render_resumo_consolidado`, não recalculados aqui).
 
-    Clicar numa NE aqui mostra "Linha do tempo mensal" EMBUTIDA logo abaixo da tabela, com
-    `renderizar_linha_do_tempo` — não `abrir_linha_do_tempo`: Streamlit proíbe abrir um
-    `st.dialog` dentro de outro já aberto (`StreamlitAPIException: Dialogs may not be nested
-    inside other dialogs` — bug visto na prática antes desta correção). Clicar noutra NE troca
-    o que aparece embutido; fechar o pop-up (X) e reabrir "Ver mais" limpa a seleção."""
+    Clicar numa NE aqui NÃO embute a "Linha do tempo mensal" dentro deste mesmo pop-up
+    (Streamlit proíbe abrir um `st.dialog` dentro de outro já aberto —
+    `StreamlitAPIException: Dialogs may not be nested inside other dialogs`; era assim antes,
+    mas o usuário pediu pop-up de verdade, não embutido abaixo do Total). Em vez disso, guarda
+    a seleção em `st.session_state` e fecha este pop-up (`st.rerun()` de dentro de um dialog o
+    fecha); `_render_resumo_consolidado`, fora de qualquer dialog, lê essa seleção pendente no
+    rerun seguinte e chama `abrir_linha_do_tempo` — um pop-up de verdade, substituindo o "Ver
+    mais" em vez de empilhar os dois."""
 
     valor_empenhado_total, saldo_total, necessidade_total = totais
     st.caption(f"{len(linhas)} {'NE/contrato' if len(linhas) == 1 else 'NEs/contratos'}")
@@ -1103,9 +1106,8 @@ def _abrir_resumo_completo(
     )
     _render_rodape_resumo(valor_empenhado_total, saldo_total, necessidade_total)
     if clicado is not None:
-        legenda, tempo_ne = clicado
-        st.divider()
-        renderizar_linha_do_tempo(legenda, tempo_ne)
+        st.session_state[f"cc_resumo_tempo_pendente_{source_key}"] = clicado
+        st.rerun()
 
 
 def _render_resumo_consolidado(
@@ -1265,6 +1267,14 @@ def _render_resumo_consolidado(
             )
     elif total_linhas:
         st.caption(f"Mostrando todas as {total_linhas} linhas no resumo")
+
+    # NE clicada dentro do pop-up "Ver mais" (`_abrir_resumo_completo`, fora deste `with`,
+    # já fechado pelo `st.rerun()` de dentro do dialog) — abre a "Linha do tempo mensal" como
+    # pop-up de verdade aqui fora, em vez de embutida abaixo do Total dentro do "Ver mais".
+    pendente_key = f"cc_resumo_tempo_pendente_{source_key}"
+    pendente = st.session_state.pop(pendente_key, None)
+    if pendente is not None:
+        abrir_linha_do_tempo(*pendente)
 
 
 def _html_linha_empenhado_liquidado(
