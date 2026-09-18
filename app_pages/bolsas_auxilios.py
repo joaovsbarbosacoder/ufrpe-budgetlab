@@ -40,7 +40,9 @@ não fica sem indicação do que é.
 
 `_aplicar_edicoes_da_sessao` sobrepõe, no DataFrame usado pelos quadros acima da lista, os
 valores já editados em cada cartão (lidos de `st.session_state`, sem redesenhar widgets) e
-recalcula `valor_mensal`/`valor_anual`/`meses_a_empenhar`/`valor_a_empenhar` a partir deles —
+recalcula `valor_mensal`/`valor_anual`/`meses_a_empenhar`/`valor_a_empenhar` a partir deles.
+Uma divergência financeira explicitamente preservada da migração prevalece sobre a fórmula
+de quantidade × valor unitário até um desses dois campos ser editado —
 sem isso, editar um campo só mudava o que aparecia dentro do próprio cartão, nunca nos KPIs,
 no Resumo Consolidado nem na Cobertura Orçamentária por PTRES (bug relatado explicitamente:
 "Alterei uma informação no cadastro de bolsa e a alteração não foi refletida nos quadros
@@ -635,12 +637,22 @@ def _render_card(linha: pd.Series, ano: int, source_key: str, sugestao_inicio_po
                 r4[2], "Saldo (R$)", _ou_zero(linha["saldo_colado_planilha"]), f"{k}_saldo", step=100.0
             )
 
-        valor_mensal = qtd_efetiva * valor_unitario
+        valor_mensal_excepcional = linha.get("valor_mensal_excepcional")
+        valor_mensal = (
+            float(valor_mensal_excepcional)
+            if pd.notna(valor_mensal_excepcional)
+            else qtd_efetiva * valor_unitario
+        )
         meses_a_empenhar, valor_a_empenhar = calcular_necessidade_empenho(
             meses_empenhados, meses_liquidados, valor_mensal
         )
 
-        r4[3].markdown("<div class='bls-label'>Valor Mensal</div>", unsafe_allow_html=True)
+        rotulo_valor_mensal = (
+            "Valor Mensal (informado)"
+            if pd.notna(valor_mensal_excepcional)
+            else "Valor Mensal"
+        )
+        r4[3].markdown(f"<div class='bls-label'>{rotulo_valor_mensal}</div>", unsafe_allow_html=True)
         r4[3].markdown(f"<div class='bls-calc'>{_brl(valor_mensal)}</div>", unsafe_allow_html=True)
 
         r5 = st.columns(3)
@@ -684,6 +696,9 @@ def _render_card(linha: pd.Series, ano: int, source_key: str, sugestao_inicio_po
                 "fonte_cod": fonte or None, "natureza_despesa_cod": nd or None, "ugr_cod": ugr or None,
                 "pi_cod": pi or None, "ne_curta": ne_curta.strip() or None, "meses_no_ano": meses_no_ano,
                 "qtd_inicial": qtd_inicial, "qtd_efetiva": qtd_efetiva, "valor_unitario": valor_unitario,
+                "valor_mensal_excepcional": (
+                    float(valor_mensal_excepcional) if pd.notna(valor_mensal_excepcional) else None
+                ),
                 "valor_empenhado_tg": valor_empenhado_tg_persistir,
                 "saldo_colado_planilha": saldo_colado_planilha_persistir,
                 "situacao_tg": situacao, "meses_empenhados": meses_empenhados_persistir,
@@ -790,7 +805,7 @@ def _render_resumo_consolidado(
     de um bloco de HTML injetado via `st.markdown` — HTML puro não dispara evento Python. O
     cartão em si virou `st.container(border=True)` pelo mesmo motivo (ver `_inject_css`)."""
 
-    valor_mensal = (filtrado["qtd_efetiva"] * filtrado["valor_unitario"]).fillna(0.0)
+    valor_mensal = filtrado["valor_mensal"].fillna(0.0)
     necessidade_ate_dezembro = valor_mensal * meses_restantes
     saldo_por_linha = filtrado["saldo_execucao"].fillna(filtrado["saldo_colado_planilha"]).fillna(0.0)
     empenhar_ate_fim = (necessidade_ate_dezembro - saldo_por_linha).clip(lower=0)
@@ -1017,6 +1032,10 @@ def _aplicar_edicoes_da_sessao(dataframe: pd.DataFrame, source_key: str) -> pd.D
         for sufixo, coluna in _CAMPOS_EDITAVEIS_NUMERICOS.items():
             valor = st.session_state.get(f"{k}_{sufixo}")
             if valor is not None:
+                if coluna in ("qtd_efetiva", "valor_unitario"):
+                    anterior = resultado.at[indice, coluna]
+                    if pd.isna(anterior) or float(valor) != float(anterior):
+                        resultado.at[indice, "valor_mensal_excepcional"] = pd.NA
                 resultado.at[indice, coluna] = valor
         for sufixo, coluna in _CAMPOS_EDITAVEIS_TEXTO.items():
             valor = st.session_state.get(f"{k}_{sufixo}")
@@ -1026,10 +1045,11 @@ def _aplicar_edicoes_da_sessao(dataframe: pd.DataFrame, source_key: str) -> pd.D
         if situacao is not None:
             resultado.at[indice, "situacao_tg"] = situacao
 
-    # mesmas fórmulas usadas dentro do cartão (`_render_card`) e na leitura original
-    # (`ler_bolsas_auxilios`) — reaproveitadas aqui, não reimplementadas, para os totais
-    # acima da lista nunca divergirem do que cada cartão mostra.
-    resultado["valor_mensal"] = resultado["qtd_efetiva"] * resultado["valor_unitario"]
+    # Mesma regra usada dentro do cartão (`_render_card`): o valor excepcional preservado da
+    # origem prevalece enquanto quantidade/valor unitário não forem editados; nos demais casos,
+    # vale a fórmula. Assim, os totais acima nunca divergem do que cada cartão mostra.
+    valor_calculado = resultado["qtd_efetiva"] * resultado["valor_unitario"]
+    resultado["valor_mensal"] = resultado["valor_mensal_excepcional"].fillna(valor_calculado)
     resultado["valor_anual"] = resultado["valor_mensal"] * resultado["meses_no_ano"]
     resultado["meses_a_empenhar"], resultado["valor_a_empenhar"] = calcular_necessidade_empenho(
         resultado["meses_empenhados"], resultado["meses_liquidados"], resultado["valor_mensal"]
@@ -1208,7 +1228,7 @@ if filtrado.empty:
 render_metric_grid(
     [
         {"label": "Despesa Anual Total", "value": format_brl_compact(filtrado["valor_anual"].sum())},
-        {"label": "Valor Mensal", "value": format_brl_compact((filtrado["qtd_efetiva"] * filtrado["valor_unitario"]).sum())},
+        {"label": "Valor Mensal", "value": format_brl_compact(filtrado["valor_mensal"].sum())},
         # "Necessidade de Reforço" saiu daqui (pedido explícito) — `valor_a_empenhar`, quando a
         # NE já vem da Execução Anual, é matematicamente igual a `saldo_execucao`
         # (empenhado − liquidado nos dois, só chegando lá por contas diferentes — ver

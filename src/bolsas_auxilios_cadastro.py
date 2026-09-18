@@ -12,11 +12,14 @@ exercício novo — o vínculo com a Execução Anual se refaz quando o usuário
 de empenho, via `com_saldo_execucao`, que já é multi-ano por natureza: `ne_curta` embute o ano,
 "2027NE000123" nunca colide com uma NE de 2026).
 
-`como_dataframe` devolve exatamente o mesmo esquema de colunas que
+`como_dataframe` devolve o mesmo esquema de colunas que
 `src.bolsas_auxilios.ler_bolsas_auxilios` produzia (menos `tem_saldo`/`meses_de_saldo`/
 `ocorrencias_tg` — confirmado sem uso em `app_pages/bolsas_auxilios.py`, grep no módulo) — o
 resto do pipeline da página (`com_saldo_execucao`, Resumo Consolidado, Cobertura Orçamentária,
-Relatório de Reforço) não sabe se os dados vieram de Excel ou do cadastro nativo.
+Relatório de Reforço) não sabe se os dados vieram de Excel ou do cadastro nativo. A coluna
+adicional `valor_mensal_excepcional` preserva explicitamente valores financeiros informados
+na origem que não sejam iguais a `qtd_efetiva * valor_unitario`; quando nula, a fórmula
+continua sendo a fonte do valor mensal.
 
 Migração única (`migrar_de_planilha`): lê a planilha antiga com `ler_bolsas_auxilios` e grava
 cada linha como um registro nativo do exercício informado (2026, na migração feita para este
@@ -60,7 +63,7 @@ DIRETORIO_PADRAO = Path("data/bolsas_auxilios")
 CAMPOS_IDENTIDADE = [
     "processo", "programa_bolsa", "unidade_cod", "acao_cod", "ptres", "fonte_cod",
     "natureza_despesa_cod", "ugr_cod", "pi_cod", "meses_no_ano", "qtd_inicial",
-    "qtd_efetiva", "valor_unitario",
+    "qtd_efetiva", "valor_unitario", "valor_mensal_excepcional",
 ]
 
 #: em branco/zerados no exercício novo — o vínculo com a Execução Anual se refaz quando o
@@ -85,6 +88,7 @@ _COLUNAS_TEXTO = [
 ]
 _COLUNAS_NUMERICAS = [
     "meses_no_ano", "qtd_inicial", "qtd_efetiva", "valor_unitario",
+    "valor_mensal_excepcional",
     "valor_empenhado_tg", "saldo_colado_planilha", "meses_empenhados", "meses_liquidados",
     "inicio_execucao_mes",
 ]
@@ -131,9 +135,9 @@ def excluir_exercicio(ano: int) -> None:
 
 def como_dataframe(programas: list[dict]) -> pd.DataFrame:
     """Mesmo esquema de colunas de `src.bolsas_auxilios.ler_bolsas_auxilios` (ver docstring do
-    módulo) — `valor_mensal`/`valor_anual`/`meses_a_empenhar`/`valor_a_empenhar` recalculados
-    aqui (nunca gravados no registro: são sempre derivados de qtd/valor unitário/meses, mesma
-    fórmula usada em `app_pages/bolsas_auxilios.py::_aplicar_edicoes_da_sessao`)."""
+    módulo) — `valor_mensal` usa `valor_mensal_excepcional` quando informado e, nos demais
+    registros, é derivado de quantidade efetiva e valor unitário. Os outros campos financeiros
+    calculados continuam sempre derivados desse valor mensal efetivo."""
 
     if not programas:
         return pd.DataFrame(columns=_COLUNAS_VAZIAS)
@@ -149,7 +153,8 @@ def como_dataframe(programas: list[dict]) -> pd.DataFrame:
             df[coluna] = pd.NA
         df[coluna] = pd.to_numeric(df[coluna], errors="coerce")
 
-    df["valor_mensal"] = df["qtd_efetiva"] * df["valor_unitario"]
+    valor_calculado = df["qtd_efetiva"] * df["valor_unitario"]
+    df["valor_mensal"] = df["valor_mensal_excepcional"].fillna(valor_calculado)
     df["valor_anual"] = df["valor_mensal"] * df["meses_no_ano"]
     df["meses_a_empenhar"], df["valor_a_empenhar"] = calcular_necessidade_empenho(
         df["meses_empenhados"], df["meses_liquidados"], df["valor_mensal"]
@@ -172,6 +177,20 @@ def _limpo(valor: object) -> object:
     return valor
 
 
+def _valor_mensal_excepcional(linha: pd.Series) -> float | None:
+    """Preserva a divergência da origem sem alterar quantidade ou valor unitário."""
+
+    informado = linha.get("valor_mensal")
+    quantidade = linha.get("qtd_efetiva")
+    unitario = linha.get("valor_unitario")
+    if pd.isna(informado):
+        return None
+    if pd.isna(quantidade) or pd.isna(unitario):
+        return float(informado)
+    calculado = float(quantidade) * float(unitario)
+    return float(informado) if abs(float(informado) - calculado) > 0.01 else None
+
+
 def migrar_de_planilha(caminho: str | Path, ano: int) -> list[dict]:
     """Importação única: lê a planilha antiga (`ler_bolsas_auxilios`) e grava cada linha como
     um registro nativo do exercício `ano` — usada uma vez para migrar 2026 (pedido explícito de
@@ -181,6 +200,7 @@ def migrar_de_planilha(caminho: str | Path, ano: int) -> list[dict]:
     criados = []
     for _, linha in dataframe.iterrows():
         campos = {chave: _limpo(linha.get(chave)) for chave in (*CAMPOS_IDENTIDADE, *CAMPOS_EXECUCAO_PADRAO)}
+        campos["valor_mensal_excepcional"] = _valor_mensal_excepcional(linha)
         registro = novo_registro(**campos)
         salvar_programa(ano, registro)
         criados.append(registro)
