@@ -17,11 +17,12 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from decimal import Decimal
+from html import escape
 
 import pandas as pd
 import streamlit as st
 
-from src.design_tokens import BORDER, FONT_HEADING, NEGATIVE, POSITIVE, SURFACE_ALT, TEXT_MUTED, WARNING
+from src import design_tokens
 from src.teds_alertas import TIPO_EMPENHO_MULTIPLOS_TEDS, TIPO_NC_UG_EMITENTE_AUSENTE
 from src.teds_normalizacao import texto_para_valor
 from src.teds_schema import conectar
@@ -85,31 +86,129 @@ def pct(numerador: Decimal, denominador: Decimal) -> tuple[float, str]:
 # --------------------------------------------------------------------------------------
 
 def injetar_css() -> None:
+    d = design_tokens
     st.markdown(
         f"""
         <style>
         .teds-badge {{
-            font-family: {FONT_HEADING}; font-size: 11px; letter-spacing: 0.02em;
-            padding: 3px 10px; border-radius: 8px; display: inline-block;
-            border: 1px solid currentColor; white-space: normal; line-height: 1.35;
+            font-family: {d.FONT_HEADING}; font-size: 11px; letter-spacing: 0.01em;
+            padding: 4px 10px; border-radius: 999px; display: inline-block;
+            background: color-mix(in srgb, currentColor 10%, transparent);
+            white-space: normal; line-height: 1.35; font-weight: 700;
         }}
         .teds-card {{
-            border: 1px solid {BORDER}; border-radius: 12px; padding: 14px 16px;
-            background: {SURFACE_ALT};
+            border: 1px solid {d.BORDER}; border-radius: 7px; padding: 14px 16px;
+            background: {d.SURFACE}; box-shadow: 0 3px 12px rgba(11,53,87,.06);
         }}
-        .teds-muted {{ color: {TEXT_MUTED}; font-size: 12.5px; }}
+        .teds-muted {{ color: {d.TEXT_MUTED}; font-size: 12.5px; }}
         .teds-fictício {{
-            font-family: {FONT_HEADING}; font-size: 9.5px; letter-spacing: 0.06em;
-            text-transform: uppercase; color: {WARNING};
+            font-family: {d.FONT_HEADING}; font-size: 9.5px; letter-spacing: 0.06em;
+            text-transform: uppercase; color: {d.WARNING};
         }}
+        .teds-kpi-grid {{
+            display:grid; grid-template-columns:repeat(var(--count),minmax(0,1fr)); gap:12px;
+            margin:.2rem 0 1rem;
+        }}
+        .teds-kpi {{
+            min-height:92px; display:flex; align-items:center; gap:14px;
+            background:{d.SURFACE}; border:1px solid {d.BORDER}; border-radius:7px;
+            padding:14px 16px; box-shadow:0 3px 12px rgba(11,53,87,.055);
+        }}
+        .teds-kpi-icon {{
+            flex:0 0 52px; width:52px; height:52px; border-radius:50%; color:white;
+            display:grid; place-items:center; font-size:24px; font-weight:800;
+            background:var(--tone); box-shadow:inset 0 -8px 18px rgba(0,0,0,.08);
+        }}
+        .teds-kpi-label {{color:{d.TEXT_MUTED};font-size:13px;font-weight:650;line-height:1.25}}
+        .teds-kpi-value {{color:var(--tone);font-size:24px;font-weight:800;line-height:1.2;
+            letter-spacing:-.035em;font-variant-numeric:tabular-nums}}
+        .teds-panel {{background:{d.SURFACE};border:1px solid {d.BORDER};border-radius:7px;
+            padding:16px 18px;box-shadow:0 3px 12px rgba(11,53,87,.055);height:100%}}
+        .teds-panel-head {{display:flex;align-items:center;justify-content:space-between;margin-bottom:15px}}
+        .teds-panel-title {{font:700 18px {d.FONT_HEADING};color:{d.TEXT}}}
+        .teds-panel-meta {{color:{d.TEXT_MUTED};font-size:12px}}
+        .teds-progress-row {{display:grid;grid-template-columns:92px minmax(120px,1fr) 54px 145px;
+            gap:12px;align-items:center;margin:14px 0;color:{d.TEXT};font-size:13px}}
+        .teds-progress-track {{height:16px;border-radius:5px;background:{d.BORDER};overflow:hidden}}
+        .teds-progress-fill {{height:100%;border-radius:5px;background:var(--tone);width:var(--width)}}
+        .teds-progress-pct {{font-weight:700;font-variant-numeric:tabular-nums}}
+        .teds-progress-value {{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}}
+        .teds-difference {{display:flex;justify-content:space-between;border-top:1px solid {d.BORDER};
+            margin-top:16px;padding-top:14px}}
+        .teds-difference strong {{color:{d.WARNING};font-size:20px}}
+        @media (max-width:1100px) {{.teds-kpi-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}
+            .teds-progress-row{{grid-template-columns:84px 1fr 48px}}.teds-progress-value{{grid-column:2/4;text-align:left}}}}
+        @media (max-width:700px) {{.teds-kpi-grid{{grid-template-columns:1fr}}
+            .teds-progress-row{{grid-template-columns:78px 1fr}}.teds-progress-pct{{text-align:right}}
+            .teds-progress-value{{grid-column:2}}}}
         </style>
         """,
         unsafe_allow_html=True,
     )
 
 
+def render_kpi_strip(metrics: list[dict[str, object]]) -> None:
+    """Faixa de indicadores do módulo TED, fiel à densidade do handoff."""
+
+    cards = []
+    for metric in metrics:
+        cards.append(
+            "<div class='teds-kpi' style='--tone:{tone}'>"
+            "<div class='teds-kpi-icon'>{icon}</div><div>"
+            "<div class='teds-kpi-label'>{label}</div>"
+            "<div class='teds-kpi-value'>{value}</div></div></div>".format(
+                tone=escape(str(metric.get("tone", design_tokens.ACCENT))),
+                icon=escape(str(metric.get("icon", "•"))),
+                label=escape(str(metric["label"])),
+                value=escape(str(metric["value"])),
+            )
+        )
+    st.markdown(
+        f"<div class='teds-kpi-grid' style='--count:{min(len(cards), 5)}'>" + "".join(cards) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_execution_panel(
+    title: str,
+    rows: list[dict[str, object]],
+    *,
+    difference: tuple[str, str] | None = None,
+) -> None:
+    """Painel compacto de execução com rótulo, barra, percentual e valor."""
+
+    body = []
+    for row in rows:
+        width = max(0.0, min(float(row.get("fraction", 0.0)), 1.0)) * 100
+        body.append(
+            "<div class='teds-progress-row' style='--tone:{tone};--width:{width:.1f}%'>"
+            "<span>{label}</span><div class='teds-progress-track'><div class='teds-progress-fill'></div></div>"
+            "<span class='teds-progress-pct'>{percent}</span>"
+            "<span class='teds-progress-value'>{value}</span></div>".format(
+                tone=escape(str(row.get("tone", design_tokens.ACCENT))),
+                width=width,
+                label=escape(str(row["label"])),
+                percent=escape(str(row["percent"])),
+                value=escape(str(row["value"])),
+            )
+        )
+    diff_html = ""
+    if difference:
+        diff_html = (
+            "<div class='teds-difference'><span>" + escape(difference[0]) + "</span>"
+            "<strong>" + escape(difference[1]) + "</strong></div>"
+        )
+    st.markdown(
+        "<div class='teds-panel'><div class='teds-panel-head'>"
+        f"<span class='teds-panel-title'>{escape(title)}</span>"
+        "<span class='teds-panel-meta'>Valores em R$</span></div>"
+        + "".join(body) + diff_html + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def cor_gravidade(gravidade: str) -> str:
-    return {"alta": NEGATIVE, "media": WARNING, "baixa": TEXT_MUTED}.get(gravidade, TEXT_MUTED)
+    return {"alta": design_tokens.NEGATIVE, "media": design_tokens.WARNING, "baixa": design_tokens.TEXT_MUTED}.get(gravidade, design_tokens.TEXT_MUTED)
 
 
 def rotulo_gravidade(gravidade: str) -> str:
@@ -117,7 +216,7 @@ def rotulo_gravidade(gravidade: str) -> str:
 
 
 def cor_status_alerta(status: str) -> str:
-    return {STATUS_ABERTO: NEGATIVE, STATUS_EM_ANALISE: WARNING, STATUS_RESOLVIDO: POSITIVE}.get(status, TEXT_MUTED)
+    return {STATUS_ABERTO: design_tokens.NEGATIVE, STATUS_EM_ANALISE: design_tokens.WARNING, STATUS_RESOLVIDO: design_tokens.POSITIVE}.get(status, design_tokens.TEXT_MUTED)
 
 
 def rotulo_status_alerta(status: str) -> str:
@@ -129,18 +228,18 @@ def rotulo_tipo_alerta(tipo: str) -> str:
 
 
 def cor_situacao_conciliacao(situacao: str) -> str:
-    return {"Conciliado": POSITIVE, "Conferência necessária": NEGATIVE, "Fonte ausente": WARNING}.get(situacao, TEXT_MUTED)
+    return {"Conciliado": design_tokens.POSITIVE, "Conferência necessária": design_tokens.NEGATIVE, "Fonte ausente": design_tokens.WARNING}.get(situacao, design_tokens.TEXT_MUTED)
 
 
 def cor_estado_ted(estado_atual: str | None) -> str:
     texto = (estado_atual or "").lower()
     if "execu" in texto:
-        return POSITIVE
+        return design_tokens.POSITIVE
     if "restri" in texto or "diligên" in texto:
-        return NEGATIVE
+        return design_tokens.NEGATIVE
     if "aguard" in texto or "cadastr" in texto:
-        return TEXT_MUTED
-    return WARNING
+        return design_tokens.TEXT_MUTED
+    return design_tokens.WARNING
 
 
 def badge(texto: str, cor: str) -> str:

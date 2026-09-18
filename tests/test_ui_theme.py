@@ -1,10 +1,12 @@
 """Testes unitários de formatação visual sem regras de negócio."""
 
 import unittest
+from pathlib import Path
 
 import pandas as pd
 
-from src.ui_theme import format_brl_compact, format_brl_full
+from src import design_tokens
+from src.ui_theme import _metric_visual, _theme_css, format_brl_compact, format_brl_full
 
 
 class UiThemeTests(unittest.TestCase):
@@ -17,6 +19,28 @@ class UiThemeTests(unittest.TestCase):
         self.assertEqual(format_brl_full(83_612_345.67), "R$ 83.612.345,67")
         self.assertEqual(format_brl_compact(-1_000), "R$ -1 mil")
         self.assertEqual(format_brl_full(pd.NA), "Valor nulo")
+
+    def test_default_visual_shell_matches_light_administrative_layout(self) -> None:
+        css = _theme_css()
+        self.assertIn("min-width: 15.5rem", css)
+        self.assertIn(design_tokens.SIDEBAR_ACTIVE, css)
+        self.assertIn(design_tokens.BG, css)
+        self.assertIn("ufrpe-page-context", css)
+        self.assertIn("stDataFrame", css)
+
+    def test_dark_mode_is_not_available(self) -> None:
+        css = _theme_css()
+        config = (Path(__file__).resolve().parents[1] / ".streamlit" / "config.toml").read_text(encoding="utf-8")
+
+        self.assertIn("color-scheme: light", css)
+        self.assertIn('base = "light"', config)
+        self.assertNotIn("[theme.dark]", config)
+        self.assertFalse(hasattr(design_tokens, "alternar_tema"))
+        self.assertFalse(hasattr(design_tokens, "tema_atual"))
+
+    def test_metric_visual_uses_semantic_status_colors(self) -> None:
+        self.assertEqual(_metric_visual({"label": "Alertas críticos"}), ("!", design_tokens.NEGATIVE))
+        self.assertEqual(_metric_visual({"label": "Registros aceitos"}), ("✓", design_tokens.POSITIVE))
 
 
 if __name__ == "__main__":

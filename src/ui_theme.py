@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import numbers
+from html import escape
 
 import pandas as pd
 import streamlit as st
@@ -12,21 +13,14 @@ from src import design_tokens
 
 
 def _theme_css() -> str:
-    """Monta o CSS global a partir dos tokens ATUAIS de `design_tokens` —
-    função (não mais um texto fixo calculado uma única vez): como este
-    módulo é carregado uma só vez por processo (`sys.modules`), um texto
-    fixo montado no import ficaria travado no tema de quando o servidor
-    subiu, ignorando trocas feitas depois pelo alternador de tema (ver
-    `render_theme_toggle`). Os nomes abaixo são lidos como atributo do
-    módulo (`design_tokens.TEXT`, não `from design_tokens import TEXT`) só
-    por isso — mesmo tema do docstring de `design_tokens.py`.
-    """
+    """Monta o CSS global a partir da identidade visual clara e fixa."""
     d = design_tokens
     return f"""
 <style>
-    :root {{ color-scheme: {"dark" if design_tokens.tema_atual() == "escuro" else "light"}; }}
+    :root {{ color-scheme: light; }}
+    html, body, [class*="css"] {{ font-family: {d.FONT_BODY}; }}
     [data-testid="stAppViewContainer"] {{
-        background: radial-gradient(circle at top left, {d.BG_GRADIENT_EDGE} 0%, {d.BG} 55%);
+        background: linear-gradient(135deg, {d.BG_GRADIENT_EDGE} 0%, {d.BG} 42%, {d.BG} 100%);
     }}
     /* Antes do menu ir pra lateral, esse cabeçalho tinha a barra de navegação do topo dentro
        dele — o fundo escuro semi-transparente disfarçava como parte dela. Sem a navegação
@@ -37,117 +31,111 @@ def _theme_css() -> str:
         background: transparent;
         position: static !important;
     }}
-    .block-container {{ max-width: 1480px; padding-top: 1rem; padding-bottom: 3.25rem; }}
+    .block-container {{ max-width: 1680px; padding: 1rem 1.35rem 3.25rem; }}
+    [data-testid="stAppViewContainer"] h1 {{
+        font-family: {d.FONT_HEADING};
+        font-size: clamp(1.8rem, 2.2vw, 2.35rem);
+        font-weight: 750;
+        letter-spacing: -0.035em;
+        line-height: 1.08;
+    }}
+    [data-testid="stAppViewContainer"] h2,
+    [data-testid="stAppViewContainer"] h3 {{
+        font-family: {d.FONT_HEADING};
+        font-weight: 700;
+        letter-spacing: -0.02em;
+    }}
+    .ufrpe-page-context {{
+        color: {d.ACCENT}; font-size: 0.72rem; font-weight: 750;
+        letter-spacing: 0.09em; margin: 0 0 0.18rem; text-transform: uppercase;
+    }}
+    .ufrpe-page-subtitle {{
+        color: {d.TEXT_MUTED}; font-size: 0.94rem; line-height: 1.45;
+        margin: -0.3rem 0 1.05rem;
+    }}
     [data-testid="stMetric"] {{
         background: transparent;
         border: 0;
         border-radius: 0;
-        padding: 0.15rem 0;
+        padding: 0.2rem 0.1rem;
         box-shadow: none;
     }}
-    [data-testid="stMetricValue"] {{ font-weight: 650; letter-spacing: -0.02em; color: {d.TEXT}; }}
+    [data-testid="stMetricValue"] {{ font-weight: 750; letter-spacing: -0.035em; color: {d.TEXT}; }}
     [data-testid="stMetricLabel"] {{ color: {d.TEXT_MUTED}; font-weight: 600; }}
-    [data-testid="stDataFrame"] {{ border: 1px solid {d.BORDER}; border-radius: {d.RADIUS}; overflow: hidden; }}
-    /* Barra lateral escondida por padrão (pedido explícito) — só uma fresta de 0,5rem na
-       borda esquerda pra servir de área de hover; expande pra largura confortável ao
-       encostar o mouse nela. min-width/width juntos porque o Streamlit define os dois via
-       style inline (ver stSidebar); só max-width não bastava para vencer o width inline. */
+    .ufrpe-metric-icon {{
+        width: 42px; height: 42px; border-radius: 50%; display: grid; place-items: center;
+        float: left; margin: 0.2rem 0.75rem 0.35rem 0; color: #fff; font-size: 1.15rem;
+        font-weight: 800; background: var(--tone); box-shadow: inset 0 -7px 14px rgba(0,0,0,.08);
+    }}
+    [data-testid="stDataFrame"] {{
+        border: 1px solid {d.BORDER};
+        border-radius: 7px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(11, 53, 87, 0.05);
+    }}
+    [data-testid="stDataFrame"] [role="columnheader"] {{
+        background: {d.SURFACE_ALT} !important;
+        color: {d.TEXT} !important;
+        font-weight: 700 !important;
+    }}
+    /* Navegação institucional persistente, como nas referências: a estrutura do
+       produto fica sempre visível e o conteúdo não se desloca ao passar o mouse. */
     [data-testid="stSidebar"] {{
-        background: {d.SIDEBAR_BG};
-        border-right: 1px solid {d.BORDER};
-        min-width: 0.5rem !important;
-        width: 0.5rem !important;
-        transition: width 0.18s ease, min-width 0.18s ease;
+        background: linear-gradient(180deg, {d.SIDEBAR_BG_TOP} 0%, {d.SIDEBAR_BG} 52%, {d.SIDEBAR_BG_BOTTOM} 100%);
+        border-right: 0;
+        min-width: 15.5rem !important;
+        width: 15.5rem !important;
+        box-shadow: 3px 0 14px rgba(7, 19, 61, 0.10);
     }}
-    [data-testid="stSidebar"]:hover {{
-        min-width: 21rem !important;
-        width: 21rem !important;
-    }}
-    /* O conteúdo (ícones, nav, logo) só aparece junto com a expansão — sem isso, a fresta de
-       0,5rem ainda mostraria uma lasca cortada dos ícones por baixo do overflow:hidden. */
     [data-testid="stSidebarContent"] {{
         overflow-x: hidden;
-        opacity: 0;
-        transition: opacity 0.12s ease;
+        opacity: 1;
     }}
-    [data-testid="stSidebar"]:hover [data-testid="stSidebarContent"] {{ opacity: 1; }}
-    /* Alça nativa de redimensionar a sidebar (div com cursor:col-resize bem na borda) — some
-       o tamanho normal do trilho, mas arrastá-la sem querer destrava um tamanho intermediário
-       "grudado" e sua barra de destaque (cor de acento) fica sólida por cima da fresta — a
-       barra azul sólida que quebrou o layout. Sem sentido mesmo com o trilho de largura fixa
-       controlada por CSS: o usuário não deveria conseguir redimensionar manualmente. */
     [data-testid="stSidebar"] div[style*="cursor: col-resize"] {{
         display: none !important;
         pointer-events: none !important;
     }}
-    /* Logo institucional no topo da lateral, injetada via markdown (não usamos st.logo: o
-       componente nativo zera a largura do próprio slot de cabeçalho quando detecta a sidebar
-       estreita — ele decide colapsar medindo a largura real do contêiner no momento do
-       primeiro render, não o estado de :hover, e nunca mais volta a mostrar a imagem depois
-       disso). position:fixed tira a logo do fluxo do conteúdo da sidebar (que só cresce por
-       :hover via CSS, sem disparar o mecanismo de colapso nativo do Streamlit) e a ancora no
-       canto superior esquerdo, sempre visível tanto no trilho estreito quanto expandido;
-       padding-top no nav abre espaço pra ela não ficar por cima do primeiro item ("Início").
-       Tamanho acompanha o :hover do próprio trilho (pedido explícito: pequena quando fechado,
-       maior — proporcional — quando abre): a versão fechada fica bem dentro dos 4.5rem do
-       trilho pra não vazar sobre a borda pro conteúdo principal (5.75rem fixos vazavam ~7px
-       além da borda); a versão expandida usa a folga extra dos 21rem abertos. */
-    .ufrpe-sidebar-logo {{
-        position: fixed;
-        top: 0.85rem;
-        left: 1.05rem;
-        z-index: 999;
+    .ufrpe-sidebar-brand {{
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 1rem 1rem 0.85rem;
+        margin: 0 0.3rem 0.35rem;
+        border-bottom: 1px solid rgba(255,255,255,0.13);
     }}
-    .ufrpe-sidebar-logo img {{
-        height: 3.75rem !important;
-        max-height: 3.75rem !important;
+    .ufrpe-sidebar-brand img {{
+        height: 3rem !important;
+        max-height: 3rem !important;
         width: auto !important;
         max-width: none !important;
         display: block;
-        transition: height 0.18s ease, max-height 0.18s ease;
     }}
-    [data-testid="stSidebar"]:hover .ufrpe-sidebar-logo img {{
-        height: 6.5rem !important;
-        max-height: 6.5rem !important;
+    .ufrpe-sidebar-brand div {{ display: grid; line-height: 1.05; }}
+    .ufrpe-sidebar-brand strong {{ color: white; font-size: 1.08rem; letter-spacing: 0.02em; }}
+    .ufrpe-sidebar-brand span {{ color: {d.SIDEBAR_TEXT_MUTED}; font-size: 0.9rem; margin-top: 0.22rem; }}
+    [data-testid="stSidebarNav"] {{ padding-top: 0.25rem; }}
+    [data-testid="stSidebarNavLink"] {{
+        min-height: 2.8rem;
+        margin: 0.1rem 0.45rem;
+        padding-left: 0.8rem;
+        border-radius: 0;
+        border-left: 3px solid transparent;
+        color: {d.SIDEBAR_TEXT} !important;
     }}
-    [data-testid="stSidebarNav"] {{ padding-top: 5rem; transition: padding-top 0.18s ease; }}
-    [data-testid="stSidebar"]:hover [data-testid="stSidebarNav"] {{ padding-top: 8rem; }}
-    [data-testid="stSidebarNavLink"] {{ border-radius: 10px; }}
+    [data-testid="stSidebarNavLink"] * {{ color: {d.SIDEBAR_TEXT} !important; }}
+    [data-testid="stSidebarNavLink"]:hover {{ background: rgba(255,255,255,0.08); }}
     [data-testid="stSidebarNavLink"][aria-current="page"] {{
-        background: {d.ACCENT_SOFT};
-        color: {d.ACCENT};
-    }}
-    /* Rótulo de cada item some no estado estreito (só o ícone fica visível) e o cabeçalho
-       de seção ("Contratos", "Administração") também — reaparecem ao passar o mouse. Largura
-       de hover generosa (21rem) + nowrap: o pedido explícito era não voltar a cortar/quebrar
-       o texto dos itens quando exibidos (ex.: "Empenhos com Execução Retardada"). */
-    [data-testid="stSidebarNavLink"] span[label] {{
-        display: inline-block;
-        max-width: 0;
-        opacity: 0;
-        overflow: hidden;
-        white-space: nowrap;
-        transition: max-width 0.18s ease, opacity 0.12s ease;
-    }}
-    [data-testid="stSidebarNavLink"] span[label] p {{
-        white-space: nowrap;
-        overflow: visible;
-        text-overflow: clip;
+        background: {d.SIDEBAR_ACTIVE};
+        border-left-color: {d.SIDEBAR_ACTIVE_BORDER};
+        color: white !important;
     }}
     [data-testid="stNavSectionHeader"] {{
-        opacity: 0;
-        max-height: 0;
-        overflow: hidden;
-        white-space: nowrap;
-        transition: opacity 0.12s ease, max-height 0.18s ease;
-    }}
-    [data-testid="stSidebar"]:hover [data-testid="stSidebarNavLink"] span[label] {{
-        max-width: 16rem;
-        opacity: 1;
-    }}
-    [data-testid="stSidebar"]:hover [data-testid="stNavSectionHeader"] {{
-        opacity: 1;
-        max-height: 2.5rem;
+        color: {d.SIDEBAR_TEXT_MUTED} !important;
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        padding: 1rem 1.15rem 0.25rem;
     }}
     /* Avisos (st.info/success/warning/error) — os componentes MAIS usados do sistema
        (~100 chamadas). Antes daqui só tinham raio/espessura de borda; o fundo vinha do
@@ -180,8 +168,8 @@ def _theme_css() -> str:
     [data-testid="stVerticalBlockBorderWrapper"] {{
         background: {d.SURFACE};
         border: 1px solid {d.BORDER};
-        border-radius: 16px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+        border-radius: {d.RADIUS};
+        box-shadow: 0 3px 12px rgba(11, 53, 87, 0.06);
     }}
     /* `stTab` é o testid real de cada aba (confirmado no bundle, `index.*.js`) — não
        `button[role="tab"]` aninhado sob `stTabs`, que não corresponde à estrutura desta
@@ -190,6 +178,8 @@ def _theme_css() -> str:
        checkbox acima), por isso funciona aqui para marcar a aba ativa. */
     [data-testid="stTab"] {{ color: {d.TEXT_MUTED}; }}
     [data-testid="stTab"][aria-selected="true"] {{ color: {d.ACCENT}; }}
+    [data-testid="stTabs"] [role="tablist"] {{ border-bottom: 1px solid {d.BORDER}; gap: 0.4rem; }}
+    [data-testid="stTab"] {{ min-height: 2.8rem; padding-inline: 1rem; font-weight: 650; }}
     [data-testid="stMultiSelectTagsContainer"] {{ flex-wrap: wrap; row-gap: 0.35rem; }}
 
     * {{ scrollbar-color: {d.ACCENT} transparent; scrollbar-width: auto; }}
@@ -236,8 +226,8 @@ def _theme_css() -> str:
     [data-testid="stCaptionContainer"] p {{ color: {d.TEXT_MUTED} !important; }}
     [data-testid="stWidgetLabel"] p {{ color: {d.TEXT} !important; }}
 
-    /* Widgets nativos (texto/seleção/botão/checkbox) — mesmo motivo do bloco acima:
-       precisam de cobertura própria aqui pra acompanhar claro/escuro. */
+    /* Widgets nativos (texto/seleção/botão/checkbox) — cobertura explícita para manter
+       contraste consistente sobre as superfícies claras. */
     [data-testid="stTextInput"] input,
     [data-testid="stTextArea"] textarea,
     [data-testid="stNumberInput"] input {{
@@ -284,6 +274,10 @@ def _theme_css() -> str:
     [data-testid="stButton"] button, [data-testid="stFormSubmitButton"] button {{
         background: {d.SURFACE} !important;
         border-color: {d.BORDER} !important;
+        min-height: 2.55rem;
+        border-radius: 6px;
+        font-weight: 700;
+        box-shadow: none;
     }}
     /* O rótulo do botão é um elemento próprio dentro dele (o Streamlit define a cor
        lá, não no <button>) — daí a cor precisar descer para os descendentes. */
@@ -300,6 +294,12 @@ def _theme_css() -> str:
         background: {d.ACCENT} !important;
         color: #FFFFFF !important;
         border-color: {d.ACCENT} !important;
+    }}
+    [data-testid="stButton"] button[kind="primary"],
+    [data-testid="stFormSubmitButton"] button[kind="primary"] {{
+        background: linear-gradient(180deg, {d.ACCENT} 0%, {d.ACCENT_STRONG} 100%) !important;
+        border-color: {d.ACCENT_STRONG} !important;
+        box-shadow: 0 4px 10px rgba(9, 105, 218, 0.16);
     }}
     [data-testid="stCheckbox"] label p, [data-testid="stRadio"] label p {{ color: {d.TEXT}; }}
     /* Segmented control / pills (ex.: seletor "Indicador" em Dotação Orçamentária). O
@@ -350,6 +350,11 @@ def _theme_css() -> str:
         border: 1px solid {d.BORDER};
         border-radius: {d.RADIUS};
     }}
+    [data-testid="stProgress"] > div > div > div {{
+        background: linear-gradient(90deg, {d.ACCENT} 0%, {d.ACCENT_STRONG} 100%) !important;
+    }}
+    [data-testid="stMetric"] {{ min-height: 4.25rem; }}
+    [data-testid="stMetricValue"] {{ font-size: 1.55rem; }}
     [data-testid="stFileUploader"] section,
     [data-testid="stFileUploaderDropzone"] {{
         background: {d.SURFACE_ALT} !important;
@@ -416,38 +421,19 @@ def _theme_css() -> str:
 
 
 def apply_theme() -> None:
-    """Aplica tokens e ajustes visuais estáticos em toda a sessão Streamlit —
-    primeiro reatribui a paleta de cor atual (`design_tokens.aplicar_paleta`,
-    conforme o tema escolhido no alternador, ver `render_theme_toggle`), só
-    depois monta e injeta o CSS: precisa vir nessa ordem porque `_theme_css()`
-    lê os tokens já reatribuídos."""
+    """Aplica a identidade visual clara e fixa em toda a sessão."""
 
-    design_tokens.aplicar_paleta()
     st.markdown(_theme_css(), unsafe_allow_html=True)
-
-
-def render_theme_toggle() -> None:
-    """Botão na barra lateral para alternar entre tema claro e escuro (pedido
-    explícito). Rótulo/ícone descrevem o tema PRA ONDE o clique leva (não o
-    atual) — padrão usual desse tipo de alternador. Chamar depois de
-    `apply_theme()` (mesma ordem de `app.py`), pra já refletir eventual troca
-    feita nesta mesma rodada antes do próximo rerun."""
-
-    indo_para_claro = design_tokens.tema_atual() == "escuro"
-    rotulo = "☀️ Tema claro" if indo_para_claro else "🌙 Tema escuro"
-    if st.sidebar.button(rotulo, key="ufrpe_alternar_tema", use_container_width=True):
-        design_tokens.alternar_tema()
-        st.rerun()
 
 
 def render_page_header(title: str, subtitle: str | None = None, context: str | None = None) -> None:
     """Exibe cabeçalho consistente, sem alterar dados ou estado da página."""
 
+    if context:
+        st.markdown(f'<div class="ufrpe-page-context">{context}</div>', unsafe_allow_html=True)
     st.title(title)
     if subtitle:
-        st.caption(subtitle)
-    if context:
-        st.badge(context, icon=":material/account_balance:", color="blue")
+        st.markdown(f'<div class="ufrpe-page-subtitle">{subtitle}</div>', unsafe_allow_html=True)
 
 
 def render_alert(message: str, status: str = "info") -> None:
@@ -471,6 +457,11 @@ def render_metric_grid(metrics: list[dict[str, object]], columns: int = 4) -> No
         grid = st.columns(len(row), vertical_alignment="top", border=True)
         for column, metric in zip(grid, row, strict=True):
             with column:
+                icon, tone = _metric_visual(metric)
+                st.markdown(
+                    f'<div class="ufrpe-metric-icon" style="--tone:{escape(tone)}">{escape(icon)}</div>',
+                    unsafe_allow_html=True,
+                )
                 st.metric(
                     str(metric["label"]),
                     str(metric["value"]),
@@ -479,6 +470,21 @@ def render_metric_grid(metrics: list[dict[str, object]], columns: int = 4) -> No
                 subtitle = metric.get("subtitle")
                 if subtitle:
                     st.caption(str(subtitle))
+
+
+def _metric_visual(metric: dict[str, object]) -> tuple[str, str]:
+    """Ícone e cor semânticos para os cartões compartilhados, sem alterar seus dados."""
+
+    if metric.get("icon") or metric.get("tone"):
+        return str(metric.get("icon", "▥")), str(metric.get("tone", design_tokens.ACCENT))
+    label = str(metric.get("label", "")).casefold()
+    if any(word in label for word in ("alert", "crít", "rejeit", "vencid", "déficit")):
+        return "!", design_tokens.NEGATIVE
+    if any(word in label for word in ("aviso", "atenção", "empenhad", "pendente", "prazo")):
+        return "!", design_tokens.WARNING
+    if any(word in label for word in ("disponível", "aceit", "pago", "liquid", "conclu", "execução")):
+        return "✓", design_tokens.POSITIVE
+    return "▥", design_tokens.ACCENT
 
 
 def format_brl_compact(value: object) -> str:

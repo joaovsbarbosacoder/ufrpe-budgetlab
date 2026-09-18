@@ -116,13 +116,16 @@ from src.design_tokens import (
     BORDER_SOFT,
     FONT_BODY,
     FONT_HEADING,
+    POSITIVE,
     SIZE,
     SPACE,
     SURFACE,
+    SURFACE_ALT,
     TEXT,
     TEXT_FAINT,
     TEXT_MUTED,
     TRACK,
+    WARNING,
 )
 from src.execucao_anual import (
     agregar_por_ne,
@@ -274,9 +277,10 @@ def _num(value: object) -> str:
 
 
 @st.cache_data(show_spinner="Lendo a base de Execução Anual...")
-def _cached_leitura(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
-    """`caminho_ponteiro`/`mtime_ponteiro` só participam da chave de cache — força reler
-    quando o manifesto atual mudar. O DataFrame devolvido já é a base composta por ano (ver
+def _cached_leitura(caminho_ponteiro: str, sha_manifesto: str) -> pd.DataFrame:
+    """`caminho_ponteiro`/`sha_manifesto` só participam da chave de cache — força reler
+    quando a extração atual mudar, sem depender do horário do arquivo-ponteiro. O DataFrame
+    devolvido já é a base composta por ano (ver
     `importacao_execucao.carregar_atual`), não só o arquivo do manifesto atual."""
 
     return carregar_atual()
@@ -355,19 +359,32 @@ def _inject_css() -> None:
         <style>
         .ce-kpis {{
             display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
-            gap: 1px; background: {BORDER}; border: 1px solid {BORDER};
-            margin: 4px 0 18px 0;
+            gap: 10px; margin: 4px 0 18px 0;
         }}
-        .ce-kpi {{ background: {SURFACE}; padding: 11px 14px 12px 14px; }}
+        .ce-kpi {{
+            min-height: 86px; display: flex; align-items: center; gap: 11px;
+            background: {SURFACE}; padding: 12px 14px; border: 1px solid {BORDER};
+            border-radius: 7px; box-shadow: 0 3px 12px rgba(11,53,87,.055);
+        }}
+        .ce-kpi-icon {{
+            flex: 0 0 42px; width: 42px; height: 42px; border-radius: 50%;
+            display: grid; place-items: center; color: #fff; font-size: 17px;
+            font-family: {FONT_HEADING}; font-weight: 800; background: var(--tone);
+            box-shadow: inset 0 -7px 14px rgba(0,0,0,.08);
+        }}
         .ce-kpi-label {{
-            font-family: {FONT_HEADING}; font-size: 10px; letter-spacing: 0.14em;
-            text-transform: uppercase; color: {TEXT_MUTED};
+            font-family: {FONT_HEADING}; font-size: 11px; color: {TEXT_MUTED};
+            line-height: 1.2; font-weight: 650;
         }}
         .ce-kpi-value {{
-            font-family: {FONT_HEADING}; font-size: 24px; line-height: 1.1;
-            font-variant-numeric: tabular-nums; color: {ACCENT_STRONG};
+            font-family: {FONT_HEADING}; font-size: 20px; line-height: 1.15;
+            font-variant-numeric: tabular-nums; color: var(--tone); font-weight: 800;
         }}
-        .ce-detail-head {{ padding: 15px 18px 14px 18px; background: {SURFACE}; border-bottom: 1px solid {BORDER}; }}
+        .ce-detail-head {{
+            padding: 15px 18px 14px 18px; margin: -1rem -1rem .8rem;
+            background: {SURFACE_ALT}; border-bottom: 1px solid {BORDER};
+            border-radius: 7px 7px 0 0;
+        }}
         .ce-kicker {{
             font-family: {FONT_HEADING}; font-size: 10px; letter-spacing: 0.16em;
             text-transform: uppercase; color: {TEXT_MUTED};
@@ -419,9 +436,14 @@ def _inject_css() -> None:
            abaixo do botão, sem clique — pedido explícito: sem valores (Empenhado/Liquidado/
            Pago) na lista.
         */
-        .st-key-ce_list_select button {{ justify-content: flex-start; text-align: left; }}
+        .st-key-ce_list_select button {{
+            justify-content: flex-start; text-align: left; min-height: 42px;
+            border-radius: 6px 6px 0 0;
+        }}
         .ce-list-info {{
-            padding: 2px 4px 10px 4px; border-bottom: 1px solid {BORDER_SOFT}; margin-bottom: 4px;
+            padding: 4px 9px 9px; border: 1px solid {BORDER}; border-top: 0;
+            border-radius: 0 0 6px 6px; margin: -1px 0 7px;
+            background: {SURFACE_ALT};
         }}
         .ce-list-fav {{
             font-family: {FONT_BODY}; font-size: {SIZE['code']}; color: {TEXT_FAINT};
@@ -463,6 +485,8 @@ def _inject_css() -> None:
             text-align: right; font-family: {FONT_BODY}; font-size: {SIZE['value_strong']};
             font-weight: 600; font-variant-numeric: tabular-nums; color: {ACCENT_STRONG};
         }}
+        @media (max-width: 1250px) {{ .ce-kpis {{ grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }} }}
+        @media (max-width: 760px) {{ .ce-kpis {{ grid-template-columns: 1fr !important; }} }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -471,8 +495,10 @@ def _inject_css() -> None:
 
 def _render_kpis(kpis: list[dict[str, str]], colunas: int = 6) -> None:
     celulas = "".join(
-        f'<div class="ce-kpi"><div class="ce-kpi-label">{k["rotulo"]}</div>'
-        f'<div class="ce-kpi-value">{k["valor"]}</div></div>'
+        f'<div class="ce-kpi" style="--tone:{k.get("cor", ACCENT_STRONG)}">'
+        f'<div class="ce-kpi-icon">{k.get("icone", "▥")}</div><div>'
+        f'<div class="ce-kpi-label">{k["rotulo"]}</div>'
+        f'<div class="ce-kpi-value">{k["valor"]}</div></div></div>'
         for k in kpis
     )
     st.markdown(
@@ -582,7 +608,7 @@ def _render_cartoes_lista(dados: pd.DataFrame, ne_selecionado: str, source_key: 
                     _rotulo_botao_cartao(linha),
                     key=f"consulta_empenhos_ver_{source_key}_{linha['ne_ccor']}",
                     type="primary" if selecionado else "secondary",
-                    use_container_width=True,
+                    width="stretch",
                 ):
                     ne_clicada = linha["ne_ccor"]
                 st.markdown(_html_linha_lista(linha), unsafe_allow_html=True)
@@ -826,7 +852,7 @@ def _render_detalhe(
             st.metric("Saldo de empenho", format_brl_compact(linha["saldo"]))
 
     if linha_do_tempo is not None and linha["ne_ccor"] in set(linha_do_tempo["ne_ccor"]):
-        if st.button("📈 Linha do tempo mensal", key=f"ce_tempo_{linha['ne_ccor']}", use_container_width=True):
+        if st.button("📈 Linha do tempo mensal", key=f"ce_tempo_{linha['ne_ccor']}", width="stretch"):
             tempo_ne = linha_do_tempo[linha_do_tempo["ne_ccor"] == linha["ne_ccor"]]
             ne_exibicao = _ne_exibicao(linha["ne_ccor"], linha["ano"])
             if liquidacao_competencia is not None:
@@ -896,7 +922,7 @@ if manifesto is None:
 
 caminho_ponteiro = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO
 try:
-    dataframe = _cached_leitura(str(caminho_ponteiro), caminho_ponteiro.stat().st_mtime)
+    dataframe = _cached_leitura(str(caminho_ponteiro), manifesto.sha256)
 except Exception as error:
     st.error(f"Não foi possível ler a base de Execução Anual: {error}")
     st.stop()
@@ -1023,12 +1049,12 @@ for _medida in ("empenhada", "liquidada", "paga"):
 
 _render_kpis(
     [
-        {"rotulo": "Empenhos", "valor": str(len(visivel))},
-        {"rotulo": "Empenhado", "valor": format_brl_compact(totais["empenhada"]) if tem_dado["empenhada"] else "Sem registros"},
-        {"rotulo": "Liquidado", "valor": format_brl_compact(totais["liquidada"]) if tem_dado["liquidada"] else "Sem registros"},
-        {"rotulo": "Pago", "valor": format_brl_compact(totais["paga"]) if tem_dado["paga"] else "Sem registros"},
-        {"rotulo": "Saldo de empenho", "valor": format_brl_compact(visivel["saldo"].sum())},
-        {"rotulo": "A pagar", "valor": format_brl_compact(visivel["a_pagar"].sum())},
+        {"rotulo": "Empenhos", "valor": str(len(visivel)), "icone": "▤", "cor": ACCENT_STRONG},
+        {"rotulo": "Empenhado", "valor": format_brl_compact(totais["empenhada"]) if tem_dado["empenhada"] else "Sem registros", "icone": "□", "cor": WARNING},
+        {"rotulo": "Liquidado", "valor": format_brl_compact(totais["liquidada"]) if tem_dado["liquidada"] else "Sem registros", "icone": "✓", "cor": POSITIVE},
+        {"rotulo": "Pago", "valor": format_brl_compact(totais["paga"]) if tem_dado["paga"] else "Sem registros", "icone": "✓", "cor": POSITIVE},
+        {"rotulo": "Saldo de empenho", "valor": format_brl_compact(visivel["saldo"].sum()), "icone": "≋", "cor": ACCENT_STRONG},
+        {"rotulo": "A pagar", "valor": format_brl_compact(visivel["a_pagar"].sum()), "icone": "!", "cor": WARNING},
     ]
 )
 
@@ -1084,7 +1110,7 @@ with coluna_principal:
             rotulo_selecionar_todos = "Desmarcar todos" if todos_marcados_lista else "Selecionar todos"
             if st.button(
                 rotulo_selecionar_todos, key=f"consulta_empenhos_selecionar_todos_{source_key}",
-                use_container_width=True,
+                width="stretch",
             ):
                 novo_valor = not todos_marcados_lista
                 for ne in dados_visiveis["ne_ccor"]:

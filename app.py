@@ -3,7 +3,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from src.ui_theme import apply_theme, render_theme_toggle
+from src.ui_theme import apply_theme
 
 _LOGO_B64 = base64.b64encode(Path("assets/ufrpe_logo.png").read_bytes()).decode()
 
@@ -14,14 +14,13 @@ st.set_page_config(
 )
 
 apply_theme()
-render_theme_toggle()
 
 st.sidebar.markdown(
-    f'<div class="ufrpe-sidebar-logo">'
-    f'<img src="data:image/png;base64,{_LOGO_B64}" alt="UFRPE" /></div>',
+    f'<div class="ufrpe-sidebar-brand">'
+    f'<img src="data:image/png;base64,{_LOGO_B64}" alt="Brasão da UFRPE" />'
+    f'<div><strong>UFRPE</strong><span>BudgetLab</span></div></div>',
     unsafe_allow_html=True,
 )
-
 page = st.navigation(
     {
         # seção "" fica no início do menu, sem cabeçalho de grupo (ver docstring de
@@ -174,8 +173,7 @@ page = st.navigation(
     # o resto atrás de um botão "View N more" — passamos de 12 pra 14 páginas ao adicionar
     # Emendas Parlamentares/Alertas Gerenciais e isso escondeu Contratos — Vigência, Minhas
     # Demandas, Proposta Consolidada e Atualizar Planilhas sem nenhum aviso. `True` mantém
-    # todas sempre visíveis, coerente com o trilho de ícones (que já esconde tudo até o
-    # hover — esconder página atrás de mais um clique em cima disso seria demais).
+    # todas sempre visíveis na navegação lateral persistente.
     expanded=True,
 )
 

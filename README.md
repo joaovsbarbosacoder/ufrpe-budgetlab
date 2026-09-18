@@ -22,6 +22,14 @@ delta entre extrações, política de confirmação) vive em
 pelas duas bases; cada uma só define sua própria leitura, validação e
 medidas (`src/importacao_execucao.py`, `src/importacao_dotacao.py`).
 
+### Visão geral
+
+A página inicial funciona como painel operacional: informa quantas das bases
+cadastradas estão disponíveis localmente, a atualização mais recente entre
+elas e a situação dos prazos orçamentários cadastrados. Esses indicadores não
+combinam valores financeiros de extrações diferentes. A página também oferece
+acessos diretos aos principais módulos de planejamento, operação e controle.
+
 ### Dotação Anual (BI CPOC - Por Ano)
 
 Uma única aba organiza os lançamentos por ano (não por mês), com blocos
@@ -178,9 +186,11 @@ revisados nesta mudança de apresentação.
 
 ## Visual e tema
 
-A interface usa tema escuro. As cores, tipografia e espaçamentos ficam
-centralizados em `src/design_tokens.py`; `src/ui_theme.py` consome esses
-tokens (sem hexadecimais soltos) para o CSS global e os helpers reutilizáveis
+A interface usa exclusivamente uma área de trabalho clara com navegação lateral
+azul persistente, inspirada em painéis administrativos institucionais. Não há
+alternância para modo escuro. As cores, tipografia e
+espaçamentos ficam centralizados em `src/design_tokens.py`; `src/ui_theme.py`
+consome esses tokens para o CSS global e os helpers reutilizáveis
 (`render_page_header`, `render_alert`, `render_metric_grid`,
 `format_brl_compact`, `format_brl_full`). `.streamlit/config.toml` reflete os
 mesmos tokens de cor de fundo, superfície e texto.

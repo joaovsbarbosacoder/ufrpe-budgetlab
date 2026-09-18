@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import streamlit as st
 
+from src import design_tokens
 from src.teds_ui import (
     STATUS_ABERTO,
     STATUS_EM_ANALISE,
@@ -23,6 +24,7 @@ from src.teds_ui import (
     cor_gravidade,
     cor_status_alerta,
     injetar_css,
+    render_kpi_strip,
     rotulo_gravidade,
     rotulo_status_alerta,
     rotulo_tipo_alerta,
@@ -45,12 +47,13 @@ informativos = [a for a in todos if a.gravidade == "baixa"]
 em_analise = [a for a in todos if a.status == STATUS_EM_ANALISE]
 resolvidos = [a for a in todos if a.status == STATUS_RESOLVIDO]
 
-kpi = st.columns(5)
-kpi[0].container(border=True).metric("Críticos", str(len(criticos)))
-kpi[1].container(border=True).metric("Atenção", str(len(atencao)))
-kpi[2].container(border=True).metric("Informativos", str(len(informativos)))
-kpi[3].container(border=True).metric("Em análise", str(len(em_analise)))
-kpi[4].container(border=True).metric("Resolvidos", str(len(resolvidos)))
+render_kpi_strip([
+    {"label": "Críticos", "value": len(criticos), "icon": "!", "tone": design_tokens.NEGATIVE},
+    {"label": "Atenção", "value": len(atencao), "icon": "!", "tone": design_tokens.WARNING},
+    {"label": "Informativos", "value": len(informativos), "icon": "i", "tone": design_tokens.ACCENT},
+    {"label": "Em análise", "value": len(em_analise), "icon": "◷", "tone": design_tokens.TEXT_MUTED},
+    {"label": "Resolvidos", "value": len(resolvidos), "icon": "✓", "tone": design_tokens.POSITIVE},
+])
 
 col_grav, col_tipo, col_ted, col_status, col_resp = st.columns(5)
 with col_grav:

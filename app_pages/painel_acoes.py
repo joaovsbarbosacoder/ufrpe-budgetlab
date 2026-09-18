@@ -61,9 +61,10 @@ from src.ui_theme import (
 
 
 @st.cache_data(show_spinner="Lendo a base de Dotação Anual...")
-def _cached_leitura(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
-    """`caminho_ponteiro`/`mtime_ponteiro` só participam da chave de cache — força reler
-    quando o manifesto atual mudar. O DataFrame devolvido já é a base composta por ano (ver
+def _cached_leitura(caminho_ponteiro: str, sha_manifesto: str) -> pd.DataFrame:
+    """`caminho_ponteiro`/`sha_manifesto` só participam da chave de cache — força reler
+    quando a extração atual mudar, sem depender do horário do arquivo-ponteiro. O DataFrame
+    devolvido já é a base composta por ano (ver
     `importacao_dotacao.carregar_atual`), não só o arquivo do manifesto atual."""
 
     return carregar_atual()
@@ -423,7 +424,7 @@ if manifesto is None:
 
 caminho_ponteiro = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO
 try:
-    dataframe = _cached_leitura(str(caminho_ponteiro), caminho_ponteiro.stat().st_mtime)
+    dataframe = _cached_leitura(str(caminho_ponteiro), manifesto.sha256)
 except Exception as error:
     st.error(f"Não foi possível ler a base de Dotação Anual: {error}")
     st.stop()

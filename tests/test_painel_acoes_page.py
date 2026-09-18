@@ -1,31 +1,26 @@
 """Testes da página Painel por Ação de Governo.
 
 Migrou de `st.session_state` para o manifesto versionado de Dotação Anual
-(`src/importacao_dotacao.py`) — os testes agora importam fixtures de verdade
-via `importar()` (gravando em `data/raw/`/`data/manifestos/`, como a
-importação inicial real), com backup/restore do estado atual em cada teste,
-mesmo padrão já usado em `test_execucao_orcamentaria_reimportacao.py`.
+(`src/importacao_dotacao.py`). As planilhas sintéticas são lidas em diretório temporário e o
+manifesto/DataFrame são injetados: os testes não tocam em `data/raw/` ou `data/manifestos/`.
 """
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
-from src.importacao_dotacao import importar
+from src.importacao_dotacao import gerar_manifesto, ler_dotacao_anual
 from tests.test_tesouro_dotacao_anual import (
     workbook_bytes,
     write_recognized_sheet,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DIRETORIO_RAW = PROJECT_ROOT / "data/raw"
-DIRETORIO_MANIFESTOS = PROJECT_ROOT / "data/manifestos"
-MANIFESTO_ATUAL = DIRETORIO_MANIFESTOS / "dotacao_anual_atual.json"
-
-
 def write_sheet_with_empty_subdivision(ws) -> None:
     """Base válida com uma ação extra sem nenhum valor monetário informado.
 
@@ -103,25 +98,28 @@ def write_sheet_with_phantom_fonte(ws) -> None:
 
 class PainelAcoesPageTests(unittest.TestCase):
     def setUp(self) -> None:
-        self._manifesto_backup = MANIFESTO_ATUAL.read_bytes() if MANIFESTO_ATUAL.exists() else None
-        self._raw_antes = set(DIRETORIO_RAW.glob("*.xlsx"))
-        self._manifestos_antes = set(DIRETORIO_MANIFESTOS.glob("dotacao_anual_*.json"))
+        self._temporario = tempfile.TemporaryDirectory()
+        self._patch_manifesto = patch(
+            "src.importacao_dotacao.Manifesto.atual", return_value=None
+        )
+        self._patch_carregar = patch(
+            "src.importacao_dotacao.carregar_atual", return_value=None
+        )
+        self.mock_manifesto = self._patch_manifesto.start()
+        self.mock_carregar = self._patch_carregar.start()
 
     def tearDown(self) -> None:
-        if self._manifesto_backup is not None:
-            MANIFESTO_ATUAL.write_bytes(self._manifesto_backup)
-        else:
-            MANIFESTO_ATUAL.unlink(missing_ok=True)
-        for novo in set(DIRETORIO_RAW.glob("*.xlsx")) - self._raw_antes:
-            novo.unlink(missing_ok=True)
-        for novo in set(DIRETORIO_MANIFESTOS.glob("dotacao_anual_*.json")) - self._manifestos_antes:
-            novo.unlink(missing_ok=True)
+        self._patch_carregar.stop()
+        self._patch_manifesto.stop()
+        self._temporario.cleanup()
 
     def _importar_fixture(self, nome: str, builder) -> Path:
-        caminho = DIRETORIO_RAW / nome
+        caminho = Path(self._temporario.name) / nome
         caminho.write_bytes(workbook_bytes(builder))
-        resultado = importar(caminho)
-        assert resultado.ok, resultado.validacao.erros
+        leitura = ler_dotacao_anual(caminho)
+        manifesto = gerar_manifesto(leitura, caminho)
+        self.mock_manifesto.return_value = manifesto
+        self.mock_carregar.return_value = leitura.workbook.consolidated_data
         return caminho
 
     def _open_page(self) -> AppTest:
@@ -129,12 +127,6 @@ class PainelAcoesPageTests(unittest.TestCase):
         app.run()
         app.switch_page("app_pages/painel_acoes.py")
         app.run(timeout=20)
-        # composição por ano (ver src/importacao_versionada.py): o seletor de Ano pode ter
-        # mais opções além do ano da fixture importada (anos de uma extração real anterior,
-        # ainda compostos junto — não apagados só porque a fixture não os traz), e o padrão
-        # do seletor é sempre o ano mais recente disponível — que pode não ser mais 2024 (o
-        # ano usado por todas as fixtures deste arquivo). Seleciona explicitamente em vez de
-        # depender de qual ano calha de ser "o mais recente" no ambiente onde o teste roda.
         if app.selectbox:
             app.selectbox[0].select(2024)
             app.run(timeout=20)
@@ -195,7 +187,6 @@ class PainelAcoesPageTests(unittest.TestCase):
         self.assertFalse(any("FONTE_FANTASMA" in option for option in fonte_options))
 
     def test_explains_when_no_base_was_imported(self) -> None:
-        MANIFESTO_ATUAL.unlink(missing_ok=True)
         app = self._open_page()
 
         self.assertEqual(len(app.exception), 0)

@@ -37,11 +37,12 @@ from src.importacao_dotacao import Manifesto as ManifestoDotacao
 from src.importacao_execucao import Manifesto as ManifestoExecucao
 from src.reimportacao_especificacoes import ESPECIFICACAO_DOTACAO_ANUAL, ESPECIFICACAO_EXECUCAO_ANUAL
 from src.ui_reimportacao import render_reimportacao
+from src.ui_theme import render_page_header
 
-st.title("Atualizar Planilhas")
-st.caption(
-    "Único lugar do app para enviar uma planilha nova, versionada ou não. Cada envio é "
-    "validado antes de aceitar."
+render_page_header(
+    "Atualizar Planilhas",
+    "Único lugar do app para enviar uma planilha nova, versionada ou não. Cada envio é validado antes de aceitar.",
+    "Administração",
 )
 
 st.subheader("Bases com reimportação versionada")

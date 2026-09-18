@@ -22,8 +22,9 @@ from decimal import Decimal
 import pandas as pd
 import streamlit as st
 
+from src import design_tokens
 from src.teds_normalizacao import texto_para_valor
-from src.teds_ui import anos_disponiveis, badge, brl, carregar_teds, conexao, cor_situacao_conciliacao, filtrar_por_exercicio, injetar_css
+from src.teds_ui import anos_disponiveis, badge, brl, carregar_teds, conexao, cor_situacao_conciliacao, filtrar_por_exercicio, injetar_css, render_kpi_strip
 from src.ui_theme import render_page_header
 
 injetar_css()
@@ -114,14 +115,15 @@ if tipo_sel != "Todos":
 if situacao_sel != "Todas":
     comparacao = comparacao[comparacao["situacao"] == situacao_sel]
 
-kpi = st.columns(4)
-kpi[0].container(border=True).metric("Conciliados", str((comparacao["situacao"] == "Conciliado").sum()))
-kpi[1].container(border=True).metric("Conferência necessária", str((comparacao["situacao"] == "Conferência necessária").sum()))
-kpi[2].container(border=True).metric("Fonte ausente", str((comparacao["situacao"] == "Fonte ausente").sum()))
 diferenca_total = sum(
     (abs(d) for d in comparacao.loc[comparacao["metrica"] == "Valor das NEs", "diferenca"].dropna()), start=Decimal("0")
 )
-kpi[3].container(border=True).metric("Diferença total", brl(diferenca_total))
+render_kpi_strip([
+    {"label": "Conciliados", "value": int((comparacao["situacao"] == "Conciliado").sum()), "icon": "✓", "tone": design_tokens.POSITIVE},
+    {"label": "Conferência necessária", "value": int((comparacao["situacao"] == "Conferência necessária").sum()), "icon": "!", "tone": design_tokens.NEGATIVE},
+    {"label": "Fonte ausente", "value": int((comparacao["situacao"] == "Fonte ausente").sum()), "icon": "□", "tone": design_tokens.WARNING},
+    {"label": "Diferença total", "value": brl(diferenca_total), "icon": "▥", "tone": design_tokens.ACCENT},
+])
 
 st.markdown("#### Comparação entre fontes")
 if comparacao.empty:

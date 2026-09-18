@@ -56,10 +56,8 @@ def renderizar_linha_do_tempo(legenda: str, tempo: pd.DataFrame) -> None:
     para uma única NE. `legenda` aparece como `st.caption` no topo (livre — cada página decide
     o que identificar: NE completa, bolsa/programa, etc.)."""
 
-    # Cores lidas como atributo do módulo (não `from design_tokens import ACCENT`, que
-    # ficaria travada no tema de quando este módulo de apoio foi carregado pela primeira
-    # vez no processo — ver docstring de `design_tokens.py`) para acompanhar o alternador
-    # de tema claro/escuro a cada abertura deste pop-up.
+    # Os tokens ficam centralizados no módulo para manter este pop-up coerente com o
+    # restante da identidade visual clara.
     d = design_tokens
     st.caption(legenda)
     tempo = tempo.sort_values("ano_mes")

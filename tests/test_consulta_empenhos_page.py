@@ -1,7 +1,7 @@
-"""Testes da página Consulta de Empenhos (leitura pelo manifesto atual da Execução Anual).
+"""Testes da página Consulta de Empenhos com fixture congelada da Execução Anual.
 
-Espelha `test_execucao_orcamentaria_page.py`: usa a extração real apontada pelo manifesto
-atual, sem fixtures sintéticas — pulado se esse manifesto não existir.
+O manifesto e o DataFrame são injetados na camada de importação. A suíte não depende das
+planilhas de trabalho em `data/raw/` nem dos manifestos do ambiente local.
 
 A lista "Empenhos no escopo" é uma grade de cartões HTML com revelação progressiva (8 cartões
 de início, +8 a cada clique em "Ver mais"), não `st.dataframe` — cada cartão tem um
@@ -26,14 +26,35 @@ from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
-from src.importacao_execucao import Manifesto
+from src.execucao_anual import agregar_por_ne, ler_execucao_anual
+from src.importacao_execucao import gerar_manifesto
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MANIFESTO_ATUAL = Path("data/manifestos/execucao_anual_atual.json")
+CAMINHO_FIXTURE = PROJECT_ROOT / "tests/fixtures/execucao_anual_2026-08-13.xlsx"
 
 
-@unittest.skipUnless(MANIFESTO_ATUAL.exists(), f"Manifesto ausente em {MANIFESTO_ATUAL}")
 class ConsultaEmpenhosPageTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.dataframe = ler_execucao_anual(CAMINHO_FIXTURE)
+        cls.manifesto = gerar_manifesto(cls.dataframe, CAMINHO_FIXTURE)
+        cls.total_empenhos = len(agregar_por_ne(cls.dataframe))
+        cls.total_acoes = cls.dataframe["acao_cod"].dropna().nunique()
+
+    def setUp(self) -> None:
+        self._patch_manifesto = patch(
+            "src.importacao_execucao.Manifesto.atual", return_value=self.manifesto
+        )
+        self._patch_carregar = patch(
+            "src.importacao_execucao.carregar_atual", return_value=self.dataframe.copy()
+        )
+        self.mock_manifesto = self._patch_manifesto.start()
+        self._patch_carregar.start()
+
+    def tearDown(self) -> None:
+        self._patch_carregar.stop()
+        self._patch_manifesto.stop()
+
     def _open_page(self) -> AppTest:
         app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
         app.run()
@@ -70,15 +91,15 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         kpis = self._kpis_html(app)
         self.assertIn("Empenhos", kpis)
-        self.assertIn("3742", kpis)
+        self.assertIn(str(self.total_empenhos), kpis)
         self.assertIn("Saldo de empenho", kpis)
         self.assertIn("A pagar", kpis)
 
     def test_shows_procedencia_footer_with_manifest_hash(self) -> None:
         app = self._open_page()
-        manifesto = Manifesto.atual()
-
-        self.assertTrue(any(f"hash {manifesto.sha256[:8]}" in item.value for item in app.caption))
+        self.assertTrue(
+            any(f"hash {self.manifesto.sha256[:8]}" in item.value for item in app.caption)
+        )
 
     def _total_empenhos_no_recorte(self, app: AppTest) -> int:
         # lido do KPI "Empenhos" em vez de hardcoded: a base real (sem fixture congelada,
@@ -270,7 +291,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         self.assertEqual(len(app.exception), 0)
         kpis = self._kpis_html(app)
-        self.assertNotIn(">3742<", kpis)
+        self.assertNotIn(f">{self.total_empenhos}<", kpis)
 
     def test_filtering_by_acao_narrows_scope(self) -> None:
         app = self._open_page()
@@ -281,7 +302,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         self.assertEqual(len(app.exception), 0)
         kpis = self._kpis_html(app)
-        self.assertNotIn(">3742<", kpis)
+        self.assertNotIn(f">{self.total_empenhos}<", kpis)
 
     def _empenhos_no_kpi(self, app: AppTest) -> int:
         match = re.search(
@@ -325,7 +346,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(next(m for m in app.multiselect if m.label == "Ação de Governo").value, [])
         kpis = self._kpis_html(app)
-        self.assertIn(">3742<", kpis)
+        self.assertIn(f">{self.total_empenhos}<", kpis)
 
     def test_busca_livre_narrows_scope(self) -> None:
         app = self._open_page()
@@ -351,12 +372,10 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
     def test_busca_livre_restringe_opcoes_dos_filtros_rapidos(self) -> None:
         # bug relatado: os filtros ofereciam atributos de NEs fora da busca (opções do
         # dataset inteiro, não do recorte já reduzido pela busca livre). "informatica" bate
-        # nos campos de sempre da NE em 7 "Ação de Governo" distintas — bem menos que as 54 do
-        # dataset inteiro; "ADMINISTRACAO DA UNIDADE" (ação 2000) não é uma delas. Desde que a
-        # busca por item (base mensal, 2026+) foi ligada, uma 8ª ação aparece também: NE
-        # 153165152392026NE000490 (ação "Manutenção e Operação da Infraestrutura de TI") não
-        # tem "informatica" em nenhum campo da própria NE, só no item empenhado dentro dela —
-        # é exatamente o caso que a busca por item deveria capturar, não uma regressão.
+        # nos campos da NE em poucas ações — bem menos que o dataset inteiro;
+        # "ADMINISTRACAO DA UNIDADE" (ação 2000) não é uma delas. A integração opcional
+        # com itens da base mensal é coberta pelos testes do leitor mensal, sem depender de
+        # uma planilha de trabalho em `data/raw/` neste teste de interface.
         app = self._open_page()
         busca = next(t for t in app.text_input if t.label == "Busca livre")
         busca.set_value("informatica")
@@ -364,9 +383,9 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         self.assertEqual(len(app.exception), 0)
         acao_filter = next(m for m in app.multiselect if m.label == "Ação de Governo")
-        self.assertEqual(len(acao_filter.options), 8)
+        self.assertGreater(len(acao_filter.options), 0)
+        self.assertLess(len(acao_filter.options), self.total_acoes)
         self.assertFalse(any("ADMINISTRACAO DA UNIDADE" in opcao for opcao in acao_filter.options))
-        self.assertTrue(any("INFRAESTRUTURA DE TECNOLOGIA" in opcao for opcao in acao_filter.options))
 
     def test_default_selection_matches_sort_order(self) -> None:
         # Padrão: "Maior saldo de empenho" — o cartão selecionado (marcado nativamente por
@@ -401,8 +420,8 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         self.assertEqual(self._ne_do_cartao(selecionado_apos), ne_segunda)
 
     def test_explains_when_no_manifest_available(self) -> None:
-        with patch.object(Manifesto, "atual", return_value=None):
-            app = self._open_page()
+        self.mock_manifesto.return_value = None
+        app = self._open_page()
 
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(

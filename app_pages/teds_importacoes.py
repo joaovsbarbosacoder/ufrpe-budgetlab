@@ -21,6 +21,7 @@ import io
 import pandas as pd
 import streamlit as st
 
+from src import design_tokens
 from src.teds_importacao_simec import (
     _MAPA_DOC_NC,
     _MAPA_DOC_NE,
@@ -33,7 +34,7 @@ from src.teds_importacao_simec import (
 )
 from src.teds_lotes import importar_doc_ne, importar_doc_nc, importar_doc_pf, importar_execucao_anual
 from src.teds_normalizacao import mapear_colunas
-from src.teds_ui import conexao, formatar_historico_lotes, historico_importacoes, injetar_css
+from src.teds_ui import conexao, formatar_historico_lotes, historico_importacoes, injetar_css, render_kpi_strip
 from src.ui_theme import render_page_header
 
 injetar_css()
@@ -52,12 +53,13 @@ historico = historico_importacoes(conn)
 ultima = historico["data_importacao"].max() if not historico.empty else None
 total_aceitos = int(historico["quantidade_registros"].sum()) if not historico.empty else 0
 
-kpi = st.columns(5)
-kpi[0].container(border=True).metric("Última atualização", pd.Timestamp(ultima).strftime("%d/%m/%Y %H:%M") if ultima else "—")
-kpi[1].container(border=True).metric("Arquivos importados", str(len(historico)))
-kpi[2].container(border=True).metric("Registros aceitos", str(total_aceitos))
-kpi[3].container(border=True).metric("Com avisos", str(st.session_state.get("imp_ultimo_avisos", "—")))
-kpi[4].container(border=True).metric("Rejeitados", str(st.session_state.get("imp_ultimo_rejeitados", 0)))
+render_kpi_strip([
+    {"label": "Última atualização", "value": pd.Timestamp(ultima).strftime("%d/%m/%Y %H:%M") if ultima else "—", "icon": "□", "tone": design_tokens.ACCENT},
+    {"label": "Arquivos importados", "value": len(historico), "icon": "▤", "tone": design_tokens.POSITIVE},
+    {"label": "Registros aceitos", "value": total_aceitos, "icon": "✓", "tone": design_tokens.ACCENT},
+    {"label": "Com avisos", "value": st.session_state.get("imp_ultimo_avisos", "—"), "icon": "!", "tone": design_tokens.WARNING},
+    {"label": "Rejeitados", "value": st.session_state.get("imp_ultimo_rejeitados", 0), "icon": "×", "tone": design_tokens.NEGATIVE},
+])
 
 st.session_state.setdefault("imp_step", 1)
 

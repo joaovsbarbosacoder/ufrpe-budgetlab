@@ -2,28 +2,28 @@
 fileWatcherType = "none"
 
 [theme]
-base = "dark"
-primaryColor = "#4C8DFF"
-backgroundColor = "#0B1220"
-secondaryBackgroundColor = "#121B2D"
-textColor = "#E7ECF5"
-borderColor = "#232E45"
-blueColor = "#4C8DFF"
-greenColor = "#22C55E"
-yellowColor = "#F5A524"
-redColor = "#F0576B"
+base = "light"
+primaryColor = "#0969DA"
+backgroundColor = "#F5F8FC"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#07133D"
+borderColor = "#D3DFEC"
+blueColor = "#0969DA"
+greenColor = "#0A8F3D"
+yellowColor = "#C96A00"
+redColor = "#D20A16"
 font = "sans serif"
 baseFontSize = 15
 baseFontWeight = 400
 headingFontSizes = ["32px", "24px", "20px", "16px", "14px", "12px"]
 headingFontWeights = [600, 600, 600, 600, 600, 600]
-baseRadius = "large"
-buttonRadius = "medium"
+baseRadius = "small"
+buttonRadius = "small"
 showWidgetBorder = true
 linkUnderline = false
 
 [theme.sidebar]
-backgroundColor = "#0E1626"
-secondaryBackgroundColor = "#121B2D"
+backgroundColor = "#0B3557"
+secondaryBackgroundColor = "#124B77"
 textColor = "#E7ECF5"
-borderColor = "#232E45"
+borderColor = "#235C85"

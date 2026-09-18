@@ -18,6 +18,7 @@ from decimal import Decimal
 import pandas as pd
 import streamlit as st
 
+from src import design_tokens
 from src.teds_normalizacao import texto_para_valor
 from src.teds_ui import (
     anos_disponiveis,
@@ -32,6 +33,8 @@ from src.teds_ui import (
     filtrar_por_exercicio,
     injetar_css,
     pct,
+    render_execution_panel,
+    render_kpi_strip,
     rotulo_gravidade,
     rotulo_tipo_alerta,
     soma_tg_por_teds,
@@ -55,18 +58,23 @@ if teds_df.empty:
     )
     st.stop()
 
-# ---------------------------------------------------------------------- filtros
-col_exercicio, col_ug, col_espaco, col_atualizado = st.columns([1, 1.4, 3, 1.6])
+# ---------------------------------------------------------------------- filtros e ação principal
+col_exercicio, col_ug, col_espaco, col_atualizado, col_importar = st.columns(
+    [1, 2.1, 2.7, 1.55, 1.25], vertical_alignment="bottom"
+)
 anos = anos_disponiveis(teds_df)
 with col_exercicio:
     exercicio = st.selectbox("Exercício", ["Todos"] + [str(a) for a in anos], key="vg_exercicio")
 ugs = sorted(teds_df["ug_descentralizadora"].dropna().unique())
 with col_ug:
-    ug = st.selectbox("UG Descentralizadora", ["Todas"] + list(ugs), key="vg_ug")
+    ug = st.selectbox("UG", ["Todas"] + list(ugs), key="vg_ug")
 with col_atualizado:
     ultima = conn.execute("SELECT MAX(data_importacao) FROM import_batch").fetchone()[0]
     if ultima:
         st.caption(f"Atualizado em {pd.Timestamp(ultima).strftime('%d/%m/%Y %H:%M')}")
+with col_importar:
+    if st.button("Importar dados", type="primary", icon=":material/download:", width="stretch"):
+        st.switch_page("app_pages/teds_importacoes.py")
 
 filtrado = teds_df
 if exercicio != "Todos":
@@ -101,54 +109,42 @@ alertas_abertos_filtrados = [
     a for a in alertas_todos if a.status != "resolvido" and (a.chave_ted in chaves_filtradas or a.chave_ted is None)
 ]
 
-kpi_cols = st.columns(5)
-kpi_cols[0].container(border=True).metric("TEDs em execução", str(len(em_execucao)))
-kpi_cols[1].container(border=True).metric("NC líquida", brl(nc_liquida_total))
-kpi_cols[2].container(border=True).metric("PF líquida", brl(pf_liquida_total))
-kpi_cols[3].container(border=True).metric("Empenhado", brl(empenhado_total))
-kpi_cols[4].container(border=True).metric("Alertas críticos", str(len(alertas_criticos)))
+render_kpi_strip(
+    [
+        {"label": "TEDs em execução", "value": len(em_execucao), "icon": "▤", "tone": design_tokens.ACCENT},
+        {"label": "NC líquida", "value": brl(nc_liquida_total), "icon": "≋", "tone": design_tokens.POSITIVE},
+        {"label": "PF líquida", "value": brl(pf_liquida_total), "icon": "▥", "tone": design_tokens.ACCENT},
+        {"label": "Empenhado", "value": brl(empenhado_total), "icon": "□", "tone": design_tokens.WARNING},
+        {"label": "Alertas críticos", "value": len(alertas_criticos), "icon": "!", "tone": design_tokens.NEGATIVE},
+    ]
+)
 
 # ---------------------------------------------------------------------- execução orç./fin.
 liquidado_total, pago_total, tem_dado_tg = soma_tg_por_teds(conn, chaves_filtradas)
 
 col_orc, col_fin = st.columns(2)
 with col_orc:
-    with st.container(border=True):
-        st.markdown("**Execução orçamentária**")
-        st.caption("Valores em R$")
-        st.write("NC líquida — 100%" if nc_liquida_total else "NC líquida — —")
-        st.progress(1.0 if nc_liquida_total else 0.0)
-        st.caption(brl(nc_liquida_total))
-        frac, texto = pct(empenhado_total, nc_liquida_total)
-        st.write(f"Empenhado — {texto}")
-        st.progress(frac)
-        st.caption(brl(empenhado_total))
-        if tem_dado_tg:
-            frac, texto = pct(liquidado_total, empenhado_total)
-            st.write(f"Liquidado — {texto}")
-            st.progress(frac)
-            st.caption(brl(liquidado_total))
-        else:
-            st.write("Liquidado — sem dado")
-            st.caption("Nenhuma extração do Tesouro Gerencial importada ainda para as NEs deste recorte.")
+    frac_empenhado, pct_empenhado = pct(empenhado_total, nc_liquida_total)
+    frac_liquidado, pct_liquidado = pct(liquidado_total, empenhado_total)
+    render_execution_panel(
+        "Execução orçamentária",
+        [
+            {"label": "NC líquida", "fraction": 1 if nc_liquida_total else 0, "percent": "100%" if nc_liquida_total else "—", "value": brl(nc_liquida_total), "tone": design_tokens.POSITIVE},
+            {"label": "Empenhado", "fraction": frac_empenhado, "percent": pct_empenhado, "value": brl(empenhado_total), "tone": design_tokens.WARNING},
+            {"label": "Liquidado", "fraction": frac_liquidado if tem_dado_tg else 0, "percent": pct_liquidado if tem_dado_tg else "Sem dado", "value": brl(liquidado_total) if tem_dado_tg else "Tesouro Gerencial", "tone": design_tokens.ACCENT},
+        ],
+    )
 
 with col_fin:
-    with st.container(border=True):
-        st.markdown("**Execução financeira**")
-        st.caption("Valores em R$")
-        st.write("PF líquida — 100%" if pf_liquida_total else "PF líquida — —")
-        st.progress(1.0 if pf_liquida_total else 0.0)
-        st.caption(brl(pf_liquida_total))
-        if tem_dado_tg:
-            frac, texto = pct(pago_total, pf_liquida_total)
-            st.write(f"Pago — {texto}")
-            st.progress(frac)
-            st.caption(brl(pago_total))
-        else:
-            st.write("Pago — sem dado")
-            st.caption("Nenhuma extração do Tesouro Gerencial importada ainda para as NEs deste recorte.")
-        st.caption("Diferença NC−PF")
-        st.markdown(f"**{brl(nc_liquida_total - pf_liquida_total)}**")
+    frac_pago, pct_pago = pct(pago_total, pf_liquida_total)
+    render_execution_panel(
+        "Execução financeira",
+        [
+            {"label": "PF líquida", "fraction": 1 if pf_liquida_total else 0, "percent": "100%" if pf_liquida_total else "—", "value": brl(pf_liquida_total), "tone": design_tokens.ACCENT},
+            {"label": "Pago", "fraction": frac_pago if tem_dado_tg else 0, "percent": pct_pago if tem_dado_tg else "Sem dado", "value": brl(pago_total) if tem_dado_tg else "Tesouro Gerencial", "tone": design_tokens.POSITIVE},
+        ],
+        difference=("Diferença NC−PF", brl(nc_liquida_total - pf_liquida_total)),
+    )
 
 # ---------------------------------------------------------------------- alertas prioritários
 st.markdown("#### Alertas prioritários")

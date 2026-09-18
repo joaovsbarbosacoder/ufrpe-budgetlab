@@ -1,63 +1,201 @@
-"""Página inicial do UFRPE BudgetLab."""
+"""Painel inicial do UFRPE BudgetLab.
+
+Resume apenas estados observáveis no ambiente local: disponibilidade das bases
+cadastradas e prazos orçamentários. Não calcula totais financeiros nem presume
+regras entre bases diferentes.
+"""
+
+from datetime import datetime
+from pathlib import Path
 
 import streamlit as st
 
-from src.design_tokens import NEGATIVE, WARNING
+from src.atualizar_planilhas import ESPECIFICACOES
+from src.importacao_dotacao import Manifesto as ManifestoDotacao
+from src.importacao_execucao import Manifesto as ManifestoExecucao
 from src.prazos_orcamentarios import (
-    CRITICIDADE_ATRASADO, CRITICIDADE_VENCENDO, carregar_prazos, prazos_com_criticidade,
+    CRITICIDADE_ATRASADO,
+    CRITICIDADE_VENCENDO,
+    carregar_prazos,
+    prazos_com_criticidade,
 )
-from src.ui_theme import render_page_header
-
-render_page_header(
-    "UFRPE BudgetLab",
-    "Ambiente institucional para gestão e análise orçamentária.",
-    "Gestão orçamentária",
-)
+from src.ui_theme import render_metric_grid, render_page_header
 
 
-def _render_card_prazos() -> None:
-    """Card só aparece quando há prazo vencido ou dentro da antecedência de alerta (pedido
-    explícito) — mesmo princípio de "só aparece o que precisa de ação" de
-    `app_pages/alertas_gerenciais.py`. Lê o mesmo cadastro/classificação do Painel de Prazos
-    Orçamentários (`src/prazos_orcamentarios.py`), sem duplicar a regra aqui."""
+def _resumo_bases() -> tuple[int, int, list[str], datetime | None]:
+    """Disponibilidade e atualização das bases, sem abrir as planilhas."""
 
+    estados: list[tuple[str, bool, datetime | None]] = []
+    for nome, manifesto in (
+        ("Execução Anual", ManifestoExecucao.atual()),
+        ("Dotação Anual", ManifestoDotacao.atual()),
+    ):
+        atualizado_em = None
+        if manifesto is not None:
+            try:
+                atualizado_em = datetime.fromisoformat(manifesto.data_extracao)
+            except (TypeError, ValueError):
+                atualizado_em = None
+        estados.append((nome, manifesto is not None, atualizado_em))
+
+    for especificacao in ESPECIFICACOES.values():
+        caminho = Path(especificacao.caminho)
+        atualizado_em = (
+            datetime.fromtimestamp(caminho.stat().st_mtime)
+            if caminho.exists()
+            else None
+        )
+        estados.append((especificacao.nome, caminho.exists(), atualizado_em))
+
+    ausentes = [nome for nome, disponivel, _ in estados if not disponivel]
+    datas = [data for _, disponivel, data in estados if disponivel and data is not None]
+    return len(estados) - len(ausentes), len(estados), ausentes, max(datas, default=None)
+
+
+def _resumo_prazos() -> tuple[int, int, int]:
     prazos = prazos_com_criticidade(carregar_prazos())
     if prazos.empty:
-        return
+        return 0, 0, 0
     pendentes = prazos[~prazos["concluido"]]
     atrasados = int((pendentes["criticidade"] == CRITICIDADE_ATRASADO).sum())
     vencendo = int((pendentes["criticidade"] == CRITICIDADE_VENCENDO).sum())
-    if not atrasados and not vencendo:
-        return
-
-    cor = NEGATIVE if atrasados else WARNING
-    with st.container(border=True):
-        st.markdown(f"<span style='color:{cor};font-weight:600'>⏰ Prazos Orçamentários</span>", unsafe_allow_html=True)
-        partes = []
-        if atrasados:
-            partes.append(f"**{atrasados}** atrasado(s)")
-        if vencendo:
-            partes.append(f"**{vencendo}** vencendo")
-        st.markdown(" · ".join(partes))
-        st.page_link("app_pages/painel_prazos.py", label="Ver painel de prazos", icon=":material/arrow_forward:")
+    return len(pendentes), atrasados, vencendo
 
 
-_render_card_prazos()
+bases_disponiveis, bases_cadastradas, bases_ausentes, ultima_atualizacao = _resumo_bases()
+prazos_pendentes, prazos_atrasados, prazos_vencendo = _resumo_prazos()
 
-with st.container(border=True):
-    st.subheader("Visão geral")
-    st.write(
-        "Cada base tem importação própria e versionada, com manifesto e "
-        "rastreabilidade completa até a célula de origem. A reimportação "
-        "acontece na página \"Atualizar Planilhas\" (menu Administração)."
+render_page_header(
+    "Visão geral",
+    "Acompanhamento integrado das bases e rotinas orçamentárias da UFRPE.",
+    "Gestão orçamentária",
+)
+
+if ultima_atualizacao is not None:
+    st.caption(f"Atualização mais recente entre as bases: {ultima_atualizacao:%d/%m/%Y às %H:%M}")
+else:
+    st.caption("Nenhuma base local disponível para identificar a última atualização.")
+
+render_metric_grid(
+    [
+        {
+            "label": ":material/database: Bases disponíveis",
+            "value": f"{bases_disponiveis} de {bases_cadastradas}",
+            "help": "Bases versionadas com manifesto e planilhas de trabalho encontradas localmente.",
+        },
+        {
+            "label": ":material/event_note: Prazos pendentes",
+            "value": prazos_pendentes,
+            "help": "Prazos cadastrados que ainda não foram concluídos.",
+        },
+        {
+            "label": ":material/error: Atrasados",
+            "value": prazos_atrasados,
+            "help": "Prazos pendentes cuja data já passou.",
+        },
+        {
+            "label": ":material/schedule: Vencendo",
+            "value": prazos_vencendo,
+            "help": "Prazos dentro da antecedência configurada em cada cadastro.",
+        },
+    ]
+)
+
+if bases_ausentes:
+    st.warning(
+        "Bases ainda não disponíveis: " + ", ".join(bases_ausentes) + ".",
+        icon=":material/database_off:",
+    )
+else:
+    st.success(
+        "Todas as bases cadastradas estão disponíveis localmente.",
+        icon=":material/check_circle:",
     )
 
-with st.container(border=True):
-    st.subheader("Módulos disponíveis")
-    st.markdown(
-        "- Dotação Orçamentária (Dotação Anual)\n"
-        "- Painel por Ação de Governo (Dotação Anual)\n"
-        "- Execução Orçamentária (Execução Anual)"
+if prazos_atrasados:
+    st.error(
+        f"{prazos_atrasados} prazo(s) orçamentário(s) atrasado(s) requer(em) atenção.",
+        icon=":material/error:",
+    )
+elif prazos_vencendo:
+    st.warning(
+        f"{prazos_vencendo} prazo(s) entrou(aram) na antecedência de alerta configurada.",
+        icon=":material/schedule:",
+    )
+elif prazos_pendentes:
+    st.success(
+        "Nenhum prazo pendente está em situação de alerta.",
+        icon=":material/check_circle:",
+    )
+else:
+    st.info("Nenhum prazo orçamentário pendente cadastrado.", icon=":material/info:")
+
+st.subheader("Acessos rápidos")
+st.caption(
+    "Abra diretamente as áreas mais utilizadas. Cada módulo mantém sua "
+    "própria fonte e rastreabilidade."
+)
+
+col_planejamento, col_operacao, col_gestao = st.columns(3, vertical_alignment="top")
+
+with col_planejamento.container(border=True, height="stretch"):
+    st.markdown("#### Planejamento e execução")
+    st.caption("Dotação, execução anual e acompanhamento por ação.")
+    st.page_link(
+        "app_pages/dotacao_orcamentaria.py",
+        label="Dotação orçamentária",
+        icon=":material/account_balance:",
+    )
+    st.page_link(
+        "app_pages/execucao_orcamentaria.py",
+        label="Execução orçamentária",
+        icon=":material/query_stats:",
+    )
+    st.page_link(
+        "app_pages/painel_acoes.py",
+        label="Painel por ação",
+        icon=":material/dashboard:",
     )
 
-st.caption("As funcionalidades futuras serão habilitadas conforme suas regras de negócio forem confirmadas.")
+with col_operacao.container(border=True, height="stretch"):
+    st.markdown("#### Operação")
+    st.caption("Consultas detalhadas e acompanhamento das despesas recorrentes.")
+    st.page_link(
+        "app_pages/consulta_empenhos.py",
+        label="Consulta de empenhos",
+        icon=":material/receipt_long:",
+    )
+    st.page_link(
+        "app_pages/bolsas_auxilios.py",
+        label="Bolsas e auxílios",
+        icon=":material/school:",
+    )
+    st.page_link(
+        "app_pages/despesas_pessoal.py",
+        label="Despesas de pessoal",
+        icon=":material/groups:",
+    )
+
+with col_gestao.container(border=True, height="stretch"):
+    st.markdown("#### Gestão e controle")
+    st.caption("Alertas, prazos e atualização controlada das fontes.")
+    st.page_link(
+        "app_pages/alertas_gerenciais.py",
+        label="Alertas gerenciais",
+        icon=":material/notifications:",
+    )
+    st.page_link(
+        "app_pages/painel_prazos.py",
+        label="Gerenciamento de prazos",
+        icon=":material/event_upcoming:",
+    )
+    st.page_link(
+        "app_pages/atualizar_planilhas.py",
+        label="Atualizar planilhas",
+        icon=":material/upload_file:",
+    )
+
+st.caption(
+    "Os indicadores desta página representam disponibilidade local e prazos cadastrados; "
+    "não combinam valores financeiros entre bases com datas de extração diferentes."
+)

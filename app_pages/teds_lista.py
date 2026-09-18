@@ -18,6 +18,7 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
+from src import design_tokens
 from src.teds_normalizacao import texto_para_valor
 from src.teds_ui import (
     alertas_de_ne_para_ted,
@@ -36,6 +37,7 @@ from src.teds_ui import (
     historico_lotes_do_ted,
     injetar_css,
     pct,
+    render_kpi_strip,
     rotulo_gravidade,
     rotulo_tipo_alerta,
     soma_tg_por_teds,
@@ -294,10 +296,11 @@ elif com_alerta == "Sem alertas":
     visivel = visivel[~visivel["chave_ted"].isin(alertas_por_ted.keys())]
 
 em_execucao = visivel[visivel["estado_atual"].astype(str).str.contains("Execução", case=False, na=False)]
-stat_cols = st.columns(3)
-stat_cols[0].container(border=True).metric("TEDs encontrados", str(len(visivel)))
-stat_cols[1].container(border=True).metric("Em execução", str(len(em_execucao)))
-stat_cols[2].container(border=True).metric("Com alertas", str(visivel["chave_ted"].isin(alertas_por_ted.keys()).sum()))
+render_kpi_strip([
+    {"label": "TEDs encontrados", "value": len(visivel), "icon": "▤", "tone": design_tokens.ACCENT},
+    {"label": "Em execução", "value": len(em_execucao), "icon": "▥", "tone": design_tokens.POSITIVE},
+    {"label": "Com alertas", "value": int(visivel["chave_ted"].isin(alertas_por_ted.keys()).sum()), "icon": "!", "tone": design_tokens.NEGATIVE},
+])
 
 st.markdown("#### Lista de TEDs")
 if visivel.empty:
