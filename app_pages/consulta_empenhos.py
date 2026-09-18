@@ -117,6 +117,8 @@ from src.design_tokens import (
     FONT_BODY,
     FONT_HEADING,
     POSITIVE,
+    RADIUS,
+    RADIUS_SM,
     SIZE,
     SPACE,
     SURFACE,
@@ -333,9 +335,13 @@ def _apply_filters(dataframe: pd.DataFrame, selections: dict[str, list[object]])
     return apply_filters(dataframe, FILTER_FIELDS, selections)
 
 
-def _render_filtros_rapidos(dataframe: pd.DataFrame, source_key: str) -> dict[str, list[object]]:
+def _render_filtros_rapidos(
+    dataframe: pd.DataFrame,
+    source_key: str,
+    columns: list[object] | None = None,
+) -> dict[str, list[object]]:
     return _render_filtros_rapidos_compartilhado(
-        dataframe, FILTER_FIELDS_RAPIDOS, FILTER_FIELDS, _PREFIXO_FILTRO, source_key
+        dataframe, FILTER_FIELDS_RAPIDOS, FILTER_FIELDS, _PREFIXO_FILTRO, source_key, columns
     )
 
 
@@ -364,7 +370,7 @@ def _inject_css() -> None:
         .ce-kpi {{
             min-height: 86px; display: flex; align-items: center; gap: 11px;
             background: {SURFACE}; padding: 12px 14px; border: 1px solid {BORDER};
-            border-radius: 7px; box-shadow: 0 3px 12px rgba(11,53,87,.055);
+            border-radius: {RADIUS}; box-shadow: 0 3px 12px rgba(11,53,87,.055);
         }}
         .ce-kpi-icon {{
             flex: 0 0 42px; width: 42px; height: 42px; border-radius: 50%;
@@ -383,7 +389,7 @@ def _inject_css() -> None:
         .ce-detail-head {{
             padding: 15px 18px 14px 18px; margin: -1rem -1rem .8rem;
             background: {SURFACE_ALT}; border-bottom: 1px solid {BORDER};
-            border-radius: 7px 7px 0 0;
+            border-radius: {RADIUS} {RADIUS} 0 0;
         }}
         .ce-kicker {{
             font-family: {FONT_HEADING}; font-size: 10px; letter-spacing: 0.16em;
@@ -438,11 +444,11 @@ def _inject_css() -> None:
         */
         .st-key-ce_list_select button {{
             justify-content: flex-start; text-align: left; min-height: 42px;
-            border-radius: 6px 6px 0 0;
+            border-radius: {RADIUS_SM} {RADIUS_SM} 0 0;
         }}
         .ce-list-info {{
             padding: 4px 9px 9px; border: 1px solid {BORDER}; border-top: 0;
-            border-radius: 0 0 6px 6px; margin: -1px 0 7px;
+            border-radius: 0 0 {RADIUS_SM} {RADIUS_SM}; margin: -1px 0 7px;
             background: {SURFACE_ALT};
         }}
         .ce-list-fav {{
@@ -903,13 +909,11 @@ def _render_detalhe(
 
 
 # ---------------------------------------------------------------------- página
-cabecalho, acao_limpar = st.columns([5, 1], vertical_alignment="bottom")
-with cabecalho:
-    render_page_header(
-        "Consulta de Empenhos",
-        "Execução Anual da Despesa (BI CPOC), no nível da nota de empenho.",
-        "Execução",
-    )
+render_page_header(
+    "Consulta de Empenhos",
+    "Execução Anual da Despesa (BI CPOC), no nível da nota de empenho.",
+    "Execução",
+)
 _inject_css()
 
 manifesto = Manifesto.atual()
@@ -958,33 +962,29 @@ if CAMINHO_LIQUIDACAO_COMPETENCIA.exists():
 
 source_key = manifesto.sha256[:12]
 
-with acao_limpar:
-    if st.button("Limpar filtros", key=f"consulta_empenhos_limpar_{source_key}"):
-        _limpar_filtros(source_key)
-        st.rerun()
+with st.container(border=True, key="ce_filter_panel"):
+    filter_columns = st.columns([1.7, 1, 1.35, 1.2, 1.2], vertical_alignment="bottom")
+    with filter_columns[0]:
+        busca = st.text_input(
+            "Busca livre",
+            key=f"consulta_empenhos_busca_{source_key}",
+            placeholder="NE, favorecido, ação, PI, processo…",
+        )
 
-busca_col, *_ = st.columns([2, 1, 1, 1, 1])
-with busca_col:
-    busca = st.text_input(
-        "Busca livre",
-        key=f"consulta_empenhos_busca_{source_key}",
-        placeholder="NE, descrição, favorecido, natureza, PI, PTRES, item (2026+)…",
-    )
+    # a busca livre restringe as OPÇÕES dos filtros rápidos/avançados também, não só o resultado
+    # final — sem isso, os filtros ofereciam atributos de NEs fora da busca (bug relatado: opção
+    # aparecia sem nenhuma relação com os empenhos exibidos). Por `ne_ccor` (não linha a linha,
+    # ver docstring de `_dataframe_restrito_a_busca`), pra não perder linha de item de execução
+    # da mesma NE e quebrar a agregação por falta de linha, não por ausência real do dado.
+    dataframe_buscado = _dataframe_restrito_a_busca(dataframe, busca, itens_por_ne)
+    if busca and dataframe_buscado.empty:
+        # sai aqui, antes do "Nenhum registro corresponde à combinação de filtros selecionada"
+        # mais abaixo (que fala de FILTROS DE ATRIBUTO) — a causa da lista vazia é a busca, não
+        # uma seleção de filtro, a mensagem precisa dizer a coisa certa.
+        st.warning("Nenhum empenho encontrado com os filtros informados.")
+        st.stop()
 
-# a busca livre restringe as OPÇÕES dos filtros rápidos/avançados também, não só o resultado
-# final — sem isso, os filtros ofereciam atributos de NEs fora da busca (bug relatado: opção
-# aparecia sem nenhuma relação com os empenhos exibidos). Por `ne_ccor` (não linha a linha,
-# ver docstring de `_dataframe_restrito_a_busca`), pra não perder linha de item de execução
-# da mesma NE e quebrar a agregação por falta de linha, não por ausência real do dado.
-dataframe_buscado = _dataframe_restrito_a_busca(dataframe, busca, itens_por_ne)
-if busca and dataframe_buscado.empty:
-    # sai aqui, antes do "Nenhum registro corresponde à combinação de filtros selecionada"
-    # mais abaixo (que fala de FILTROS DE ATRIBUTO) — a causa da lista vazia é a busca, não
-    # uma seleção de filtro, a mensagem precisa dizer a coisa certa.
-    st.warning("Nenhum empenho encontrado com os filtros informados.")
-    st.stop()
-
-selections = _render_filtros_rapidos(dataframe_buscado, source_key)
+    selections = _render_filtros_rapidos(dataframe_buscado, source_key, list(filter_columns[1:]))
 
 # "Notas de Empenho (NE)" (pedido explícito): só aparece com Exercício selecionado — listar
 # as ~3.700 NEs da base inteira sem esse recorte não seria útil (e ficaria pesado). Logo
@@ -995,30 +995,41 @@ selections = _render_filtros_rapidos(dataframe_buscado, source_key)
 # ainda cruza com os filtros avançados (aplicados a `filtrado` mais abaixo), então nenhuma
 # combinação incoerente chega a aparecer na lista/nos cards, só a lista de opções da própria
 # caixa de NE é que não se restringe por eles.
-ne_key = f"consulta_empenhos_ne_{source_key}"
-ne_selecionadas: list[str] = []
-if "ano" in selections:
-    filtrado_rapido = _apply_filters(dataframe_buscado, selections)
-    mapa_ne = _opcoes_ne(filtrado_rapido)
-    persistido = st.session_state.get(ne_key, [])
-    valido = [rotulo for rotulo in persistido if rotulo in mapa_ne]
-    if valido != persistido:
-        st.session_state[ne_key] = valido
-    rotulos_ne = st.multiselect(
-        "Notas de Empenho (NE)",
-        options=list(mapa_ne),
-        key=ne_key,
-        help="Filtra para uma ou mais NEs específicas do recorte já filtrado pelos filtros rápidos acima.",
-    )
-    ne_selecionadas = [mapa_ne[rotulo] for rotulo in rotulos_ne]
-else:
-    # sem Exercício selecionado, não há lista — e qualquer seleção antiga (de quando havia um
-    # Exercício escolhido) fica sem efeito e some da sessão, para não travar invisível.
-    st.session_state.pop(ne_key, None)
-    st.caption("Selecione um Exercício acima para filtrar por Nota de Empenho (NE) específica.")
+    ne_key = f"consulta_empenhos_ne_{source_key}"
+    ne_selecionadas: list[str] = []
+    if "ano" in selections:
+        filtrado_rapido = _apply_filters(dataframe_buscado, selections)
+        mapa_ne = _opcoes_ne(filtrado_rapido)
+        persistido = st.session_state.get(ne_key, [])
+        valido = [rotulo for rotulo in persistido if rotulo in mapa_ne]
+        if valido != persistido:
+            st.session_state[ne_key] = valido
+        rotulos_ne = st.multiselect(
+            "Notas de Empenho (NE)",
+            options=list(mapa_ne),
+            key=ne_key,
+            help="Filtra para uma ou mais NEs específicas do recorte já filtrado pelos filtros rápidos acima.",
+        )
+        ne_selecionadas = [mapa_ne[rotulo] for rotulo in rotulos_ne]
+    else:
+        # sem Exercício selecionado, não há lista — e qualquer seleção antiga (de quando havia um
+        # Exercício escolhido) fica sem efeito e some da sessão, para não travar invisível.
+        st.session_state.pop(ne_key, None)
+        st.caption("Selecione um Exercício acima para filtrar por Nota de Empenho (NE) específica.")
 
-with st.expander("Filtros por atributo (12 campos, cruzados) — combinações sem registro não aparecem nas listas"):
-    _render_filtros_avancados(dataframe_buscado, source_key, selections)
+    advanced_column, clear_column = st.columns([5, 1], vertical_alignment="top")
+    with advanced_column:
+        with st.expander("Filtros avançados"):
+            st.caption("12 atributos cruzados; combinações sem registro não aparecem nas listas.")
+            _render_filtros_avancados(dataframe_buscado, source_key, selections)
+    with clear_column:
+        if st.button(
+            "Limpar filtros",
+            key=f"consulta_empenhos_limpar_{source_key}",
+            use_container_width=True,
+        ):
+            _limpar_filtros(source_key)
+            st.rerun()
 
 filtrado = _apply_filters(dataframe_buscado, selections)
 if ne_selecionadas:

@@ -249,34 +249,54 @@ if not st.session_state.get(_ano_padrao_aplicado_key):
     st.session_state[_ano_key] = [str(ano_extracao)]  # multiselect: valor é sempre uma lista
     st.session_state[_ano_padrao_aplicado_key] = True
 
-acao_limpar_col, *_ = st.columns([1, 4])
-with acao_limpar_col:
-    if st.button("Limpar filtros", key=f"{_PREFIXO_FILTRO}_limpar_{source_key}"):
-        limpar_filtros(CAMPOS_EXECUCAO, _PREFIXO_FILTRO, source_key)
-        st.rerun()
+with st.container(border=True, key="er_filter_panel"):
+    filter_columns = st.columns([1.7, 1, 1.35, 1.2, 1.2], vertical_alignment="bottom")
+    with filter_columns[0]:
+        busca = st.text_input(
+            "Busca livre",
+            key=f"{_PREFIXO_FILTRO}_busca_{source_key}",
+            placeholder="NE, favorecido, ação, PI, processo…",
+        )
+    # a busca livre restringe as OPÇÕES dos filtros rápidos/avançados também, não só o resultado
+    # final — sem isso, os filtros ofereciam atributos de NEs fora da busca (bug relatado em
+    # consulta_empenhos.py, mesmo mecanismo de filtro aqui). Por `ne_ccor`, não linha a linha (ver
+    # docstring de `_dataframe_restrito_a_busca`).
+    dataframe_buscado = _dataframe_restrito_a_busca(dataframe, busca)
+    if busca and dataframe_buscado.empty:
+        # sai aqui, antes do "Nenhum registro corresponde à combinação de filtros selecionada"
+        # mais abaixo (que fala de FILTROS DE ATRIBUTO) — a causa da lista vazia é a busca, não
+        # uma seleção de filtro, a mensagem precisa dizer a coisa certa.
+        st.warning("Nenhum empenho encontrado com os filtros informados.")
+        st.stop()
 
-busca_col, *_ = st.columns([2, 1, 1, 1, 1])
-with busca_col:
-    busca = st.text_input(
-        "Busca livre",
-        key=f"{_PREFIXO_FILTRO}_busca_{source_key}",
-        placeholder="NE, descrição, favorecido, natureza, PI, PTRES…",
+    selections = render_filtros_rapidos(
+        dataframe_buscado,
+        CAMPOS_RAPIDOS_EXECUCAO,
+        CAMPOS_EXECUCAO,
+        _PREFIXO_FILTRO,
+        source_key,
+        list(filter_columns[1:]),
     )
-# a busca livre restringe as OPÇÕES dos filtros rápidos/avançados também, não só o resultado
-# final — sem isso, os filtros ofereciam atributos de NEs fora da busca (bug relatado em
-# consulta_empenhos.py, mesmo mecanismo de filtro aqui). Por `ne_ccor`, não linha a linha (ver
-# docstring de `_dataframe_restrito_a_busca`).
-dataframe_buscado = _dataframe_restrito_a_busca(dataframe, busca)
-if busca and dataframe_buscado.empty:
-    # sai aqui, antes do "Nenhum registro corresponde à combinação de filtros selecionada"
-    # mais abaixo (que fala de FILTROS DE ATRIBUTO) — a causa da lista vazia é a busca, não
-    # uma seleção de filtro, a mensagem precisa dizer a coisa certa.
-    st.warning("Nenhum empenho encontrado com os filtros informados.")
-    st.stop()
-
-selections = render_filtros_rapidos(dataframe_buscado, CAMPOS_RAPIDOS_EXECUCAO, CAMPOS_EXECUCAO, _PREFIXO_FILTRO, source_key)
-with st.expander("Filtros por atributo (12 campos, cruzados) — combinações sem registro não aparecem nas listas"):
-    render_filtros_avancados(dataframe_buscado, CAMPOS_AVANCADOS_EXECUCAO, CAMPOS_EXECUCAO, _PREFIXO_FILTRO, source_key, selections)
+    advanced_column, clear_column = st.columns([5, 1], vertical_alignment="top")
+    with advanced_column:
+        with st.expander("Filtros avançados"):
+            st.caption("12 atributos cruzados; combinações sem registro não aparecem nas listas.")
+            render_filtros_avancados(
+                dataframe_buscado,
+                CAMPOS_AVANCADOS_EXECUCAO,
+                CAMPOS_EXECUCAO,
+                _PREFIXO_FILTRO,
+                source_key,
+                selections,
+            )
+    with clear_column:
+        if st.button(
+            "Limpar filtros",
+            key=f"{_PREFIXO_FILTRO}_limpar_{source_key}",
+            use_container_width=True,
+        ):
+            limpar_filtros(CAMPOS_EXECUCAO, _PREFIXO_FILTRO, source_key)
+            st.rerun()
 
 filtrado = apply_filters(dataframe_buscado, CAMPOS_EXECUCAO, selections)
 if filtrado.empty:

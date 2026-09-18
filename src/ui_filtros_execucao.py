@@ -38,7 +38,7 @@ Contrato público:
     option_mapping(dataframe, code_column, description_column) -> dict[str, object]
     selected_values(label, mapping, key) -> list[object]
     apply_filters(dataframe, campos_todos, selections) -> pd.DataFrame
-    render_filtros_rapidos(dataframe, campos_rapidos, campos_todos, prefixo, source_key) -> dict[str, list[object]]
+    render_filtros_rapidos(dataframe, campos_rapidos, campos_todos, prefixo, source_key, columns=None) -> dict[str, list[object]]
     render_filtros_avancados(dataframe, campos_avancados, campos_todos, prefixo, source_key, selections) -> None
     limpar_filtros(campos_todos, prefixo, source_key) -> None
 """
@@ -200,15 +200,19 @@ def render_filtros_rapidos(
     campos_todos: Sequence[CampoFiltro],
     prefixo: str,
     source_key: str,
+    columns: Sequence[object] | None = None,
 ) -> dict[str, list[object]]:
     """Desenha os filtros rápidos (sempre visíveis, um `st.multiselect` por coluna) — cada
     campo mostra só os valores que ainda têm registro dado o que está selecionado em QUALQUER
     outro campo (`_todas_selecoes_atuais`/`_disponiveis_excluindo`), rápido ou avançado, não só
-    nos campos rápidos desenhados antes dele."""
+    nos campos rápidos desenhados antes dele. `columns` permite integrar os widgets a uma barra
+    que também contenha a busca livre, sem duplicar a lógica do componente."""
 
     todas_selecoes = _todas_selecoes_atuais(dataframe, campos_todos, prefixo, source_key)
     selections: dict[str, list[object]] = {}
-    columns = st.columns(len(campos_rapidos))
+    columns = list(columns) if columns is not None else st.columns(len(campos_rapidos))
+    if len(columns) != len(campos_rapidos):
+        raise ValueError("A quantidade de colunas deve coincidir com a de filtros rápidos.")
     for column, (filter_name, label, code_column, description_column) in zip(
         columns, campos_rapidos, strict=True
     ):

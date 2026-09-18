@@ -53,8 +53,8 @@ TRACK = {"tight": "0.06em", "label": "0.12em", "kicker": "0.16em"}
 
 # --- Espaçamento / forma (não varia por tema) -------------------------------
 SPACE = {"xs": "6px", "sm": "10px", "md": "14px", "lg": "18px", "xl": "22px", "xxl": "32px"}
-RADIUS = "8px"
-RADIUS_SM = "6px"
+RADIUS = "14px"
+RADIUS_SM = "10px"
 CARD_PAD = "16px 18px"
 
 # Soma das larguras mínimas de SUBDIV_COLUMNS + os 9 espaçamentos de

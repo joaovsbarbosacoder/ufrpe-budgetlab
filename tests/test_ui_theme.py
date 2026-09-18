@@ -27,6 +27,16 @@ class UiThemeTests(unittest.TestCase):
         self.assertIn(design_tokens.BG, css)
         self.assertIn("ufrpe-page-context", css)
         self.assertIn("stDataFrame", css)
+        self.assertIn(f"border-radius: {design_tokens.RADIUS}", css)
+        self.assertIn(f"border-radius: {design_tokens.RADIUS_SM}", css)
+
+    def test_rounded_shape_tokens_match_streamlit_theme(self) -> None:
+        config = (Path(__file__).resolve().parents[1] / ".streamlit" / "config.toml").read_text(encoding="utf-8")
+
+        self.assertEqual(design_tokens.RADIUS, "14px")
+        self.assertEqual(design_tokens.RADIUS_SM, "10px")
+        self.assertIn('baseRadius = "large"', config)
+        self.assertIn('buttonRadius = "medium"', config)
 
     def test_dark_mode_is_not_available(self) -> None:
         css = _theme_css()

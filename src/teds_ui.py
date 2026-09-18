@@ -97,7 +97,7 @@ def injetar_css() -> None:
             white-space: normal; line-height: 1.35; font-weight: 700;
         }}
         .teds-card {{
-            border: 1px solid {d.BORDER}; border-radius: 7px; padding: 14px 16px;
+            border: 1px solid {d.BORDER}; border-radius: {d.RADIUS}; padding: 14px 16px;
             background: {d.SURFACE}; box-shadow: 0 3px 12px rgba(11,53,87,.06);
         }}
         .teds-muted {{ color: {d.TEXT_MUTED}; font-size: 12.5px; }}
@@ -111,7 +111,7 @@ def injetar_css() -> None:
         }}
         .teds-kpi {{
             min-height:92px; display:flex; align-items:center; gap:14px;
-            background:{d.SURFACE}; border:1px solid {d.BORDER}; border-radius:7px;
+            background:{d.SURFACE}; border:1px solid {d.BORDER}; border-radius:{d.RADIUS};
             padding:14px 16px; box-shadow:0 3px 12px rgba(11,53,87,.055);
         }}
         .teds-kpi-icon {{
@@ -122,7 +122,7 @@ def injetar_css() -> None:
         .teds-kpi-label {{color:{d.TEXT_MUTED};font-size:13px;font-weight:650;line-height:1.25}}
         .teds-kpi-value {{color:var(--tone);font-size:24px;font-weight:800;line-height:1.2;
             letter-spacing:-.035em;font-variant-numeric:tabular-nums}}
-        .teds-panel {{background:{d.SURFACE};border:1px solid {d.BORDER};border-radius:7px;
+        .teds-panel {{background:{d.SURFACE};border:1px solid {d.BORDER};border-radius:{d.RADIUS};
             padding:16px 18px;box-shadow:0 3px 12px rgba(11,53,87,.055);height:100%}}
         .teds-panel-head {{display:flex;align-items:center;justify-content:space-between;margin-bottom:15px}}
         .teds-panel-title {{font:700 18px {d.FONT_HEADING};color:{d.TEXT}}}

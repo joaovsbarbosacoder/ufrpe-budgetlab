@@ -69,7 +69,7 @@ def _theme_css() -> str:
     }}
     [data-testid="stDataFrame"] {{
         border: 1px solid {d.BORDER};
-        border-radius: 7px;
+        border-radius: {d.RADIUS};
         overflow: hidden;
         box-shadow: 0 2px 8px rgba(11, 53, 87, 0.05);
     }}
@@ -118,7 +118,7 @@ def _theme_css() -> str:
         min-height: 2.8rem;
         margin: 0.1rem 0.45rem;
         padding-left: 0.8rem;
-        border-radius: 0;
+        border-radius: {d.RADIUS_SM};
         border-left: 3px solid transparent;
         color: {d.SIDEBAR_TEXT} !important;
     }}
@@ -225,6 +225,17 @@ def _theme_css() -> str:
     [data-testid="stCaptionContainer"],
     [data-testid="stCaptionContainer"] p {{ color: {d.TEXT_MUTED} !important; }}
     [data-testid="stWidgetLabel"] p {{ color: {d.TEXT} !important; }}
+    [data-testid="stTextInput"] [data-testid="stWidgetLabel"] p,
+    [data-testid="stTextArea"] [data-testid="stWidgetLabel"] p,
+    [data-testid="stNumberInput"] [data-testid="stWidgetLabel"] p,
+    [data-testid="stSelectbox"] [data-testid="stWidgetLabel"] p,
+    [data-testid="stMultiSelect"] [data-testid="stWidgetLabel"] p {{
+        color: {d.TEXT_MUTED} !important;
+        font-size: 0.68rem;
+        font-weight: 750;
+        letter-spacing: 0.045em;
+        text-transform: uppercase;
+    }}
 
     /* Widgets nativos (texto/seleção/botão/checkbox) — cobertura explícita para manter
        contraste consistente sobre as superfícies claras. */
@@ -234,20 +245,20 @@ def _theme_css() -> str:
         background: {d.SURFACE} !important;
         color: {d.TEXT} !important;
         border-color: {d.BORDER} !important;
+        border-radius: {d.RADIUS_SM} !important;
     }}
     /* Caixa fechada do selectbox/multiselect. Esta versão do Streamlit NÃO usa mais
        BaseWeb aqui (confirmado no bundle: `Selectbox.*.js`/`Multiselect.*.js` usam
        React Aria + styled-components, sem nenhum atributo `data-baseweb` — a regra
        anterior mirava algo que não existe nesta versão, por isso nunca funcionou). A
-       caixa em si é um `<input>` comum dentro do contêiner com testid estável; cobrir
-       o contêiner e todos os seus `div` diretos (várias camadas, sem nome próprio)
-       dá conta do fundo sem depender de uma classe gerada (essas mudam a cada build). */
-    [data-testid="stSelectbox"],
-    [data-testid="stSelectbox"] div,
-    [data-testid="stMultiSelect"],
-    [data-testid="stMultiSelect"] div {{
+       caixa em si é um `<input>` comum dentro do contêiner com testid estável. `:has(> input)`
+       alcança somente a camada visual da caixa, sem pintar também o fundo atrás do rótulo,
+       e continua independente das classes geradas (essas mudam a cada build). */
+    [data-testid="stSelectbox"] div:has(> input),
+    [data-testid="stMultiSelect"] div:has(> input) {{
         background-color: {d.SURFACE} !important;
         border-color: {d.BORDER} !important;
+        border-radius: {d.RADIUS_SM} !important;
     }}
     [data-testid="stSelectbox"] input,
     [data-testid="stSelectbox"] *,
@@ -275,7 +286,7 @@ def _theme_css() -> str:
         background: {d.SURFACE} !important;
         border-color: {d.BORDER} !important;
         min-height: 2.55rem;
-        border-radius: 6px;
+        border-radius: {d.RADIUS_SM};
         font-weight: 700;
         box-shadow: none;
     }}

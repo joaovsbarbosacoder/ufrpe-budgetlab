@@ -17,8 +17,8 @@ baseFontSize = 15
 baseFontWeight = 400
 headingFontSizes = ["32px", "24px", "20px", "16px", "14px", "12px"]
 headingFontWeights = [600, 600, 600, 600, 600, 600]
-baseRadius = "small"
-buttonRadius = "small"
+baseRadius = "large"
+buttonRadius = "medium"
 showWidgetBorder = true
 linkUnderline = false
 
