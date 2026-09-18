@@ -16,6 +16,7 @@ from src.despesas_pessoal import (
     MULTIPLICADOR_13,
     MULTIPLICADOR_13_3333,
     REGRA_DECIMO_TERCEIRO,
+    REGRA_INDENIZACAO_POR_GRUPO,
     REGRA_MULTIPLICADOR,
     REGRA_PROPORCAO_HISTORICA,
     REGRA_SENTENCA_POR_GRUPO,
@@ -106,7 +107,7 @@ class TestRegraParaNatureza(unittest.TestCase):
 
     def test_ed94_indenizacoes_trabalhistas_defensivo(self):
         regra = regra_para_natureza("319094", "31909401")
-        self.assertEqual(regra.multiplicador, MULTIPLICADOR_12)
+        self.assertEqual(regra.tipo, REGRA_INDENIZACAO_POR_GRUPO)
 
     def test_ed96_ressarcimento_defensivo(self):
         regra = regra_para_natureza("319096", "31909601")
@@ -132,6 +133,18 @@ class TestMultiplicadorEfetivo(unittest.TestCase):
     def test_multiplicador_direto_ignora_grupo(self):
         regra = regra_para_natureza("319004", "x")
         self.assertEqual(multiplicador_efetivo(regra, GRUPO_RPPS), MULTIPLICADOR_13_3333)
+
+    def test_indenizacao_ativo_e_12(self):
+        regra = regra_para_natureza("319094", "x")
+        self.assertEqual(multiplicador_efetivo(regra, GRUPO_ATIVO), MULTIPLICADOR_12)
+
+    def test_indenizacao_inativo_e_13(self):
+        regra = regra_para_natureza("319094", "x")
+        self.assertEqual(multiplicador_efetivo(regra, GRUPO_INATIVO), MULTIPLICADOR_13)
+
+    def test_indenizacao_outros_grupos_e_12(self):
+        regra = regra_para_natureza("319094", "x")
+        self.assertEqual(multiplicador_efetivo(regra, GRUPO_RPPS), MULTIPLICADOR_12)
 
     def test_regra_sem_multiplicador_direto_levanta_erro(self):
         regra = regra_para_natureza("319092", "x")

@@ -51,6 +51,16 @@ nunca presumir:
      segunda pertenceria a uma Ação de Governo INTEIRA ainda fora de `ACOES_ESCOPO` —
      sem o código dela, não há como detectá-la; bastaria somar a `ACOES_ESCOPO` e ao
      `_GRUPO_POR_ACAO` quando o código for conhecido.
+  7. (18/09/2026) Auditoria externa comparou a metodologia deste módulo com a matriz de
+     projeção 2023v3 (modelo original da SPO/MEC). Duas divergências resolvidas:
+     - Abono pecuniário/constitucional/adiantamento de férias (item 3 acima, proporção
+       histórica): CONFIRMADO manter como está — divergência deliberada e consciente em
+       relação à matriz 2023v3, não um erro a corrigir.
+     - ED_94 (Indenizações e Restituições Trabalhistas, item 3 acima): tinha um único
+       multiplicador x12 para todos os grupos. A matriz 2023v3 pede x12 para Ativo mas
+       x13 para Inativo. CORRIGIDO para multiplicador por grupo (Ativo -> x12, Inativo
+       -> x13), alinhando ao modelo — sem efeito na projeção atual (base de inativos
+       ainda é zero), mas evita divergência quando essa rubrica passar a ter execução.
 
 Contrato público:
     classificar_grupo(acao_cod) -> str | None
@@ -139,6 +149,7 @@ MULTIPLICADOR_12 = 12.0
 
 REGRA_MULTIPLICADOR = "multiplicador"
 REGRA_SENTENCA_POR_GRUPO = "sentenca_por_grupo"
+REGRA_INDENIZACAO_POR_GRUPO = "indenizacao_por_grupo"
 REGRA_DECIMO_TERCEIRO = "decimo_terceiro"
 REGRA_PROPORCAO_HISTORICA = "proporcao_historica"
 REGRA_ZERO = "zero"
@@ -182,6 +193,13 @@ TABELA_REGRAS: dict[str, RegraRubrica] = {
         "319096", "Ressarcimento de Despesa de Pessoal Requisitado", REGRA_MULTIPLICADOR, MULTIPLICADOR_13_3333,
         origem="ED_96 do briefing — sem execução observada em 2026, incluída defensivamente (decisão 3).",
     ),
+    # --- indenizações trabalhistas: multiplicador depende do grupo (decisão 7) ---
+    "319094": _regra(
+        "319094", "Indenizações e Restituições Trabalhistas", REGRA_INDENIZACAO_POR_GRUPO,
+        origem="ED_94 do briefing — sem execução observada em 2026, incluída defensivamente (decisão 3). "
+        "Multiplicador por grupo confirmado em 18/09/2026 (decisão 7): Ativo (20TP) -> x12; "
+        "Inativo (0181) -> x13, alinhado ao relatório-modelo (antes x12 para todos).",
+    ),
     # --- grupo ×13 (12 meses + 13º, sem 1/3 férias) ---
     "319013": _regra("319013", "Obrigações Patronais (RGPS)", REGRA_MULTIPLICADOR, MULTIPLICADOR_13),
     "319113": _regra("319113", "Obrigações Patronais — RPPS (Ação 09HB)", REGRA_MULTIPLICADOR, MULTIPLICADOR_13),
@@ -190,10 +208,6 @@ TABELA_REGRAS: dict[str, RegraRubrica] = {
     "319003": _regra("319003", "Pensões (excl. 13º)", REGRA_MULTIPLICADOR, MULTIPLICADOR_12),
     "319011": _regra("319011", "Vencimentos e Vantagens Fixas — Pessoal Civil (excl. 13º/férias)", REGRA_MULTIPLICADOR, MULTIPLICADOR_12),
     "319016": _regra("319016", "Outras Despesas Variáveis — Pessoal Civil", REGRA_MULTIPLICADOR, MULTIPLICADOR_12),
-    "319094": _regra(
-        "319094", "Indenizações e Restituições Trabalhistas", REGRA_MULTIPLICADOR, MULTIPLICADOR_12,
-        origem="ED_94 do briefing — sem execução observada em 2026, incluída defensivamente (decisão 3).",
-    ),
     # --- sentenças judiciais: multiplicador depende do grupo (decisão 4) ---
     "319091": _regra(
         "319091", "Sentenças Judiciais", REGRA_SENTENCA_POR_GRUPO,
@@ -273,10 +287,10 @@ def regra_para_natureza(natureza_despesa_cod: str, natureza_detalhada_cod: str |
 
 
 def multiplicador_efetivo(regra: RegraRubrica, grupo: str | None) -> float:
-    """Resolve o multiplicador de fato para `REGRA_MULTIPLICADOR`/`REGRA_SENTENCA_POR_GRUPO`
-    — as duas únicas regras que usam um número direto (as outras três — 13º, proporção
-    histórica, zero — não multiplicam o mês de referência por um fator fixo, ver
-    `projetar`)."""
+    """Resolve o multiplicador de fato para `REGRA_MULTIPLICADOR`/`REGRA_SENTENCA_POR_GRUPO`/
+    `REGRA_INDENIZACAO_POR_GRUPO` — as únicas regras que usam um número direto (as
+    outras três — 13º, proporção histórica, zero — não multiplicam o mês de referência
+    por um fator fixo, ver `projetar`)."""
 
     if regra.tipo == REGRA_MULTIPLICADOR:
         assert regra.multiplicador is not None
@@ -289,6 +303,12 @@ def multiplicador_efetivo(regra: RegraRubrica, grupo: str | None) -> float:
         # RPPS/outros_beneficios não têm sentença classificada no briefing — trata pela
         # regra mais conservadora (x13, sem o terço de férias) em vez de presumir x13,3333.
         return MULTIPLICADOR_13
+    if regra.tipo == REGRA_INDENIZACAO_POR_GRUPO:
+        if grupo == GRUPO_INATIVO:
+            return MULTIPLICADOR_13
+        # Ativo (decisão 3) e RPPS/outros_beneficios (sem indenização classificada no
+        # briefing, tratado pelo mesmo padrão x12 da decisão 3/5) — decisão 7.
+        return MULTIPLICADOR_12
     raise ValueError(f"multiplicador_efetivo: regra {regra.tipo!r} não usa multiplicador direto.")
 
 
@@ -462,7 +482,7 @@ def projetar(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano_mes_referencia
                 vencimentos_projetados = _projecao_vencimentos_do_grupo(linhas, linha.grupo)
                 proporcao = float(linha.execucao_ano_anterior) / float(base_ano_anterior)
                 projecoes.append(proporcao * vencimentos_projetados if vencimentos_projetados is not None else None)
-        else:  # REGRA_MULTIPLICADOR / REGRA_SENTENCA_POR_GRUPO
+        else:  # REGRA_MULTIPLICADOR / REGRA_SENTENCA_POR_GRUPO / REGRA_INDENIZACAO_POR_GRUPO
             if pd.isna(valor_ref):
                 projecoes.append(None)
             else:
@@ -646,7 +666,7 @@ def _distribuir_mes_futuro(
         # pelos meses restantes como simplificação documentada, não presumida como
         # regra definitiva. Ver docstring do módulo.
         return {mes: valor_referencia for mes in meses_a_projetar}
-    # REGRA_MULTIPLICADOR / REGRA_SENTENCA_POR_GRUPO: valor cheio em todo mês futuro,
+    # REGRA_MULTIPLICADOR / REGRA_SENTENCA_POR_GRUPO / REGRA_INDENIZACAO_POR_GRUPO: valor cheio em todo mês futuro,
     # mais a fração "acima de 12" do multiplicador, metade em cada mês de 13º.
     multiplicador = multiplicador_efetivo(regra, grupo)
     extra_total = valor_referencia * (multiplicador - 12.0)
