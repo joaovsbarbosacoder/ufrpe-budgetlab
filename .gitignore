@@ -47,6 +47,11 @@ data/bolsas_auxilios/*
 data/contratos_continuos/*
 !data/contratos_continuos/.gitkeep
 
+# Banco SQLite do modulo de TEDs (data real de producao, gerado pelos uploads da propria
+# pagina app_pages/teds.py — ver docstring de src/teds_schema.py), nao versionado.
+data/teds/*
+!data/teds/.gitkeep
+
 # Sistema operacional
 .DS_Store
 Thumbs.db

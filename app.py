@@ -107,6 +107,41 @@ page = st.navigation(
                 icon="📅",
             ),
         ],
+        # Acompanhamento de TEDs — 6 páginas (layout adaptado de um handoff de design, ver
+        # docstring de cada app_pages/teds_*.py): drill-down do detalhe do TED acontece dentro
+        # de "TEDs" via st.session_state, não como página própria (ver teds_lista.py).
+        "TEDs": [
+            st.Page(
+                "app_pages/teds_visao_geral.py",
+                title="Visão geral",
+                icon="🏠",
+            ),
+            st.Page(
+                "app_pages/teds_lista.py",
+                title="TEDs",
+                icon="🧾",
+            ),
+            st.Page(
+                "app_pages/teds_conciliacao.py",
+                title="Conciliação",
+                icon="🔁",
+            ),
+            st.Page(
+                "app_pages/teds_central_alertas.py",
+                title="Alertas",
+                icon="🔔",
+            ),
+            st.Page(
+                "app_pages/teds_importacoes.py",
+                title="Importações",
+                icon="☁️",
+            ),
+            st.Page(
+                "app_pages/teds_configuracoes.py",
+                title="Configurações",
+                icon="⚙️",
+            ),
+        ],
         # Novo módulo de escrita (não leitura de base do Tesouro): setores registram
         # demandas orçamentárias e a PROPLAD consolida. Seção própria entre "Contratos" e
         # "Administração" — "Administração" precisa continuar por último (ver comentário
