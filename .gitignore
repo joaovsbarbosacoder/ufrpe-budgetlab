@@ -16,6 +16,9 @@ htmlcov/
 .ruff_cache/
 .mypy_cache/
 
+# Fragmentos temporarios criados durante transferencias de arquivos
+.tmp.driveupload/
+
 # Configuracoes e segredos locais
 .env
 .env.*
