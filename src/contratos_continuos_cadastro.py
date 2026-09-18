@@ -55,7 +55,7 @@ Contrato público:
     como_dataframe(contratos) -> pd.DataFrame
     anos_disponiveis() -> list[int]
     duplicar_exercicio(ano_origem, ano_destino) -> list[dict]
-    migrar_de_planilha(caminho, ano) -> list[dict]
+    migrar_de_planilha(caminho, ano, *, diretorio_base=None) -> list[dict]
 """
 
 from __future__ import annotations
@@ -245,7 +245,12 @@ def _itens_do_grupo(grupo: pd.DataFrame, despesa_mensal_total: float) -> list[di
     return itens
 
 
-def migrar_de_planilha(caminho: str | Path, ano: int) -> list[dict]:
+def migrar_de_planilha(
+    caminho: str | Path,
+    ano: int,
+    *,
+    diretorio_base: str | Path | None = None,
+) -> list[dict]:
     """Importação única: lê a planilha antiga (uma linha por contrato × item de licitação,
     `ler_contratos_continuos`) e AGRUPA por NE (ou por número de contrato, para contratos
     ainda sem NE atribuída) em um registro nativo por contrato — usada uma vez para migrar
@@ -253,6 +258,7 @@ def migrar_de_planilha(caminho: str | Path, ano: int) -> list[dict]:
     normal. Ver docstring do módulo para o critério de agrupamento e o que cada campo vira."""
 
     dataframe = ler_contratos_continuos(caminho)
+    destino = DIRETORIO_PADRAO if diretorio_base is None else Path(diretorio_base)
     chave_agrupamento = dataframe["ne_curta"].fillna(dataframe["contrato_numero"])
 
     criados = []
@@ -275,6 +281,6 @@ def migrar_de_planilha(caminho: str | Path, ano: int) -> list[dict]:
             )
 
         registro = novo_registro(**campos)
-        salvar_contrato(ano, registro)
+        _salvar(destino, ano, registro)
         criados.append(registro)
     return criados

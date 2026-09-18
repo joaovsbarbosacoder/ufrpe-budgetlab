@@ -213,6 +213,28 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
+### Migração dos cadastros nativos
+
+Bolsas e Auxílios e Contratos Contínuos usam cadastros JSON locais, separados das planilhas
+de trabalho originais. O comando oficial executa por padrão somente uma simulação: lê as
+duas planilhas, monta os cadastros em diretórios temporários, confere contagens, totais e
+hashes e não grava em `data/bolsas_auxilios/` nem em `data/contratos_continuos/`.
+
+```powershell
+python -m scripts.migrar_cadastros_nativos
+```
+
+Depois de revisar a saída, use `--aplicar` para promover os dois cadastros validados:
+
+```powershell
+python -m scripts.migrar_cadastros_nativos --aplicar
+```
+
+O comando nunca sobrescreve um exercício existente. Caminhos e exercício podem ser informados
+explicitamente com `--bolsas`, `--contratos`, `--ano`, `--diretorio-bolsas` e
+`--diretorio-contratos`. As planilhas de origem são somente lidas e seus hashes são conferidos
+novamente antes de qualquer gravação.
+
 ## Estrutura do projeto
 
 ```text

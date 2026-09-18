@@ -35,7 +35,7 @@ Contrato público:
     como_dataframe(programas) -> pd.DataFrame
     anos_disponiveis() -> list[int]
     duplicar_exercicio(ano_origem, ano_destino) -> list[dict]
-    migrar_de_planilha(caminho, ano) -> list[dict]
+    migrar_de_planilha(caminho, ano, *, diretorio_base=None) -> list[dict]
 """
 
 from __future__ import annotations
@@ -191,17 +191,23 @@ def _valor_mensal_excepcional(linha: pd.Series) -> float | None:
     return float(informado) if abs(float(informado) - calculado) > 0.01 else None
 
 
-def migrar_de_planilha(caminho: str | Path, ano: int) -> list[dict]:
+def migrar_de_planilha(
+    caminho: str | Path,
+    ano: int,
+    *,
+    diretorio_base: str | Path | None = None,
+) -> list[dict]:
     """Importação única: lê a planilha antiga (`ler_bolsas_auxilios`) e grava cada linha como
     um registro nativo do exercício `ano` — usada uma vez para migrar 2026 (pedido explícito de
     desvinculação da planilha); não é chamada pela página em uso normal."""
 
     dataframe = ler_bolsas_auxilios(caminho)
+    destino = DIRETORIO_PADRAO if diretorio_base is None else Path(diretorio_base)
     criados = []
     for _, linha in dataframe.iterrows():
         campos = {chave: _limpo(linha.get(chave)) for chave in (*CAMPOS_IDENTIDADE, *CAMPOS_EXECUCAO_PADRAO)}
         campos["valor_mensal_excepcional"] = _valor_mensal_excepcional(linha)
         registro = novo_registro(**campos)
-        salvar_programa(ano, registro)
+        _salvar(destino, ano, registro)
         criados.append(registro)
     return criados
