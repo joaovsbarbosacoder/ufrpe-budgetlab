@@ -24,10 +24,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pandas as pd
 from streamlit.testing.v1 import AppTest
 
 from src.execucao_anual import agregar_por_ne, ler_execucao_anual
 from src.importacao_execucao import gerar_manifesto
+from src.ui_theme import format_brl_full
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CAMINHO_FIXTURE = PROJECT_ROOT / "tests/fixtures/execucao_anual_2026-08-13.xlsx"
@@ -400,6 +402,23 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         self.assertTrue(
             any(f'class="ce-ne">{ne_selecionada}' in item.value for item in app.markdown)
         )
+
+    def test_detalhe_mostra_valores_financeiros_exatos(self) -> None:
+        app = self._open_page()
+        selecionado = next(c for c in self._cartoes_lista(app) if c.proto.type == "primary")
+        ne_selecionada = self._ne_do_cartao(selecionado)
+        por_ne = agregar_por_ne(self.dataframe)
+        linha = por_ne.loc[por_ne["ne_ccor"].str.endswith(ne_selecionada)].iloc[0]
+        liquidado_efetivo = linha["liquidada"] if pd.notna(linha["liquidada"]) else 0.0
+
+        metricas = {metric.label: metric.value for metric in app.metric}
+        esperado = {
+            "Empenhado": format_brl_full(linha["empenhada"]),
+            "Liquidado": format_brl_full(linha["liquidada"]) if pd.notna(linha["liquidada"]) else "Sem registros",
+            "Pago": format_brl_full(linha["paga"]) if pd.notna(linha["paga"]) else "Sem registros",
+            "Saldo de empenho": format_brl_full(linha["empenhada"] - liquidado_efetivo),
+        }
+        self.assertEqual({rotulo: metricas[rotulo] for rotulo in esperado}, esperado)
 
     def test_clicar_no_cartao_troca_a_ne_selecionada(self) -> None:
         # botão "Ver" foi removido (pedido explícito) — cada cartão É o próprio `st.button`

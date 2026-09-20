@@ -142,7 +142,7 @@ from src.ui_filtros_execucao import limpar_filtros as _limpar_filtros_compartilh
 from src.ui_filtros_execucao import render_filtros_avancados as _render_filtros_avancados_compartilhado
 from src.ui_filtros_execucao import render_filtros_rapidos as _render_filtros_rapidos_compartilhado
 from src.ui_linha_do_tempo import abrir_linha_do_tempo
-from src.ui_theme import format_brl_compact, render_page_header
+from src.ui_theme import format_brl_compact, format_brl_full, render_page_header
 
 
 #: namespace de `st.session_state` para o filtro compartilhado (`src/ui_filtros_execucao.py`)
@@ -851,11 +851,11 @@ def _render_detalhe(
     with st.container(key="ce_detail_metrics"):
         v1, v2 = st.columns(2)
         with v1:
-            st.metric("Empenhado", format_brl_compact(linha["empenhada"]))
-            st.metric("Pago", format_brl_compact(linha["paga"]) if pd.notna(linha["paga"]) else "Sem registros")
+            st.metric("Empenhado", format_brl_full(linha["empenhada"]))
+            st.metric("Pago", format_brl_full(linha["paga"]) if pd.notna(linha["paga"]) else "Sem registros")
         with v2:
-            st.metric("Liquidado", format_brl_compact(linha["liquidada"]) if pd.notna(linha["liquidada"]) else "Sem registros")
-            st.metric("Saldo de empenho", format_brl_compact(linha["saldo"]))
+            st.metric("Liquidado", format_brl_full(linha["liquidada"]) if pd.notna(linha["liquidada"]) else "Sem registros")
+            st.metric("Saldo de empenho", format_brl_full(linha["saldo"]))
 
     if linha_do_tempo is not None and linha["ne_ccor"] in set(linha_do_tempo["ne_ccor"]):
         if st.button("📈 Linha do tempo mensal", key=f"ce_tempo_{linha['ne_ccor']}", width="stretch"):
