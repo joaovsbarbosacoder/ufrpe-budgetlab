@@ -1,19 +1,28 @@
 """
-Leitura e normalização da base MENSAL de Execução da Despesa (BI CPOC / Tesouro Gerencial),
-a partir do exercício 2026 — sucessora, só para 2026 em diante, da base ANUAL existente
-(`src/execucao_anual.py`, que continua a fonte de 2023-2025 e não é substituída por esta).
+Leitura e normalização da base MENSAL de Execução da Despesa (BI CPOC / Tesouro Gerencial).
 
 Camada: regra específica de base (não é leitor genérico, não é analítica, não é interface).
 Depende apenas de pandas/openpyxl. Não importa Streamlit. Ver docs/base_execucao_mensal.md
 para o contrato completo (layout, regra de deduplicação, reconciliação).
 
-Diferenças de layout frente à base anual (mesma origem BI CPOC, mesmas 38 colunas
-dimensionais nas mesmas posições):
-  * Cabeçalho ocupa 3 linhas (não 2) — uma linha a mais no topo com o rótulo do mês
-    ("JAN/2026" etc.) por cima de cada bloco mensal.
-  * Uma dimensão nova, `NE Item` (código + descrição), entre `NE CCor - Favorecido` e
-    `Ano Lançamento` — descreve o item/produto/rubrica dentro do empenho (ex.: elemento 30,
-    "Item compra: 00201 - PAPEL FILME...").
+LAYOUT ATUAL (extração recebida em 21/09/2026, substitui o formato anterior de aba única —
+ver docs/base_execucao_mensal.md, seção "Histórico de layout", para o formato antigo ainda
+coberto pela fixture congelada `tests/fixtures/execucao_mensal_2026-09-03.xlsx`):
+  * MÚLTIPLAS ABAS, uma por exercício (ex. "2026", "2025", "2024") — `ano` não é mais uma
+    coluna de dado, é derivado do nome da aba (decisão explícita do usuário: a extração agora
+    cobre 2024-2026, não só 2026+; ler todas as abas presentes, nunca uma lista fixa de anos).
+  * 2 linhas de banner de relatório ("Páginas:", "Ano Lançamento: AAAA") + 1 linha em branco
+    antes do cabeçalho de 3 linhas (que passou da linha 1 para a linha 4 da planilha).
+  * Duas dimensões novas frente ao layout antigo: `Unidade Orçamentária` (par código/descrição,
+    logo após PTRES) e `NE - Informação Complementar` (campo único, logo após `NE - Núm.
+    Processo`) — nenhuma delas existia na base ANUAL nem no layout antigo desta base.
+  * `NE Item` (código + descrição) continua existindo, só que deslocado para depois de `NE CCor
+    - Favorecido` (mesma posição relativa ao layout antigo, mas os índices absolutos mudaram
+    por causa das duas dimensões novas acima).
+  * Além dos blocos mensais reais (`"JAN/2026"` etc.), os exercícios fechados trazem blocos de
+    encerramento rotulados `"013/AAAA"`/`"014/AAAA"` no fim — decisão explícita do usuário:
+    ignorados (não entram no resultado), tratados como blocos conhecidos-e-descartados, não
+    como erro de layout.
   * Em vez de 1 bloco anual de Empenhada/Liquidada/Paga, há N blocos mensais (um por mês
     presente na extração) — detectados dinamicamente a partir do rótulo de cada bloco na
     primeira linha do cabeçalho, nunca um número fixo de meses hardcoded (a extração cresce
@@ -47,11 +56,16 @@ import pandas as pd
 # 1. Contrato do arquivo de origem
 # --------------------------------------------------------------------------------------
 
+#: linhas de relatório antes do cabeçalho ("Páginas:", "Ano Lançamento: AAAA", em branco).
+LINHAS_BANNER = 3
 LINHAS_CABECALHO = 3
-PRIMEIRA_LINHA_DADOS_PLANILHA = 4
+#: total de linhas puladas antes dos dados = banner + cabeçalho.
+LINHAS_PULADAS = LINHAS_BANNER + LINHAS_CABECALHO
+PRIMEIRA_LINHA_DADOS_PLANILHA = LINHAS_PULADAS + 1
 
-#: colunas dimensionais (0-37), mesma posição/ordem/nome que `src.execucao_anual.COLUNAS` —
-#: reaproveitado de propósito (mesma origem BI CPOC) até a posição da "NE CCor - Favorecido".
+#: colunas dimensionais (0-40) na ordem/posição da extração atual (21/09/2026). `ano` NÃO é
+#: uma coluna aqui — é derivado do nome da aba (ver docstring do módulo) e acrescentado depois
+#: da leitura bruta.
 COLUNAS_DIMENSAO = [
     "iduso_cod", "iduso_desc",
     "resultado_primario_cod", "resultado_primario_desc",
@@ -66,17 +80,20 @@ COLUNAS_DIMENSAO = [
     "pi_cod", "pi_desc",
     "po_acao_cod", "po_cod", "po_desc",
     "ptres",
+    "unidade_orcamentaria_cod", "unidade_orcamentaria_desc",
     "ug_executora_cod", "ug_executora_desc",
     "ug_responsavel_cod", "ug_responsavel_desc",
     "ugr_cod", "ugr_desc",
     "processo_ne",
+    "ne_informacao_complementar",
     "ne_descricao", "ne_ccor", "ne_favorecido",
     "ne_item_cod", "ne_item_desc",
-    "ano",
 ]
 
-#: posição (0-indexada) da primeira coluna do primeiro bloco mensal — logo após `ano`.
+#: posição (0-indexada) da primeira coluna do primeiro bloco mensal.
 PRIMEIRA_COLUNA_MESES = len(COLUNAS_DIMENSAO)
+#: posição da coluna `ne_item_cod` (as duas últimas colunas dimensionais são o par NE Item).
+_COLUNA_NE_ITEM = PRIMEIRA_COLUNA_MESES - 2
 
 MEDIDAS = ["empenhada", "liquidada", "paga"]
 
@@ -91,9 +108,16 @@ _MESES_PT = {
 }
 _PADRAO_ROTULO_MES = re.compile(r"^([A-ZÇ]{3})/(\d{4})$")
 
-#: âncoras de posição fixa (linha 1 do cabeçalho, 0-indexada) — mesmo espírito de
-#: `execucao_anual.ASSINATURA_CABECALHO`, adaptado às 3 linhas e à coluna NE Item nova.
-_ANCORAS_LINHA1 = {0: "Iduso", 12: "Grupo Despesa", 25: "PTRES", 32: "NE - N", 36: "NE Item"}
+#: blocos de encerramento de exercício ("013/2025", "014/2025", ...) — período numérico de 3
+#: dígitos em vez de mês. Decisão explícita do usuário (21/09/2026): ignorar estes blocos, não
+#: tratar como erro de layout (ver docstring do módulo).
+_PADRAO_ROTULO_ENCERRAMENTO = re.compile(r"^0\d{2}/(\d{4})$")
+
+#: âncoras de posição fixa (linha 1 do cabeçalho, já sem as linhas de banner, 0-indexada).
+_ANCORAS_LINHA1 = {
+    0: "Iduso", 12: "Grupo Despesa", 25: "PTRES",
+    26: "Unidade Or", 34: "NE - N",
+}
 
 
 class ErroLayoutBase(ValueError):
@@ -125,66 +149,84 @@ def _blocos_mensais(cabecalho_linha1: list) -> list[tuple[int, int, int]]:
     coluna = PRIMEIRA_COLUNA_MESES
     total = len(cabecalho_linha1)
     while coluna < total:
-        rotulo = _rotulo_mes(cabecalho_linha1[coluna])
-        if rotulo is None:
-            raise ErroLayoutBase(
-                f"Coluna {coluna + 1}: esperado um rótulo de mês (ex. 'JAN/2026'), "
-                f"obtido {cabecalho_linha1[coluna]!r}."
-            )
         if coluna + 2 >= total:
             raise ErroLayoutBase(
-                f"Bloco mensal incompleto a partir da coluna {coluna + 1} — "
-                "cada mês precisa de 3 colunas (Empenhada, Liquidada, Paga)."
+                f"Bloco incompleto a partir da coluna {coluna + 1} — "
+                "cada bloco precisa de 3 colunas (Empenhada, Liquidada, Paga)."
             )
-        ano, mes = rotulo
-        blocos.append((coluna, ano, mes))
-        coluna += 3
+        rotulo = _rotulo_mes(cabecalho_linha1[coluna])
+        if rotulo is not None:
+            ano, mes = rotulo
+            blocos.append((coluna, ano, mes))
+            coluna += 3
+            continue
+        texto = str(cabecalho_linha1[coluna] or "").strip()
+        if _PADRAO_ROTULO_ENCERRAMENTO.match(texto):
+            # Bloco de encerramento de exercício (ex. "013/2025") — conhecido e
+            # deliberadamente descartado, não é um erro de layout (ver docstring do módulo).
+            coluna += 3
+            continue
+        raise ErroLayoutBase(
+            f"Coluna {coluna + 1}: esperado um rótulo de mês (ex. 'JAN/2026') ou de "
+            f"encerramento (ex. '013/2025'), obtido {cabecalho_linha1[coluna]!r}."
+        )
     if not blocos:
         raise ErroLayoutBase("Nenhum bloco mensal encontrado após as colunas dimensionais.")
     return blocos
 
 
-def _validar_assinatura(caminho: Path) -> list[tuple[int, int, int]]:
+#: 4 dígitos — nome de aba esperado (um exercício por aba, ver docstring do módulo).
+_PADRAO_NOME_ABA_ANO = re.compile(r"^(\d{4})$")
+
+
+def _validar_assinatura(xls: pd.ExcelFile, sheet_name: str) -> list[tuple[int, int, int]]:
     """Confere as âncoras fixas e devolve os blocos mensais detectados (ver `_blocos_mensais`)
     — a mesma leitura serve de validação e de mapa de colunas, para nunca divergir uma da
-    outra."""
+    outra. `sheet_name` é o exercício da aba (validado como o próprio ano de referência)."""
 
-    cabecalho = pd.read_excel(caminho, header=None, nrows=3, dtype=str)
+    if not _PADRAO_NOME_ABA_ANO.match(sheet_name):
+        raise ErroLayoutBase(
+            f"Nome de aba {sheet_name!r}: esperado um exercício de 4 dígitos (ex. '2026')."
+        )
+
+    cabecalho = pd.read_excel(
+        xls, sheet_name=sheet_name, header=None, skiprows=LINHAS_BANNER, nrows=LINHAS_CABECALHO, dtype=str
+    )
     linha1 = cabecalho.iloc[0].tolist()
 
     for pos, esperado in _ANCORAS_LINHA1.items():
         obtido = str(linha1[pos] or "")
         if not obtido.strip().upper().startswith(esperado.upper()):
             raise ErroLayoutBase(
-                f"Coluna {pos + 1}: esperado cabeçalho iniciando por {esperado!r}, obtido {obtido!r}."
+                f"Aba {sheet_name!r}, coluna {pos + 1}: esperado cabeçalho iniciando por "
+                f"{esperado!r}, obtido {obtido!r}."
             )
 
-    # 'Item Informação'/'Ano Lançamento' ficam sobrepostos na própria coluna `ano` (a última
-    # dimensional, índice PRIMEIRA_COLUNA_MESES - 1) — mesmo deslocamento já documentado para
-    # a base anual (ver docs/base_execucao_anual.md, "o rótulo Item Informação da linha 1 está
-    # deslocado sobre a coluna de ano"); só que aqui em duas linhas de cabeçalho diferentes,
-    # não uma. Os meses (e as colunas Empenhada/Liquidada/Paga da linha 2) só começam de fato
-    # em PRIMEIRA_COLUNA_MESES.
-    coluna_ano = PRIMEIRA_COLUNA_MESES - 1
+    # As 3 linhas do cabeçalho, sobrepostas na coluna `ne_item_cod` (a penúltima dimensional):
+    # linha 1 = rótulo de grupo (irrelevante aqui, não validado), linha 2 = 'Item Informação',
+    # linha 3 = 'NE Item' — mesmo espírito do deslocamento documentado para a base anual
+    # (docs/base_execucao_anual.md), só que em 3 linhas de cabeçalho, não 2. Os blocos
+    # mensais (e as colunas Empenhada/Liquidada/Paga da linha 2) só começam de fato em
+    # PRIMEIRA_COLUNA_MESES.
     linha2 = cabecalho.iloc[1].tolist()
-    if str(linha2[coluna_ano] or "").strip() != "Item Informação":
+    if str(linha2[_COLUNA_NE_ITEM] or "").strip() != "Item Informação":
         raise ErroLayoutBase(
-            f"Coluna {coluna_ano + 1} (linha 2): esperado 'Item Informação', "
-            f"obtido {linha2[coluna_ano]!r}."
+            f"Aba {sheet_name!r}, coluna {_COLUNA_NE_ITEM + 1} (linha 2): esperado "
+            f"'Item Informação', obtido {linha2[_COLUNA_NE_ITEM]!r}."
         )
     for deslocamento, esperado in enumerate(("DESPESAS EMPENHADAS", "DESPESAS LIQUIDADAS", "DESPESAS PAGAS")):
         obtido = str(linha2[PRIMEIRA_COLUNA_MESES + deslocamento] or "")
         if not obtido.strip().upper().startswith(esperado):
             raise ErroLayoutBase(
-                f"Coluna {PRIMEIRA_COLUNA_MESES + 1 + deslocamento} (linha 2): esperado "
-                f"iniciando por {esperado!r}, obtido {obtido!r}."
+                f"Aba {sheet_name!r}, coluna {PRIMEIRA_COLUNA_MESES + 1 + deslocamento} (linha 2): "
+                f"esperado iniciando por {esperado!r}, obtido {obtido!r}."
             )
 
     linha3 = cabecalho.iloc[2].tolist()
-    if str(linha3[coluna_ano] or "").strip() != "Ano Lançamento":
+    if str(linha3[_COLUNA_NE_ITEM] or "").strip() != "NE Item":
         raise ErroLayoutBase(
-            f"Coluna {coluna_ano + 1} (linha 3): esperado 'Ano Lançamento', "
-            f"obtido {linha3[coluna_ano]!r}."
+            f"Aba {sheet_name!r}, coluna {_COLUNA_NE_ITEM + 1} (linha 3): esperado 'NE Item', "
+            f"obtido {linha3[_COLUNA_NE_ITEM]!r}."
         )
 
     return _blocos_mensais(linha1)
@@ -206,30 +248,24 @@ def _para_numero(serie: pd.Series) -> pd.Series:
     return original.where(original.notna(), convertido)
 
 
-def ler_execucao_mensal(caminho: str | Path) -> pd.DataFrame:
-    """Lê a base bruta e devolve o DataFrame normalizado em formato longo — uma linha por
-    (linha original da planilha × mês do bloco correspondente), com `mes`/`ano_mes` derivados
-    do rótulo do próprio bloco (nunca de `ano`/`Ano Lançamento`, que é uma dimensão à parte,
-    ver docstring do módulo). Sem agregar nada — para a soma financeira correta, ver
-    `valor_empenhado_por_bloco`."""
+def _ler_aba(xls: pd.ExcelFile, nome_arquivo: str, sheet_name: str) -> pd.DataFrame:
+    """Lê e normaliza uma única aba (um exercício) — ver `ler_execucao_mensal` para o
+    contrato público, que concatena todas as abas da planilha."""
 
-    caminho = Path(caminho)
-    if not caminho.exists():
-        raise FileNotFoundError(caminho)
+    blocos = _validar_assinatura(xls, sheet_name)
+    ano_aba = int(sheet_name)
 
-    blocos = _validar_assinatura(caminho)
-
-    bruto = pd.read_excel(caminho, header=None, skiprows=LINHAS_CABECALHO, dtype=str)
+    bruto = pd.read_excel(xls, sheet_name=sheet_name, header=None, skiprows=LINHAS_PULADAS, dtype=str)
 
     dimensoes = bruto.iloc[:, :PRIMEIRA_COLUNA_MESES].copy()
     dimensoes.columns = COLUNAS_DIMENSAO
     for col in COLUNAS_DIMENSAO:
-        if col != "ano":
-            dimensoes[col] = dimensoes[col].astype("string").str.strip()
-    dimensoes["ano"] = pd.to_numeric(dimensoes["ano"], errors="raise").astype("int16")
+        dimensoes[col] = dimensoes[col].astype("string").str.strip()
+    dimensoes["ano"] = pd.array([ano_aba] * len(dimensoes), dtype="int16")
     dimensoes["processo_ne"] = dimensoes["processo_ne"].mask(dimensoes["processo_ne"].isin(_SENTINELAS_PROCESSO))
     dimensoes.insert(0, "linha_origem", range(PRIMEIRA_LINHA_DADOS_PLANILHA, PRIMEIRA_LINHA_DADOS_PLANILHA + len(bruto)))
-    dimensoes.insert(1, "arquivo_origem", caminho.name)
+    dimensoes.insert(1, "arquivo_origem", nome_arquivo)
+    dimensoes.insert(2, "aba_origem", sheet_name)
 
     eh_item = dimensoes["ne_descricao"].fillna("").str.upper().eq(MARCADOR_ITEM_EXECUCAO)
     dimensoes["tipo_linha"] = pd.Series("empenho", index=dimensoes.index, dtype="string").mask(eh_item, "item_execucao")
@@ -248,8 +284,27 @@ def ler_execucao_mensal(caminho: str | Path) -> pd.DataFrame:
         parte["paga"] = _para_numero(bruto.iloc[:, coluna_empenhada + 2])
         partes.append(parte)
 
-    resultado = pd.concat(partes, ignore_index=True)
-    return resultado.sort_values(["linha_origem", "ano_mes"]).reset_index(drop=True)
+    return pd.concat(partes, ignore_index=True)
+
+
+def ler_execucao_mensal(caminho: str | Path) -> pd.DataFrame:
+    """Lê a base bruta e devolve o DataFrame normalizado em formato longo — uma linha por
+    (linha original da planilha × mês do bloco correspondente), com `mes`/`ano_mes` derivados
+    do rótulo do próprio bloco. TODAS as abas presentes na planilha são lidas e concatenadas —
+    uma por exercício, nunca uma lista fixa de anos (ver docstring do módulo). Sem agregar
+    nada — para a soma financeira correta, ver `valor_empenhado_por_bloco`."""
+
+    caminho = Path(caminho)
+    if not caminho.exists():
+        raise FileNotFoundError(caminho)
+
+    with pd.ExcelFile(caminho) as xls:
+        abas = xls.sheet_names
+        if not abas:
+            raise ErroLayoutBase("Planilha sem nenhuma aba.")
+        resultado = pd.concat((_ler_aba(xls, caminho.name, aba) for aba in abas), ignore_index=True)
+
+    return resultado.sort_values(["ano", "linha_origem", "ano_mes"]).reset_index(drop=True)
 
 
 # --------------------------------------------------------------------------------------
@@ -307,6 +362,84 @@ def linha_do_tempo_por_ne(df: pd.DataFrame) -> pd.DataFrame:
     return resultado.reset_index().sort_values(["ne_ccor", "ano_mes"]).reset_index(drop=True)
 
 
+#: dimensões constantes dentro de uma NE (mesmo espírito de
+#: `src.execucao_anual._DIMENSOES_CONSTANTES_POR_NE`, verificado contra a extração de
+#: referência: nenhuma das 2.567 NEs tem mais de um valor distinto em nenhum destes campos —
+#: ver commit que introduziu esta função). `natureza_detalhada`/`subitem` ficam de fora de
+#: propósito — mesma exceção da Base Anual, uma NE pode ter mais de uma classificação.
+_DIMENSOES_CONSTANTES_POR_NE = [
+    "ano",
+    "iduso_cod", "iduso_desc",
+    "resultado_primario_cod", "resultado_primario_desc",
+    "categoria_economica_cod", "categoria_economica_desc",
+    "acao_cod", "acao_desc",
+    "elemento_cod", "elemento_desc",
+    "fonte_cod", "fonte_desc",
+    "gnd_cod", "gnd_desc",
+    "natureza_despesa_cod", "natureza_despesa_desc",
+    "pi_cod", "pi_desc",
+    "po_acao_cod", "po_cod", "po_desc",
+    "ptres",
+    "unidade_orcamentaria_cod", "unidade_orcamentaria_desc",
+    "ug_executora_cod", "ug_executora_desc",
+    "ug_responsavel_cod", "ug_responsavel_desc",
+    "ugr_cod", "ugr_desc",
+    "ne_informacao_complementar",
+    "ne_favorecido",
+]
+
+
+def _resumo_classificacao(valores: pd.Series) -> str:
+    """Valor único se a NE tem só uma classificação; contagem, caso contrário. Mesma função
+    de `src.execucao_anual._resumo_classificacao`, duplicada aqui de propósito — os dois
+    módulos não se importam entre si (bases independentes, ver docstring do módulo)."""
+
+    unicos = valores.dropna().unique()
+    if len(unicos) == 0:
+        return "—"
+    if len(unicos) == 1:
+        return str(unicos[0])
+    return f"{len(unicos)} classificações"
+
+
+def agregar_por_ne(df: pd.DataFrame) -> pd.DataFrame:
+    """Uma linha por NE — para consulta/navegação, não para reconciliação financeira (para
+    isso, `valor_empenhado_por_bloco`/`reconciliar`, que nunca perdem granularidade). Mesmo
+    contrato de `src.execucao_anual.agregar_por_ne`, adaptado à granularidade extra desta
+    base (mês + Natureza Detalhada/Subitem por bloco):
+
+      * `empenhada` soma `valor_empenhado_por_bloco` (já deduplicada) por NE, entre todos os
+        blocos E todos os meses — o total empenhado da NE até agora, não um valor mensal.
+      * `liquidada`/`paga` somam direto as linhas de item de execução da NE (não duplicam por
+        item nem por bloco, só por mês — soma entre meses é a correta).
+      * `ne_descricao`/`processo_ne` vêm só das linhas de tipo "empenho" (mesma razão da Base
+        Anual: linhas de item de execução trazem sentinela, não o dado real).
+      * Natureza Detalhada/Subitem resumidos como "N classificações" quando a NE tem mais de
+        uma (mesma exceção da Base Anual).
+    """
+
+    dedup_bloco = valor_empenhado_por_bloco(df)
+    empenhada_por_ne = dedup_bloco.groupby("ne_ccor")["empenhada"].sum(min_count=1)
+
+    liquidado_pago = df.loc[df["tipo_linha"] == "item_execucao"]
+    liquidada_paga_por_ne = liquidado_pago.groupby("ne_ccor")[["liquidada", "paga"]].sum(min_count=1)
+
+    agregacoes: dict[str, object] = {coluna: "first" for coluna in _DIMENSOES_CONSTANTES_POR_NE}
+    agregacoes["natureza_detalhada_label"] = _resumo_classificacao
+    agregacoes["subitem_cod"] = _resumo_classificacao
+    resultado = df.groupby("ne_ccor", dropna=False).agg(agregacoes)
+
+    resultado["empenhada"] = empenhada_por_ne
+    resultado[["liquidada", "paga"]] = liquidada_paga_por_ne
+
+    so_empenho = df.loc[df["tipo_linha"] == "empenho"].groupby("ne_ccor")
+    resultado["ne_descricao"] = so_empenho["ne_descricao"].first()
+    resultado["processo_ne"] = so_empenho["processo_ne"].first()
+
+    resultado = resultado.reset_index().rename(columns={"subitem_cod": "subitem_resumo"})
+    return resultado.sort_values("ne_ccor").reset_index(drop=True)
+
+
 def primeiro_mes_com_empenho_por_ne(tempo_com_ne_curta: pd.DataFrame) -> pd.Series:
     """Mês (1-12) do primeiro `ano_mes` em que cada NE teve Empenhado > 0 — usado como
     referência automática de "quando a execução daquela NE começou" (pedido explícito:
@@ -330,15 +463,25 @@ def primeiro_mes_com_empenho_por_ne(tempo_com_ne_curta: pd.DataFrame) -> pd.Seri
 def reconciliar(df: pd.DataFrame) -> dict:
     """Totais que devem bater com a origem — Empenhado já deduplicado por bloco (ver
     `valor_empenhado_por_bloco`); Liquidado/Pago somados direto (não duplicam por item: só
-    aparecem nas linhas de item de execução, uma por NE×mês)."""
+    aparecem nas linhas de item de execução, uma por NE×mês).
+
+    `anos`/`totais_por_ano` (uma medida por ano, as 3) seguem o mesmo contrato de
+    `src.execucao_anual.reconciliar` — exigido por `src.importacao_versionada.gerar_manifesto`/
+    `comparar` (ver `src/importacao_execucao_mensal.py`, que amarra esta base a esse núcleo
+    genérico)."""
 
     empenhado_dedup = valor_empenhado_por_bloco(df)
     liquidado_pago = df.loc[df["tipo_linha"] == "item_execucao"]
+
+    emp_por_ano = empenhado_dedup.assign(ano=empenhado_dedup["ano_mes"] // 100).groupby("ano")["empenhada"].sum()
+    lp_por_ano = liquidado_pago.groupby("ano")[["liquidada", "paga"]].sum(min_count=1)
+    anos = sorted(set(df["ano"].unique().tolist()))
 
     return {
         "linhas": int(len(df)),
         "linhas_originais": int(df["linha_origem"].nunique()),
         "meses": sorted(df["ano_mes"].unique().tolist()),
+        "anos": anos,
         "notas_empenho_distintas": int(df["ne_ccor"].nunique()),
         "totais": {
             "empenhada": round(float(empenhado_dedup["empenhada"].sum()), 2),
@@ -346,8 +489,12 @@ def reconciliar(df: pd.DataFrame) -> dict:
             "paga": round(float(liquidado_pago["paga"].sum(min_count=1) or 0.0), 2),
         },
         "totais_por_ano": {
-            int(ano): round(float(grupo["empenhada"].sum()), 2)
-            for ano, grupo in empenhado_dedup.assign(ano=empenhado_dedup["ano_mes"] // 100).groupby("ano")
+            int(ano): {
+                "empenhada": round(float(emp_por_ano.get(ano, 0.0)), 2),
+                "liquidada": round(float(lp_por_ano.loc[ano, "liquidada"]), 2) if ano in lp_por_ano.index and pd.notna(lp_por_ano.loc[ano, "liquidada"]) else None,
+                "paga": round(float(lp_por_ano.loc[ano, "paga"]), 2) if ano in lp_por_ano.index and pd.notna(lp_por_ano.loc[ano, "paga"]) else None,
+            }
+            for ano in anos
         },
     }
 
@@ -387,10 +534,12 @@ def validar(df: pd.DataFrame, esperado: dict | None = None) -> RelatorioValidaca
     # pagamento registrado em maio pode ser referente a uma liquidação de abril, então
     # comparar mês a mês isoladamente é o teste errado (gera falso "pago > liquidado" sempre
     # que o pagamento atrasa um mês em relação à liquidação). A coerência real é ACUMULADA ao
-    # longo do exercício, mesmo espírito da checagem anual de `execucao_anual.validar`.
+    # longo do exercício, mesmo espírito da checagem anual de `execucao_anual.validar` — mas
+    # reiniciada a cada exercício (a base agora cobre vários anos por aba, ver docstring do
+    # módulo): acumular de dezembro de um ano para janeiro do seguinte seria incoerente.
     liquidado_pago = df.loc[df["tipo_linha"] == "item_execucao"]
-    por_mes = liquidado_pago.groupby("ano_mes")[["liquidada", "paga"]].sum(min_count=1).fillna(0.0)
-    acumulado = por_mes.sort_index().cumsum()
+    por_mes = liquidado_pago.groupby("ano_mes")[["liquidada", "paga"]].sum(min_count=1).fillna(0.0).sort_index()
+    acumulado = por_mes.groupby(por_mes.index // 100).cumsum()
     excede = acumulado[acumulado["paga"] - acumulado["liquidada"] > 0.01]
     for ano_mes in excede.index:
         erros.append(f"Acumulado até {ano_mes}: pago maior que liquidado.")
