@@ -13,6 +13,7 @@ import streamlit as st
 from src.atualizar_planilhas import ESPECIFICACOES
 from src.importacao_dotacao import Manifesto as ManifestoDotacao
 from src.importacao_execucao import Manifesto as ManifestoExecucao
+from src.importacao_execucao_mensal import Manifesto as ManifestoExecucaoMensal
 from src.prazos_orcamentarios import (
     CRITICIDADE_ATRASADO,
     CRITICIDADE_VENCENDO,
@@ -29,6 +30,7 @@ def _resumo_bases() -> tuple[int, int, list[str], datetime | None]:
     for nome, manifesto in (
         ("Execução Anual", ManifestoExecucao.atual()),
         ("Dotação Anual", ManifestoDotacao.atual()),
+        ("Execução Mensal", ManifestoExecucaoMensal.atual()),
     ):
         atualizado_em = None
         if manifesto is not None:

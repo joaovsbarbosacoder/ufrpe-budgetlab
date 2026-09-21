@@ -15,7 +15,7 @@ multi-ano por natureza (`ne_curta` embute o ano, "2027NE000123" nunca colide com
 então nenhuma mudança foi necessária ali.
 
 LINHA DO TEMPO MENSAL NO RESUMO CONSOLIDADO (pedido explícito): cada bolsa listada em
-"Resumo Consolidado" é clicável quando sua NE (`ne_curta`) tem dado na base MENSAL (2026+,
+"Resumo Consolidado" é clicável quando sua NE (`ne_curta`) tem dado na base MENSAL (2024+,
 `_cached_linha_do_tempo` → `src.tesouro_execucao_mensal.linha_do_tempo_por_ne`) — abre o
 mesmo pop-up "Linha do tempo mensal" de `app_pages/consulta_empenhos.py`
 (`src/ui_linha_do_tempo.py`, compartilhado: "mesmo formato implementado na consulta de
@@ -181,20 +181,16 @@ from src.importacao_dotacao import carregar_atual as carregar_dotacao_atual
 from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, Manifesto
 from src.importacao_execucao import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO
 from src.importacao_execucao import carregar_atual as carregar_execucao_atual
+from src.importacao_execucao_mensal import DIRETORIO_MANIFESTOS_PADRAO as DIRETORIO_MANIFESTOS_EXECUCAO_MENSAL
+from src.importacao_execucao_mensal import Manifesto as ManifestoExecucaoMensal
+from src.importacao_execucao_mensal import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO_MENSAL
+from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
 from src.necessidade_empenho import calcular_necessidade_empenho
 from src.relatorio_reforco_empenho import BOLSAS_AUXILIOS as RELATORIO_BOLSAS_AUXILIOS
-from src.tesouro_execucao_mensal import (
-    ler_execucao_mensal,
-    linha_do_tempo_por_ne,
-    primeiro_mes_com_empenho_por_ne,
-)
+from src.tesouro_execucao_mensal import linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_linha_do_tempo import MESES_ABREV, abrir_linha_do_tempo
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
 from src.ui_theme import format_brl_compact, render_metric_grid, render_page_header
-
-#: mesmo arquivo usado por `app_pages/consulta_empenhos.py`/`app_pages/execucao_mensal.py`
-#: para a linha do tempo mensal — base MENSAL (só 2026+), sem importação versionada ainda.
-CAMINHO_EXECUCAO_MENSAL = Path("data/raw") / "BI CPOC - EXEC. DESPESAS - Mensal.xlsx"
 
 COLUNAS_BUSCA = ["processo", "programa_bolsa", "unidade_cod", "acao_cod", "pi_cod", "ne_curta"]
 
@@ -202,14 +198,16 @@ SITUACAO_OPCOES = ["ATUALIZADO", "SEM EMPENHO", "NÃO LOCALIZADO"]
 
 
 @st.cache_data(show_spinner="Lendo a linha do tempo mensal...")
-def _cached_linha_do_tempo(caminho: str, mtime: float) -> pd.DataFrame:
-    """Empenhado/Liquidado/Pago por (NE, mês), a partir da base MENSAL — com `ne_curta`
-    (forma "2026NE000123", ver `src.execucao_anual.ne_curta`) acrescentada, pra poder ligar
-    com o `ne_curta` já usado no cadastro de Bolsas (`src/bolsas_auxilios.py`). Pop-up "Linha
-    do tempo mensal" (`src/ui_linha_do_tempo.py`), pedido explícito: mesmo formato de
-    `app_pages/consulta_empenhos.py`. `mtime` só participa da chave de cache."""
+def _cached_linha_do_tempo(caminho_ponteiro: str, sha_manifesto: str) -> pd.DataFrame:
+    """Empenhado/Liquidado/Pago por (NE, mês), a partir da base MENSAL (`carregar_atual`,
+    importação versionada — ver `src/importacao_execucao_mensal.py`) — com `ne_curta` (forma
+    "2026NE000123", ver `src.execucao_anual.ne_curta`) acrescentada, pra poder ligar com o
+    `ne_curta` já usado no cadastro de Bolsas (`src/bolsas_auxilios.py`). Pop-up "Linha do
+    tempo mensal" (`src/ui_linha_do_tempo.py`), pedido explícito: mesmo formato de
+    `app_pages/consulta_empenhos.py`. `caminho_ponteiro`/`sha_manifesto` só participam da
+    chave de cache."""
 
-    tempo = linha_do_tempo_por_ne(ler_execucao_mensal(caminho))
+    tempo = linha_do_tempo_por_ne(carregar_execucao_mensal_atual())
     tempo["ne_curta"] = tempo["ne_ccor"].apply(_ne_curta_execucao)
     return tempo
 
@@ -796,7 +794,7 @@ def _render_resumo_consolidado(
     bolsa, não agregado num único total — o valor empenhado, o saldo e a necessidade de
     empenho até dezembro de cada programa.
 
-    Pedido explícito: cada bolsa com NE encontrada na base MENSAL (2026+) é clicável — abre o
+    Pedido explícito: cada bolsa com NE encontrada na base MENSAL (2024+) é clicável — abre o
     mesmo pop-up "Linha do tempo mensal" de `app_pages/consulta_empenhos.py`
     (`src/ui_linha_do_tempo.py`, compartilhado). Bolsa sem NE ou sem dado mensal aparece como
     texto simples, sem botão — mesmo critério de "some silenciosamente" já usado lá.
@@ -858,7 +856,7 @@ def _render_resumo_consolidado(
                 if clicavel:
                     if linha[0].button(rotulo, key=f"bls_resumo_tempo_{source_key}_{row['id']}", use_container_width=True):
                         tempo_ne = tempo_por_ne_curta[tempo_por_ne_curta["ne_curta"] == ne_curta_bolsa]
-                        legenda = f"{_dash(row['programa_bolsa'])} (NE {ne_curta_bolsa}) — base mensal (2026+)."
+                        legenda = f"{_dash(row['programa_bolsa'])} (NE {ne_curta_bolsa}) — Execução Mensal (BI CPOC)."
                         abrir_linha_do_tempo(legenda, tempo_ne)
                 else:
                     linha[0].markdown(f'<div class="bls-resumo-nome-simples">{_esc(rotulo)}</div>', unsafe_allow_html=True)
@@ -1161,13 +1159,16 @@ except Exception as error:
     st.error(f"Não foi possível ler os dados: {error}")
     st.stop()
 
-# Base mensal (2026+) só para o pop-up "Linha do tempo mensal" do Resumo Consolidado —
-# opcional: sem o arquivo, o resumo continua funcionando normal, só sem nenhuma bolsa clicável.
+# Base mensal (2024+) só para o pop-up "Linha do tempo mensal" do Resumo Consolidado —
+# opcional: sem importação ainda feita, o resumo continua funcionando normal, só sem nenhuma
+# bolsa clicável.
 tempo_por_ne_curta: pd.DataFrame | None = None
-if CAMINHO_EXECUCAO_MENSAL.exists():
+manifesto_execucao_mensal = ManifestoExecucaoMensal.atual()
+if manifesto_execucao_mensal is not None:
+    caminho_ponteiro_execucao_mensal = DIRETORIO_MANIFESTOS_EXECUCAO_MENSAL / NOME_PONTEIRO_EXECUCAO_MENSAL
     try:
         tempo_por_ne_curta = _cached_linha_do_tempo(
-            str(CAMINHO_EXECUCAO_MENSAL), CAMINHO_EXECUCAO_MENSAL.stat().st_mtime
+            str(caminho_ponteiro_execucao_mensal), manifesto_execucao_mensal.sha256
         )
     except Exception:
         tempo_por_ne_curta = None

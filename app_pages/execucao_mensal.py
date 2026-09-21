@@ -1,12 +1,13 @@
-"""Execução Mensal — base MENSAL da Execução da Despesa, a partir de 2026 (BI CPOC).
+"""Execução Mensal — base MENSAL da Execução da Despesa, a partir de 2024 (BI CPOC).
 
-Complementar à página "Execução Orçamentária" (base ANUAL, 2023-2026) — não a substitui.
-Lê `src/tesouro_execucao_mensal.py`, um arquivo fixo em `data/raw/` (`CAMINHO_EXECUCAO_MENSAL`,
-mesmo caminho usado por `app_pages/consulta_empenhos.py` para a busca por item), sem manifesto
-versionado (fora do escopo — ver docs/base_execucao_mensal.md, seção 7). Atualizável pela
-página "Atualizar Planilhas" como planilha de trabalho (`src/atualizar_planilhas.py`, spec
-`execucao_mensal`) — substituição direta com backup por carimbo de data/hora, sem detecção de
-delta/retroatividade.
+Complementar à página "Execução Orçamentária" (base ANUAL, 2023-2026) — não a substitui;
+nenhuma reconciliação entre as duas foi definida (ver docs/base_execucao_mensal.md, seção 5).
+
+FONTE (21/09/2026, pedido explícito do usuário): passou a ler `Manifesto.atual()`/
+`carregar_atual()` de `src/importacao_execucao_mensal.py` — importação versionada (manifesto,
+delta, confirmação de retroatividade), mesmo padrão da Execução/Dotação Anual, em vez do
+arquivo fixo lido direto de antes. Reimportar pela página "Atualizar Planilhas", card
+"Execução Mensal" (`src/reimportacao_especificacoes.py`).
 
 Empenhado usa sempre `valor_empenhado_por_bloco()` (nunca a soma direta das linhas): o valor
 de um (NE, Natureza Detalhada, Subitem, mês) repete em cada linha de item daquele bloco —
@@ -17,19 +18,16 @@ linhas de item de execução, uma por NE × mês) e são somados direto.
 
 from __future__ import annotations
 
-from pathlib import Path
+from datetime import datetime
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
 from src.design_tokens import ACCENT, ACCENT_STRONG, BORDER, POSITIVE, TEXT, TEXT_MUTED
-from src.tesouro_execucao_mensal import ler_execucao_mensal, valor_empenhado_por_bloco
+from src.importacao_execucao_mensal import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
+from src.tesouro_execucao_mensal import valor_empenhado_por_bloco
 from src.ui_theme import format_brl_compact, format_brl_full, render_metric_grid, render_page_header
-
-#: mesmo arquivo usado por `app_pages/consulta_empenhos.py` para a busca por item — base
-#: MENSAL (só 2026+), sem importação versionada ainda.
-CAMINHO_EXECUCAO_MENSAL = Path("data/raw") / "BI CPOC - EXEC. DESPESAS - Mensal.xlsx"
 
 MESES_ABREV = {
     1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai", 6: "Jun",
@@ -49,8 +47,12 @@ FILTER_FIELDS = (
 
 
 @st.cache_data(show_spinner="Lendo a base de Execução Mensal...")
-def _cached_leitura(caminho: str, mtime: float) -> pd.DataFrame:
-    return ler_execucao_mensal(caminho)
+def _cached_leitura(caminho_ponteiro: str, sha_manifesto: str) -> pd.DataFrame:
+    """`caminho_ponteiro`/`sha_manifesto` só participam da chave de cache — força reler
+    quando a extração atual mudar. Devolve a base composta por ano (`carregar_atual`), não só
+    o arquivo do manifesto atual (mesmo padrão de `execucao_orcamentaria.py`)."""
+
+    return carregar_atual()
 
 
 def _rotulo_mes(ano_mes: int) -> str:
@@ -265,30 +267,27 @@ def _render_composicao(df_filtrado: pd.DataFrame, dedup: pd.DataFrame, source_ke
 # ---------------------------------------------------------------------- página
 render_page_header(
     "Execução Mensal",
-    "Execução da Despesa por mês (BI CPOC), a partir de 2026 — complementar à Execução "
+    "Execução da Despesa por mês (BI CPOC), a partir de 2024 — complementar à Execução "
     "Orçamentária (anual, 2023-2026).",
     "Execução",
 )
 
-if not CAMINHO_EXECUCAO_MENSAL.exists():
+manifesto = Manifesto.atual()
+if manifesto is None:
     st.info(
-        f"A base mensal não foi encontrada em '{CAMINHO_EXECUCAO_MENSAL}'. Copie a extração "
-        "atual (BI CPOC, variante com quebra mensal) para essa pasta para usar esta página."
+        "Nenhuma base de Execução Mensal foi importada ainda. Envie a extração pela página "
+        '"Atualizar Planilhas", card "Execução Mensal", antes de usar esta página.'
     )
     st.stop()
 
+caminho_ponteiro = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO
 try:
-    dataframe = _cached_leitura(str(CAMINHO_EXECUCAO_MENSAL), CAMINHO_EXECUCAO_MENSAL.stat().st_mtime)
+    dataframe = _cached_leitura(str(caminho_ponteiro), manifesto.sha256)
 except Exception as error:
     st.error(f"Não foi possível ler a base de Execução Mensal: {error}")
     st.stop()
 
-st.caption(
-    "Leitura direta de arquivo — esta base ainda não tem manifesto/importação versionada "
-    "(ver docs/base_execucao_mensal.md)."
-)
-
-source_key = str(int(CAMINHO_EXECUCAO_MENSAL.stat().st_mtime))
+source_key = manifesto.sha256[:12]
 selections = _render_filtros(dataframe, source_key)
 filtrado = _apply_filters(dataframe, selections)
 
@@ -313,8 +312,10 @@ with st.container(border=True):
     st.caption("Empenhado, Liquidado e Pago por categoria de uma dimensão, sobre o mesmo recorte filtrado acima.")
     _render_composicao(filtrado, dedup, source_key)
 
+data_extracao_texto = datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y")
 st.caption(
-    f"Fonte: '{CAMINHO_EXECUCAO_MENSAL.name}' · {dataframe['linha_origem'].nunique()} linhas "
-    "brutas na planilha completa · Empenhado sempre deduplicado por (NE, Natureza Detalhada, "
-    "Subitem, mês) — ver docs/base_execucao_mensal.md."
+    f"Última extração: {data_extracao_texto} · hash {manifesto.sha256[:8]} — exercícios não "
+    "trazidos por ela usam a extração anterior que os trouxe (composição por ano) · "
+    "Empenhado sempre deduplicado por (NE, Natureza Detalhada, Subitem, mês) — ver "
+    "docs/base_execucao_mensal.md."
 )

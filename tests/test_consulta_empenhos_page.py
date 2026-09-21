@@ -1,7 +1,12 @@
-"""Testes da página Consulta de Empenhos com fixture congelada da Execução Anual.
+"""Testes da página Consulta de Empenhos com fixture congelada da Execução Mensal.
 
-O manifesto e o DataFrame são injetados na camada de importação. A suíte não depende das
-planilhas de trabalho em `data/raw/` nem dos manifestos do ambiente local.
+A página lê `Manifesto.atual()`/`carregar_atual()` de `src.importacao_execucao_mensal`
+(importação versionada, ver `src/importacao_execucao_mensal.py`) — a suíte mocka essas duas
+funções (não a página em si: `app_pages/consulta_empenhos.py` é um script que executa `st.*`
+no import, então `unittest.mock.patch` num atributo SEU forçaria uma reimportação fora do
+sandbox do `AppTest`; mockar as funções na biblioteca de onde a página importa funciona porque
+o `AppTest` reexecuta o `from ... import ...` a cada `app.run()`, sempre lendo o atributo
+atual do módulo biblioteca). Não depende de nenhum manifesto real em `data/manifestos/`.
 
 A lista "Empenhos no escopo" é uma grade de cartões HTML com revelação progressiva (8 cartões
 de início, +8 a cada clique em "Ver mais"), não `st.dataframe` — cada cartão tem um
@@ -27,28 +32,28 @@ from unittest.mock import patch
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
-from src.execucao_anual import agregar_por_ne, ler_execucao_anual
-from src.importacao_execucao import gerar_manifesto
+from src.importacao_execucao_mensal import gerar_manifesto
+from src.tesouro_execucao_mensal import agregar_por_ne, ler_execucao_mensal
 from src.ui_theme import format_brl_full
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CAMINHO_FIXTURE = PROJECT_ROOT / "tests/fixtures/execucao_anual_2026-08-13.xlsx"
+CAMINHO_FIXTURE = PROJECT_ROOT / "tests/fixtures/execucao_mensal_2026-09-21.xlsx"
 
 
 class ConsultaEmpenhosPageTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.dataframe = ler_execucao_anual(CAMINHO_FIXTURE)
+        cls.dataframe = ler_execucao_mensal(CAMINHO_FIXTURE)
         cls.manifesto = gerar_manifesto(cls.dataframe, CAMINHO_FIXTURE)
         cls.total_empenhos = len(agregar_por_ne(cls.dataframe))
         cls.total_acoes = cls.dataframe["acao_cod"].dropna().nunique()
 
     def setUp(self) -> None:
         self._patch_manifesto = patch(
-            "src.importacao_execucao.Manifesto.atual", return_value=self.manifesto
+            "src.importacao_execucao_mensal.Manifesto.atual", return_value=self.manifesto
         )
         self._patch_carregar = patch(
-            "src.importacao_execucao.carregar_atual", return_value=self.dataframe.copy()
+            "src.importacao_execucao_mensal.carregar_atual", return_value=self.dataframe.copy()
         )
         self.mock_manifesto = self._patch_manifesto.start()
         self._patch_carregar.start()
@@ -444,7 +449,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(
-            any("Nenhuma base de Execução Anual foi importada" in item.value for item in app.info)
+            any("Nenhuma base de Execução Mensal foi importada" in item.value for item in app.info)
         )
 
 

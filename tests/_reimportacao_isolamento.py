@@ -29,6 +29,8 @@ from src.importacao_dotacao import ResultadoImportacao as ResultadoImportacaoDot
 from src.importacao_dotacao import importar as importar_dotacao
 from src.importacao_execucao import ResultadoImportacao as ResultadoImportacaoExecucao
 from src.importacao_execucao import importar as importar_execucao
+from src.importacao_execucao_mensal import ResultadoImportacao as ResultadoImportacaoExecucaoMensal
+from src.importacao_execucao_mensal import importar as importar_execucao_mensal
 
 
 class IsolamentoReimportacaoMixin:
@@ -52,6 +54,7 @@ class IsolamentoReimportacaoMixin:
 
         self._patch_spec("ESPECIFICACAO_EXECUCAO_ANUAL")
         self._patch_spec("ESPECIFICACAO_DOTACAO_ANUAL")
+        self._patch_spec("ESPECIFICACAO_EXECUCAO_MENSAL")
 
     def _patch_spec(self, nome_atributo: str) -> None:
         original = getattr(reimportacao_especificacoes, nome_atributo)
@@ -75,5 +78,12 @@ class IsolamentoReimportacaoMixin:
         caminho = self.tmp_raw / nome_arquivo
         caminho.write_bytes(conteudo)
         resultado = importar_dotacao(caminho, diretorio_manifestos=self.tmp_manifestos)
+        assert resultado.ok, resultado.validacao.erros
+        return resultado
+
+    def importar_baseline_execucao_mensal(self, caminho_fixture: Path) -> ResultadoImportacaoExecucaoMensal:
+        caminho = self.tmp_raw / caminho_fixture.name
+        caminho.write_bytes(caminho_fixture.read_bytes())
+        resultado = importar_execucao_mensal(caminho, diretorio_manifestos=self.tmp_manifestos)
         assert resultado.ok, resultado.validacao.erros
         return resultado

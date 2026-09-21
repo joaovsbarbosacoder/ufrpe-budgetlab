@@ -197,23 +197,19 @@ from src.importacao_dotacao import carregar_atual as carregar_dotacao_atual
 from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, Manifesto
 from src.importacao_execucao import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO
 from src.importacao_execucao import carregar_atual as carregar_execucao_atual
+from src.importacao_execucao_mensal import Manifesto as ManifestoExecucaoMensal
+from src.importacao_execucao_mensal import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO_MENSAL
+from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
 from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne, liquidado_por_ne_e_mes
 from src.necessidade_empenho import calcular_necessidade_empenho
 from src.relatorio_reforco_empenho import CONTRATOS_CONTINUOS as RELATORIO_CONTRATOS_CONTINUOS
-from src.tesouro_execucao_mensal import (
-    ler_execucao_mensal,
-    linha_do_tempo_por_ne,
-    primeiro_mes_com_empenho_por_ne,
-)
+from src.tesouro_execucao_mensal import linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_linha_do_tempo import MESES_ABREV, abrir_linha_do_tempo
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
 from src.ui_theme import format_brl_compact, render_metric_grid, render_page_header
 
 DIRETORIO_DADOS_BRUTOS = Path("data/raw")
 CAMINHO_PAGAMENTOS = DIRETORIO_DADOS_BRUTOS / "CONTRATOS - CONTROLE 2020 - Pagamentos.xlsx"
-#: mesmo arquivo usado por app_pages/consulta_empenhos.py/bolsas_auxilios.py para a linha do
-#: tempo mensal — base MENSAL (só 2026+), sem importação versionada ainda.
-CAMINHO_EXECUCAO_MENSAL = Path("data/raw") / "BI CPOC - EXEC. DESPESAS - Mensal.xlsx"
 #: mesmo arquivo usado por app_pages/consulta_empenhos.py (ver ali o porquê da troca) — usada
 #: aqui para "Necessidade de Empenho" (ver `com_saldo_execucao`, parâmetro
 #: `indice_liquidado_competencia`). Ausência do arquivo não impede o resto da página: a conta
@@ -239,14 +235,15 @@ def _cached_por_ne_execucao(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.
 
 
 @st.cache_data(show_spinner="Lendo a linha do tempo mensal...")
-def _cached_linha_do_tempo(caminho: str, mtime: float) -> pd.DataFrame:
-    """Empenhado/Liquidado/Pago por (NE, mês), a partir da base MENSAL — com `ne_curta`
+def _cached_linha_do_tempo(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
+    """Empenhado/Liquidado/Pago por (NE, mês), a partir da base MENSAL (`carregar_atual`,
+    importação versionada — ver `src/importacao_execucao_mensal.py`) — com `ne_curta`
     acrescentada, pra poder ligar com o `ne_curta` já usado nos contratos. Pop-up "Linha do
     tempo mensal" (`src/ui_linha_do_tempo.py`), mesmo formato de
-    `app_pages/bolsas_auxilios.py`/`app_pages/consulta_empenhos.py`. `mtime` só participa da
-    chave de cache."""
+    `app_pages/bolsas_auxilios.py`/`app_pages/consulta_empenhos.py`. `caminho_ponteiro`/
+    `mtime_ponteiro` só participam da chave de cache."""
 
-    tempo = linha_do_tempo_por_ne(ler_execucao_mensal(caminho))
+    tempo = linha_do_tempo_por_ne(carregar_execucao_mensal_atual())
     tempo["ne_curta"] = tempo["ne_ccor"].apply(_ne_curta_execucao)
     return tempo
 
@@ -1054,7 +1051,7 @@ def _render_linhas_resumo(
                         "por Competência), não por mês de lançamento."
                     )
                 else:
-                    legenda = f"{_dash(fornecedor)} (NE {ne_curta_linha}) — base mensal (2026+)."
+                    legenda = f"{_dash(fornecedor)} (NE {ne_curta_linha}) — Execução Mensal (BI CPOC)."
                 clicado = (legenda, tempo_ne)
         else:
             linha[0].markdown(f'<div class="cc-resumo-nome-simples">{_esc(rotulo)}</div>', unsafe_allow_html=True)
@@ -1127,7 +1124,7 @@ def _render_resumo_consolidado(
     de uma vez. Itens sem NE (contrato ainda sem empenho) aparecem à parte, um por linha, já
     que não há NE para agrupar — e nunca são clicáveis (não há NE pra buscar na base mensal).
 
-    Pedido explícito: cada NE com dado na base MENSAL (2026+) é clicável — abre o mesmo pop-up
+    Pedido explícito: cada NE com dado na base MENSAL (2024+) é clicável — abre o mesmo pop-up
     "Linha do tempo mensal" de `app_pages/bolsas_auxilios.py`/`app_pages/consulta_empenhos.py`
     (`src/ui_linha_do_tempo.py`, compartilhado). Cada linha é um `st.button` de verdade (não
     HTML) quando clicável — HTML puro não dispara evento Python — daí o cartão também ter
@@ -1699,13 +1696,16 @@ except Exception as error:
     st.error(f"Não foi possível ler os dados: {error}")
     st.stop()
 
-# Base mensal (2026+) só para o pop-up "Linha do tempo mensal" do Resumo Consolidado —
-# opcional: sem o arquivo, o resumo continua funcionando normal, só sem nenhuma NE clicável.
+# Base mensal (2024+) só para o pop-up "Linha do tempo mensal" do Resumo Consolidado —
+# opcional: sem importação ainda feita, o resumo continua funcionando normal, só sem nenhuma
+# NE clicável.
 tempo_por_ne_curta: pd.DataFrame | None = None
-if CAMINHO_EXECUCAO_MENSAL.exists():
+manifesto_execucao_mensal = ManifestoExecucaoMensal.atual()
+if manifesto_execucao_mensal is not None:
+    caminho_ponteiro_execucao_mensal = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO_EXECUCAO_MENSAL
     try:
         tempo_por_ne_curta = _cached_linha_do_tempo(
-            str(CAMINHO_EXECUCAO_MENSAL), CAMINHO_EXECUCAO_MENSAL.stat().st_mtime
+            str(caminho_ponteiro_execucao_mensal), caminho_ponteiro_execucao_mensal.stat().st_mtime
         )
     except Exception:
         tempo_por_ne_curta = None

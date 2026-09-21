@@ -35,7 +35,12 @@ import streamlit as st
 from src.atualizar_planilhas import ESPECIFICACOES, EspecificacaoBase, substituir_planilha
 from src.importacao_dotacao import Manifesto as ManifestoDotacao
 from src.importacao_execucao import Manifesto as ManifestoExecucao
-from src.reimportacao_especificacoes import ESPECIFICACAO_DOTACAO_ANUAL, ESPECIFICACAO_EXECUCAO_ANUAL
+from src.importacao_execucao_mensal import Manifesto as ManifestoExecucaoMensal
+from src.reimportacao_especificacoes import (
+    ESPECIFICACAO_DOTACAO_ANUAL,
+    ESPECIFICACAO_EXECUCAO_ANUAL,
+    ESPECIFICACAO_EXECUCAO_MENSAL,
+)
 from src.ui_reimportacao import render_reimportacao
 from src.ui_theme import render_page_header
 
@@ -47,8 +52,8 @@ render_page_header(
 
 st.subheader("Bases com reimportação versionada")
 st.caption(
-    "Execução Anual e Dotação Anual — manifesto próprio, com detecção de retroatividade e "
-    "exercício removido antes de aplicar."
+    "Execução Anual, Dotação Anual e Execução Mensal — manifesto próprio, com detecção de "
+    "retroatividade e exercício removido antes de aplicar."
 )
 
 
@@ -68,12 +73,13 @@ def _render_card_versionado(nome: str, manifesto_atual, spec) -> None:
 
 _render_card_versionado("Execução Orçamentária (Execução Anual)", ManifestoExecucao.atual(), ESPECIFICACAO_EXECUCAO_ANUAL)
 _render_card_versionado("Dotação Orçamentária (Dotação Anual)", ManifestoDotacao.atual(), ESPECIFICACAO_DOTACAO_ANUAL)
+_render_card_versionado("Execução Mensal", ManifestoExecucaoMensal.atual(), ESPECIFICACAO_EXECUCAO_MENSAL)
 
 st.subheader("Planilhas de trabalho")
 st.caption(
-    "Contratos Contínuos, Bolsas e Auxílios, Contratos — Vigência, Contratos — Pagamentos, "
-    "Execução Mensal e Liquidação por Competência — sem reimportação versionada: cada envio "
-    "substitui o arquivo inteiro, com a versão anterior preservada em data/raw/_backup/."
+    "Contratos Contínuos, Bolsas e Auxílios, Contratos — Vigência, Contratos — Pagamentos e "
+    "Liquidação por Competência — sem reimportação versionada: cada envio substitui o arquivo "
+    "inteiro, com a versão anterior preservada em data/raw/_backup/."
 )
 
 

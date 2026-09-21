@@ -128,14 +128,17 @@ class TestPainelPessoal(unittest.TestCase):
         stat_original = Path.stat
         exists_original = Path.exists
         def caminho_base(p):
-            return p.name in {"BI CPOC - EXEC. DESPESAS - Mensal.xlsx", "execucao_anual_atual.json", "dotacao_anual_atual.json"}
+            return p.name in {
+                "execucao_anual_atual.json", "dotacao_anual_atual.json", "execucao_mensal_atual.json",
+            }
         def stat_base(p, *args, **kwargs):
             return stat_original(Path(__file__)) if caminho_base(p) else stat_original(p, *args, **kwargs)
         with patch("src.importacao_execucao.Manifesto.atual", return_value=manifesto), \
              patch("src.importacao_dotacao.Manifesto.atual", return_value=manifesto), \
+             patch("src.importacao_execucao_mensal.Manifesto.atual", return_value=manifesto), \
              patch("src.importacao_execucao.carregar_atual", return_value=self.anual), \
              patch("src.importacao_dotacao.carregar_atual", return_value=dotacao), \
-             patch("src.tesouro_execucao_mensal.ler_execucao_mensal", return_value=self.mensal), \
+             patch("src.importacao_execucao_mensal.carregar_atual", return_value=self.mensal), \
              patch("src.ui_despesas_pessoal.render_painel", side_effect=render), \
              patch("pathlib.Path.exists", lambda p: True if caminho_base(p) else exists_original(p)), \
              patch("pathlib.Path.stat", stat_base):

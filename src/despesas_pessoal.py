@@ -6,9 +6,11 @@ NENHUMA regra aqui foi presumida sem confirmação explícita.
 
 Camada: regra de negócio pura (não lê arquivo, não importa Streamlit) — consome os
 DataFrames já normalizados por `src.importacao_execucao.carregar_atual()` (Execução
-Anual, versionada por manifesto) e `src.tesouro_execucao_mensal.ler_execucao_mensal()`
-(Execução Mensal, só 2026+, ainda sem manifesto — mesmo padrão "leitura direta
-opcional" já usado em `app_pages/consulta_empenhos.py` para a linha do tempo mensal).
+Anual) e `src.importacao_execucao_mensal.carregar_atual()` (Execução Mensal, 2024 em
+diante) — as duas bases têm importação versionada por manifesto (21/09/2026: a Mensal
+ganhou o mesmo padrão da Anual). `grade_mensal`/`grade_mensal_beneficios` recebem o
+`ano` como parâmetro explícito e filtram `mensal_df` por ele — a base mensal cobrir
+vários exercícios não implica em somar/misturar anos aqui.
 
 DECISÕES CONFIRMADAS PELO USUÁRIO (09-10/09/2026) — mudar exige nova confirmação,
 nunca presumir:

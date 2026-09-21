@@ -1,12 +1,28 @@
 """Consulta de Empenhos — navegação e busca no nível da Nota de Empenho (NE).
 
-Adaptação do handoff de design (`consulta-empenhos.dc.html` / `painel_execucao.py`) para a
-base de Execução Anual já integrada (`src/execucao_anual.py`), lida a partir do manifesto atual
-— não do carregador hipotético do handoff (`data_loader_execucao.py`), que assumia uma
-planilha achatada com uma linha por NE e colunas `Empenhado`/`Liquidado`/`Pago` diretas. A base
-real mistura linhas de empenho e de item de execução (ver `docs/base_execucao_anual.md`, seção
-3); `agregar_por_ne()` (`src/execucao_anual.py`) resolve isso somando cada NE preservando
-nulo ≠ zero, com a mesma granularidade de todas as outras páginas desta base.
+Adaptação do handoff de design (`consulta-empenhos.dc.html` / `painel_execucao.py`) — não do
+carregador hipotético do handoff (`data_loader_execucao.py`), que assumia uma planilha
+achatada com uma linha por NE e colunas `Empenhado`/`Liquidado`/`Pago` diretas. A base real
+mistura linhas de empenho e de item de execução; `agregar_por_ne()` resolve isso somando cada
+NE preservando nulo ≠ zero.
+
+FONTE DE DADOS (troca deliberada, 21/09/2026): esta página lia da Execução ANUAL
+(`src/execucao_anual.py`, manifesto versionado, 2023-2026). Pedido explícito do usuário:
+passou a ler da Execução MENSAL (`src/tesouro_execucao_mensal.py`, BI CPOC, `docs/
+base_execucao_mensal.md`) via `Manifesto.atual()`/`carregar_atual()` de
+`src/importacao_execucao_mensal.py` — importação versionada (manifesto, delta,
+confirmação de retroatividade), mesmo padrão da Execução Anual (ganhou isso no mesmo dia,
+antes só lia um arquivo fixo direto). Consequência aceita explicitamente: a Execução Mensal
+só cobre 2024 em diante — 2023 não aparece nesta página até essa base ganhar uma importação
+cobrindo aquele exercício. `agregar_por_ne()` (agora a versão de
+`src/tesouro_execucao_mensal.py`) tem o mesmo contrato de saída da versão antiga (mesmos
+nomes de coluna) — troca de fonte não exigiu reescrever o resto da página, só a leitura/
+gating/cache no rodapé do script e as dimensões novas (`NE - Informação Complementar`,
+`Unidade Orçamentária` — só existem nesta base) acrescentadas aos filtros avançados
+(`_CAMPO_NE_INFORMACAO_COMPLEMENTAR`/`_CAMPO_UNIDADE_ORCAMENTARIA`, fora do
+módulo compartilhado — ver comentário ao lado de `FILTER_FIELDS_AVANCADOS`, já que
+`app_pages/empenhos_execucao_retardada.py` continua na Base Anual, sem essa coluna). Reimportar
+pela página "Atualizar Planilhas", card "Execução Mensal".
 
 Layout replica o handoff de perto: barra de filtros (busca + 4 rápidos, incluindo Exercício),
 filtros avançados recolhíveis, faixa de KPIs em grade com hairlines, duas colunas — lista +
@@ -42,16 +58,15 @@ mecanismo): cada campo agora é um `st.multiselect`, não mais um dropdown "Todo
 — reverte a decisão original desta página de usar seleção única "de propósito" (documentada
 antes só no código, nunca neste docstring). Ver `src/ui_filtros_execucao.py` para o porquê.
 
-BUSCA POR ITEM (pedido explícito posterior): a busca livre agora também encontra empenhos
-pelo item/produto/rubrica dentro deles (ex.: "papel filme"), não só pelos campos da NE em si
-— dado que só existe na base MENSAL (`src/tesouro_execucao_mensal.py`, `docs/
-base_execucao_mensal.md`), cobrindo só 2026+, lida de um arquivo fixo em `data/raw/`
-(`CAMINHO_EXECUCAO_MENSAL`) sem importação versionada ainda. `_cached_itens_por_ne` resume,
-por NE, o texto de todos os itens distintos encontrados (`ne_item_desc`); a busca (linha a
-linha em `_dataframe_restrito_a_busca` e no "seguro" `_aplicar_busca` por NE) passa a marcar
-como batendo tanto NE cujos campos de sempre contêm o termo quanto NE cujo texto de itens
-contém — sem essa base disponível (arquivo ausente ou 2023-2025, fora do período coberto), a
-busca continua exatamente como antes. O painel de detalhe (`_render_detalhe`) ganhou uma
+BUSCA POR ITEM (pedido explícito posterior): a busca livre também encontra empenhos pelo
+item/produto/rubrica dentro deles (ex.: "papel filme"), a partir de `ne_item_desc` (`NE
+Item`, dimensão desta própria base — ver `docs/base_execucao_mensal.md`). `_cached_itens_por_ne`
+resume, por NE, o texto de todos os itens distintos encontrados; a busca (linha a linha em
+`_dataframe_restrito_a_busca` e no "seguro" `_aplicar_busca` por NE) passa a marcar como
+batendo tanto NE cujos campos de sempre contêm o termo quanto NE cujo texto de itens contém.
+Falha na leitura (não a ausência da base — a página já exige `Manifesto.atual()` para
+renderizar, ver rodapé do script) deixa `itens_por_ne = None`: a busca continua
+funcionando, só sem encontrar por item. O painel de detalhe (`_render_detalhe`) ganhou uma
 seção listando os itens da NE selecionada, quando existem (aberta por padrão — fechada,
 passava batido).
 
@@ -67,13 +82,13 @@ restringe por eles.
 LINHA DO TEMPO MENSAL (pedido explícito posterior): pop-up (`src.ui_linha_do_tempo.
 abrir_linha_do_tempo`, `st.dialog`) com Empenhado/Liquidado/Pago por mês de uma NE — acionado
 por um botão dentro do painel de detalhe (`_render_detalhe`), separado da seleção de qual NE
-está em detalhe (ver item abaixo). Só aparece para NE com dado na base MENSAL (2026+,
-`_cached_linha_do_tempo` → `src.tesouro_execucao_mensal.linha_do_tempo_por_ne`); some
-silenciosamente para as demais (2023-2025 ou sem a base mensal disponível). O próprio pop-up
-foi extraído para `src/ui_linha_do_tempo.py` (pedido explícito posterior: mesmo formato
-reaproveitado por `app_pages/bolsas_auxilios.py`) — o CSS `.ce-tempo-*` que ele usa continua
-injetado aqui (`_inject_css`), não no módulo compartilhado (Streamlit não carrega CSS
-injetado numa página anterior ao navegar para outra).
+está em detalhe (ver item abaixo). Vem de `_cached_linha_do_tempo` →
+`src.tesouro_execucao_mensal.linha_do_tempo_por_ne`, a mesma base que já alimenta o resto da
+página; some silenciosamente só se essa leitura falhar (`linha_do_tempo = None`, ver rodapé
+do script). O próprio pop-up foi extraído para `src/ui_linha_do_tempo.py` (pedido explícito
+posterior: mesmo formato reaproveitado por `app_pages/bolsas_auxilios.py`) — o CSS
+`.ce-tempo-*` que ele usa continua injetado aqui (`_inject_css`), não no módulo compartilhado
+(Streamlit não carrega CSS injetado numa página anterior ao navegar para outra).
 
 LIQUIDADO POR COMPETÊNCIA NA LINHA DO TEMPO (pedido explícito posterior, só nesta página —
 `app_pages/bolsas_auxilios.py` continua com Liquidado por lançamento): a coluna Liquidado do
@@ -81,8 +96,8 @@ pop-up passa a vir de `src/liquidacao_competencia.py` (mês de referência/compe
 mais da Execução Mensal (mês de LANÇAMENTO — quando o processo formal de liquidação ocorreu,
 não necessariamente o mês a que a despesa se refere). Empenhado/Pago continuam da Execução
 Mensal, sem mudança. `_tempo_com_liquidacao_por_competencia` faz a troca; sem a base de
-competência disponível (arquivo ausente), a linha do tempo volta ao comportamento anterior
-(Liquidado por lançamento) — mesma lógica de ausência silenciosa da base mensal. NE sem
+competência disponível (arquivo ausente), a linha do tempo volta ao comportamento padrão
+(Liquidado por lançamento) — ausência silenciosa, mesmo espírito de `itens_por_ne`. NE sem
 nenhuma linha de competência (mas com dado na Execução Mensal) mostra Liquidado 0 em todo
 mês — decisão explícita da v1: não reconcilia com o total liquidado da NE, não cai de volta
 para o valor de lançamento (ver docs/BudgetLab_competencia_por_empenho.md para o desenho
@@ -129,15 +144,11 @@ from src.design_tokens import (
     TRACK,
     WARNING,
 )
-from src.execucao_anual import (
-    agregar_por_ne,
-    ne_curta as _ne_curta_execucao,
-    saldo_por_ne,
-)
-from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
+from src.execucao_anual import ne_curta as _ne_curta_execucao, saldo_por_ne
+from src.importacao_execucao_mensal import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
 from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne_e_mes
-from src.tesouro_execucao_mensal import ler_execucao_mensal, linha_do_tempo_por_ne
-from src.ui_filtros_execucao import CAMPOS_AVANCADOS_EXECUCAO, CAMPOS_EXECUCAO, CAMPOS_RAPIDOS_EXECUCAO, apply_filters
+from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne
+from src.ui_filtros_execucao import CAMPOS_AVANCADOS_EXECUCAO, CAMPOS_RAPIDOS_EXECUCAO, CampoFiltro, apply_filters
 from src.ui_filtros_execucao import limpar_filtros as _limpar_filtros_compartilhado
 from src.ui_filtros_execucao import render_filtros_avancados as _render_filtros_avancados_compartilhado
 from src.ui_filtros_execucao import render_filtros_rapidos as _render_filtros_rapidos_compartilhado
@@ -150,14 +161,22 @@ from src.ui_theme import format_brl_compact, format_brl_full, render_page_header
 #: sessão já em uso.
 _PREFIXO_FILTRO = "consulta_empenhos"
 
-# as 16 dimensões em si (rápidos + avançados) agora vivem em `src/ui_filtros_execucao.py`
+# as 16 dimensões-base (rápidos + avançados) vivem em `src/ui_filtros_execucao.py`
 # (`CAMPOS_RAPIDOS_EXECUCAO`/`CAMPOS_AVANCADOS_EXECUCAO`) — compartilhadas com
-# `app_pages/empenhos_execucao_retardada.py`, não redeclaradas aqui.
+# `app_pages/empenhos_execucao_retardada.py` (que continua na Base ANUAL, sem estas colunas),
+# por isso as 2 dimensões abaixo (só desta base) são acrescentadas aqui, não no módulo
+# compartilhado — adicioná-las lá quebraria aquela outra página com KeyError.
+_CAMPO_NE_INFORMACAO_COMPLEMENTAR: CampoFiltro = (
+    "ne_informacao_complementar", "NE - Informação Complementar", "ne_informacao_complementar", None,
+)
+_CAMPO_UNIDADE_ORCAMENTARIA: CampoFiltro = (
+    "unidade_orcamentaria", "Unidade Orçamentária", "unidade_orcamentaria_cod", "unidade_orcamentaria_desc",
+)
 FILTER_FIELDS_RAPIDOS = CAMPOS_RAPIDOS_EXECUCAO
-FILTER_FIELDS_AVANCADOS = CAMPOS_AVANCADOS_EXECUCAO
-FILTER_FIELDS = CAMPOS_EXECUCAO
+FILTER_FIELDS_AVANCADOS = CAMPOS_AVANCADOS_EXECUCAO + (_CAMPO_NE_INFORMACAO_COMPLEMENTAR, _CAMPO_UNIDADE_ORCAMENTARIA)
+FILTER_FIELDS = FILTER_FIELDS_RAPIDOS + FILTER_FIELDS_AVANCADOS
 
-# Todas as 16 dimensões dos filtros (rápidos + avançados, `FILTER_FIELDS`) — pedido explícito
+# Todas as 18 dimensões dos filtros (rápidos + avançados, `FILTER_FIELDS`) — pedido explícito
 # pra "Consolidação do escopo" cobrir toda opção de filtro disponível, não só um subconjunto
 # escolhido à mão (o que faltava antes: Exercício, Iduso, Resultado Primário Lei, Categoria
 # Econômica, Elemento de Despesa, Natureza de Despesa Detalhada, Subitem, PI, PTRES, UG
@@ -211,11 +230,6 @@ COLUNAS_BUSCA = [
     "ne_ccor", "ne_descricao", "ne_favorecido", "natureza_detalhada_label",
     "pi_cod", "ptres", "acao_desc", "fonte_desc", "processo_ne",
 ]
-
-#: base MENSAL (só 2026+, ver docs/base_execucao_mensal.md) — arquivo fixo em `data/raw/`,
-#: sem importação versionada ainda (fora do escopo desta etapa). Usada só para a busca por
-#: item; ausência do arquivo não impede o resto da página, só a busca por item.
-CAMINHO_EXECUCAO_MENSAL = Path("data/raw") / "BI CPOC - EXEC. DESPESAS - Mensal.xlsx"
 
 #: base de Liquidação por Competência (ver src/liquidacao_competencia.py) — mesmo caminho
 #: fixo referenciado pela spec `liquidacao_competencia` em `src/atualizar_planilhas.py`.
@@ -278,36 +292,36 @@ def _num(value: object) -> str:
     return f"{round(float(value)):,}".replace(",", ".")
 
 
-@st.cache_data(show_spinner="Lendo a base de Execução Anual...")
+@st.cache_data(show_spinner="Lendo a base de Execução Mensal...")
 def _cached_leitura(caminho_ponteiro: str, sha_manifesto: str) -> pd.DataFrame:
     """`caminho_ponteiro`/`sha_manifesto` só participam da chave de cache — força reler
-    quando a extração atual mudar, sem depender do horário do arquivo-ponteiro. O DataFrame
-    devolvido já é a base composta por ano (ver
-    `importacao_execucao.carregar_atual`), não só o arquivo do manifesto atual."""
+    quando a extração atual mudar. Devolve a base composta por ano (`carregar_atual`), em
+    formato longo (uma linha por NE × Natureza Detalhada/Subitem × mês × item) — quem chama
+    agrega por NE com `agregar_por_ne` DEPOIS de filtrar linha a linha (ver corpo da página),
+    nunca antes: Natureza Detalhada/Subitem podem variar dentro da mesma NE."""
 
     return carregar_atual()
 
 
-@st.cache_data(show_spinner="Lendo os itens de empenho (base mensal)...")
-def _cached_itens_por_ne(caminho: str, mtime: float) -> pd.Series:
+@st.cache_data(show_spinner="Lendo os itens de empenho...")
+def _cached_itens_por_ne(caminho_ponteiro: str, sha_manifesto: str) -> pd.Series:
     """NE CCor -> texto de todos os itens distintos daquela NE (`ne_item_desc`, separados por
-    " | "), a partir da base MENSAL — usada só para a busca por palavra-chave de item, nunca
-    para valor financeiro (essa base não tem manifesto/importação versionada ainda). `mtime`
-    só participa da chave de cache."""
+    " | ") — usada só para a busca por palavra-chave de item. Lê de novo (não reaproveita o
+    resultado de `_cached_leitura`: cada `st.cache_data` guarda seu próprio resultado por
+    assinatura de chamada, sem custo real de reler — o arquivo já está em cache do SO/pandas
+    depois da primeira leitura desta sessão)."""
 
-    dados = ler_execucao_mensal(caminho)
+    dados = carregar_atual()
     reais = dados.loc[dados["tem_item"], ["ne_ccor", "ne_item_desc"]].drop_duplicates()
     return reais.groupby("ne_ccor")["ne_item_desc"].agg(" | ".join)
 
 
 @st.cache_data(show_spinner="Lendo a linha do tempo mensal...")
-def _cached_linha_do_tempo(caminho: str, mtime: float) -> pd.DataFrame:
-    """Empenhado/Liquidado/Pago por (NE, mês), a partir da base MENSAL — para o pop-up "Linha
-    do tempo mensal" do painel de detalhe. Mesmo arquivo/`mtime` de `_cached_itens_por_ne`
-    (lido de novo aqui, não reaproveitado: cada `st.cache_data` guarda seu próprio resultado
-    por chamada; ambos ficam em cache após a primeira leitura de cada um nesta sessão)."""
+def _cached_linha_do_tempo(caminho_ponteiro: str, sha_manifesto: str) -> pd.DataFrame:
+    """Empenhado/Liquidado/Pago por (NE, mês) — para o pop-up "Linha do tempo mensal" do
+    painel de detalhe."""
 
-    return linha_do_tempo_por_ne(ler_execucao_mensal(caminho))
+    return linha_do_tempo_por_ne(carregar_atual())
 
 
 @st.cache_data(show_spinner="Lendo a Liquidação por Competência...")
@@ -869,7 +883,7 @@ def _render_detalhe(
                     "Competência), não por mês de lançamento."
                 )
             else:
-                legenda = f"Nota de empenho {ne_exibicao} — base mensal (2026+)."
+                legenda = f"Nota de empenho {ne_exibicao} — Execução Mensal (BI CPOC)."
             abrir_linha_do_tempo(legenda, tempo_ne)
 
     st.markdown('<div class="ce-section-title">Classificação da despesa</div>', unsafe_allow_html=True)
@@ -885,6 +899,7 @@ def _render_detalhe(
     st.markdown('<div class="ce-section-title">Programação orçamentária</div>', unsafe_allow_html=True)
     st.caption(
         f"Nº do Processo: {linha['processo_ne'] if pd.notna(linha['processo_ne']) else 'Não informado'}  \n"
+        f"Informação Complementar: {linha['ne_informacao_complementar'] if pd.notna(linha['ne_informacao_complementar']) and str(linha['ne_informacao_complementar']).strip() else 'Não informado'}  \n"
         f"Ação de Governo: {linha['acao_cod']} — {linha['acao_desc']}  \n"
         f"Fonte de Recursos: {linha['fonte_cod']} — {linha['fonte_desc']}  \n"
         f"Resultado Primário Lei: {linha['resultado_primario_cod']} — {linha['resultado_primario_desc']}  \n"
@@ -903,7 +918,7 @@ def _render_detalhe(
     if itens_por_ne is not None and linha["ne_ccor"] in itens_por_ne.index:
         # aberto por padrão (pedido explícito) — fechado, passava batido: a NE selecionada ao
         # abrir a página já tem item mapeado na maioria das vezes, e o usuário não percebia.
-        with st.expander("Itens do empenho (base mensal, 2026+)", expanded=True):
+        with st.expander("Itens do empenho", expanded=True):
             for item in itens_por_ne.loc[linha["ne_ccor"]].split(" | "):
                 st.markdown(f"- {_esc(item)}")
 
@@ -911,7 +926,7 @@ def _render_detalhe(
 # ---------------------------------------------------------------------- página
 render_page_header(
     "Consulta de Empenhos",
-    "Execução Anual da Despesa (BI CPOC), no nível da nota de empenho.",
+    "Execução Mensal da Despesa (BI CPOC), no nível da nota de empenho.",
     "Execução",
 )
 _inject_css()
@@ -919,8 +934,8 @@ _inject_css()
 manifesto = Manifesto.atual()
 if manifesto is None:
     st.info(
-        "Nenhuma base de Execução Anual foi importada ainda. Rode a importação "
-        "inicial (ver docs/base_execucao_anual.md) antes de usar esta página."
+        "Nenhuma base de Execução Mensal foi importada ainda. Envie a extração pela página "
+        '"Atualizar Planilhas", card "Execução Mensal", antes de usar esta página.'
     )
     st.stop()
 
@@ -928,29 +943,22 @@ caminho_ponteiro = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO
 try:
     dataframe = _cached_leitura(str(caminho_ponteiro), manifesto.sha256)
 except Exception as error:
-    st.error(f"Não foi possível ler a base de Execução Anual: {error}")
+    st.error(f"Não foi possível ler a base de Execução Mensal: {error}")
     st.stop()
 
-# Base mensal (2026+) — opcional: sem o arquivo, a busca continua funcionando exatamente como
-# antes (só sem encontrar por palavra-chave de item) e o botão "Linha do tempo mensal" some do
-# painel de detalhe (ver `_render_detalhe`).
-itens_por_ne: pd.Series | None = None
-linha_do_tempo: pd.DataFrame | None = None
-if CAMINHO_EXECUCAO_MENSAL.exists():
-    try:
-        itens_por_ne = _cached_itens_por_ne(
-            str(CAMINHO_EXECUCAO_MENSAL), CAMINHO_EXECUCAO_MENSAL.stat().st_mtime
-        )
-        linha_do_tempo = _cached_linha_do_tempo(
-            str(CAMINHO_EXECUCAO_MENSAL), CAMINHO_EXECUCAO_MENSAL.stat().st_mtime
-        )
-    except Exception:
-        itens_por_ne = None
-        linha_do_tempo = None
+# Itens do empenho e linha do tempo mensal vêm da MESMA base já lida acima (`dataframe`) —
+# leitura própria em cache (não reaproveita `dataframe` direto) só porque cada
+# `st.cache_data` guarda seu próprio resultado por assinatura de chamada; ambos ficam em
+# cache após a primeira leitura nesta sessão, sem custo real de reler o arquivo do disco.
+try:
+    itens_por_ne: pd.Series | None = _cached_itens_por_ne(str(caminho_ponteiro), manifesto.sha256)
+    linha_do_tempo: pd.DataFrame | None = _cached_linha_do_tempo(str(caminho_ponteiro), manifesto.sha256)
+except Exception:
+    itens_por_ne = None
+    linha_do_tempo = None
 
-# Liquidação por Competência — mesma lógica de ausência silenciosa que a base mensal acima:
-# sem o arquivo, a linha do tempo volta a mostrar Liquidado por mês de lançamento
-# (comportamento anterior a este pedido), sem quebrar a página.
+# Liquidação por Competência — ausência silenciosa: sem o arquivo, a linha do tempo volta a
+# mostrar Liquidado por mês de lançamento (comportamento padrão), sem quebrar a página.
 liquidacao_competencia: pd.DataFrame | None = None
 if CAMINHO_LIQUIDACAO_COMPETENCIA.exists():
     try:
@@ -1020,7 +1028,7 @@ with st.container(border=True, key="ce_filter_panel"):
     advanced_column, clear_column = st.columns([5, 1], vertical_alignment="top")
     with advanced_column:
         with st.expander("Filtros avançados"):
-            st.caption("12 atributos cruzados; combinações sem registro não aparecem nas listas.")
+            st.caption(f"{len(FILTER_FIELDS_AVANCADOS)} atributos cruzados; combinações sem registro não aparecem nas listas.")
             _render_filtros_avancados(dataframe_buscado, source_key, selections)
     with clear_column:
         if st.button(
@@ -1191,4 +1199,7 @@ with st.container(border=True):
         _render_consolidacao_grupo(visivel[visivel["ne_ccor"].isin(marcados)])
 
 data_extracao_texto = datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y")
-st.caption(f"Procedência: extração de {data_extracao_texto} · hash {manifesto.sha256[:8]}")
+st.caption(
+    f"Última extração: {data_extracao_texto} · hash {manifesto.sha256[:8]} — exercícios não "
+    "trazidos por ela usam a extração anterior que os trouxe (composição por ano)."
+)

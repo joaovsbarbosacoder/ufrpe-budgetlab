@@ -158,10 +158,10 @@ para editá-lo. As edições ficam em memória, na sessão e na referência esco
 e podem ser restauradas pelo rodapé. Meses executados permanecem protegidos.
 
 A fonte do realizado é a Liquidada da Execução Mensal. As regras existentes
-em `src/despesas_pessoal.py` alimentam os meses futuros. Execução Anual e Dotação
-Anual são lidas pelos seus manifestos; a Mensal ainda usa o arquivo local
-`data/raw/BI CPOC - EXEC. DESPESAS - Mensal.xlsx`. As datas das extrações são
-independentes e ficam informadas no rodapé.
+em `src/despesas_pessoal.py` alimentam os meses futuros. Execução Anual, Dotação
+Anual e Execução Mensal são lidas pelos seus manifestos (importação versionada,
+`src/importacao_execucao_mensal.py`). As datas das extrações são independentes
+e ficam informadas no rodapé.
 
 Dotação por rubrica aparece como “—”, pois a base não oferece essa dimensão.
 Benefício Especial e Precatórios preservam os lugares previstos no layout, com

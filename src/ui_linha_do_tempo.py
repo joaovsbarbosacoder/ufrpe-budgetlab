@@ -1,5 +1,5 @@
 """Pop-up "Linha do tempo mensal" — Empenhado/Liquidado/Pago por mês, a partir da base
-MENSAL (`src/tesouro_execucao_mensal.py`, 2026+).
+MENSAL (`src/tesouro_execucao_mensal.py`, 2024+).
 
 Extraído de `app_pages/consulta_empenhos.py` (implementação original) para ser reutilizado por
 qualquer página que já tenha a evolução mensal de uma NE em mãos (`linha_do_tempo_por_ne`) e

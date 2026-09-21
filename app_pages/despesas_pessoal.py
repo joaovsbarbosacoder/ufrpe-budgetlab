@@ -4,7 +4,6 @@ Componente HTML único com tabelas semânticas, expansão inline e edição de m
 futuros. Processamento financeiro permanece em src.despesas_pessoal.
 """
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -24,10 +23,12 @@ from src.importacao_execucao import (
     Manifesto as ManifestoExecucao, NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO,
     carregar_atual as carregar_execucao_atual,
 )
-from src.tesouro_execucao_mensal import ler_execucao_mensal
+from src.importacao_execucao_mensal import (
+    DIRETORIO_MANIFESTOS_PADRAO as DIRETORIO_MANIFESTOS_EXECUCAO_MENSAL,
+    Manifesto as ManifestoExecucaoMensal, NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO_MENSAL,
+    carregar_atual as carregar_execucao_mensal_atual,
+)
 from src.ui_despesas_pessoal import montar_painel, render_painel, validar_edicao
-
-CAMINHO_EXECUCAO_MENSAL = Path("data/raw") / "BI CPOC - EXEC. DESPESAS - Mensal.xlsx"
 
 
 @st.cache_data(show_spinner="Lendo a base de Execução Anual...")
@@ -36,8 +37,8 @@ def _cached_execucao_anual(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.D
 
 
 @st.cache_data(show_spinner="Lendo a base de Execução Mensal...")
-def _cached_execucao_mensal(caminho: str, mtime: float) -> pd.DataFrame:
-    return ler_execucao_mensal(caminho)
+def _cached_execucao_mensal(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
+    return carregar_execucao_mensal_atual()
 
 
 @st.cache_data(show_spinner="Lendo a base de Dotação Anual...")
@@ -52,30 +53,31 @@ st.html("""<style>
 
 manifesto_execucao = ManifestoExecucao.atual()
 manifesto_dotacao = ManifestoDotacao.atual()
-if manifesto_execucao is None or manifesto_dotacao is None:
+manifesto_execucao_mensal = ManifestoExecucaoMensal.atual()
+if manifesto_execucao is None or manifesto_dotacao is None or manifesto_execucao_mensal is None:
     st.info(
-        "Este painel precisa da Execução Anual e da Dotação Anual já importadas "
-        "(menu \"Atualizar Planilhas\"). Falta: "
+        "Este painel precisa da Execução Anual, da Dotação Anual e da Execução Mensal já "
+        'importadas (menu "Atualizar Planilhas"). Falta: '
         + ", ".join(
-            nome for nome, ok in (("Execução Anual", manifesto_execucao is not None), ("Dotação Anual", manifesto_dotacao is not None))
+            nome for nome, ok in (
+                ("Execução Anual", manifesto_execucao is not None),
+                ("Dotação Anual", manifesto_dotacao is not None),
+                ("Execução Mensal", manifesto_execucao_mensal is not None),
+            )
             if not ok
         )
         + "."
     )
     st.stop()
 
-if not CAMINHO_EXECUCAO_MENSAL.exists():
-    st.info(
-        f"Este painel depende da base MENSAL de Execução da Despesa (`{CAMINHO_EXECUCAO_MENSAL}`), "
-        "que ainda não foi encontrada. Sem esse arquivo não há como montar a grade."
-    )
-    st.stop()
-
 caminho_ponteiro_execucao = DIRETORIO_MANIFESTOS_EXECUCAO / NOME_PONTEIRO_EXECUCAO
 caminho_ponteiro_dotacao = DIRETORIO_MANIFESTOS_DOTACAO / NOME_PONTEIRO_DOTACAO
+caminho_ponteiro_execucao_mensal = DIRETORIO_MANIFESTOS_EXECUCAO_MENSAL / NOME_PONTEIRO_EXECUCAO_MENSAL
 try:
     anual = _cached_execucao_anual(str(caminho_ponteiro_execucao), caminho_ponteiro_execucao.stat().st_mtime)
-    mensal = _cached_execucao_mensal(str(CAMINHO_EXECUCAO_MENSAL), CAMINHO_EXECUCAO_MENSAL.stat().st_mtime)
+    mensal = _cached_execucao_mensal(
+        str(caminho_ponteiro_execucao_mensal), caminho_ponteiro_execucao_mensal.stat().st_mtime
+    )
     dotacao = _cached_dotacao_anual(str(caminho_ponteiro_dotacao), caminho_ponteiro_dotacao.stat().st_mtime)
 except Exception as error:
     st.error(f"Não foi possível ler as bases necessárias: {error}")
@@ -126,8 +128,9 @@ def data_extracao(manifesto):
 procedencia = (
     f"Procedência: Execução Anual, extração de {data_extracao(manifesto_execucao)}, "
     f"hash {manifesto_execucao.sha256[:8]}; Dotação Anual, extração de "
-    f"{data_extracao(manifesto_dotacao)}, hash {manifesto_dotacao.sha256[:8]}. "
-    f"Execução Mensal: {CAMINHO_EXECUCAO_MENSAL.name}, arquivo local sem manifesto. "
+    f"{data_extracao(manifesto_dotacao)}, hash {manifesto_dotacao.sha256[:8]}; "
+    f"Execução Mensal, extração de {data_extracao(manifesto_execucao_mensal)}, "
+    f"hash {manifesto_execucao_mensal.sha256[:8]}. "
     "As bases possuem datas de extração independentes."
 )
 dados = montar_painel(grade, mensal, anual, dotacao_grupo, ano_dotacao,
