@@ -12,6 +12,7 @@ import unittest
 from decimal import Decimal
 
 from src.teds_alertas import (
+    STATUS_DESCARTADO,
     TIPO_EMPENHO_MULTIPLOS_TEDS,
     TIPO_NC_UG_EMITENTE_AUSENTE,
     DocumentoNC,
@@ -20,6 +21,8 @@ from src.teds_alertas import (
     detectar_ne_em_multiplos_teds,
     gerar_alertas_nc_parcial,
     gerar_alertas_ne_multiplos_teds,
+    carregar_decisoes_vinculo_ne,
+    registrar_decisao_vinculo_ne,
     sincronizar_alertas_multiplos_teds,
     sincronizar_alertas_nc_parcial,
     total_empenhado_por_ted,
@@ -145,6 +148,133 @@ class SincronizacaoComBancoTests(unittest.TestCase):
             "SELECT COUNT(*) FROM alerta WHERE tipo = ?", (TIPO_EMPENHO_MULTIPLOS_TEDS,)
         ).fetchone()[0]
         self.assertEqual(total, 1)
+
+    def test_decisao_mantem_so_ted_escolhido_contabilizavel_e_preserva_historico(self):
+        sincronizar_alertas_multiplos_teds(self.conn)
+        alerta_id = self.conn.execute(
+            "SELECT id FROM alerta WHERE tipo = ?", (TIPO_EMPENHO_MULTIPLOS_TEDS,)
+        ).fetchone()[0]
+
+        decisao = registrar_decisao_vinculo_ne(
+            self.conn,
+            alerta_id=alerta_id,
+            chave_empenho=NE_422,
+            chave_ted_escolhida=TED_17352,
+            responsavel="Maria Silva",
+            justificativa="A documentação de origem identifica o TED 17352.",
+        )
+
+        status = dict(
+            self.conn.execute(
+                "SELECT chave_ted, status_validacao FROM vinculo_ne WHERE chave_empenho = ?",
+                (NE_422,),
+            ).fetchall()
+        )
+        self.assertEqual(status[TED_17352], "ok")
+        self.assertEqual(status[TED_17454], STATUS_DESCARTADO)
+        self.assertEqual(decisao.chave_ted_escolhida, TED_17352)
+        self.assertEqual(decisao.teds_envolvidos, (TED_17352, TED_17454))
+
+        historico = carregar_decisoes_vinculo_ne(self.conn, NE_422)
+        self.assertEqual(len(historico), 1)
+        self.assertEqual(historico[0].responsavel, "Maria Silva")
+        alerta = self.conn.execute(
+            "SELECT status, responsavel, justificativa FROM alerta WHERE id = ?", (alerta_id,)
+        ).fetchone()
+        self.assertEqual(alerta, ("resolvido", "Maria Silva", "A documentação de origem identifica o TED 17352."))
+
+    def test_sincronizacao_preserva_decisao_vigente_sem_reabrir_alerta(self):
+        sincronizar_alertas_multiplos_teds(self.conn)
+        alerta_id = self.conn.execute(
+            "SELECT id FROM alerta WHERE tipo = ?", (TIPO_EMPENHO_MULTIPLOS_TEDS,)
+        ).fetchone()[0]
+        registrar_decisao_vinculo_ne(
+            self.conn,
+            alerta_id=alerta_id,
+            chave_empenho=NE_422,
+            chave_ted_escolhida=TED_17454,
+            responsavel="João Souza",
+            justificativa="Conferência efetuada no processo de origem.",
+        )
+
+        novos = sincronizar_alertas_multiplos_teds(self.conn)
+
+        self.assertEqual(novos, [])
+        status = dict(
+            self.conn.execute(
+                "SELECT chave_ted, status_validacao FROM vinculo_ne WHERE chave_empenho = ?",
+                (NE_422,),
+            ).fetchall()
+        )
+        self.assertEqual(status[TED_17454], "ok")
+        self.assertEqual(status[TED_17352], STATUS_DESCARTADO)
+        total_alertas = self.conn.execute(
+            "SELECT COUNT(*) FROM alerta WHERE tipo = ?", (TIPO_EMPENHO_MULTIPLOS_TEDS,)
+        ).fetchone()[0]
+        self.assertEqual(total_alertas, 1)
+
+    def test_decisao_exige_responsavel_e_justificativa(self):
+        sincronizar_alertas_multiplos_teds(self.conn)
+        alerta_id = self.conn.execute(
+            "SELECT id FROM alerta WHERE tipo = ?", (TIPO_EMPENHO_MULTIPLOS_TEDS,)
+        ).fetchone()[0]
+
+        with self.assertRaisesRegex(ValueError, "responsável"):
+            registrar_decisao_vinculo_ne(
+                self.conn,
+                alerta_id=alerta_id,
+                chave_empenho=NE_422,
+                chave_ted_escolhida=TED_17352,
+                responsavel=" ",
+                justificativa="Vínculo conferido.",
+            )
+        with self.assertRaisesRegex(ValueError, "justificativa"):
+            registrar_decisao_vinculo_ne(
+                self.conn,
+                alerta_id=alerta_id,
+                chave_empenho=NE_422,
+                chave_ted_escolhida=TED_17352,
+                responsavel="Maria Silva",
+                justificativa=" ",
+            )
+
+    def test_novo_ted_invalida_decisao_anterior_e_reabre_conferencia(self):
+        sincronizar_alertas_multiplos_teds(self.conn)
+        alerta_id = self.conn.execute(
+            "SELECT id FROM alerta WHERE tipo = ?", (TIPO_EMPENHO_MULTIPLOS_TEDS,)
+        ).fetchone()[0]
+        registrar_decisao_vinculo_ne(
+            self.conn,
+            alerta_id=alerta_id,
+            chave_empenho=NE_422,
+            chave_ted_escolhida=TED_17352,
+            responsavel="Maria Silva",
+            justificativa="Conferência baseada nos dois vínculos existentes.",
+        )
+        terceiro_ted = chave_ted("18000", "1NOVO1")
+        self.conn.execute(
+            """
+            INSERT INTO vinculo_ne
+                (chave_ted, chave_empenho, ug_emitente, gestao_emitente, numero_ne,
+                 valor_ne, import_batch_id, linha_origem)
+            VALUES (?, ?, '153165', '15239', '2026NE000422', '388300.00', 1, '{}')
+            """,
+            (terceiro_ted, NE_422),
+        )
+        self.conn.commit()
+
+        novos = sincronizar_alertas_multiplos_teds(self.conn)
+
+        self.assertEqual(len(novos), 1)
+        status = self.conn.execute(
+            "SELECT DISTINCT status_validacao FROM vinculo_ne WHERE chave_empenho = ?",
+            (NE_422,),
+        ).fetchall()
+        self.assertEqual(status, [("pendente",)])
+        abertos = self.conn.execute(
+            "SELECT COUNT(*) FROM alerta WHERE documento = ? AND status = 'aberto'", (NE_422,)
+        ).fetchone()[0]
+        self.assertEqual(abertos, 1)
 
 
 class DetectaDocumentosNcParciaisTests(unittest.TestCase):

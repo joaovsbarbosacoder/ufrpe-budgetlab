@@ -23,7 +23,11 @@ import pandas as pd
 import streamlit as st
 
 from src import design_tokens
-from src.teds_alertas import TIPO_EMPENHO_MULTIPLOS_TEDS, TIPO_NC_UG_EMITENTE_AUSENTE
+from src.teds_alertas import (
+    STATUS_OK,
+    TIPO_EMPENHO_MULTIPLOS_TEDS,
+    TIPO_NC_UG_EMITENTE_AUSENTE,
+)
 from src.teds_normalizacao import texto_para_valor
 from src.teds_schema import conectar
 
@@ -231,6 +235,24 @@ def cor_situacao_conciliacao(situacao: str) -> str:
     return {"Conciliado": design_tokens.POSITIVE, "Conferência necessária": design_tokens.NEGATIVE, "Fonte ausente": design_tokens.WARNING}.get(situacao, design_tokens.TEXT_MUTED)
 
 
+def situacao_conciliacao(
+    *,
+    tem_pendencia: bool,
+    fonte_ausente: bool,
+    diferenca: Decimal | None,
+    tolerancia: Decimal,
+) -> str:
+    """Classifica a comparação sem deixar uma fonte ausente ocultar um vínculo conflitante."""
+
+    if tem_pendencia:
+        return "Conferência necessária"
+    if fonte_ausente:
+        return "Fonte ausente"
+    if diferenca is not None and abs(diferenca) > tolerancia:
+        return "Conferência necessária"
+    return "Conciliado"
+
+
 def cor_estado_ted(estado_atual: str | None) -> str:
     texto = (estado_atual or "").lower()
     if "execu" in texto:
@@ -322,7 +344,16 @@ def filtrar_por_exercicio(teds_df: pd.DataFrame, ano: int) -> pd.DataFrame:
 
 
 def _soma_empenhado_por_ted(conn: sqlite3.Connection, chave_ted: str) -> Decimal:
-    linhas = conn.execute("SELECT valor_ne FROM vinculo_ne WHERE chave_ted = ?", (chave_ted,)).fetchall()
+    """Soma somente vínculos liberados para contabilização.
+
+    Uma NE ligada a mais de um TED permanece consultável em ``vinculo_ne``. Somente o vínculo
+    com ``status_validacao='ok'`` compõe o total; pendentes e descartados ficam como evidência.
+    """
+
+    linhas = conn.execute(
+        "SELECT valor_ne FROM vinculo_ne WHERE chave_ted = ? AND status_validacao = ?",
+        (chave_ted, STATUS_OK),
+    ).fetchall()
     total = Decimal("0")
     for (valor,) in linhas:
         total += texto_para_valor(valor)
@@ -332,10 +363,11 @@ def _soma_empenhado_por_ted(conn: sqlite3.Connection, chave_ted: str) -> Decimal
 def soma_tg_por_teds(conn: sqlite3.Connection, chaves_ted: set[str]) -> tuple[Decimal, Decimal, bool]:
     """`(liquidado, pago, tem_dado)` somados para o conjunto de TEDs, cruzando
     `vinculo_ne.numero_ne` (já no formato completo, ex. "2024NE000338") com
-    `execucao_tg.numero_completo_ne`. `tem_dado=False` quando nenhuma linha do Tesouro
-    Gerencial foi importada ainda para nenhuma dessas NEs — nesse caso os dois valores vêm
-    zerados, mas o chamador não deve exibi-los como "0,00" (é ausência de dado, não um total
-    real de zero)."""
+    `execucao_tg.numero_completo_ne`. Somente vínculos com `status_validacao='ok'` entram no
+    cruzamento, pelo mesmo bloqueio aplicado ao total empenhado. `tem_dado=False` quando
+    nenhuma linha do Tesouro Gerencial foi importada para as NEs contabilizáveis — nesse caso
+    os dois valores vêm zerados, mas o chamador não deve exibi-los como "0,00" (é ausência de
+    dado contabilizável, não um total real de zero)."""
 
     if not chaves_ted:
         return Decimal("0"), Decimal("0"), False
@@ -343,8 +375,9 @@ def soma_tg_por_teds(conn: sqlite3.Connection, chaves_ted: set[str]) -> tuple[De
     numeros_ne = {
         numero_ne
         for (numero_ne,) in conn.execute(
-            f"SELECT DISTINCT numero_ne FROM vinculo_ne WHERE chave_ted IN ({marcadores})",
-            list(chaves_ted),
+            f"SELECT DISTINCT numero_ne FROM vinculo_ne "
+            f"WHERE chave_ted IN ({marcadores}) AND status_validacao = ?",
+            [*chaves_ted, STATUS_OK],
         ).fetchall()
     }
     if not numeros_ne:
@@ -359,6 +392,98 @@ def soma_tg_por_teds(conn: sqlite3.Connection, chaves_ted: set[str]) -> tuple[De
     liquidado = sum((texto_para_valor(v) for v, _ in linhas if v is not None), start=Decimal("0"))
     pago = sum((texto_para_valor(v) for _, v in linhas if v is not None), start=Decimal("0"))
     return liquidado, pago, True
+
+
+@dataclass(frozen=True)
+class CoberturaRelacionamentos:
+    """Painel de qualidade do §13 do briefing — percentuais/contagens sobre o quanto dos
+    documentos importados já está de fato ligado a um TED (ou ao Tesouro Gerencial/
+    competência), para o valor financeiro sem relacionamento nunca ficar escondido atrás de
+    "só uma quantidade de linhas".
+
+    Interpretação adotada onde o briefing não é literal quanto à direção da métrica (registrado
+    aqui, não presumido em silêncio):
+
+      * "percentual de NEs relacionadas a um TED" não pode ser medido contra `vinculo_ne` (toda
+        linha ali JÁ nasce ligada a um TED — `ler_doc_ne_simec` rejeita a linha antes de
+        persistir se faltar TED/SIAFI, ver `src/teds_importacao_simec.py`). Em vez disso, mede
+        a fração de NEs com atribuição HOJE inequívoca a um único TED (`status_validacao='ok'`)
+        sobre o total de NEs distintas conhecidas — uma NE presa em `pendente` (múltiplos TEDs,
+        ver `src/teds_alertas.py`) conta como não coberta até a decisão humana.
+      * "percentual de NEs relacionadas ao Tesouro Gerencial" cruza as NEs com
+        `status_validacao='ok'` (as mesmas contabilizáveis nos totais financeiros, ver
+        `soma_tg_por_teds`) contra `execucao_tg.numero_completo_ne`.
+    """
+
+    pct_nc_relacionadas: float | None
+    pct_pf_relacionadas: float | None
+    pct_ne_relacionadas: float | None
+    pct_ne_no_tesouro_gerencial: float | None
+    pct_liquidacoes_com_competencia: float | None
+    qtd_documentos_parciais: int
+    qtd_documentos_nao_relacionados: int
+    valor_nao_relacionado: Decimal
+
+
+def _percentual(numerador: int, denominador: int) -> float | None:
+    return None if denominador == 0 else numerador / denominador
+
+
+def calcular_cobertura_relacionamentos(conn: sqlite3.Connection) -> CoberturaRelacionamentos:
+    total_nc, relacionadas_nc, parciais_nc, nao_relacionadas_nc = conn.execute(
+        """
+        SELECT COUNT(*), SUM(chave_ted IS NOT NULL), SUM(status_relacionamento = 'PARCIAL'),
+               SUM(chave_ted IS NULL)
+        FROM documento_nc
+        """
+    ).fetchone()
+    # Soma em Decimal (nunca `SUM`/`CAST AS REAL` do SQLite — ponto flutuante binário é
+    # proibido para dinheiro neste módulo, ver docstring de `src/teds_normalizacao.py`).
+    valores_nc_sem_ted = conn.execute(
+        "SELECT valor_assinado_total FROM documento_nc WHERE chave_ted IS NULL"
+    ).fetchall()
+
+    total_pf, relacionadas_pf, nao_relacionadas_pf = conn.execute(
+        "SELECT COUNT(*), SUM(chave_ted IS NOT NULL), SUM(chave_ted IS NULL) FROM documento_pf"
+    ).fetchone()
+    valores_pf_sem_ted = conn.execute(
+        "SELECT valor_assinado FROM documento_pf WHERE chave_ted IS NULL"
+    ).fetchall()
+
+    valor_nao_relacionado = sum(
+        (texto_para_valor(v) for (v,) in (*valores_nc_sem_ted, *valores_pf_sem_ted)),
+        start=Decimal("0"),
+    )
+
+    total_ne, ne_ok = conn.execute(
+        """
+        SELECT COUNT(DISTINCT chave_empenho), COUNT(DISTINCT CASE WHEN status_validacao = 'ok' THEN chave_empenho END)
+        FROM vinculo_ne
+        """
+    ).fetchone()
+
+    ne_no_tg = conn.execute(
+        """
+        SELECT COUNT(DISTINCT v.chave_empenho) FROM vinculo_ne v
+        WHERE v.status_validacao = 'ok'
+          AND EXISTS (SELECT 1 FROM execucao_tg t WHERE t.numero_completo_ne = v.numero_ne)
+        """
+    ).fetchone()[0]
+
+    total_tg, tg_com_competencia = conn.execute(
+        "SELECT COUNT(*), SUM(ano_competencia IS NOT NULL AND mes_competencia IS NOT NULL) FROM execucao_tg"
+    ).fetchone()
+
+    return CoberturaRelacionamentos(
+        pct_nc_relacionadas=_percentual(relacionadas_nc or 0, total_nc or 0),
+        pct_pf_relacionadas=_percentual(relacionadas_pf or 0, total_pf or 0),
+        pct_ne_relacionadas=_percentual(ne_ok or 0, total_ne or 0),
+        pct_ne_no_tesouro_gerencial=_percentual(ne_no_tg or 0, ne_ok or 0),
+        pct_liquidacoes_com_competencia=_percentual(tg_com_competencia or 0, total_tg or 0),
+        qtd_documentos_parciais=parciais_nc or 0,
+        qtd_documentos_nao_relacionados=(nao_relacionadas_nc or 0) + (nao_relacionadas_pf or 0),
+        valor_nao_relacionado=valor_nao_relacionado,
+    )
 
 
 @dataclass(frozen=True)
@@ -407,19 +532,19 @@ def alertas_de_ne_para_ted(conn: sqlite3.Connection, chave_ted: str) -> list[Ale
     """Alertas de NE-em-múltiplos-TEDs relacionados a este TED — não usam `chave_ted` na
     própria linha do alerta (uma NE pendente não pertence a um único TED, ver docstring de
     `gerar_alertas_ne_multiplos_teds`), então o cruzamento é por `chave_empenho` das NEs deste
-    TED que estão com `status_validacao='pendente'`."""
+    TED. Isso mantém o alerta resolvido acessível no histórico dos dois TEDs envolvidos."""
 
-    chaves_empenho_pendentes = {
+    chaves_empenho = {
         chave_empenho
         for (chave_empenho,) in conn.execute(
-            "SELECT DISTINCT chave_empenho FROM vinculo_ne WHERE chave_ted = ? AND status_validacao = 'pendente'",
+            "SELECT DISTINCT chave_empenho FROM vinculo_ne WHERE chave_ted = ?",
             (chave_ted,),
         ).fetchall()
     }
-    if not chaves_empenho_pendentes:
+    if not chaves_empenho:
         return []
     todos = carregar_alertas(conn, tipos=(TIPO_EMPENHO_MULTIPLOS_TEDS,))
-    return [a for a in todos if a.documento in chaves_empenho_pendentes]
+    return [a for a in todos if a.documento in chaves_empenho]
 
 
 def atualizar_status_alerta(
@@ -431,6 +556,13 @@ def atualizar_status_alerta(
     justificativa: str | None = None,
 ) -> None:
     from datetime import datetime, timezone
+
+    if novo_status == STATUS_RESOLVIDO:
+        linha = conn.execute("SELECT tipo FROM alerta WHERE id = ?", (alerta_id,)).fetchone()
+        if linha is not None and linha[0] == TIPO_EMPENHO_MULTIPLOS_TEDS:
+            raise ValueError(
+                "Alertas de vínculo múltiplo devem ser resolvidos pela decisão explícita do TED."
+            )
 
     data_resolucao = datetime.now(timezone.utc).isoformat() if novo_status == STATUS_RESOLVIDO else None
     conn.execute(

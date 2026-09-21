@@ -101,6 +101,14 @@ class NormalizarCodigoTests(unittest.TestCase):
     def test_none_vira_vazio(self):
         self.assertEqual(normalizar_codigo(None), "")
 
+    def test_codigo_alfanumerico_vira_maiusculo(self):
+        # regra 3.1 do briefing: "1abdku" -> "1ABDKU".
+        self.assertEqual(normalizar_codigo("1abdku"), "1ABDKU")
+        self.assertEqual(normalizar_codigo("2026ne000422"), "2026NE000422")
+
+    def test_codigo_ja_maiusculo_nao_muda(self):
+        self.assertEqual(normalizar_codigo("2026NE000422"), "2026NE000422")
+
 
 class NormalizarNomeColunaTests(unittest.TestCase):
     def test_variacoes_de_acento_espaco_e_caixa_sao_equivalentes(self):

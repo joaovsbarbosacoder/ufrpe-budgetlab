@@ -202,12 +202,17 @@ def _render_detalhe(chave_ted: str) -> None:
         if not docs:
             st.caption("Nenhum empenho vinculado a este TED.")
         for numero_ne, ug_emitente, gestao_emitente, valor_ne, status_val, chave_empenho in docs:
+            rotulos_status = {
+                "pendente": "Vínculo múltiplo — conferência necessária",
+                "descartado": "Não contabilizado — decisão registrada",
+                "ok": "Ok",
+            }
             cor = cor_gravidade("alta") if status_val == "pendente" else "inherit"
             cdoc, cval = st.columns([3, 1])
             cdoc.markdown(
                 f"**{numero_ne}** — UG {ug_emitente} / gestão {gestao_emitente}  \n"
                 f"<span style='color:{cor};font-size:12px'>"
-                f"{'Pendente — mesmo empenho em outro TED' if status_val == 'pendente' else 'Ok'}</span>",
+                f"{rotulos_status.get(status_val, status_val)}</span>",
                 unsafe_allow_html=True,
             )
             cval.markdown(f"<div style='text-align:right'>{brl(valor_ne)}</div>", unsafe_allow_html=True)

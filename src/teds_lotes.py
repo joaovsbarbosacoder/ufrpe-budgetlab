@@ -22,6 +22,7 @@ import json
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -69,18 +70,83 @@ def _lote_ja_importado(conn: sqlite3.Connection, tipo_relatorio: str, hash_arqui
     return row[0] if row else None
 
 
+@dataclass(frozen=True)
+class ResumoControle:
+    """Total de controle de um lote (regra 6.2 do briefing): quantidade de linhas lidas,
+    rejeitadas e aceitas com aviso, mais a soma bruta/positiva/negativa/líquida quando o
+    relatório tem um valor por linha com sinal bem definido.
+
+    As somas ficam `None` para Execução Anual e Execução do Tesouro Gerencial: essas duas
+    bases trazem várias colunas de valor por linha (ex.: os 6 totais por TED da Execução
+    Anual) sem uma leitura única de "valor da linha" — forçar uma soma ali exigiria escolher
+    arbitrariamente qual coluna vale como "o" valor da linha, o que não está no briefing nem
+    foi confirmado contra as extrações reais revisadas.
+
+    "Total do rodapé" e a diferença contra ele (também parte da regra 6.2) não estão aqui —
+    ver comentário em `src/teds_schema.py::_COLUNAS_CONTROLE_IMPORT_BATCH`.
+    """
+
+    quantidade_linhas_lidas: int
+    quantidade_rejeitadas: int
+    quantidade_com_aviso: int
+    soma_bruta: Decimal | None = None
+    soma_positiva: Decimal | None = None
+    soma_negativa: Decimal | None = None
+    soma_liquida: Decimal | None = None
+
+
+def _resumo_controle(
+    *,
+    quantidade_linhas_lidas: int,
+    registros: list[dict[str, Any]],
+    rejeitadas: list[LinhaRejeitada],
+    campo_valor: str | None,
+    campo_operacao: str | None = None,
+    campo_avisos: str | None = None,
+) -> ResumoControle:
+    """`campo_valor=None` quando o relatório não sustenta soma bruta/positiva/negativa/líquida
+    (ver `ResumoControle`). `campo_operacao=None` trata todo registro como positivo (relatórios
+    sem sinal de operação, ex.: DOC NE)."""
+
+    quantidade_com_aviso = sum(1 for r in registros if r.get(campo_avisos)) if campo_avisos else 0
+    if campo_valor is None:
+        return ResumoControle(quantidade_linhas_lidas, len(rejeitadas), quantidade_com_aviso)
+
+    bruta = Decimal("0")
+    positiva = Decimal("0")
+    negativa = Decimal("0")
+    liquida = Decimal("0")
+    for registro in registros:
+        valor: Decimal = registro[campo_valor]
+        sinal = 1 if campo_operacao is None or registro[campo_operacao] == "+" else -1
+        bruta += valor
+        liquida += valor * sinal
+        if sinal > 0:
+            positiva += valor
+        else:
+            negativa += valor
+
+    return ResumoControle(
+        quantidade_linhas_lidas, len(rejeitadas), quantidade_com_aviso, bruta, positiva, negativa, liquida
+    )
+
+
 def _registrar_lote(
     conn: sqlite3.Connection,
     tipo_relatorio: str,
     nome_arquivo: str,
     hash_arquivo: str,
     quantidade_registros: int,
+    resumo: ResumoControle | None = None,
 ) -> int:
+    resumo = resumo or ResumoControle(quantidade_linhas_lidas=quantidade_registros, quantidade_rejeitadas=0, quantidade_com_aviso=0)
     cursor = conn.execute(
         """
         INSERT INTO import_batch
-            (tipo_relatorio, nome_arquivo, hash_arquivo, data_importacao, quantidade_registros, status)
-        VALUES (?, ?, ?, ?, ?, 'ok')
+            (tipo_relatorio, nome_arquivo, hash_arquivo, data_importacao, quantidade_registros, status,
+             quantidade_linhas_lidas, quantidade_rejeitadas, quantidade_com_aviso,
+             soma_bruta, soma_positiva, soma_negativa, soma_liquida)
+        VALUES (?, ?, ?, ?, ?, 'ok', ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             tipo_relatorio,
@@ -88,6 +154,13 @@ def _registrar_lote(
             hash_arquivo,
             datetime.now(timezone.utc).isoformat(),
             quantidade_registros,
+            resumo.quantidade_linhas_lidas,
+            resumo.quantidade_rejeitadas,
+            resumo.quantidade_com_aviso,
+            valor_para_texto(resumo.soma_bruta) if resumo.soma_bruta is not None else None,
+            valor_para_texto(resumo.soma_positiva) if resumo.soma_positiva is not None else None,
+            valor_para_texto(resumo.soma_negativa) if resumo.soma_negativa is not None else None,
+            valor_para_texto(resumo.soma_liquida) if resumo.soma_liquida is not None else None,
         ),
     )
     return cursor.lastrowid
@@ -132,7 +205,13 @@ def importar_execucao_anual(
         return ResultadoImportacaoLote(existente, ja_importado=True, inseridos=0)
 
     leitura = ler_execucao_anual_simec(df)
-    batch_id = _registrar_lote(conn, TIPO_EXECUCAO_ANUAL, nome_arquivo, hash_arquivo, len(leitura.registros))
+    resumo = _resumo_controle(
+        quantidade_linhas_lidas=len(df), registros=leitura.registros, rejeitadas=leitura.rejeitadas,
+        campo_valor=None,
+    )
+    batch_id = _registrar_lote(
+        conn, TIPO_EXECUCAO_ANUAL, nome_arquivo, hash_arquivo, len(leitura.registros), resumo
+    )
 
     for r in leitura.registros:
         _upsert_ted(conn, r, batch_id)
@@ -179,7 +258,11 @@ def importar_doc_ne(
         return ResultadoImportacaoLote(existente, ja_importado=True, inseridos=0)
 
     leitura = ler_doc_ne_simec(df)
-    batch_id = _registrar_lote(conn, TIPO_DOC_NE, nome_arquivo, hash_arquivo, len(leitura.registros))
+    resumo = _resumo_controle(
+        quantidade_linhas_lidas=len(df), registros=leitura.registros, rejeitadas=leitura.rejeitadas,
+        campo_valor="valor_ne",
+    )
+    batch_id = _registrar_lote(conn, TIPO_DOC_NE, nome_arquivo, hash_arquivo, len(leitura.registros), resumo)
 
     for r in leitura.registros:
         _upsert_ted(conn, r, batch_id)
@@ -229,7 +312,11 @@ def importar_doc_nc(
         return ResultadoImportacaoLote(existente, ja_importado=True, inseridos=0)
 
     leitura = ler_doc_nc_simec(df, identificador_lote=hash_arquivo)
-    batch_id = _registrar_lote(conn, TIPO_DOC_NC, nome_arquivo, hash_arquivo, len(leitura.registros))
+    resumo = _resumo_controle(
+        quantidade_linhas_lidas=len(df), registros=leitura.registros, rejeitadas=leitura.rejeitadas,
+        campo_valor="valor_original", campo_operacao="operacao", campo_avisos="avisos",
+    )
+    batch_id = _registrar_lote(conn, TIPO_DOC_NC, nome_arquivo, hash_arquivo, len(leitura.registros), resumo)
 
     for r in leitura.registros:
         conn.execute(
@@ -326,7 +413,11 @@ def importar_doc_pf(
         return ResultadoImportacaoLote(existente, ja_importado=True, inseridos=0)
 
     leitura = ler_doc_pf_simec(df)
-    batch_id = _registrar_lote(conn, TIPO_DOC_PF, nome_arquivo, hash_arquivo, len(leitura.registros))
+    resumo = _resumo_controle(
+        quantidade_linhas_lidas=len(df), registros=leitura.registros, rejeitadas=leitura.rejeitadas,
+        campo_valor="valor_original", campo_operacao="operacao",
+    )
+    batch_id = _registrar_lote(conn, TIPO_DOC_PF, nome_arquivo, hash_arquivo, len(leitura.registros), resumo)
 
     for r in leitura.registros:
         conn.execute(
@@ -369,7 +460,13 @@ def importar_execucao_tg(
         return ResultadoImportacaoLote(existente, ja_importado=True, inseridos=0)
 
     leitura = ler_execucao_tg(df)
-    batch_id = _registrar_lote(conn, TIPO_EXECUCAO_TG, nome_arquivo, hash_arquivo, len(leitura.registros))
+    resumo = _resumo_controle(
+        quantidade_linhas_lidas=len(df), registros=leitura.registros, rejeitadas=leitura.rejeitadas,
+        campo_valor=None,
+    )
+    batch_id = _registrar_lote(
+        conn, TIPO_EXECUCAO_TG, nome_arquivo, hash_arquivo, len(leitura.registros), resumo
+    )
 
     for r in leitura.registros:
         conn.execute(

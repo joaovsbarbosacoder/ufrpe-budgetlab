@@ -25,6 +25,24 @@ from pathlib import Path
 
 CAMINHO_BANCO_PADRAO = Path("data/teds/teds.db")
 
+#: Colunas de "total de controle" (regra 6.2 do briefing) adicionadas depois da criação
+#: original de `import_batch` — migradas via `ALTER TABLE` em `conectar()` para não perder o
+#: histórico já gravado em `data/teds/teds.db` (lotes antigos ficam com essas colunas NULL,
+#: nunca com um total inventado). Somas ficam em TEXT/Decimal, nunca REAL (ver
+#: `src/teds_normalizacao.py`). "Total do rodapé" e a diferença contra ele NÃO entraram nesta
+#: rodada: as 4 extrações reais revisadas (ver docstring de `src/teds_importacao_simec.py`)
+#: não tiveram uma linha de rodapé com total confirmada coluna a coluna — capturar isso exigiria
+#: presumir um formato ainda não visto, o que o projeto evita fazer (ver AGENTS.md).
+_COLUNAS_CONTROLE_IMPORT_BATCH: dict[str, str] = {
+    "quantidade_linhas_lidas": "INTEGER",
+    "quantidade_rejeitadas": "INTEGER",
+    "quantidade_com_aviso": "INTEGER",
+    "soma_bruta": "TEXT",
+    "soma_positiva": "TEXT",
+    "soma_negativa": "TEXT",
+    "soma_liquida": "TEXT",
+}
+
 _DDL = """
 CREATE TABLE IF NOT EXISTS import_batch (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -184,9 +202,38 @@ CREATE TABLE IF NOT EXISTS alerta (
     data_resolucao TEXT
 );
 
+-- Registro append-only da decisão humana para uma NE associada a múltiplos TEDs.
+-- Os vínculos originais não são apagados: apenas um fica contabilizável, e a fotografia dos
+-- TEDs envolvidos permite invalidar a decisão se uma importação futura mudar o conflito.
+CREATE TABLE IF NOT EXISTS decisao_vinculo_ne (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chave_empenho TEXT NOT NULL,
+    chave_ted_escolhida TEXT NOT NULL,
+    teds_envolvidos TEXT NOT NULL,
+    decisao TEXT NOT NULL,
+    responsavel TEXT NOT NULL,
+    justificativa TEXT NOT NULL,
+    data_decisao TEXT NOT NULL,
+    alerta_id INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS ix_alerta_status ON alerta (status);
 CREATE INDEX IF NOT EXISTS ix_vinculo_ne_chave_empenho ON vinculo_ne (chave_empenho);
+CREATE INDEX IF NOT EXISTS ix_decisao_vinculo_ne_empenho
+    ON decisao_vinculo_ne (chave_empenho, id);
 """
+
+
+def _migrar_colunas_controle_import_batch(conexao: sqlite3.Connection) -> None:
+    """`ALTER TABLE ... ADD COLUMN` idempotente para quem já tinha `data/teds/teds.db` gravado
+    antes das colunas de "total de controle" existirem — nunca recria a tabela nem apaga
+    lotes já importados; colunas novas ficam NULL nas linhas antigas (nunca um total
+    inventado para um lote que já rodou sem essa contabilidade)."""
+
+    existentes = {linha[1] for linha in conexao.execute("PRAGMA table_info(import_batch)").fetchall()}
+    for coluna, tipo_sql in _COLUNAS_CONTROLE_IMPORT_BATCH.items():
+        if coluna not in existentes:
+            conexao.execute(f"ALTER TABLE import_batch ADD COLUMN {coluna} {tipo_sql}")
 
 
 def conectar(caminho: str | Path = CAMINHO_BANCO_PADRAO) -> sqlite3.Connection:
@@ -202,5 +249,6 @@ def conectar(caminho: str | Path = CAMINHO_BANCO_PADRAO) -> sqlite3.Connection:
     conexao = sqlite3.connect(caminho)
     conexao.execute("PRAGMA foreign_keys = ON")
     conexao.executescript(_DDL)
+    _migrar_colunas_controle_import_batch(conexao)
     conexao.commit()
     return conexao

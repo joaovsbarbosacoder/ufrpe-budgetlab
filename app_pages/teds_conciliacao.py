@@ -24,7 +24,7 @@ import streamlit as st
 
 from src import design_tokens
 from src.teds_normalizacao import texto_para_valor
-from src.teds_ui import anos_disponiveis, badge, brl, carregar_teds, conexao, cor_situacao_conciliacao, filtrar_por_exercicio, injetar_css, render_kpi_strip
+from src.teds_ui import anos_disponiveis, badge, brl, carregar_teds, conexao, cor_situacao_conciliacao, filtrar_por_exercicio, injetar_css, render_kpi_strip, situacao_conciliacao
 from src.ui_theme import render_page_header
 
 injetar_css()
@@ -76,12 +76,16 @@ linhas_comparacao = []
 for _, ted_row in filtrado.iterrows():
     chave_ted = ted_row["chave_ted"]
     ne_linhas = _linhas_ne(chave_ted)
-    numeros_ne = {n for n, _, _ in ne_linhas}
+    ne_contabilizaveis = [linha for linha in ne_linhas if linha[2] == "ok"]
+    numeros_ne = {n for n, _, _ in ne_contabilizaveis}
     tg_linhas = _tg_por_numeros(numeros_ne)
     tem_pendencia = any(status == "pendente" for _, _, status in ne_linhas)
 
-    valor_simec = sum((texto_para_valor(v) for _, v, _ in ne_linhas), start=Decimal("0"))
-    qtd_simec = len(ne_linhas)
+    valor_simec = sum(
+        (texto_para_valor(valor) for _, valor, _ in ne_contabilizaveis),
+        start=Decimal("0"),
+    )
+    qtd_simec = len(ne_contabilizaveis)
     if tg_linhas:
         valor_tg = sum((texto_para_valor(v) for _, v in tg_linhas if v is not None), start=Decimal("0"))
         qtd_tg = len({n for n, _ in tg_linhas})
@@ -93,14 +97,13 @@ for _, ted_row in filtrado.iterrows():
         ("Valor das NEs", valor_simec, valor_tg, fonte_ausente),
         ("Quantidade de NEs", Decimal(qtd_simec), Decimal(qtd_tg) if qtd_tg is not None else None, fonte_ausente),
     ):
-        if ausente:
-            diferenca, situacao = None, "Fonte ausente"
-        else:
-            diferenca = valor_a - valor_b
-            if tem_pendencia or abs(diferenca) > tolerancia:
-                situacao = "Conferência necessária"
-            else:
-                situacao = "Conciliado"
+        diferenca = None if ausente else valor_a - valor_b
+        situacao = situacao_conciliacao(
+            tem_pendencia=tem_pendencia,
+            fonte_ausente=ausente,
+            diferenca=diferenca,
+            tolerancia=tolerancia,
+        )
         linhas_comparacao.append(
             {
                 "chave_ted": chave_ted, "ted": ted_row["ted"], "siafi": ted_row["codigo_siafi"],
@@ -139,7 +142,7 @@ else:
         c[2].write(linha["metrica"])
         c[3].write(brl(linha["simec"]) if linha["metrica"] == "Valor das NEs" else str(int(linha["simec"])))
         c[4].write(str(linha["documentos"]))
-        if linha["situacao"] == "Fonte ausente":
+        if pd.isna(linha["tg"]):
             c[5].write("—")
             c[6].write("—")
         else:

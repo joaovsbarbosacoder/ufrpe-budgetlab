@@ -33,8 +33,8 @@ from src.teds_importacao_simec import (
     ler_execucao_anual_simec,
 )
 from src.teds_lotes import importar_doc_ne, importar_doc_nc, importar_doc_pf, importar_execucao_anual
-from src.teds_normalizacao import mapear_colunas
-from src.teds_ui import conexao, formatar_historico_lotes, historico_importacoes, injetar_css, render_kpi_strip
+from src.teds_normalizacao import ColunaObrigatoriaAusente, mapear_colunas
+from src.teds_ui import brl, conexao, formatar_historico_lotes, historico_importacoes, injetar_css, render_kpi_strip
 from src.ui_theme import render_page_header
 
 injetar_css()
@@ -82,7 +82,7 @@ with col_wizard:
 
     elif st.session_state["imp_step"] == 2:
         tipo_rotulo = st.session_state["imp_tipo_rotulo_confirmado"]
-        _, mapa_esperado, _, _ = _TIPOS[tipo_rotulo]
+        _, mapa_esperado, leitor, _ = _TIPOS[tipo_rotulo]
         try:
             df = pd.read_excel(io.BytesIO(st.session_state["imp_conteudo"]))
         except Exception as erro:
@@ -97,13 +97,30 @@ with col_wizard:
             ]
             st.dataframe(pd.DataFrame(linhas_mapa), hide_index=True, width="stretch")
             faltando = [m["Campo esperado"] for m in linhas_mapa if m["Coluna encontrada na planilha"].startswith("—")]
+
+            # Regra 6.1 do briefing: coluna OBRIGATÓRIA ausente rejeita o arquivo inteiro — não
+            # basta um aviso ignorável. O leitor de cada relatório já sabe quais dos campos de
+            # `mapa_esperado` são obrigatórios (`_CAMPOS_OBRIGATORIOS_*`); reaproveita essa
+            # validação aqui (dry-run, sem persistir nada) em vez de duplicar a lista de campos
+            # obrigatórios nesta página.
+            bloqueado = False
             if faltando:
-                st.warning(f"Campos não encontrados no cabeçalho: {', '.join(faltando)}.")
+                try:
+                    leitor(df)
+                except ColunaObrigatoriaAusente as exc:
+                    st.error(str(exc))
+                    bloqueado = True
+                else:
+                    st.warning(
+                        f"Campos não encontrados no cabeçalho: {', '.join(faltando)} — opcionais "
+                        "para este relatório, a importação pode continuar."
+                    )
+
             col_voltar, col_avancar = st.columns(2)
             if col_voltar.button("Voltar"):
                 st.session_state["imp_step"] = 1
                 st.rerun()
-            if col_avancar.button("Avançar para validação", type="primary"):
+            if col_avancar.button("Avançar para validação", type="primary", disabled=bloqueado):
                 st.session_state["imp_step"] = 3
                 st.rerun()
 
@@ -152,6 +169,32 @@ with col_wizard:
                 st.info("Este arquivo já tinha sido importado — nada mudou.")
             else:
                 st.success(f"Importação concluída — {resultado.inseridos} linha(s) gravada(s), {len(resultado.rejeitadas)} rejeitada(s).")
+
+            # Total de controle do lote (regra 6.2 do briefing) — mesmo depois de "já
+            # importado", já que o lote antigo continua consultável por `import_batch_id`.
+            lote = conn.execute(
+                "SELECT quantidade_linhas_lidas, quantidade_rejeitadas, quantidade_com_aviso, "
+                "soma_bruta, soma_positiva, soma_negativa, soma_liquida FROM import_batch WHERE id = ?",
+                (resultado.import_batch_id,),
+            ).fetchone()
+            if lote is not None:
+                lidas, rejeitadas_lote, com_aviso, bruta, positiva, negativa, liquida = lote
+                st.markdown("###### Total de controle do lote")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Linhas lidas", lidas if lidas is not None else "—")
+                c2.metric("Rejeitadas", rejeitadas_lote if rejeitadas_lote is not None else "—")
+                c3.metric("Com aviso", com_aviso if com_aviso is not None else "—")
+                if bruta is not None:
+                    c4, c5, c6 = st.columns(3)
+                    c4.metric("Soma bruta", brl(bruta))
+                    c5.metric("Soma líquida (positiva − negativa)", brl(liquida))
+                    c6.metric("Soma negativa", brl(negativa))
+                else:
+                    st.caption(
+                        "Este relatório não sustenta uma soma bruta/positiva/negativa/líquida "
+                        "única por linha (várias colunas de valor por registro)."
+                    )
+
             if st.button("Nova importação"):
                 for chave in ("imp_conteudo", "imp_nome_arquivo", "imp_tipo_rotulo_confirmado", "imp_df", "imp_leitura_ok"):
                     st.session_state.pop(chave, None)

@@ -64,6 +64,7 @@ from src.teds_normalizacao import (
     parse_valor_brl,
     sinal_operacao,
     texto_coluna as _texto,
+    validar_colunas_obrigatorias as _validar_colunas_obrigatorias,
 )
 
 AVISO_UG_EMITENTE_NC_AUSENTE = "UG_EMITENTE_NC_AUSENTE"
@@ -114,9 +115,15 @@ _CAMPOS_VALOR_EXECUCAO_ANUAL = (
     "total_repassado",
 )
 
+#: colunas sem as quais o arquivo não identifica o TED nem sustenta a conciliação (regra 6.1
+#: do briefing) — os demais campos do `_MAPA_EXECUCAO_ANUAL` (descrição, estado, vigência, UG
+#: descentralizadora) já são tratados como opcionais linha a linha no corpo da função.
+_CAMPOS_OBRIGATORIOS_EXECUCAO_ANUAL = ("ted", "codigo_siafi", "ano_emissao") + _CAMPOS_VALOR_EXECUCAO_ANUAL
+
 
 def ler_execucao_anual_simec(df: pd.DataFrame) -> ResultadoLeitura:
     colunas = _mapear_colunas(df.columns, _MAPA_EXECUCAO_ANUAL)
+    _validar_colunas_obrigatorias(df.columns, colunas, _CAMPOS_OBRIGATORIOS_EXECUCAO_ANUAL)
     resultado = ResultadoLeitura()
 
     for indice, linha in df.iterrows():
@@ -179,9 +186,16 @@ _MAPA_DOC_NE = {
     "valor_ne": (normalizar_nome_coluna("Valor da NE"),),
 }
 
+#: descrição/estado/vigência/UG descentralizadora ficam de fora (opcionais, tratados linha a
+#: linha) — os demais formam a chave do TED e do empenho (regra 4.2 do briefing).
+_CAMPOS_OBRIGATORIOS_DOC_NE = (
+    "numero_ne", "ted", "codigo_siafi", "ug_emitente", "gestao_emitente", "valor_ne",
+)
+
 
 def ler_doc_ne_simec(df: pd.DataFrame) -> ResultadoLeitura:
     colunas = _mapear_colunas(df.columns, _MAPA_DOC_NE)
+    _validar_colunas_obrigatorias(df.columns, colunas, _CAMPOS_OBRIGATORIOS_DOC_NE)
     resultado = ResultadoLeitura()
 
     for indice, linha in df.iterrows():
@@ -260,6 +274,11 @@ _MAPA_DOC_NC = {
     "ted": (normalizar_nome_coluna("TED"),),
 }
 
+#: `ug_emitente` fica de fora de propósito — ausente em ~41% das linhas reais (ver docstring
+#: do módulo), tratado como aviso/relacionamento parcial linha a linha, não como coluna
+#: obrigatória do arquivo. `data_emissao` também é tolerada ausente (ver corpo do leitor).
+_CAMPOS_OBRIGATORIOS_DOC_NC = ("numero_nc", "operacao", "valor_nc", "ted", "codigo_siafi")
+
 
 @dataclass
 class ResultadoLeituraNC:
@@ -282,6 +301,7 @@ def ler_doc_nc_simec(df: pd.DataFrame, identificador_lote: str = "") -> Resultad
     """
 
     colunas = _mapear_colunas(df.columns, _MAPA_DOC_NC)
+    _validar_colunas_obrigatorias(df.columns, colunas, _CAMPOS_OBRIGATORIOS_DOC_NC)
     resultado = ResultadoLeituraNC()
     agregados: dict[str, dict[str, Any]] = {}
 
@@ -390,9 +410,12 @@ _MAPA_DOC_PF = {
     "valor_pf": (normalizar_nome_coluna("Valor Doc. PF"),),
 }
 
+_CAMPOS_OBRIGATORIOS_DOC_PF = ("numero_pf", "ug_emitente", "operacao", "valor_pf", "ted", "codigo_siafi")
+
 
 def ler_doc_pf_simec(df: pd.DataFrame) -> ResultadoLeitura:
     colunas = _mapear_colunas(df.columns, _MAPA_DOC_PF)
+    _validar_colunas_obrigatorias(df.columns, colunas, _CAMPOS_OBRIGATORIOS_DOC_PF)
     resultado = ResultadoLeitura()
 
     for indice, linha in df.iterrows():

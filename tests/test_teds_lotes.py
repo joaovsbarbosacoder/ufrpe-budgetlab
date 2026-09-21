@@ -294,5 +294,88 @@ class ImportarDocNcTests(unittest.TestCase):
         self.assertEqual(total_lotes, 2)  # histórico de lotes preservado
 
 
+class TotalDeControleTests(unittest.TestCase):
+    """Regra 6.2 do briefing: cada lote grava quantidade de linhas lidas/rejeitadas/com aviso
+    e a soma bruta/positiva/negativa/líquida, quando o relatório sustenta essa soma."""
+
+    def setUp(self):
+        self.conn = conectar(":memory:")
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _lote(self, tipo: str) -> tuple:
+        return self.conn.execute(
+            "SELECT quantidade_linhas_lidas, quantidade_rejeitadas, quantidade_com_aviso, "
+            "soma_bruta, soma_positiva, soma_negativa, soma_liquida "
+            "FROM import_batch WHERE tipo_relatorio = ?",
+            (tipo,),
+        ).fetchone()
+
+    def test_doc_nc_com_operacoes_mistas_e_linha_de_rodape_ignorada(self):
+        df = pd.DataFrame(
+            [
+                _linha_doc_nc(**{"UG Emitente - NC": 152734.0, "Operação": "( + )", "Valor Total NC": 600.0}),
+                _linha_doc_nc(**{
+                    "Número da NC": "2025NC000266", "UG Emitente - NC": 152734.0,
+                    "Operação": "( - )", "Valor Total NC": 100.0,
+                }),
+                {"Número da NC": None, "Valor Total NC": 500.0},  # rodapé, sem identificador
+            ]
+        )
+        importar_doc_nc(self.conn, df, "doc_nc.xlsx", b"conteudo")
+
+        lidas, rejeitadas, com_aviso, bruta, positiva, negativa, liquida = self._lote("simec_doc_nc")
+        self.assertEqual(lidas, 3)
+        self.assertEqual(rejeitadas, 1)
+        self.assertEqual(com_aviso, 0)
+        self.assertEqual(texto_para_valor(bruta), Decimal("700.00"))
+        self.assertEqual(texto_para_valor(positiva), Decimal("600.00"))
+        self.assertEqual(texto_para_valor(negativa), Decimal("100.00"))
+        self.assertEqual(texto_para_valor(liquida), Decimal("500.00"))
+
+    def test_doc_nc_conta_linhas_com_aviso_de_ug_ausente(self):
+        df = pd.DataFrame([_linha_doc_nc(**{"UG Emitente - NC": None, "Valor Total NC": 100.0})])
+        importar_doc_nc(self.conn, df, "doc_nc.xlsx", b"conteudo")
+
+        _, _, com_aviso, *_ = self._lote("simec_doc_nc")
+        self.assertEqual(com_aviso, 1)
+
+    def test_doc_ne_soma_como_sempre_positivo_sem_conceito_de_operacao(self):
+        importar_doc_ne(self.conn, _df_doc_ne_caso_real(), "doc_ne.xlsx", b"conteudo")
+
+        lidas, rejeitadas, com_aviso, bruta, positiva, negativa, liquida = self._lote("simec_doc_ne")
+        self.assertEqual(lidas, 3)
+        self.assertEqual(rejeitadas, 0)
+        soma_esperada = Decimal("388300.00") + Decimal("154496.00") + Decimal("388300.00")
+        self.assertEqual(texto_para_valor(bruta), soma_esperada)
+        self.assertEqual(texto_para_valor(positiva), soma_esperada)
+        self.assertEqual(texto_para_valor(negativa), Decimal("0"))
+        self.assertEqual(texto_para_valor(liquida), soma_esperada)
+
+    def test_execucao_anual_nao_calcula_soma_unica_de_linha(self):
+        # Execução Anual tem 6 colunas de valor por linha — não sustenta uma única soma bruta/
+        # positiva/negativa/líquida coerente (ver docstring de `ResumoControle`).
+        df = pd.DataFrame(
+            [
+                {
+                    "Ano de emissão": 2026, "SIAFI": "1ABDKU", "TED": "17352",
+                    "Total NC Descentralização": "100,00", "Total NC Devolução": "0,00",
+                    "Total Descentralizado": "100,00", "Total PF Repasse": "100,00",
+                    "Total PF Devolução": "0,00", "Total Repassado": "100,00",
+                }
+            ]
+        )
+        importar_execucao_anual(self.conn, df, "execucao_anual.xlsx", b"conteudo")
+
+        lidas, rejeitadas, com_aviso, bruta, positiva, negativa, liquida = self._lote("simec_execucao_anual")
+        self.assertEqual(lidas, 1)
+        self.assertEqual(rejeitadas, 0)
+        self.assertIsNone(bruta)
+        self.assertIsNone(positiva)
+        self.assertIsNone(negativa)
+        self.assertIsNone(liquida)
+
+
 if __name__ == "__main__":
     unittest.main()

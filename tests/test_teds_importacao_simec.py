@@ -28,7 +28,7 @@ from src.teds_importacao_simec import (
     ler_doc_pf_simec,
     ler_execucao_anual_simec,
 )
-from src.teds_normalizacao import chave_empenho, chave_ted
+from src.teds_normalizacao import ColunaObrigatoriaAusente, chave_empenho, chave_ted
 
 
 class LerExecucaoAnualSimecTests(unittest.TestCase):
@@ -559,6 +559,68 @@ class RealHeadersDocPfTests(unittest.TestCase):
         self.assertEqual(registro["operacao"], "-")
         self.assertEqual(registro["valor_assinado"], Decimal("-9.76"))
         self.assertIsInstance(registro["valor_original"], Decimal)
+
+
+class ColunaObrigatoriaAusenteTests(unittest.TestCase):
+    """Regra 6.1 do briefing: coluna obrigatória ausente rejeita o ARQUIVO inteiro, com uma
+    mensagem clara listando o que faltou e o que foi encontrado — não deve degenerar em
+    "toda linha virou LinhaRejeitada por KeyError" sem uma causa estrutural visível."""
+
+    def test_execucao_anual_sem_coluna_ted_rejeita_arquivo(self):
+        df = pd.DataFrame([{"SIAFI": "1ABDKU", "Ano de emissão": 2026}])
+        with self.assertRaises(ColunaObrigatoriaAusente) as ctx:
+            ler_execucao_anual_simec(df)
+        self.assertIn("ted", ctx.exception.campos_faltando)
+        self.assertIn("SIAFI", ctx.exception.colunas_encontradas)
+
+    def test_doc_ne_sem_valor_da_ne_rejeita_arquivo(self):
+        df = pd.DataFrame(
+            [
+                {
+                    "Gestão Emitente - NE": "15239",
+                    "Número do Empenho": "2026NE000422",
+                    "UG Executora Emitente - NE": "153165",
+                    "TED": "17352",
+                    "SIAFI": "1ABDKU",
+                }
+            ]
+        )
+        with self.assertRaises(ColunaObrigatoriaAusente) as ctx:
+            ler_doc_ne_simec(df)
+        self.assertEqual(ctx.exception.campos_faltando, ["valor_ne"])
+
+    def test_doc_nc_sem_numero_da_nc_rejeita_arquivo(self):
+        df = pd.DataFrame(
+            [{"Operação": "( + )", "Valor Total NC": "388.300,00", "TED": "17352", "SIAFI": "1ABDKU"}]
+        )
+        with self.assertRaises(ColunaObrigatoriaAusente) as ctx:
+            ler_doc_nc_simec(df)
+        self.assertEqual(ctx.exception.campos_faltando, ["numero_nc"])
+
+    def test_doc_nc_sem_ug_emitente_nao_rejeita_arquivo(self):
+        # ao contrário das demais, UG Emitente da NC é opcional no arquivo inteiro (regra 4.5
+        # do briefing) — ausência da COLUNA não pode ser tratada como estrutural.
+        df = pd.DataFrame(
+            [
+                {
+                    "Número da NC": "2026NC000101",
+                    "Operação": "( + )",
+                    "Valor Total NC": "388.300,00",
+                    "TED": "17352",
+                    "SIAFI": "1ABDKU",
+                }
+            ]
+        )
+        resultado = ler_doc_nc_simec(df)
+        self.assertEqual(len(resultado.rejeitadas), 0)
+
+    def test_doc_pf_sem_ug_emitente_rejeita_arquivo(self):
+        df = pd.DataFrame(
+            [{"Número Doc. PF": "2026PF000016", "Operação": "(+)", "Valor Doc. PF": "1,00", "TED": "17352", "SIAFI": "1ABDKU"}]
+        )
+        with self.assertRaises(ColunaObrigatoriaAusente) as ctx:
+            ler_doc_pf_simec(df)
+        self.assertEqual(ctx.exception.campos_faltando, ["ug_emitente"])
 
 
 if __name__ == "__main__":

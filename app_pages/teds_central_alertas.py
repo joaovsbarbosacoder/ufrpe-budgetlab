@@ -13,10 +13,17 @@ from __future__ import annotations
 import streamlit as st
 
 from src import design_tokens
+from src.teds_alertas import (
+    TIPO_EMPENHO_MULTIPLOS_TEDS,
+    carregar_decisoes_vinculo_ne,
+    registrar_decisao_vinculo_ne,
+    teds_vinculados_ao_empenho,
+)
 from src.teds_ui import (
     STATUS_ABERTO,
     STATUS_EM_ANALISE,
     STATUS_RESOLVIDO,
+    alertas_de_ne_para_ted,
     atualizar_status_alerta,
     badge,
     carregar_alertas,
@@ -61,7 +68,15 @@ with col_grav:
 tipos_existentes = sorted({a.tipo for a in todos})
 with col_tipo:
     tipo_sel = st.selectbox("Tipo", ["Todos"] + tipos_existentes, key="ca_tipo", format_func=lambda v: "Todos" if v == "Todos" else rotulo_tipo_alerta(v))
-teds_existentes = sorted({a.chave_ted for a in todos if a.chave_ted})
+teds_existentes = sorted(
+    {a.chave_ted for a in todos if a.chave_ted}
+    | {
+        chave_ted
+        for (chave_ted,) in conn.execute(
+            "SELECT DISTINCT chave_ted FROM vinculo_ne ORDER BY chave_ted"
+        ).fetchall()
+    }
+)
 ted_pre_selecionado = st.session_state.pop("alertas_filtro_chave_ted", None)
 with col_ted:
     opcoes_ted = ["Todos"] + teds_existentes
@@ -79,7 +94,8 @@ if grav_sel != "Todas":
 if tipo_sel != "Todos":
     filtrados = [a for a in filtrados if a.tipo == tipo_sel]
 if ted_sel != "Todos":
-    filtrados = [a for a in filtrados if a.chave_ted == ted_sel]
+    alertas_indiretos = {a.id for a in alertas_de_ne_para_ted(conn, ted_sel)}
+    filtrados = [a for a in filtrados if a.chave_ted == ted_sel or a.id in alertas_indiretos]
 if status_sel != "Todos":
     filtrados = [a for a in filtrados if a.status == status_sel]
 if resp_sel == "Não atribuído":
@@ -146,25 +162,91 @@ with col_detalhe:
             if alvo.status == STATUS_RESOLVIDO:
                 st.caption(f"🟢 Resolvido — {alvo.data_resolucao}")
 
-            st.markdown("**Análise do alerta**")
-            justificativa = st.text_area(
-                "Justificativa da análise", value=alvo.justificativa or "", key=f"ca_just_{alvo.id}",
-                placeholder="Descreva a análise, observações ou o motivo da resolução…",
-            )
-            responsavel = st.text_input("Responsável", value=alvo.responsavel or "", key=f"ca_resp_txt_{alvo.id}")
-
-            cbtn1, cbtn2 = st.columns(2)
-            with cbtn1:
-                if st.button("Marcar em análise", disabled=alvo.status == STATUS_RESOLVIDO, width="stretch"):
-                    atualizar_status_alerta(conn, alvo.id, STATUS_EM_ANALISE, responsavel=responsavel or None)
-                    st.rerun()
-            with cbtn2:
-                if st.button("Resolver alerta", type="primary", width="stretch"):
-                    if not justificativa.strip():
-                        st.error("Informe a justificativa antes de resolver o alerta.")
-                    else:
-                        atualizar_status_alerta(
-                            conn, alvo.id, STATUS_RESOLVIDO,
-                            responsavel=responsavel or None, justificativa=justificativa,
+            if alvo.tipo == TIPO_EMPENHO_MULTIPLOS_TEDS:
+                decisoes = carregar_decisoes_vinculo_ne(conn, alvo.documento)
+                if decisoes:
+                    st.markdown("**Histórico de decisões**")
+                    for decisao in decisoes:
+                        st.caption(
+                            f"{decisao.data_decisao} — TED escolhido: "
+                            f"{decisao.chave_ted_escolhida} — responsável: {decisao.responsavel}"
                         )
+                        st.write(decisao.justificativa)
+
+                st.markdown("**Decisão sobre o vínculo**")
+                teds_vinculados = teds_vinculados_ao_empenho(conn, alvo.documento)
+                with st.form(f"ca_decisao_{alvo.id}", border=False):
+                    ted_escolhido = st.selectbox(
+                        "TED que deve contabilizar a NE",
+                        teds_vinculados,
+                        key=f"ca_ted_escolhido_{alvo.id}",
+                    )
+                    responsavel = st.text_input(
+                        "Responsável pela decisão",
+                        value=alvo.responsavel or "",
+                        key=f"ca_resp_txt_{alvo.id}",
+                    )
+                    justificativa = st.text_area(
+                        "Justificativa da decisão",
+                        value=alvo.justificativa or "",
+                        key=f"ca_just_{alvo.id}",
+                        placeholder="Explique por que a NE pertence ao TED selecionado.",
+                    )
+                    decidiu = st.form_submit_button(
+                        "Registrar decisão e resolver",
+                        type="primary",
+                        disabled=alvo.status == STATUS_RESOLVIDO,
+                        width="stretch",
+                    )
+                if decidiu:
+                    try:
+                        registrar_decisao_vinculo_ne(
+                            conn,
+                            alerta_id=alvo.id,
+                            chave_empenho=alvo.documento,
+                            chave_ted_escolhida=ted_escolhido,
+                            responsavel=responsavel,
+                            justificativa=justificativa,
+                        )
+                    except ValueError as erro:
+                        st.error(str(erro))
+                    else:
+                        st.success("Decisão registrada. Somente o TED escolhido será contabilizado.")
                         st.rerun()
+
+                if st.button(
+                    "Marcar em análise",
+                    key=f"ca_analisar_{alvo.id}",
+                    disabled=alvo.status == STATUS_RESOLVIDO,
+                    width="stretch",
+                ):
+                    atualizar_status_alerta(
+                        conn,
+                        alvo.id,
+                        STATUS_EM_ANALISE,
+                        responsavel=responsavel.strip() or None,
+                    )
+                    st.rerun()
+            else:
+                st.markdown("**Análise do alerta**")
+                justificativa = st.text_area(
+                    "Justificativa da análise", value=alvo.justificativa or "", key=f"ca_just_{alvo.id}",
+                    placeholder="Descreva a análise, observações ou o motivo da resolução…",
+                )
+                responsavel = st.text_input("Responsável", value=alvo.responsavel or "", key=f"ca_resp_txt_{alvo.id}")
+
+                cbtn1, cbtn2 = st.columns(2)
+                with cbtn1:
+                    if st.button("Marcar em análise", disabled=alvo.status == STATUS_RESOLVIDO, width="stretch"):
+                        atualizar_status_alerta(conn, alvo.id, STATUS_EM_ANALISE, responsavel=responsavel or None)
+                        st.rerun()
+                with cbtn2:
+                    if st.button("Resolver alerta", type="primary", width="stretch"):
+                        if not justificativa.strip():
+                            st.error("Informe a justificativa antes de resolver o alerta.")
+                        else:
+                            atualizar_status_alerta(
+                                conn, alvo.id, STATUS_RESOLVIDO,
+                                responsavel=responsavel or None, justificativa=justificativa,
+                            )
+                            st.rerun()

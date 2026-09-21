@@ -64,7 +64,10 @@ def normalizar_codigo(valor: object) -> str:
     """Converte um identificador (TED, SIAFI, UG, gestão, número de NC/PF/NE) para texto,
     preservando zeros à esquerda quando já vem como string. Excel/pandas costuma entregar
     códigos puramente numéricos como `float` (ex.: 153165.0) — nesse caso, a parte decimal
-    é descartada por não carregar informação (não existe código com fração)."""
+    é descartada por não carregar informação (não existe código com fração). Códigos
+    alfanuméricos são convertidos para maiúsculas (regra 3.1 do briefing, ex.: `1abdku` ->
+    `1ABDKU`) — a conversão para maiúsculas ocorre por último, depois de resolver o `.0` de
+    float, para não interferir na detecção de número inteiro."""
 
     if valor is None:
         return ""
@@ -73,10 +76,10 @@ def normalizar_codigo(valor: object) -> str:
             return ""
         if valor.is_integer():
             return str(int(valor))
-        return repr(valor)
+        return repr(valor).upper()
     if isinstance(valor, int):
         return str(valor)
-    return normalizar_espacos(valor)
+    return normalizar_espacos(valor).upper()
 
 
 # --------------------------------------------------------------------------------------
@@ -277,6 +280,42 @@ def mapear_colunas(colunas: pd.Index, mapa_esperado: dict[str, tuple[str, ...]])
                 encontrado[canonico] = normalizadas[variante]
                 break
     return encontrado
+
+
+class ColunaObrigatoriaAusente(ValueError):
+    """Levantada quando o cabeçalho da planilha não traz uma coluna obrigatória do relatório.
+
+    Regra 6.1 do briefing: "Se faltar uma coluna obrigatória, rejeitar o arquivo inteiro e
+    apresentar os nomes encontrados e esperados" — antes desta validação, uma coluna ausente
+    só se manifestava linha a linha (cada linha virava `LinhaRejeitada` por `KeyError`,
+    escondendo a causa estrutural atrás de centenas de rejeições individuais).
+    """
+
+    def __init__(self, campos_faltando: list[str], colunas_encontradas: list[Any]):
+        self.campos_faltando = campos_faltando
+        self.colunas_encontradas = colunas_encontradas
+        faltando_texto = ", ".join(campos_faltando)
+        encontradas_texto = ", ".join(str(c) for c in colunas_encontradas) or "(nenhuma)"
+        super().__init__(
+            f"Coluna(s) obrigatória(s) ausente(s) no arquivo: {faltando_texto}. "
+            f"Colunas encontradas na planilha: {encontradas_texto}."
+        )
+
+
+def validar_colunas_obrigatorias(
+    colunas_planilha: pd.Index,
+    colunas_mapeadas: dict[str, str],
+    campos_obrigatorios: tuple[str, ...],
+) -> None:
+    """Levanta `ColunaObrigatoriaAusente` se algum de `campos_obrigatorios` não foi casado por
+    `mapear_colunas` — chamar logo após `mapear_colunas`, antes de iterar qualquer linha do
+    DataFrame, para rejeitar o ARQUIVO inteiro de uma vez (não confundir com a ausência de
+    valor numa célula, que continua sendo tratada linha a linha por cada leitor quando o
+    campo é opcional, ex.: UG Emitente da NC)."""
+
+    faltando = [campo for campo in campos_obrigatorios if campo not in colunas_mapeadas]
+    if faltando:
+        raise ColunaObrigatoriaAusente(faltando, list(colunas_planilha))
 
 
 def linha_origem(linha: pd.Series) -> dict[str, Any]:

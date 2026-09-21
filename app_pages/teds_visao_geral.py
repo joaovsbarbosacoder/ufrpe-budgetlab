@@ -24,6 +24,7 @@ from src.teds_ui import (
     anos_disponiveis,
     badge,
     brl,
+    calcular_cobertura_relacionamentos,
     carregar_alertas,
     carregar_teds,
     conexao,
@@ -192,3 +193,33 @@ else:
         if c[7].button("Ver", key=f"vg_ver_{posicao}"):
             st.session_state["teds_chave_selecionada"] = linha["chave_ted"]
             st.switch_page("app_pages/teds_lista.py")
+
+# ---------------------------------------------------------------------- cobertura dos relacionamentos
+# §13 do briefing — painel de qualidade sobre a BASE INTEIRA (não aplica o filtro de
+# Exercício/UG acima: é uma métrica de qualidade da importação, não uma visão de negócio de um
+# recorte). Ver docstring de `CoberturaRelacionamentos` para a interpretação adotada nos dois
+# pontos em que o briefing não é literal sobre a direção da métrica.
+st.markdown("#### Cobertura dos relacionamentos")
+
+
+def _fmt_pct(fracao: float | None) -> str:
+    return "—" if fracao is None else f"{fracao * 100:.1f}%".replace(".", ",")
+
+
+cobertura = calcular_cobertura_relacionamentos(conn)
+col_cob1, col_cob2, col_cob3, col_cob4, col_cob5 = st.columns(5)
+col_cob1.metric("NCs com TED identificado", _fmt_pct(cobertura.pct_nc_relacionadas))
+col_cob2.metric("PFs com TED identificado", _fmt_pct(cobertura.pct_pf_relacionadas))
+col_cob3.metric("NEs com TED único e certo", _fmt_pct(cobertura.pct_ne_relacionadas))
+col_cob4.metric("NEs também no Tesouro Gerencial", _fmt_pct(cobertura.pct_ne_no_tesouro_gerencial))
+col_cob5.metric("Liquidações com competência", _fmt_pct(cobertura.pct_liquidacoes_com_competencia))
+
+if cobertura.qtd_documentos_nao_relacionados or cobertura.qtd_documentos_parciais:
+    st.warning(
+        f"{cobertura.qtd_documentos_nao_relacionados} documento(s) sem TED identificado "
+        f"(**{brl(cobertura.valor_nao_relacionado)}** fora de qualquer conciliação) e "
+        f"{cobertura.qtd_documentos_parciais} documento(s) de NC com relacionamento parcial "
+        "(UG emitente ausente)."
+    )
+else:
+    st.success("Todos os documentos de NC e PF importados têm TED identificado.")

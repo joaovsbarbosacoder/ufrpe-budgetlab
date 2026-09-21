@@ -20,6 +20,7 @@ registrada na Central de Alertas, fora do escopo desta fase).
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -30,6 +31,7 @@ from src.teds_normalizacao import texto_para_valor, valor_para_texto
 TIPO_EMPENHO_MULTIPLOS_TEDS = "empenho_multiplos_teds"
 TIPO_NC_UG_EMITENTE_AUSENTE = "nc_ug_emitente_ausente"
 STATUS_PENDENTE = "pendente"
+STATUS_DESCARTADO = "descartado"
 STATUS_OK = "ok"
 STATUS_RELACIONAMENTO_PARCIAL = "PARCIAL"
 
@@ -50,6 +52,19 @@ class Alerta:
     descricao: str
     chave_ted: str | None = None
     status: str = "aberto"
+
+
+@dataclass(frozen=True)
+class DecisaoVinculoNE:
+    id: int
+    chave_empenho: str
+    chave_ted_escolhida: str
+    teds_envolvidos: tuple[str, ...]
+    decisao: str
+    responsavel: str
+    justificativa: str
+    data_decisao: str
+    alerta_id: int
 
 
 def agrupar_por_empenho(vinculos: list[VinculoNE]) -> dict[str, list[VinculoNE]]:
@@ -225,23 +240,190 @@ def _carregar_vinculos(conn: sqlite3.Connection) -> list[VinculoNE]:
     ]
 
 
+def carregar_decisoes_vinculo_ne(
+    conn: sqlite3.Connection, chave_empenho: str
+) -> list[DecisaoVinculoNE]:
+    """Histórico append-only das decisões para um empenho, da mais recente à mais antiga."""
+
+    linhas = conn.execute(
+        """
+        SELECT id, chave_empenho, chave_ted_escolhida, teds_envolvidos, decisao,
+               responsavel, justificativa, data_decisao, alerta_id
+        FROM decisao_vinculo_ne
+        WHERE chave_empenho = ?
+        ORDER BY id DESC
+        """,
+        (chave_empenho,),
+    ).fetchall()
+    return [
+        DecisaoVinculoNE(
+            id=id_decisao,
+            chave_empenho=chave,
+            chave_ted_escolhida=escolhida,
+            teds_envolvidos=tuple(json.loads(teds)),
+            decisao=decisao,
+            responsavel=responsavel,
+            justificativa=justificativa,
+            data_decisao=data_decisao,
+            alerta_id=alerta_id,
+        )
+        for id_decisao, chave, escolhida, teds, decisao, responsavel, justificativa, data_decisao, alerta_id in linhas
+    ]
+
+
+def teds_vinculados_ao_empenho(conn: sqlite3.Connection, chave_empenho: str) -> list[str]:
+    return [
+        chave_ted
+        for (chave_ted,) in conn.execute(
+            "SELECT DISTINCT chave_ted FROM vinculo_ne WHERE chave_empenho = ? ORDER BY chave_ted",
+            (chave_empenho,),
+        ).fetchall()
+    ]
+
+
+def registrar_decisao_vinculo_ne(
+    conn: sqlite3.Connection,
+    *,
+    alerta_id: int,
+    chave_empenho: str,
+    chave_ted_escolhida: str,
+    responsavel: str,
+    justificativa: str,
+) -> DecisaoVinculoNE:
+    """Resolve explicitamente um vínculo múltiplo sem apagar qualquer linha importada."""
+
+    responsavel = responsavel.strip()
+    justificativa = justificativa.strip()
+    if not responsavel:
+        raise ValueError("Informe o responsável pela decisão.")
+    if not justificativa:
+        raise ValueError("Informe a justificativa da decisão.")
+
+    alerta = conn.execute(
+        "SELECT tipo, documento, status FROM alerta WHERE id = ?", (alerta_id,)
+    ).fetchone()
+    if alerta is None:
+        raise ValueError("Alerta não encontrado.")
+    tipo, documento, status = alerta
+    if tipo != TIPO_EMPENHO_MULTIPLOS_TEDS or documento != chave_empenho:
+        raise ValueError("O alerta não corresponde ao vínculo múltiplo informado.")
+    if status == "resolvido":
+        raise ValueError("Este alerta já foi resolvido.")
+
+    teds = teds_vinculados_ao_empenho(conn, chave_empenho)
+    if len(teds) < 2:
+        raise ValueError("O empenho não está vinculado a mais de um TED.")
+    if chave_ted_escolhida not in teds:
+        raise ValueError("O TED escolhido não está entre os vínculos do empenho.")
+
+    agora = datetime.now(timezone.utc).isoformat()
+    try:
+        conn.execute(
+            "UPDATE vinculo_ne SET status_validacao = ? WHERE chave_empenho = ?",
+            (STATUS_DESCARTADO, chave_empenho),
+        )
+        conn.execute(
+            """
+            UPDATE vinculo_ne SET status_validacao = ?
+            WHERE chave_empenho = ? AND chave_ted = ?
+            """,
+            (STATUS_OK, chave_empenho, chave_ted_escolhida),
+        )
+        cursor = conn.execute(
+            """
+            INSERT INTO decisao_vinculo_ne
+                (chave_empenho, chave_ted_escolhida, teds_envolvidos, decisao,
+                 responsavel, justificativa, data_decisao, alerta_id)
+            VALUES (?, ?, ?, 'atribuir_ted', ?, ?, ?, ?)
+            """,
+            (
+                chave_empenho,
+                chave_ted_escolhida,
+                json.dumps(teds, ensure_ascii=False),
+                responsavel,
+                justificativa,
+                agora,
+                alerta_id,
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE alerta
+            SET status = 'resolvido', responsavel = ?, justificativa = ?, data_resolucao = ?
+            WHERE id = ?
+            """,
+            (responsavel, justificativa, agora, alerta_id),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    return DecisaoVinculoNE(
+        id=int(cursor.lastrowid),
+        chave_empenho=chave_empenho,
+        chave_ted_escolhida=chave_ted_escolhida,
+        teds_envolvidos=tuple(teds),
+        decisao="atribuir_ted",
+        responsavel=responsavel,
+        justificativa=justificativa,
+        data_decisao=agora,
+        alerta_id=alerta_id,
+    )
+
+
+def _decisoes_vigentes(conn: sqlite3.Connection) -> dict[str, DecisaoVinculoNE]:
+    chaves = {
+        chave
+        for (chave,) in conn.execute(
+            "SELECT DISTINCT chave_empenho FROM decisao_vinculo_ne"
+        ).fetchall()
+    }
+    return {
+        chave: carregar_decisoes_vinculo_ne(conn, chave)[0]
+        for chave in chaves
+    }
+
+
 def sincronizar_alertas_multiplos_teds(conn: sqlite3.Connection) -> list[Alerta]:
     """Recalcula `status_validacao` de todos os vínculos e garante um alerta aberto para
     cada empenho pendente. Devolve os alertas recém-criados nesta chamada (não os que já
     existiam)."""
 
     vinculos = _carregar_vinculos(conn)
-    pendentes = detectar_ne_em_multiplos_teds(vinculos)
+    conflitos = detectar_ne_em_multiplos_teds(vinculos)
+    decisoes = _decisoes_vigentes(conn)
+    pendentes: dict[str, list[VinculoNE]] = {}
 
     conn.execute(
         "UPDATE vinculo_ne SET status_validacao = ? WHERE status_validacao != ?",
         (STATUS_OK, STATUS_OK),
     )
-    for chave_empenho in pendentes:
-        conn.execute(
-            "UPDATE vinculo_ne SET status_validacao = ? WHERE chave_empenho = ?",
-            (STATUS_PENDENTE, chave_empenho),
-        )
+    for chave_empenho, grupo in conflitos.items():
+        teds_atuais = {v.chave_ted for v in grupo}
+        decisao = decisoes.get(chave_empenho)
+        if (
+            decisao is not None
+            and set(decisao.teds_envolvidos) == teds_atuais
+            and decisao.chave_ted_escolhida in teds_atuais
+        ):
+            conn.execute(
+                "UPDATE vinculo_ne SET status_validacao = ? WHERE chave_empenho = ?",
+                (STATUS_DESCARTADO, chave_empenho),
+            )
+            conn.execute(
+                """
+                UPDATE vinculo_ne SET status_validacao = ?
+                WHERE chave_empenho = ? AND chave_ted = ?
+                """,
+                (STATUS_OK, chave_empenho, decisao.chave_ted_escolhida),
+            )
+        else:
+            pendentes[chave_empenho] = grupo
+            conn.execute(
+                "UPDATE vinculo_ne SET status_validacao = ? WHERE chave_empenho = ?",
+                (STATUS_PENDENTE, chave_empenho),
+            )
 
     ja_sinalizados = {
         documento
