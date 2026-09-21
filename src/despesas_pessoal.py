@@ -61,6 +61,21 @@ nunca presumir:
        x13 para Inativo. CORRIGIDO para multiplicador por grupo (Ativo -> x12, Inativo
        -> x13), alinhando ao modelo — sem efeito na projeção atual (base de inativos
        ainda é zero), mas evita divergência quando essa rubrica passar a ter execução.
+  8. (21/09/2026) BUG CORRIGIDO — comparação direta contra a planilha oficial 26248 (não
+     contra a matriz teórica) achou uma diferença real de ~R$44 milhões no total do
+     exercício, concentrada quase inteira na regra REGRA_DECIMO_TERCEIRO: ela usava
+     `valor_mes_referencia` da PRÓPRIA rubrica de 13º (ex.: natureza detalhada 31901143)
+     no mês de referência escolhido — mas essa rubrica só tem valor real em junho
+     (antecipação) e novembro (parcela final); em qualquer outro mês de referência (ex.:
+     agosto), o valor é um resíduo quase nulo (confirmado: R$698,73 para o 13º do Ativo
+     em ago/2026), fazendo a parcela projetada de novembro colapsar para perto de zero
+     em vez do valor esperado (a planilha 26248 mostra ~R$16,6 milhões em novembro só
+     para essa rubrica do Ativo). CORRIGIDO: `_valor_referencia_natureza_mae` busca o
+     mês de referência da natureza de despesa "mãe" de cada rubrica de 13º (319011
+     Vencimentos para o Ativo, 319001/319003 para Inativo, 319004 para temporários) —
+     a mesma base que já alimenta a proporção histórica (item 3) — em vez do valor da
+     própria rubrica de 13º. Sem mudança na distribuição temporal (ainda metade em
+     junho/metade em novembro, decisão 6) nem nas demais regras.
 
 Contrato público:
     classificar_grupo(acao_cod) -> str | None
@@ -466,7 +481,15 @@ def projetar(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano_mes_referencia
         if regra.tipo == REGRA_ZERO:
             projecoes.append(0.0)
         elif regra.tipo == REGRA_DECIMO_TERCEIRO:
-            projecoes.append(None if pd.isna(valor_ref) else float(valor_ref))
+            # NÃO usar `valor_ref` (o mês de referência da PRÓPRIA rubrica de 13º): ela só
+            # tem valor real em junho/novembro, quando o 13º de fato é pago — em qualquer
+            # outro mês de referência, `valor_ref` é resíduo quase nulo e projetaria a
+            # parcela de novembro perto de zero (bug real, achado comparando com a
+            # planilha oficial 26248, ver decisão 8). A base correta é o mês de referência
+            # da natureza "mãe" (319011 Vencimentos, 319001 Aposentadorias, 319003
+            # Pensões, 319004 Contratação Temporária — a mesma que já classifica esta
+            # linha), não a da rubrica de 13º em si.
+            projecoes.append(_valor_referencia_natureza_mae(linhas, linha.grupo, linha.natureza_despesa_cod))
         elif regra.tipo == REGRA_PROPORCAO_HISTORICA:
             base_ano_anterior = vencimentos_ano_anterior.get(linha.grupo)
             if pd.isna(linha.execucao_ano_anterior) or not base_ano_anterior or pd.isna(base_ano_anterior):
@@ -494,25 +517,40 @@ def projetar(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano_mes_referencia
     return ResultadoProjecao(linhas=linhas, ano_mes_referencia=ano_mes_referencia, ano_projecao=ano_projecao, erros=erros, alertas=alertas)
 
 
-def _projecao_vencimentos_do_grupo(linhas: pd.DataFrame, grupo: str) -> float | None:
-    """Projeção de "Vencimentos e Vantagens Fixas" (319011) REGULARES do grupo —
-    denominador vivo da regra de proporção histórica (item 3), calculado a partir do
-    próprio mês de referência do grupo (x12), não da execução bruta do ano anterior.
+def _valor_referencia_natureza_mae(linhas: pd.DataFrame, grupo: str, natureza_despesa_cod: str) -> float | None:
+    """Soma do `valor_mes_referencia` de UM mês, para a natureza de despesa "mãe" do
+    grupo (319011 Vencimentos no Ativo, 319001 Aposentadorias/319003 Pensões no Inativo,
+    319004 Contratação Temporária, conforme o caso) — excluindo as naturezas detalhadas
+    que já têm regra própria (13º salário, proporção histórica de férias): são
+    sub-rubricas da MESMA natureza "mãe", mas com projeção própria — somá-las aqui infla
+    o valor com algo que já tem sua própria regra (13º entraria dobrado: uma vez aqui,
+    outra como "13º x1").
 
-    Exclui as naturezas detalhadas de 13º salário e de proporção histórica (férias):
-    são sub-rubricas da MESMA natureza de despesa 319011, mas com projeção própria —
-    somá-las aqui infla o denominador com valores que já têm sua própria regra (13º
-    entraria dobrado: uma vez como "vencimentos x12", outra como "13º x1")."""
+    Base tanto da proporção histórica (item 3, via `_projecao_vencimentos_do_grupo`,
+    x12) quanto do 13º salário (decisão 8: cada rubrica de 13º usa a sua PRÓPRIA
+    natureza mãe, não o mês de referência da própria rubrica de 13º, que só é
+    diferente de zero em junho/novembro)."""
 
     excecoes = set(NATUREZAS_DETALHADAS_DECIMO_TERCEIRO) | set(NATUREZAS_DETALHADAS_PROPORCAO_HISTORICA)
-    venc = linhas.loc[
+    base = linhas.loc[
         (linhas["grupo"] == grupo)
-        & (linhas["natureza_despesa_cod"] == "319011")
+        & (linhas["natureza_despesa_cod"] == natureza_despesa_cod)
         & (~linhas["natureza_detalhada_cod"].isin(excecoes))
     ]
-    if venc.empty or venc["valor_mes_referencia"].isna().all():
+    if base.empty or base["valor_mes_referencia"].isna().all():
         return None
-    return float(venc["valor_mes_referencia"].sum(min_count=1)) * MULTIPLICADOR_12
+    return float(base["valor_mes_referencia"].sum(min_count=1))
+
+
+def _projecao_vencimentos_do_grupo(linhas: pd.DataFrame, grupo: str) -> float | None:
+    """Projeção anualizada (x12) de "Vencimentos e Vantagens Fixas" (319011) REGULARES
+    do grupo — denominador vivo da regra de proporção histórica (item 3), calculado a
+    partir do próprio mês de referência do grupo, não da execução bruta do ano
+    anterior. Ver `_valor_referencia_natureza_mae` para a exclusão das naturezas
+    detalhadas com regra própria."""
+
+    valor_um_mes = _valor_referencia_natureza_mae(linhas, grupo, "319011")
+    return None if valor_um_mes is None else valor_um_mes * MULTIPLICADOR_12
 
 
 # --------------------------------------------------------------------------------------
@@ -728,12 +766,17 @@ def grade_mensal(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano: int, ano_
                 alertas.append(mensagem + " Aplicado o padrão x12 da decisão 5.")
                 regra = _regra(str(chave.natureza_despesa_cod), str(chave.natureza_despesa_desc), REGRA_MULTIPLICADOR, MULTIPLICADOR_12)
 
-        linha_ref = valor_ref.loc[
-            (valor_ref["grupo"] == chave.grupo)
-            & (valor_ref["natureza_despesa_cod"] == chave.natureza_despesa_cod)
-            & (valor_ref["natureza_detalhada_cod"] == chave.natureza_detalhada_cod)
-        ]
-        valor_referencia = float(linha_ref.iloc[0]["valor_mes_referencia"]) if len(linha_ref) and pd.notna(linha_ref.iloc[0]["valor_mes_referencia"]) else None
+        if regra is not None and regra.tipo == REGRA_DECIMO_TERCEIRO:
+            # Ver decisão 8 / `_valor_referencia_natureza_mae`: nunca o mês de referência
+            # da própria rubrica de 13º (só tem valor real em jun/nov).
+            valor_referencia = _valor_referencia_natureza_mae(valor_ref, chave.grupo, chave.natureza_despesa_cod)
+        else:
+            linha_ref = valor_ref.loc[
+                (valor_ref["grupo"] == chave.grupo)
+                & (valor_ref["natureza_despesa_cod"] == chave.natureza_despesa_cod)
+                & (valor_ref["natureza_detalhada_cod"] == chave.natureza_detalhada_cod)
+            ]
+            valor_referencia = float(linha_ref.iloc[0]["valor_mes_referencia"]) if len(linha_ref) and pd.notna(linha_ref.iloc[0]["valor_mes_referencia"]) else None
 
         projetados = _distribuir_mes_futuro(regra, chave.grupo, valor_referencia, meses_futuros) if regra is not None else {mes: None for mes in meses_futuros}
 

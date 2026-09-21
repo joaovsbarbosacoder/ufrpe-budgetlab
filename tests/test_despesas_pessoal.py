@@ -281,10 +281,17 @@ class TestProjetar(unittest.TestCase):
         linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319092"].iloc[0]
         self.assertEqual(float(linha["projecao"]), 0.0)
 
-    def test_decimo_terceiro_e_uma_vez_o_mes_de_referencia(self):
+    def test_decimo_terceiro_e_uma_vez_o_mes_de_referencia_da_natureza_mae(self):
+        # Decisão 8 (bug corrigido): a base do 13º é o mês de referência da natureza
+        # "mãe" (319011, aqui só a linha 31901101 = R$100.000 — excluindo as próprias
+        # 31901143/31901145, que têm regra própria), NUNCA o mês de referência da
+        # PRÓPRIA rubrica de 13º (31901143 = R$8.000 no fixture) — essa segunda leitura
+        # só bate com a realidade em junho/novembro, quando o 13º é de fato pago; em
+        # qualquer outro mês de referência ela é um resíduo que não representa "um mês
+        # de folha".
         resultado = projetar(self._mensal(), self._anual(), 202608, 2027)
         linha = resultado.linhas[resultado.linhas["natureza_detalhada_cod"] == "31901143"].iloc[0]
-        self.assertAlmostEqual(float(linha["projecao"]), 8000.0)
+        self.assertAlmostEqual(float(linha["projecao"]), 100_000.0)
 
     def test_proporcao_historica_aplica_proporcao_do_ano_anterior_sobre_vencimentos_projetados(self):
         resultado = projetar(self._mensal(), self._anual(), 202608, 2027)
