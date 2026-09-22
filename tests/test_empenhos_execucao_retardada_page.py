@@ -11,9 +11,10 @@ nenhum manifesto real em `data/manifestos/`, nem de a extração real estar disp
 no ambiente de teste.
 
 Cobre as regras descritas na docstring de `app_pages/empenhos_execucao_retardada.py`: exercício
-vigente pré-selecionado, os dois cortes de destaque (R$ e %, independentes, combinados com OU
-quando ambos ligados), aviso quando nenhum corte está ligado, busca livre, e os 2 filtros
-avançados que só existem na Execução Mensal (paridade com Consulta de Empenhos).
+vigente pré-selecionado, os dois cortes de destaque (R$ e %, independentes, com um seletor E/OU
+que só aparece quando os dois estão ligados — padrão OU), aviso quando nenhum corte está
+ligado, busca livre, e os 2 filtros avançados que só existem na Execução Mensal (paridade com
+Consulta de Empenhos).
 """
 
 from __future__ import annotations
@@ -108,6 +109,32 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
 
         self.assertTrue(
             any("saldo ≥" in item.value and " ou " in item.value for item in app.caption)
+        )
+
+    def test_selecionar_e_com_os_dois_cortes_combina_com_e(self) -> None:
+        # pedido explicito do usuario (22/09/2026): antes o combinador era fixo em OU; agora
+        # da pra escolher "E" (interseccao) quando os dois cortes estao ligados.
+        app = self._open_page()
+
+        usar_pct = next(t for t in app.toggle if t.key and "usar_pct" in t.key)
+        usar_pct.set_value(True)
+        app.run(timeout=60)
+
+        seletor = next(s for s in app.segmented_control if s.key and "modo_combinacao" in s.key)
+        self.assertEqual(seletor.value, "OU")  # padrao preserva o comportamento ja validado
+
+        seletor.set_value("E")
+        app.run(timeout=60)
+
+        self.assertTrue(
+            any("saldo ≥" in item.value and " e " in item.value for item in app.caption)
+        )
+
+    def test_seletor_e_ou_so_aparece_com_os_dois_cortes_ligados(self) -> None:
+        app = self._open_page()  # padrao: so usar_rs ligado
+
+        self.assertFalse(
+            any(s.key and "modo_combinacao" in s.key for s in app.segmented_control)
         )
 
     def test_busca_livre_narrows_scope(self) -> None:

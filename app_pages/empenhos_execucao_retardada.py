@@ -41,13 +41,17 @@ Esquema aprovado antes da implementação original (ver histórico da conversa):
     no corte em R$ mesmo sem corte percentual aplicável).
   * Dois cortes configuráveis na tela (não fixos no código): saldo mínimo em R$ e saldo
     mínimo em % do empenhado, cada um com seu próprio `st.toggle` ("Usar") independente —
-    passou por duas rodadas de ajuste: a primeira versão combinava os dois sempre com E; a
+    passou por três rodadas de ajuste: a primeira versão combinava os dois sempre com E; a
     segunda trocou por um botão exclusivo (só um corte ativo por vez), que não permitia "os
-    dois clicados" (pedido explícito de correção). Versão final: os dois toggles ligam/desligam
-    livremente; com os dois ligados, o destaque combina com OU (passa quem atende qualquer um
-    dos ativos — "ligar os dois" amplia o destaque, não restringe). Nenhum toggle ligado é um
-    estado válido (não hardcoded pra sempre ter pelo menos um) — a tela avisa e não mostra
-    tabela, em vez de decidir um corte padrão escondido.
+    dois clicados" (pedido explícito de correção); a terceira fixou OU quando os dois estão
+    ligados (passa quem atende qualquer um dos ativos). Versão atual (pedido explícito,
+    22/09/2026): com os dois cortes ligados ao mesmo tempo, um `st.segmented_control` ("E"/
+    "OU", padrão "OU" — preserva o comportamento já validado) deixa escolher se o destaque
+    exige os dois cortes ao mesmo tempo (E, restringe) ou qualquer um deles (OU, amplia). Só
+    aparece quando os dois toggles estão ligados — com só um ativo, E e OU dão o mesmo
+    resultado, então o seletor seria só ruído. Nenhum toggle ligado continua sendo um estado
+    válido (não hardcoded pra sempre ter pelo menos um) — a tela avisa e não mostra tabela, em
+    vez de decidir um corte padrão escondido.
   * Faixa única de destaque (não duas faixas "irrisória"/"relevante" separadas — decisão já
     tomada na proposta aprovada, pelo trade-off de simplicidade): abaixo do corte vira só uma
     linha agregada informativa ("+ N empenhos abaixo do corte, somando R$X"), não uma segunda
@@ -384,10 +388,7 @@ render_metric_grid(
 )
 
 st.markdown("#### Cortes de destaque")
-st.caption(
-    "Ligue um corte, o outro, ou os dois ao mesmo tempo — com os dois ligados, entra em "
-    "destaque quem passa de qualquer um deles."
-)
+st.caption("Ligue um corte, o outro, ou os dois ao mesmo tempo.")
 
 corte_col1, corte_col2 = st.columns(2)
 with corte_col1:
@@ -424,11 +425,25 @@ with corte_col2:
             key=f"{_PREFIXO_FILTRO}_usar_pct_{source_key}",
         )
 
+# Só faz sentido perguntar "E ou OU" com os dois cortes ligados — com um só, as duas opções dão
+# o mesmo resultado (pedido explícito, 22/09/2026: antes o combinador era fixo em OU; agora dá
+# pra escolher). Padrão "OU" preserva o comportamento já validado quando o usuário liga os dois
+# pela primeira vez.
+modo_combinacao = "OU"
+if usar_rs and usar_pct:
+    modo_combinacao = st.segmented_control(
+        "Com os dois cortes ligados, destacar quem passa de",
+        options=["E", "OU"],
+        default="OU",
+        key=f"{_PREFIXO_FILTRO}_modo_combinacao_{source_key}",
+        help='"OU": entra em destaque quem passa de QUALQUER um dos dois cortes (amplia — era '
+        'o único comportamento antes desta opção). "E": só entra quem passa dos DOIS cortes ao '
+        "mesmo tempo (restringe).",
+    ) or "OU"
+
 # NE com saldo ou percentual nulo (empenhada nula/zero) nunca entra em destaque — não dá para
 # confirmar que o saldo passa do corte sem saber o valor; `.fillna(False)` trata esse "não sei"
-# como "não passa", não como erro. Os dois cortes ligados ao mesmo tempo combinam com OU —
-# entra em destaque quem passa de qualquer um dos ativos (pedido explícito: "deixar os dois
-# clicados" amplia o destaque, não restringe).
+# como "não passa", não como erro.
 passa_rs = (visivel["saldo"] >= corte_rs).fillna(False)
 passa_pct = (visivel["percentual_saldo"] >= corte_pct).fillna(False)
 partes_ativas = []
@@ -443,11 +458,16 @@ if usar_pct:
 if not partes_ativas:
     em_destaque_mascara = pd.Series(False, index=visivel.index)
     descricao_corte = None
-else:
+elif len(partes_ativas) == 1 or modo_combinacao == "OU":
     em_destaque_mascara = partes_ativas[0]
     for parte in partes_ativas[1:]:
         em_destaque_mascara = em_destaque_mascara | parte
     descricao_corte = " ou ".join(descricoes_ativas)
+else:  # "E", só possível com os dois cortes ativos (ver modo_combinacao acima)
+    em_destaque_mascara = partes_ativas[0]
+    for parte in partes_ativas[1:]:
+        em_destaque_mascara = em_destaque_mascara & parte
+    descricao_corte = " e ".join(descricoes_ativas)
 
 em_destaque = visivel[em_destaque_mascara]
 abaixo_do_corte = visivel[~em_destaque_mascara]
