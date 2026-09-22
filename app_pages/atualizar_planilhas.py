@@ -7,7 +7,8 @@ Duas famílias de base, cada uma com sua própria mecânica, mas juntas nesta p�
   * Execução Anual e Dotação Anual — importação VERSIONADA (manifesto, detecção de
     retroatividade/exercício removido, ver `src/importacao_versionada.py`). Reaproveita o
     componente já existente `src/ui_reimportacao.py::render_reimportacao`, que morava embutido
-    no fim de `app_pages/execucao_orcamentaria.py`/`app_pages/dotacao_orcamentaria.py` — as
+    no fim das páginas de análise "Execução Orçamentária"/"Dotação Orçamentária" (removidas em
+    22/09/2026, pedido do usuário — ver histórico do git se precisar da referência) — as
     especificações agora vivem em `src/reimportacao_especificacoes.py` (só assim dá pra
     importar sem rodar a página de análise inteira como efeito colateral do import).
   * Contratos Contínuos, Bolsas e Auxílios, Contratos — Vigência, Contratos — Pagamentos —

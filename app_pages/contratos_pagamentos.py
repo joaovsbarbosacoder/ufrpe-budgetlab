@@ -61,11 +61,11 @@ Diferenças deliberadas em relação ao handoff:
     fracionado ("DD/MM/AAAA A DD/MM/AAAA"), onde o mês escolhido é o que tem mais dias
     dentro do período, não o de início nem o de fim. "—" quando o texto de competência não é
     reconhecível (formato livre demais, ex. "REPACTUAÇÃO JAN A MAI/25") — nunca um palpite.
-  * Seção "Conciliação com Execução Anual" (pedido explícito, para checar se um pagamento
+  * Seção "Conciliação com Execução Mensal" (pedido explícito, para checar se um pagamento
     marcado "Duplicado" é mesmo um erro ou um pagamento legítimo): compara, por NE, a soma
     desta planilha (`soma_por_ne` em `src/contratos_pagamentos.py`, todas as linhas — inclusive
-    duplicadas) contra o valor oficial pago segundo a Execução Anual
-    (`indice_valor_pago_por_ne_curta` em `src/execucao_anual.py`). Só sinaliza a NE para
+    duplicadas) contra o valor oficial pago segundo a Execução Mensal
+    (`indice_valor_pago_por_ne_curta` em `src/execucao_ne_utils.py`). Só sinaliza a NE para
     revisão manual quando os totais não batem — NÃO decide sozinha qual base está certa nem
     altera o status "Duplicado" automaticamente, porque qualquer uma das duas planilhas
     (mantidas de forma independente) pode estar mais atualizada que a outra num dado momento;
@@ -82,8 +82,9 @@ import streamlit as st
 from src.contratos_continuos import ler_contratos_continuos
 from src.contratos_pagamentos import MESES_ORDEM, ler_pagamentos, serie_por_contrato, soma_por_ne
 from src.design_tokens import ACCENT_STRONG, BORDER, FONT_HEADING, NEGATIVE, POSITIVE, SURFACE, TEXT_MUTED
-from src.execucao_anual import agregar_por_ne, indice_valor_pago_por_ne_curta
-from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
+from src.execucao_ne_utils import indice_valor_pago_por_ne_curta
+from src.importacao_execucao_mensal import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
+from src.tesouro_execucao_mensal import agregar_por_ne
 from src.ui_theme import render_page_header
 
 DIRETORIO_DADOS_BRUTOS = Path("data/raw")
@@ -111,10 +112,10 @@ def _cached_nes_continuos(caminho: str, mtime: float) -> set[str]:
 
 @st.cache_data(show_spinner=False)
 def _cached_valor_pago_execucao(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.Series:
-    """Valor oficial pago por NE (Execução Anual), indexado pela NE curta — base da
-    reconciliação da seção "Conciliação com Execução Anual" mais abaixo na página.
+    """Valor oficial pago por NE (Execução Mensal), indexado pela NE curta — base da
+    reconciliação da seção "Conciliação com Execução Mensal" mais abaixo na página.
     `caminho_ponteiro`/`mtime_ponteiro` só participam da chave de cache — `carregar_atual` já
-    devolve a base composta por ano (ver `src/importacao_execucao.py`)."""
+    devolve a base composta por ano (ver `src/importacao_execucao_mensal.py`)."""
 
     return indice_valor_pago_por_ne_curta(agregar_por_ne(carregar_atual()))
 
@@ -234,7 +235,7 @@ def _render_conciliacao_execucao(pagamentos: pd.DataFrame, valor_pago_execucao: 
 
     Deliberadamente NÃO decide sozinha se a linha "Duplicado" está certa ou errada, nem altera
     esse status automaticamente: qualquer uma das duas bases pode estar desatualizada em
-    relação à outra num dado momento (ex.: a Execução Anual já reflete um pagamento que esta
+    relação à outra num dado momento (ex.: a Execução Mensal já reflete um pagamento que esta
     planilha, mantida manualmente, ainda não lançou, ou vice-versa) — decidir isso sozinho
     correria o risco de "consertar" um status que na verdade estava certo. Em vez disso, só
     sinaliza a NE para revisão humana quando os dois totais não batem (diferença > R$ 0,01)."""
@@ -248,7 +249,7 @@ def _render_conciliacao_execucao(pagamentos: pd.DataFrame, valor_pago_execucao: 
         valor_pago_execucao.rename("valor_pago_execucao"), how="inner"
     )
     if cruzado.empty:
-        st.info("Nenhuma NE em comum entre os pagamentos e a Execução Anual.")
+        st.info("Nenhuma NE em comum entre os pagamentos e a Execução Mensal.")
         return
 
     cruzado["diferenca"] = cruzado["soma_planilha"] - cruzado["valor_pago_execucao"]
@@ -256,7 +257,7 @@ def _render_conciliacao_execucao(pagamentos: pd.DataFrame, valor_pago_execucao: 
     divergentes = cruzado[cruzado["_diverge"]].sort_values("diferenca", key=lambda s: s.abs(), ascending=False)
 
     st.caption(
-        f"{len(cruzado)} NEs em comum entre esta planilha e a Execução Anual · "
+        f"{len(cruzado)} NEs em comum entre esta planilha e a Execução Mensal · "
         f"{len(divergentes)} com diferença entre o total registrado aqui e o valor oficial pago "
         "(diferença maior que R$ 0,01)"
     )
@@ -273,7 +274,7 @@ def _render_conciliacao_execucao(pagamentos: pd.DataFrame, valor_pago_execucao: 
     larguras = [1.6, 1.3, 1.3, 1.3]
     with st.container(key="pg_conciliacao"):
         header = st.columns(larguras)
-        for col, label in zip(header, ["NE", "Soma nesta planilha", "Valor pago (Execução Anual)", "Diferença"]):
+        for col, label in zip(header, ["NE", "Soma nesta planilha", "Valor pago (Execução Mensal)", "Diferença"]):
             col.markdown(f"<span class='pg-col-label'>{label}</span>", unsafe_allow_html=True)
         for ne, linha in divergentes.iterrows():
             c = st.columns(larguras)
@@ -318,8 +319,8 @@ if CAMINHO_CONTRATOS_CONTINUOS.exists():
 else:
     nes_continuos = set()
 
-# usado pela seção "Conciliação com Execução Anual" mais abaixo — vazio (não erro) quando
-# nenhuma Execução Anual foi importada ainda, e a seção mostra um aviso em vez da comparação.
+# usado pela seção "Conciliação com Execução Mensal" mais abaixo — vazio (não erro) quando
+# nenhuma Execução Mensal foi importada ainda, e a seção mostra um aviso em vez da comparação.
 manifesto_execucao = Manifesto.atual()
 if manifesto_execucao is not None:
     caminho_ponteiro_execucao = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO
@@ -412,10 +413,10 @@ with st.container(key="pg_cards"):
             grupo = agrupavel[agrupavel["fornecedor"] == fornecedor]
             _render_card_fornecedor(fornecedor, grupo)
 
-st.markdown("#### Conciliação com Execução Anual")
+st.markdown("#### Conciliação com Execução Mensal")
 if manifesto_execucao is None:
     st.info(
-        "Nenhuma base de Execução Anual foi importada ainda — é dela que vem o valor oficial "
+        "Nenhuma base de Execução Mensal foi importada ainda — é dela que vem o valor oficial "
         "pago por NE, usado para checar as NEs com pagamentos marcados \"Duplicado\"."
     )
 else:
@@ -448,6 +449,6 @@ else:
 
 st.caption(
     "Base consolidada manualmente por aba mensal (não é uma extração única e versionada como "
-    "Dotação/Execução Anual) — pagamentos duplicados (mesmo contrato + NF + valor em mais de "
+    "Dotação/Execução Mensal) — pagamentos duplicados (mesmo contrato + NF + valor em mais de "
     "um mês) ficam marcados para auditoria, não somam nos totais."
 )

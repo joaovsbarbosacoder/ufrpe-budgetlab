@@ -2,10 +2,10 @@
 
 Usa uma fixture congelada em `tests/fixtures/` (não a planilha de trabalho em `data/raw/`,
 que é substituída a cada atualização) — pulado se o arquivo não existir. O caso de
-divergência de saldo (`2026NE000056`) e os casos que batem foram confirmados manualmente
-contra a extração de Execução Anual ativa em 13/08/2026, mesma data da fixture; ver histórico
-da conversa para o levantamento completo. Valor empenhado (`valor_empenhado_execucao`) não
-tem nenhuma divergência nesta fixture — as 17 NEs batem exatamente contra a Execução Anual.
+divergência de saldo (`2026NE000056`) foi originalmente confirmado manualmente contra a
+Execução Anual ativa em 13/08/2026, mesma data da fixture (ver histórico da conversa) —
+`TestSaldoViaExecucaoMensal` recalibrou os números em 22/09/2026 contra a Execução Mensal, a
+fonte usada pela página real desde então (ver docstring daquela classe).
 
 IMPORTANTE: ao atualizar a planilha de trabalho em `data/raw/`, NÃO sobrescreva esta fixture
 automaticamente — ver AGENTS.md, seção sobre atualização de dados de Contratos
@@ -22,9 +22,10 @@ import openpyxl
 import pandas as pd
 
 from src.bolsas_auxilios import ErroLayoutBase, LINHA_CABECALHO, NOME_ABA, com_saldo_execucao, ler_bolsas_auxilios
-from src.execucao_anual import agregar_por_ne, saldo_por_ne
-from src.importacao_execucao import carregar_atual
+from src.execucao_ne_utils import saldo_por_ne
+from src.importacao_execucao_mensal import carregar_atual
 from src.necessidade_empenho import calcular_necessidade_empenho
+from src.tesouro_execucao_mensal import agregar_por_ne
 
 CAMINHO_BASE = Path("tests/fixtures/bolsas_auxilios_2026-08-13.xlsx")
 
@@ -95,23 +96,26 @@ class TestLeituraBolsasAuxilios(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    CAMINHO_BASE.exists() and Path("data/manifestos/execucao_anual_atual.json").exists(),
-    "Planilha de Bolsas ou manifesto de Execução Anual ausente",
+    CAMINHO_BASE.exists() and Path("data/manifestos/execucao_mensal_atual.json").exists(),
+    "Planilha de Bolsas ou manifesto de Execução Mensal ausente",
 )
-class TestSaldoViaExecucaoAnual(unittest.TestCase):
+class TestSaldoViaExecucaoMensal(unittest.TestCase):
     """Confere `saldo_execucao`/`diverge_saldo` contra os casos já levantados manualmente.
 
-    Números recalibrados em 26/08/2026 (mesmo motivo de
-    `test_contratos_continuos.py::TestSaldoViaExecucaoAnual`): o usuário reimportou a Execução
-    Anual só com 2026 atualizado, confirmou que os novos valores são reais, e a planilha de
-    Bolsas (fixture congelada de 13/08) ficou desatualizada — a maioria dos NEs passou a
-    divergir. NE 2026NE000232 é um dos poucos que ainda batem exatamente nas duas
-    comparações; usado como amostra "sem divergência"."""
+    Números recalibrados em 22/09/2026: Bolsas/Contratos Contínuos/Contratos Pagamentos
+    pararam de depender da Execução Anual (pedido do usuário) — `por_ne_execucao` agora vem
+    da Execução Mensal (`src.tesouro_execucao_mensal.agregar_por_ne`), não mais de
+    `src.execucao_anual.agregar_por_ne`. A fixture de Bolsas continua congelada em 13/08; a
+    Execução Mensal é lida ao vivo (`data/manifestos/`), então estes números tendem a ficar
+    desatualizados de novo conforme a base avança — mesma natureza frágil de antes, só que
+    contra a fonte nova. NE 2026NE000232 continua batendo exatamente no SALDO (não no valor
+    empenhado, que diverge quase sempre por natureza — a planilha de Bolsas é estática e a
+    Execução Mensal cresce a cada reforço)."""
 
     @classmethod
     def setUpClass(cls):
-        # `carregar_atual` (composta por ano) — mesmo carregador que a página usa de verdade
-        # (ver mesmo comentário em test_contratos_continuos.py::TestSaldoViaExecucaoAnual).
+        # `carregar_atual` da Execução MENSAL — mesmo carregador que a página usa de verdade
+        # (ver mesmo comentário em test_contratos_continuos.py::TestSaldoViaExecucaoMensal).
         df_execucao = carregar_atual()
         cls.por_ne = saldo_por_ne(agregar_por_ne(df_execucao))
         cls.df = com_saldo_execucao(ler_bolsas_auxilios(CAMINHO_BASE), cls.por_ne)
@@ -134,7 +138,7 @@ class TestSaldoViaExecucaoAnual(unittest.TestCase):
     def test_ne_056_diverge_por_liquidacao_nao_capturada_na_planilha(self):
         linha = self._linha("2026NE000056")
         self.assertAlmostEqual(linha["saldo_colado_planilha"], 7246.48, places=2)
-        self.assertAlmostEqual(linha["saldo_execucao"], 14883.98, places=2)
+        self.assertAlmostEqual(linha["saldo_execucao"], 2930.14, places=2)
         self.assertTrue(bool(linha["diverge_saldo"]))
 
     def test_ne_232_bate_exatamente(self):
@@ -145,7 +149,7 @@ class TestSaldoViaExecucaoAnual(unittest.TestCase):
 
     def test_quantidade_total_de_divergencias_bate_com_o_levantamento(self):
         comparaveis = self.df.dropna(subset=["ne_curta"])
-        self.assertEqual(int(comparaveis["diverge_saldo"].sum()), 12)
+        self.assertEqual(int(comparaveis["diverge_saldo"].sum()), 7)
 
     def test_todos_os_ne_curta_tem_valor_empenhado_execucao(self):
         # uma linha por NE nesta base (sem rateio por item, ao contrário de Contratos
@@ -154,16 +158,15 @@ class TestSaldoViaExecucaoAnual(unittest.TestCase):
         self.assertTrue(encontrados.all())
 
     def test_valor_empenhado_diverge_na_maioria_dos_casos(self):
-        # até 13/08/2026 nenhuma das 17 NEs divergia em valor empenhado; com a Execução Anual
-        # de 26/08 (composição por ano, planilha de Bolsas não reimportada junto), 13 passaram
-        # a divergir — NE 232 é uma das 4 que ainda batem.
-        linha = self._linha("2026NE000232")
-        self.assertAlmostEqual(linha["valor_empenhado_tg"], 11200.0, places=2)
-        self.assertAlmostEqual(linha["valor_empenhado_execucao"], 11200.0, places=2)
+        # NE 165 é a única das 17 que ainda bate exatamente (nenhum reforço desde 13/08); as
+        # outras 16 divergem — natural, a planilha é estática e a Execução Mensal cresce.
+        linha = self._linha("2026NE000165")
+        self.assertAlmostEqual(linha["valor_empenhado_tg"], 70000.0, places=2)
+        self.assertAlmostEqual(linha["valor_empenhado_execucao"], 70000.0, places=2)
         self.assertFalse(bool(linha["diverge_valor_empenhado"]))
 
         comparaveis = self.df.dropna(subset=["ne_curta"])
-        self.assertEqual(int(comparaveis["diverge_valor_empenhado"].sum()), 13)
+        self.assertEqual(int(comparaveis["diverge_valor_empenhado"].sum()), 16)
 
     def test_necessidade_de_empenho_recalculada_para_ne_encontradas_na_execucao(self):
         via_execucao = self.df[self.df["necessidade_via"] == "execucao"]
@@ -175,11 +178,13 @@ class TestSaldoViaExecucaoAnual(unittest.TestCase):
                 self.assertAlmostEqual(linha["valor_a_empenhar"], linha["valor_mensal"] * meses_esperado, places=2)
 
 
-class TestNecessidadeViaExecucaoAnual(unittest.TestCase):
+class TestNecessidadeViaExecucao(unittest.TestCase):
     """`com_saldo_execucao` recalcula `meses_a_empenhar`/`valor_a_empenhar` a partir da
-    Execução Anual quando a NE já foi encontrada, em vez das colunas manuais
-    `meses_empenhados`/`meses_liquidados` da planilha — dados sintéticos, sem depender de
-    fixture (mesmo padrão de `tests/test_contratos_continuos.py::TestNecessidadeViaExecucaoAnual`)."""
+    Execução (Mensal, desde 22/09/2026 — antes Anual) quando a NE já foi encontrada, em vez
+    das colunas manuais `meses_empenhados`/`meses_liquidados` da planilha — dados sintéticos,
+    sem depender de fixture nem da base real (`com_saldo_execucao` não sabe nem se importa
+    de onde `por_ne_execucao` veio, ver docstring de `src.execucao_ne_utils`); mesmo padrão
+    de `tests/test_contratos_continuos.py::TestNecessidadeViaExecucao`."""
 
     def _por_ne(self, linhas: list[tuple[str, float, float]]) -> pd.DataFrame:
         registros = [

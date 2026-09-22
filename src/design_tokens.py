@@ -57,16 +57,16 @@ RADIUS = "14px"
 RADIUS_SM = "10px"
 CARD_PAD = "16px 18px"
 
-# Soma das larguras mínimas de SUBDIV_COLUMNS + os 9 espaçamentos de
+# Soma das larguras mínimas de SUBDIV_COLUMNS + os 10 espaçamentos de
 # SUBDIV_GAP entre elas — mantém as duas constantes coerentes entre si em
 # vez de um número solto maior que o necessário (o que forçava rolagem
 # horizontal mesmo quando a tabela cabia no cartão).
-TABLE_MIN_WIDTH = "1000px"
+TABLE_MIN_WIDTH = "1124px"
 
 # --- Grade da tabela de subdivisões (uma definição, todos os usos) --------
 SUBDIV_COLUMNS = (
     "minmax(150px, 1.4fr) minmax(110px, 1fr) "
-    "minmax(110px, 0.8fr) minmax(100px, 0.7fr) 46px 64px 92px 88px 96px 104px"
+    "minmax(110px, 0.8fr) minmax(100px, 0.7fr) 46px 64px 92px 88px 96px 104px 104px"
 )
 SUBDIV_GAP = "6px"
 

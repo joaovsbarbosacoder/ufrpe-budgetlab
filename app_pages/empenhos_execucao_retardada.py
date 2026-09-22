@@ -77,8 +77,8 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from src.execucao_anual import detalhar_nota_empenho, saldo_por_ne
-from src.execucao_anual import ne_curta as _ne_curta_execucao
+from src.execucao_ne_utils import detalhar_nota_empenho, saldo_por_ne
+from src.execucao_ne_utils import ne_curta as _ne_curta_execucao
 from src.importacao_execucao_mensal import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
 from src.tesouro_execucao_mensal import agregar_por_ne
 from src.ui_filtros_execucao import (

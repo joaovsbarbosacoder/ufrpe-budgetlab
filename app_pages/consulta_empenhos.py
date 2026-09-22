@@ -144,7 +144,7 @@ from src.design_tokens import (
     TRACK,
     WARNING,
 )
-from src.execucao_anual import ne_curta as _ne_curta_execucao, saldo_por_ne
+from src.execucao_ne_utils import ne_curta as _ne_curta_execucao, saldo_por_ne
 from src.importacao_execucao_mensal import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
 from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne_e_mes
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne

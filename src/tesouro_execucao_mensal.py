@@ -27,6 +27,14 @@ coberto pela fixture congelada `tests/fixtures/execucao_mensal_2026-09-03.xlsx`)
     presente na extração) — detectados dinamicamente a partir do rótulo de cada bloco na
     primeira linha do cabeçalho, nunca um número fixo de meses hardcoded (a extração cresce
     um mês por vez ao longo do exercício).
+  * (22/09/2026) `Fonte Recursos Detalhada` (par código/descrição) passou a vir logo após
+    `Fonte Recursos` — pedido do usuário para viabilizar o cruzamento com a Dotação Anual no
+    mesmo nível de detalhe da Fonte (`src.painel_acoes_empenho` documentava a colisão de
+    granularidade entre as duas bases antes disso: Execução só tinha a Fonte de 3 dígitos,
+    Dotação tinha os 10 dígitos). Confirmei comparando `BI CPOC - EXEC. DESPESAS - Por Ano
+    (7).xlsx` (formato anterior, já importado) contra a `(8).xlsx` (nova extração) linha a
+    linha: a ÚNICA diferença é este par de colunas inserido entre `Fonte Recursos` e `Grupo
+    Despesa` — todo o resto do layout (árvore mensal, blocos, NE Item) é idêntico.
 
 A REGRA QUE MUDA TUDO NESTA BASE: dentro de uma mesma NE, o valor "Empenhada" de um mês
 aparece IDÊNTICO, repetido, em todas as linhas de `NE Item` que compartilham a mesma
@@ -73,6 +81,7 @@ COLUNAS_DIMENSAO = [
     "acao_cod", "acao_desc",
     "elemento_cod", "elemento_desc",
     "fonte_cod", "fonte_desc",
+    "fonte_recursos_detalhada_cod", "fonte_recursos_detalhada_desc",
     "gnd_cod", "gnd_desc",
     "natureza_despesa_cod", "natureza_despesa_desc",
     "natureza_detalhada_cod", "natureza_detalhada_desc",
@@ -114,9 +123,13 @@ _PADRAO_ROTULO_MES = re.compile(r"^([A-ZÇ]{3})/(\d{4})$")
 _PADRAO_ROTULO_ENCERRAMENTO = re.compile(r"^0\d{2}/(\d{4})$")
 
 #: âncoras de posição fixa (linha 1 do cabeçalho, já sem as linhas de banner, 0-indexada).
+#: Posições deslocadas em +2 a partir de "Grupo Despesa" em 22/09/2026 — nova extração
+#: passou a incluir "Fonte Recursos Detalhada" (par código/descrição, decisão do usuário)
+#: logo após "Fonte Recursos" (posições 10-11), pedido pra viabilizar cruzamento com a
+#: Dotação Anual sem a perda de granularidade documentada em `src.painel_acoes_empenho`.
 _ANCORAS_LINHA1 = {
-    0: "Iduso", 12: "Grupo Despesa", 25: "PTRES",
-    26: "Unidade Or", 34: "NE - N",
+    0: "Iduso", 14: "Grupo Despesa", 27: "PTRES",
+    28: "Unidade Or", 36: "NE - N",
 }
 
 

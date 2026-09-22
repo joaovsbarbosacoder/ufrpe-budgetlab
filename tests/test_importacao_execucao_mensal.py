@@ -8,9 +8,10 @@ que o núcleo exige (`anos`, `totais`, `totais_por_ano` por medida — ver
 `src/tesouro_execucao_mensal.reconciliar`), e `carregar_atual` compondo por ano entre
 manifestos diferentes.
 
-Usa a fixture congelada `tests/fixtures/execucao_mensal_2026-09-21.xlsx` (multi-aba,
-2024-2026) — pulado se o arquivo não existir. Todo teste que grava manifesto/arquivo usa um
-diretório temporário próprio, nunca `data/raw/`/`data/manifestos/` reais.
+Usa a fixture congelada `tests/fixtures/execucao_mensal_2026-09-22.xlsx` (multi-aba,
+2024-2026, com Fonte Recursos Detalhada — ver `docs/base_execucao_mensal.md`) — pulado se o
+arquivo não existir. Todo teste que grava manifesto/arquivo usa um diretório temporário
+próprio, nunca `data/raw/`/`data/manifestos/` reais.
 """
 
 from __future__ import annotations
@@ -31,10 +32,12 @@ from src.importacao_execucao_mensal import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CAMINHO_FIXTURE = PROJECT_ROOT / "tests/fixtures/execucao_mensal_2026-09-21.xlsx"
+CAMINHO_FIXTURE = PROJECT_ROOT / "tests/fixtures/execucao_mensal_2026-09-22.xlsx"
 
-#: coluna 1-indexada (openpyxl) da "Empenhada" do bloco JAN — 0-indexada 41 (PRIMEIRA_COLUNA_MESES).
-COL_EMPENHADA_JAN = 42
+#: coluna 1-indexada (openpyxl) da "Empenhada" do bloco JAN — 0-indexada 43 (PRIMEIRA_COLUNA_MESES,
+#: deslocada +2 em 22/09/2026 pelo par Fonte Recursos Detalhada — ver docstring de
+#: `src/tesouro_execucao_mensal.py`).
+COL_EMPENHADA_JAN = 44
 LINHA_DADOS = 7  # primeira linha de dado de qualquer aba (após banner + cabeçalho de 3 linhas)
 
 
@@ -74,7 +77,7 @@ class TestGerarManifesto(unittest.TestCase):
 
     def test_contagens_estruturais(self):
         self.assertEqual(self.manifesto.contagens.get("linhas_originais"), 5773)
-        self.assertEqual(self.manifesto.contagens.get("notas_empenho_distintas"), 2567)
+        self.assertEqual(self.manifesto.contagens.get("notas_empenho_distintas"), 2568)
 
 
 @unittest.skipUnless(CAMINHO_FIXTURE.exists(), f"Fixture ausente em {CAMINHO_FIXTURE}")

@@ -32,11 +32,6 @@ page = st.navigation(
         "": [
             st.Page("app_pages/home.py", title="Início", icon="🏠"),
             st.Page(
-                "app_pages/dotacao_orcamentaria.py",
-                title="Dotação Orçamentária",
-                icon="📊",
-            ),
-            st.Page(
                 "app_pages/painel_acoes.py",
                 title="Painel por Ação",
                 icon="🟪",
@@ -45,16 +40,6 @@ page = st.navigation(
                 "app_pages/limite_empenho.py",
                 title="Limite de Empenho",
                 icon="🧮",
-            ),
-            st.Page(
-                "app_pages/execucao_orcamentaria.py",
-                title="Execução Orçamentária",
-                icon="💳",
-            ),
-            st.Page(
-                "app_pages/execucao_mensal.py",
-                title="Execução Mensal",
-                icon="🗓️",
             ),
             st.Page(
                 "app_pages/consulta_empenhos.py",

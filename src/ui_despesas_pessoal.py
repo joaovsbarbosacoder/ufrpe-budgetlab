@@ -15,11 +15,12 @@ from streamlit.components.v2 import component
 
 from src import design_tokens as tokens
 from src.despesas_pessoal import (
+    ACAO_ASSISTENCIA_MEDICA, ACAO_BENEFICIOS_OBRIGATORIOS,
     GRUPO_ATIVO, GRUPO_INATIVO, GRUPO_RPPS, GRUPO_OUTROS_BENEFICIOS,
     REGRA_DECIMO_TERCEIRO, REGRA_PROPORCAO_HISTORICA,
     ResultadoGradeMensal, execucao_ano_anterior, execucao_ano_anterior_beneficios,
     valor_mes_referencia, valor_mes_referencia_beneficios,
-    regra_para_natureza, saldo_remanescente,
+    regra_para_natureza, saldo_remanescente, saldo_remanescente_beneficios_por_acao,
 )
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets" / "despesas_pessoal"
@@ -34,6 +35,12 @@ GRUPOS = {
     GRUPO_RPPS: "RPPS — AÇÃO 09HB", GRUPO_OUTROS_BENEFICIOS: "OUTROS BENEFÍCIOS",
 }
 ESPECIAIS = {REGRA_DECIMO_TERCEIRO, REGRA_PROPORCAO_HISTORICA}
+#: decisão 12 (22/09/2026) — nomes das 2 ações que compõem Outros Benefícios, usados só
+#: pra separar as linhas do Saldo Remanescente (o resto do painel continua agrupado).
+_NOMES_ACAO_BENEFICIOS = {
+    ACAO_ASSISTENCIA_MEDICA: "2004 — ASSISTÊNCIA MÉDICA/ODONTOLÓGICA",
+    ACAO_BENEFICIOS_OBRIGATORIOS: "212B — BENEFÍCIOS OBRIGATÓRIOS",
+}
 
 
 def numero(valor):
@@ -71,7 +78,7 @@ def _contexto_beneficios(df, medida):
 
 def montar_painel(grade: ResultadoGradeMensal, mensal, anual, dotacao, ano_dotacao,
                   *, meses_disponiveis, anos_dotacao, procedencia="", editados=None,
-                  dotacao_por_plano_orcamentario=None):
+                  dotacao_por_plano_orcamentario=None, dotacao_por_acao_beneficios=None):
     """Dados JSON da interface; todos os valores vêm das bases/processamento atual.
 
     `dotacao_por_plano_orcamentario` (opcional): `pd.Series` indexada por
@@ -79,7 +86,12 @@ def montar_painel(grade: ResultadoGradeMensal, mensal, anual, dotacao, ano_dotac
     dimensão Plano Orçamentário, então os filhos de Outros Benefícios (que `grade` já
     traz por PO, ver `despesas_pessoal.grade_mensal_beneficios`) mostram dotação
     própria, diferente dos outros 3 grupos (Ativo/Inativo/RPPS ficam sem essa
-    dimensão na base, `dotacao` continua `None` por rubrica para eles)."""
+    dimensão na base, `dotacao` continua `None` por rubrica para eles).
+
+    `dotacao_por_acao_beneficios` (opcional): `pd.Series` indexada por `acao_codigo`
+    (`despesas_pessoal.dotacao_atualizada_por_acao_beneficios`) — decisão 12
+    (22/09/2026): separa o Saldo Remanescente de Outros Benefícios em 2 linhas (2004/
+    212B) em vez de uma só. Não afeta os cartões por grupo, só a seção de saldo."""
     historico = execucao_ano_anterior(anual, grade.ano - 1)
     referencia = valor_mes_referencia(mensal, grade.ano_mes_referencia)
     exec_por_chave = _contexto(historico, "execucao_ano_anterior")
@@ -144,14 +156,29 @@ def montar_painel(grade: ResultadoGradeMensal, mensal, anual, dotacao, ano_dotac
              grupos[2], subtotal("financeiras", "SUBTOTAL DESP FINANCEIRAS", [GRUPO_RPPS]),
              grupos[3], total]
     saldos_df = saldo_remanescente(grade, dotacao)
+    dotacao_por_acao_beneficios = (
+        dotacao_por_acao_beneficios if dotacao_por_acao_beneficios is not None else pd.Series(dtype=float)
+    )
+    saldos_beneficios_df = saldo_remanescente_beneficios_por_acao(grade, dotacao_por_acao_beneficios)
     saldos = []
+    chaves_beneficios_por_acao = []
     for grupo in ordem:
         if grupo.get("subtotal"):
+            continue
+        if grupo["key"] == GRUPO_OUTROS_BENEFICIOS:
+            # Decisão 12: Outros Benefícios vira 2 linhas de saldo (2004/212B) em vez
+            # de uma só — o cartão do grupo em si (acima) continua junto.
+            for acao_cod, nome in _NOMES_ACAO_BENEFICIOS.items():
+                registro = saldos_beneficios_df.loc[saldos_beneficios_df["acao_cod"] == acao_cod] if not saldos_beneficios_df.empty else pd.DataFrame()
+                valores = [numero(v) for v in registro.iloc[0]["meses"]] if not registro.empty else [None] * 12
+                chave = f"beneficios_{acao_cod}"
+                chaves_beneficios_por_acao.append(chave)
+                saldos.append({"key": chave, "nome": "Saldo " + nome, "meses": valores})
             continue
         registro = saldos_df.loc[saldos_df["grupo"] == grupo["key"]] if not saldos_df.empty else pd.DataFrame()
         valores = [numero(v) for v in registro.iloc[0]["meses"]] if not registro.empty else [None] * 12
         saldos.append({"key": grupo["key"], "nome": "Saldo " + grupo["nome"], "meses": valores})
-    saldos_reais = [s for s in saldos if s["key"] in GRUPOS]
+    saldos_reais = [s for s in saldos if s["key"] in GRUPOS or s["key"] in chaves_beneficios_por_acao]
     saldo_total = [soma(s["meses"][m] for s in saldos_reais) for m in range(12)]
     saldos.append({"key": "total", "nome": "Saldo Total", "meses": saldo_total, "subtotal": True})
     deficits = [s for s in saldos_reais if any(v is not None and v < 0 for v in s["meses"])]

@@ -142,21 +142,16 @@ col_planejamento, col_operacao, col_gestao = st.columns(3, vertical_alignment="t
 
 with col_planejamento.container(border=True, height="stretch"):
     st.markdown("#### Planejamento e execução")
-    st.caption("Dotação, execução anual e acompanhamento por ação.")
-    st.page_link(
-        "app_pages/dotacao_orcamentaria.py",
-        label="Dotação orçamentária",
-        icon=":material/account_balance:",
-    )
-    st.page_link(
-        "app_pages/execucao_orcamentaria.py",
-        label="Execução orçamentária",
-        icon=":material/query_stats:",
-    )
+    st.caption("Acompanhamento por ação e limite de empenho.")
     st.page_link(
         "app_pages/painel_acoes.py",
         label="Painel por ação",
         icon=":material/dashboard:",
+    )
+    st.page_link(
+        "app_pages/limite_empenho.py",
+        label="Limite de empenho",
+        icon=":material/rule:",
     )
 
 with col_operacao.container(border=True, height="stretch"):

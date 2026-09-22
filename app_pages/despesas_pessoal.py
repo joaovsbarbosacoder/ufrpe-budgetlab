@@ -10,7 +10,8 @@ import streamlit as st
 
 from src.despesas_pessoal import (
     aplicar_overrides, consolidar_por_elemento, consolidar_relatorio_ativo,
-    dotacao_atualizada_por_grupo, dotacao_atualizada_por_plano_orcamentario,
+    dotacao_atualizada_por_acao_beneficios, dotacao_atualizada_por_grupo,
+    dotacao_atualizada_por_plano_orcamentario,
     grade_mensal, substituir_beneficios_por_plano_orcamentario, ultimo_mes_fechado,
 )
 from src.importacao_dotacao import (
@@ -121,6 +122,7 @@ edicoes = st.session_state[chave_edicoes]
 grade = aplicar_overrides(grade_base, edicoes) if edicoes else grade_base
 dotacao_grupo = dotacao_atualizada_por_grupo(dotacao, ano_dotacao)
 dotacao_por_po = dotacao_atualizada_por_plano_orcamentario(dotacao, ano_dotacao)
+dotacao_por_acao_beneficios = dotacao_atualizada_por_acao_beneficios(dotacao, ano_dotacao)
 
 def data_extracao(manifesto):
     return datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y")
@@ -136,7 +138,8 @@ procedencia = (
 dados = montar_painel(grade, mensal, anual, dotacao_grupo, ano_dotacao,
                       meses_disponiveis=meses_disponiveis, anos_dotacao=anos_dotacao,
                       procedencia=procedencia, editados=edicoes,
-                      dotacao_por_plano_orcamentario=dotacao_por_po)
+                      dotacao_por_plano_orcamentario=dotacao_por_po,
+                      dotacao_por_acao_beneficios=dotacao_por_acao_beneficios)
 resultado = render_painel(dados)
 if resultado.edicao:
     try:

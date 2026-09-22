@@ -1,4 +1,4 @@
-"""Contratos Contínuos — necessidade de empenho e saldo, cruzado com a Execução Anual.
+"""Contratos Contínuos — necessidade de empenho e saldo, cruzado com a Execução Mensal.
 
 CADASTRO NATIVO, MULTI-EXERCÍCIO (pedido explícito, mesmo tratamento já dado a
 `app_pages/bolsas_auxilios.py`): esta página não lê mais a planilha de Contratos Contínuos —
@@ -32,7 +32,7 @@ Adaptação do handoff de design (`painel_bolsas.py`, versão "cartão com rótu
 de cada campo" — mesmo padrão já aplicado em `app_pages/bolsas_auxilios.py`, replicado aqui
 para Contratos Contínuos) para os leitores e a regra de saldo já aprovados e testados neste
 projeto (`src/contratos_continuos.py`, `src/necessidade_empenho.py`,
-`src/execucao_anual.py::saldo_por_ne`) — não `data_loader_contratos.py`/`design_tokens.py`
+`src/execucao_ne_utils.py::saldo_por_ne`) — não `data_loader_contratos.py`/`design_tokens.py`
 de handoffs anteriores.
 
 Cada contrato é um cartão (`st.expander`, minimizado por padrão — mesmo padrão de
@@ -44,7 +44,7 @@ não fica sem indicação do que é.
 
 Antes da lista, um card único "Resumo Consolidado — por NE" lista, uma linha por NE (não por
 item de licitação nem um total agregado — ver `_render_resumo_consolidado`), o valor
-empenhado, o saldo (Execução Anual) e a necessidade de empenho até o fim do exercício. Itens
+empenhado, o saldo (Execução Mensal) e a necessidade de empenho até o fim do exercício. Itens
 sem NE (contrato ainda sem empenho) aparecem à parte, um por linha, já que não há NE para
 agrupar. Mesmo padrão HTML de `app_pages/painel_acoes.py`, não `st.dataframe`.
 
@@ -63,16 +63,16 @@ Diferenças deliberadas em relação aos handoffs anteriores:
     Consolidado usa `despesa_mensal × meses restantes até dezembro` só para a "Necessidade
     até Dezembro" agregada — mesma ressalva de `bolsas_auxilios.py`: não substitui nem se
     confunde com "Empenhar" por cartão.
-  * Para contratos cuja NE já foi encontrada na Execução Anual, `meses_empenhados`/
-    `meses_liquidados` deixam de vir da planilha e passam a vir da própria Execução Anual
+  * Para contratos cuja NE já foi encontrada na Execução Mensal, `meses_empenhados`/
+    `meses_liquidados` deixam de vir da planilha e passam a vir da própria Execução Mensal
     (`com_saldo_execucao`, campos `meses_empenhados_execucao`/`meses_liquidados_execucao`) —
     pedido explícito do usuário para não depender de atualizar a planilha de Contratos
     Contínuos só para refletir um novo saldo/liquidado. Os dois campos do cartão viram
-    exibição (rótulo "(Execução Anual)"), não mais editáveis, nesse caso — editar deixaria de
+    exibição (rótulo "(Execução Mensal)"), não mais editáveis, nesse caso — editar deixaria de
     ter efeito no "Empenhar" mostrado. Sem NE encontrada, os campos continuam editáveis como
     sempre, seedados pela planilha (fallback inalterado).
-  * `saldo_execucao` e `valor_empenhado_execucao` (autoritativos, vindos da Execução Anual)
-    são fixos — não editáveis (lidos da Execução Anual, não desta planilha) — e visíveis
+  * `saldo_execucao` e `valor_empenhado_execucao` (autoritativos, vindos da Execução Mensal)
+    são fixos — não editáveis (lidos da Execução Mensal, não desta planilha) — e visíveis
     junto da tag de divergência contra `saldo_colado_planilha`/soma de `valor_empenhado` por
     NE, sinalizada, não escondida. `valor_empenhado_execucao` é sempre o total da NE inteira
     (mesmo valor repetido em todo item de um contrato com vários itens) — comparado contra a
@@ -88,7 +88,7 @@ Diferenças deliberadas em relação aos handoffs anteriores:
   * Os tokens de cor/tipografia são os reais do projeto (`src/design_tokens.py`).
   * KPIs no topo, por pedido explícito: Despesa Anual Total, Despesa Mensal, Número de
     Contratos, Necessidade de Empenho Total — os demais já aprovados antes (Saldo via
-    Execução Anual, Contratos Ativos/Vencidos, Saldo Divergente) saíram do topo. Saldo e
+    Execução Mensal, Contratos Ativos/Vencidos, Saldo Divergente) saíram do topo. Saldo e
     divergência continuam visíveis por cartão e no Resumo Consolidado, só não aparecem mais
     como contagem agregada na entrada da tela (mesmo pedido já atendido em
     `bolsas_auxilios.py`).
@@ -120,12 +120,12 @@ Diferenças deliberadas em relação aos handoffs anteriores:
     totais do card (cabeçalho e rodapé) sempre somam o conjunto inteiro, nunca só o exibido.
   * Quadro "Empenhado × Liquidado" (pedido explícito) — mesmo layout HTML do Resumo
     Consolidado (`.cc-resumo-*`, mesma minimização "Ver mais"), comparando por NE o valor
-    empenhado total contra o liquidado (`indice_liquidado_por_ne_curta`, novo em
-    `src/execucao_anual.py`, ou `indice_liquidado_competencia` quando a base de competência
+    empenhado total contra o liquidado (`indice_liquidado_por_ne_curta`, em
+    `src/execucao_ne_utils.py`, ou `indice_liquidado_competencia` quando a base de competência
     está disponível — ver LIQUIDADO POR COMPETÊNCIA abaixo), abrangendo todos os contratos
     filtrados — inclusive os sem NE (aparecem com "sem NE" no lugar de liquidado/saldo). O
     saldo mostrado é o mesmo `saldo_execucao` (empenhada − liquidada por LANÇAMENTO, sempre
-    via Execução Anual — não muda com a competência, é o saldo formal usado também na
+    via Execução Mensal — não muda com a competência, é o saldo formal usado também na
     divergência contra o saldo colado da planilha/TG) já usado no resto da página, só rotulado
     "Sobra" (≥ 0) ou "Insuficiência" (< 0, liquidado passou do empenhado) — não é uma conta
     nova. Com Liquidado por competência, as três colunas do quadro (Empenhado, Liquidado,
@@ -137,7 +137,7 @@ Diferenças deliberadas em relação aos handoffs anteriores:
 LIQUIDADO POR COMPETÊNCIA (pedido explícito posterior, ver `app_pages/consulta_empenhos.py`
 para o desenho original): "Necessidade de Empenho" no cartão, o pop-up "Linha do tempo
 mensal" do Resumo Consolidado, e o quadro "Empenhado × Liquidado" acima trocam o Liquidado
-por mês/total de LANÇAMENTO (Execução Anual/Mensal) pelo de COMPETÊNCIA (mês de referência —
+por mês/total de LANÇAMENTO (Execução Mensal/Mensal) pelo de COMPETÊNCIA (mês de referência —
 `src/liquidacao_competencia.py`) quando `data/raw/Liquidação por Competência.xlsx` está
 disponível; sem o arquivo, os três voltam ao comportamento anterior (liquidado por
 lançamento), mesma lógica de ausência silenciosa das outras bases de trabalho desta página.
@@ -185,25 +185,21 @@ from src.design_tokens import (
     TEXT_MUTED,
     TRACK,
 )
-from src.execucao_anual import (
-    agregar_por_ne,
+from src.execucao_ne_utils import (
     indice_liquidado_por_ne_curta,
     ne_curta as _ne_curta_execucao,
     saldo_por_ne,
 )
-from src.importacao_dotacao import Manifesto as ManifestoDotacao
+from src.importacao_dotacao import DIRETORIO_MANIFESTOS_PADRAO, Manifesto as ManifestoDotacao
 from src.importacao_dotacao import NOME_PONTEIRO as NOME_PONTEIRO_DOTACAO
 from src.importacao_dotacao import carregar_atual as carregar_dotacao_atual
-from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, Manifesto
-from src.importacao_execucao import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO
-from src.importacao_execucao import carregar_atual as carregar_execucao_atual
 from src.importacao_execucao_mensal import Manifesto as ManifestoExecucaoMensal
 from src.importacao_execucao_mensal import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO_MENSAL
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
 from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne, liquidado_por_ne_e_mes
 from src.necessidade_empenho import calcular_necessidade_empenho
 from src.relatorio_reforco_empenho import CONTRATOS_CONTINUOS as RELATORIO_CONTRATOS_CONTINUOS
-from src.tesouro_execucao_mensal import linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
+from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_linha_do_tempo import MESES_ABREV, abrir_linha_do_tempo
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
 from src.ui_theme import format_brl_compact, render_metric_grid, render_page_header
@@ -213,7 +209,7 @@ CAMINHO_PAGAMENTOS = DIRETORIO_DADOS_BRUTOS / "CONTRATOS - CONTROLE 2020 - Pagam
 #: mesmo arquivo usado por app_pages/consulta_empenhos.py (ver ali o porquê da troca) — usada
 #: aqui para "Necessidade de Empenho" (ver `com_saldo_execucao`, parâmetro
 #: `indice_liquidado_competencia`). Ausência do arquivo não impede o resto da página: a conta
-#: volta a usar o liquidado por lançamento da Execução Anual (comportamento anterior a este
+#: volta a usar o liquidado por lançamento da Execução Mensal (comportamento anterior a este
 #: pedido).
 CAMINHO_LIQUIDACAO_COMPETENCIA = Path("data/raw") / "Liquidação por Competência.xlsx"
 
@@ -225,13 +221,15 @@ COLUNAS_BUSCA = [
 STATUS_OPCOES = ["ATIVO", "VENCIDO"]
 
 
-@st.cache_data(show_spinner="Lendo a base de Execução Anual...")
+@st.cache_data(show_spinner="Lendo a base de Execução Mensal...")
 def _cached_por_ne_execucao(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
-    """`caminho_ponteiro`/`mtime_ponteiro` só participam da chave de cache — força reler
-    quando o manifesto atual mudar. `carregar_atual` já devolve a base composta por ano (ver
-    `src/importacao_execucao.py`)."""
+    """Saldo autoritativo por NE, a partir da Execução MENSAL (2024+) — não mais a Anual (ver
+    decisão de 22/09/2026, pedido do usuário: parar de depender da Execução Anual).
+    `caminho_ponteiro`/`mtime_ponteiro` só participam da chave de cache — força reler quando
+    o manifesto atual mudar. `carregar_atual` já devolve a base composta por ano (ver
+    `src/importacao_execucao_mensal.py`)."""
 
-    return saldo_por_ne(agregar_por_ne(carregar_execucao_atual()))
+    return saldo_por_ne(agregar_por_ne(carregar_execucao_mensal_atual()))
 
 
 @st.cache_data(show_spinner="Lendo a linha do tempo mensal...")
@@ -620,9 +618,9 @@ def _campo_inicio_execucao(col, valor_persistido: object, sugestao_auto: object,
 def _rotulo_expander(linha: pd.Series) -> str:
     """Prévia do cartão minimizado — a partir dos valores brutos da linha (não dos widgets,
     que só existem depois de abrir o expander). `valor_a_empenhar` já vem resolvido pelo
-    pipeline (Execução Anual quando disponível, planilha como fallback — ver
+    pipeline (Execução Mensal quando disponível, planilha como fallback — ver
     `com_saldo_execucao`); recalcular aqui a partir de `meses_empenhados`/`meses_liquidados`
-    mostraria um número desatualizado sempre que a Execução Anual estiver disponível."""
+    mostraria um número desatualizado sempre que a Execução Mensal estiver disponível."""
 
     fornecedor = _ou_vazio(linha["fornecedor"]) or "(sem fornecedor)"
     numero = _ou_vazio(linha["contrato_numero"])
@@ -684,7 +682,7 @@ def _render_card(
         saldo_planilha = _campo_numero(r3[3], "Saldo TG (R$)", _ou_zero(linha["saldo_colado_planilha"]), f"{k}_saldotg", step=100.0)
 
         r4 = st.columns(4)
-        # Quando a NE já foi encontrada na Execução Anual, `meses_empenhados_execucao`/
+        # Quando a NE já foi encontrada na Execução Mensal, `meses_empenhados_execucao`/
         # `meses_liquidados_execucao` (ver `com_saldo_execucao`) substituem os campos manuais
         # da planilha na conta de "Empenhar" — os dois viram exibição, não mais editáveis,
         # para não sugerir que digitar ali teria algum efeito (deixaria de ter, e o cartão
@@ -695,12 +693,12 @@ def _render_card(
         if via_execucao:
             meses_empenhados = float(linha["meses_empenhados_execucao"])
             meses_liquidados = float(linha["meses_liquidados_execucao"])
-            r4[0].markdown("<div class='cc-label'>Meses Empenhados (Execução Anual)</div>", unsafe_allow_html=True)
+            r4[0].markdown("<div class='cc-label'>Meses Empenhados (Execução Mensal)</div>", unsafe_allow_html=True)
             r4[0].markdown(f"<div class='cc-calc'>{_num(meses_empenhados)}</div>", unsafe_allow_html=True)
             rotulo_liquidados = (
                 "Meses Liquidados (Competência)"
                 if bool(linha["liquidado_via_competencia"])
-                else "Meses Liquidados (Execução Anual)"
+                else "Meses Liquidados (Execução Mensal)"
             )
             r4[1].markdown(f"<div class='cc-label'>{rotulo_liquidados}</div>", unsafe_allow_html=True)
             r4[1].markdown(f"<div class='cc-calc'>{_num(meses_liquidados)}</div>", unsafe_allow_html=True)
@@ -723,13 +721,13 @@ def _render_card(
         r4[3].markdown(f"<div class='cc-calc'>{_num(meses_a_empenhar)}</div>", unsafe_allow_html=True)
 
         r5 = st.columns(4)
-        rotulo_empenhar = "Empenhar (Execução Anual)" if via_execucao else "Empenhar (planilha)"
+        rotulo_empenhar = "Empenhar (Execução Mensal)" if via_execucao else "Empenhar (planilha)"
         r5[0].markdown(f"<div class='cc-label'>{rotulo_empenhar}</div>", unsafe_allow_html=True)
         r5[0].markdown(f"<div class='cc-calc strong'>{_brl(valor_a_empenhar)}</div>", unsafe_allow_html=True)
 
         saldo_execucao = linha["saldo_execucao"]
         diverge_saldo = pd.notna(saldo_execucao) and abs(saldo_execucao - saldo_planilha) > 0.01
-        r5[1].markdown("<div class='cc-label'>Saldo (Execução Anual)</div>", unsafe_allow_html=True)
+        r5[1].markdown("<div class='cc-label'>Saldo (Execução Mensal)</div>", unsafe_allow_html=True)
         r5[1].markdown(f"<div class='cc-calc'>{_brl(saldo_execucao) if pd.notna(saldo_execucao) else 'sem NE'}</div>", unsafe_allow_html=True)
 
         # valor_empenhado_execucao é sempre no nível da NE inteira (mesmo valor repetido em
@@ -740,7 +738,7 @@ def _render_card(
         # itens, mesmo problema já evitado para saldo/SALDO TG ATUALIZADO).
         valor_empenhado_execucao = linha["valor_empenhado_execucao"]
         diverge_valor_empenhado = bool(linha["diverge_valor_empenhado"]) if pd.notna(linha["diverge_valor_empenhado"]) else False
-        r5[2].markdown("<div class='cc-label'>Empenhado (Execução Anual) · NE</div>", unsafe_allow_html=True)
+        r5[2].markdown("<div class='cc-label'>Empenhado (Execução Mensal) · NE</div>", unsafe_allow_html=True)
         r5[2].markdown(f"<div class='cc-calc'>{_brl(valor_empenhado_execucao) if pd.notna(valor_empenhado_execucao) else 'sem NE'}</div>", unsafe_allow_html=True)
 
         # Indicador INDEPENDENTE de meses_liquidados (campo manual acima, r4): quantos meses
@@ -1143,7 +1141,7 @@ def _render_resumo_consolidado(
     COMPETÊNCIA, e é esse valor (não `saldo_execucao`) que aparece na coluna "Saldo" e alimenta
     "Necessidade até Dezembro" — as duas colunas deste card continuam batendo entre si. NE sem
     competência apurada (arquivo ausente, ou nenhuma linha ainda para aquela NE) cai no
-    `saldo_execucao` de sempre (Execução Anual, por lançamento), nunca mistura as duas dentro
+    `saldo_execucao` de sempre (Execução Mensal, por lançamento), nunca mistura as duas dentro
     do mesmo NE. Antes este card usava sempre `saldo_execucao`, inconsistente com o resto da
     página (que já mostrava Liquidado por competência) — corrigido a pedido do usuário.
 
@@ -1185,7 +1183,7 @@ def _render_resumo_consolidado(
     # competência apurada (`liquidado_via_competencia` E `valor_liquidado_execucao` notna —
     # ver `com_saldo_execucao`), Empenhado − Liquidado por COMPETÊNCIA, não por lançamento;
     # sem competência para aquela NE (arquivo ausente, ou NE sem nenhuma linha apurada ainda),
-    # cai no `saldo_execucao` de sempre (Execução Anual, por lançamento) — mesmo critério de
+    # cai no `saldo_execucao` de sempre (Execução Mensal, por lançamento) — mesmo critério de
     # fallback por linha já usado em `com_saldo_execucao`, nunca mistura as duas dentro do
     # mesmo NE. Diferente do quadro "Empenhado × Liquidado" (saldo sempre por lançamento, ali
     # por ser o saldo formal comparado contra o TG): aqui não há essa comparação, então o
@@ -1244,7 +1242,7 @@ def _render_resumo_consolidado(
         if algum_ne_via_competencia:
             st.caption(
                 "Saldo/Necessidade usa Liquidado por competência (mês de referência) para as NEs com "
-                "competência já apurada; sem competência para a NE, continua por lançamento (Execução Anual)."
+                "competência já apurada; sem competência para a NE, continua por lançamento (Execução Mensal)."
             )
         clicado = _render_linhas_resumo(
             visiveis, tempo_por_ne_curta, liquidacao_competencia_por_mes, nes_com_tempo, source_key,
@@ -1305,14 +1303,14 @@ def _render_empenhado_liquidado(
     """Quadro comparando, por NE, o valor empenhado total contra o liquidado (pedido
     explícito) — mesmo layout do Resumo Consolidado acima (`.cc-resumo-*`), abrangendo TODOS
     os contratos filtrados, inclusive os sem NE (aparecem com "sem NE" no lugar de
-    liquidado/saldo, já que não há NE para buscar na Execução Anual).
+    liquidado/saldo, já que não há NE para buscar na Execução Mensal).
 
     `indice_liquidado`/`via_competencia` (pedido explícito posterior — ver LIQUIDADO POR
     COMPETÊNCIA na docstring do módulo): Liquidação por Competência quando disponível,
-    Execução Anual (por lançamento) como fallback — mesma fonte de `com_saldo_execucao`.
+    Execução Mensal (por lançamento) como fallback — mesma fonte de `com_saldo_execucao`.
 
     O saldo é o mesmo `saldo_execucao` (empenhada − liquidada por LANÇAMENTO, sempre via
-    Execução Anual — nunca muda com `via_competencia`) já usado no resto da página, não uma
+    Execução Mensal — nunca muda com `via_competencia`) já usado no resto da página, não uma
     conta nova —, só reapresentado aqui lado a lado com o valor liquidado e rotulado "Sobra"
     (saldo ≥ 0, ainda há espaço no empenho) ou "Insuficiência" (saldo < 0, liquidado passou do
     empenhado — precisa de reforço de empenho). Com `via_competencia=True` as três colunas
@@ -1362,7 +1360,7 @@ def _render_empenhado_liquidado(
 
     rotulo_total = "Sobra" if saldo_total >= 0 else "Insuficiência"
     cor_total = POSITIVE if saldo_total >= 0 else NEGATIVE
-    rotulo_liquidado = "Liquidado (Competência)" if via_competencia else "Liquidado (Execução Anual)"
+    rotulo_liquidado = "Liquidado (Competência)" if via_competencia else "Liquidado (Execução Mensal)"
     # Sem indentação/quebra de linha própria de propósito: um `st.markdown` com HTML
     # interpreta 4+ espaços no início de uma linha como bloco de código (regra do Markdown,
     # não do Streamlit) — uma string de várias linhas indentada aqui aparecia crua na tela em
@@ -1370,7 +1368,7 @@ def _render_empenhado_liquidado(
     nota_competencia = (
         '<div class="cc-resumo-metric-label" style="margin:4px 0 8px 0">'
         "Liquidado por competência (mês de referência) — Saldo continua Empenhado − Liquidado "
-        "por lançamento (Execução Anual, mesmo saldo formal do resto da página); as duas colunas "
+        "por lançamento (Execução Mensal, mesmo saldo formal do resto da página); as duas colunas "
         "não somam entre si."
         "</div>"
         if via_competencia
@@ -1669,49 +1667,45 @@ col_titulo, col_relatorio, col_novo = st.columns([4, 1.4, 1])
 with col_titulo:
     render_page_header(
         "Contratos Contínuos",
-        "Necessidade de reforço de empenho por contrato, cruzado com a Execução Anual.",
+        "Necessidade de reforço de empenho por contrato, cruzado com a Execução Mensal.",
         "Contratos",
     )
 with col_novo:
     st.write("")
     _render_novo_contrato(ano_selecionado, source_key)
 
-manifesto_execucao = Manifesto.atual()
-if manifesto_execucao is None:
+manifesto_execucao_mensal = ManifestoExecucaoMensal.atual()
+if manifesto_execucao_mensal is None:
     st.info(
-        "Nenhuma base de Execução Anual foi importada ainda — é dela que vem o saldo "
-        "autoritativo por NE. Importe a Execução Anual antes de usar esta página."
+        "Nenhuma base de Execução Mensal foi importada ainda — é dela que vem o saldo "
+        "autoritativo por NE. Importe a Execução Mensal antes de usar esta página."
     )
     st.stop()
 
-caminho_ponteiro_execucao = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO_EXECUCAO
+caminho_ponteiro_execucao_mensal = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO_EXECUCAO_MENSAL
 
 try:
     registros = carregar_contratos(ano_selecionado)
     dataframe = como_dataframe(registros)
     por_ne_execucao = _cached_por_ne_execucao(
-        str(caminho_ponteiro_execucao), caminho_ponteiro_execucao.stat().st_mtime
+        str(caminho_ponteiro_execucao_mensal), caminho_ponteiro_execucao_mensal.stat().st_mtime
     )
 except Exception as error:
     st.error(f"Não foi possível ler os dados: {error}")
     st.stop()
 
-# Base mensal (2024+) só para o pop-up "Linha do tempo mensal" do Resumo Consolidado —
-# opcional: sem importação ainda feita, o resumo continua funcionando normal, só sem nenhuma
-# NE clicável.
+# Linha do tempo mensal (pop-up "Linha do tempo mensal" do Resumo Consolidado) usa a MESMA
+# base já carregada acima para o saldo — reaproveita o manifesto já confirmado presente.
 tempo_por_ne_curta: pd.DataFrame | None = None
-manifesto_execucao_mensal = ManifestoExecucaoMensal.atual()
-if manifesto_execucao_mensal is not None:
-    caminho_ponteiro_execucao_mensal = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO_EXECUCAO_MENSAL
-    try:
-        tempo_por_ne_curta = _cached_linha_do_tempo(
-            str(caminho_ponteiro_execucao_mensal), caminho_ponteiro_execucao_mensal.stat().st_mtime
-        )
-    except Exception:
-        tempo_por_ne_curta = None
+try:
+    tempo_por_ne_curta = _cached_linha_do_tempo(
+        str(caminho_ponteiro_execucao_mensal), caminho_ponteiro_execucao_mensal.stat().st_mtime
+    )
+except Exception:
+    tempo_por_ne_curta = None
 
 # Liquidação por Competência, para "Necessidade de Empenho" (ver com_saldo_execucao) —
-# opcional: sem o arquivo, a conta volta a usar o liquidado por lançamento da Execução Anual
+# opcional: sem o arquivo, a conta volta a usar o liquidado por lançamento da Execução Mensal
 # (comportamento anterior a este pedido).
 indice_liquidado_competencia: pd.Series | None = None
 liquidacao_competencia_por_mes: pd.DataFrame | None = None
@@ -1785,7 +1779,7 @@ dataframe["inicio_execucao_efetivo"] = dataframe["inicio_execucao_mes"].fillna(
 
 with col_relatorio:
     st.write("")
-    render_botao_relatorio(dataframe, RELATORIO_CONTRATOS_CONTINUOS, f"continuos_{ano_selecionado}")
+    render_botao_relatorio(dataframe, RELATORIO_CONTRATOS_CONTINUOS, f"continuos_{ano_selecionado}", ano_selecionado)
 
 busca = st.text_input(
     "Buscar",
@@ -1874,7 +1868,7 @@ elif len(filtrado):
 
 st.caption(
     "Cadastro nativo de Contratos Contínuos (não depende mais de planilha) — uma linha por "
-    "contrato × item de licitação. Saldo Execução vem da Execução Anual do projeto, cruzado "
+    "contrato × item de licitação. Saldo Execução vem da Execução Mensal do projeto, cruzado "
     f"pela NE. Exercício em tela: {ano_selecionado}. Edição de cartão só é gravada ao clicar "
     "em '💾 Salvar'; '+ Novo contrato' e 'Remover' gravam/apagam de imediato."
 )

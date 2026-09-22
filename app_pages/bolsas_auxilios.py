@@ -1,4 +1,4 @@
-"""Bolsas e Auxílios — necessidade de empenho e saldo, cruzado com a Execução Anual.
+"""Bolsas e Auxílios — necessidade de empenho e saldo, cruzado com a Execução Mensal.
 
 CADASTRO NATIVO, MULTI-EXERCÍCIO (pedido explícito): esta página não lê mais a planilha de
 Bolsas e Auxílios — os programas vivem em `src/bolsas_auxilios_cadastro.py`
@@ -8,7 +8,7 @@ exercício 2026 foi migrado uma única vez a partir da planilha então em uso
 remoção grava direto no cadastro nativo, sem depender de reimportar Excel. Um seletor de
 exercício no topo troca qual ano está em tela; "Duplicar cadastro" copia a identidade/
 classificação dos programas do exercício atual para o próximo (execução em branco — o vínculo
-com a Execução Anual se refaz quando o usuário digitar o novo número de empenho), suportando
+com a Execução Mensal se refaz quando o usuário digitar o novo número de empenho), suportando
 gerar 2028, 2029... a partir de qualquer exercício mais recente, não só 2026→2027. Exercícios
 anteriores continuam navegáveis como histórico (nunca substituídos). `com_saldo_execucao` já é
 multi-ano por natureza (`ne_curta` embute o ano, "2027NE000123" nunca colide com "2026NE..."),
@@ -28,7 +28,7 @@ ter um botão clicável dentro de um bloco de HTML injetado de uma vez só.
 Adaptação do handoff de design (`painel_bolsas.py`, versão "cartão com rótulo pequeno acima
 de cada campo") para os leitores e a regra de saldo já aprovados e testados neste projeto
 (`src/bolsas_auxilios.py`, `src/necessidade_empenho.py`,
-`src/execucao_anual.py::saldo_por_ne`) — não os `data_loader_bolsas.py`/`design_tokens.py`
+`src/execucao_ne_utils.py::saldo_por_ne`) — não os `data_loader_bolsas.py`/`design_tokens.py`
 sugeridos no pacote de handoff.
 
 Cada programa é um cartão (`st.expander`, minimizado por padrão — um cadastro para consultar
@@ -51,7 +51,7 @@ atualizar `saldo_execucao`/`valor_empenhado_execucao` daquela linha, não só os
 planilha já trazia prontos.
 
 Antes da lista, um card único "Resumo Consolidado — por Bolsa" lista, uma linha por bolsa (não
-um total agregado), o valor empenhado, o saldo (Execução Anual) e a necessidade de empenho até
+um total agregado), o valor empenhado, o saldo (Execução Mensal) e a necessidade de empenho até
 o fim do exercício de cada programa — esta última É a métrica de calendário
 (`valor_mensal × meses restantes até dezembro`) que a "Diferença deliberada" abaixo explica
 por que NÃO virou a fórmula de "Empenhar" de cada cartão: aqui ela tem um propósito diferente
@@ -75,23 +75,23 @@ Diferenças deliberadas em relação ao handoff:
     "MESES DE SALDO" da planilha, validada linha a linha contra a origem). Como o cartão do
     handoff não tinha campos para Meses Empenhados/Liquidados, acrescentei uma linha extra
     para os dois, editáveis como o resto.
-  * Para processos cuja NE já foi encontrada na Execução Anual, `meses_empenhados`/
-    `meses_liquidados` deixam de vir da planilha e passam a vir da própria Execução Anual
+  * Para processos cuja NE já foi encontrada na Execução Mensal, `meses_empenhados`/
+    `meses_liquidados` deixam de vir da planilha e passam a vir da própria Execução Mensal
     (`com_saldo_execucao`, campos `meses_empenhados_execucao`/`meses_liquidados_execucao`) —
     pedido explícito do usuário para não depender de atualizar a planilha de Bolsas só para
     refletir um novo saldo/liquidado. Os dois campos do cartão viram exibição (rótulo
-    "(Execução Anual)"), não mais editáveis, nesse caso. Sem NE encontrada, continuam
+    "(Execução Mensal)"), não mais editáveis, nesse caso. Sem NE encontrada, continuam
     editáveis como sempre, seedados pela planilha (fallback inalterado; mesmo critério de
     `contratos_continuos.py`).
-  * `saldo_execucao` e `valor_empenhado_execucao` (autoritativos, vindos da Execução Anual)
+  * `saldo_execucao` e `valor_empenhado_execucao` (autoritativos, vindos da Execução Mensal)
     não existiam no handoff (foi desenhado antes dessa integração). Pedido explícito
-    ("faça com que os dados acompanhem a Execução Anual"): quando a NE já foi encontrada lá,
-    "Saldo (R$)" e "Empenhado (R$)" do cartão passam a EXIBIR o valor da Execução Anual
-    diretamente (rótulo "(Execução Anual)", não editável) — mesmo critério já usado para
+    ("faça com que os dados acompanhem a Execução Mensal"): quando a NE já foi encontrada lá,
+    "Saldo (R$)" e "Empenhado (R$)" do cartão passam a EXIBIR o valor da Execução Mensal
+    diretamente (rótulo "(Execução Mensal)", não editável) — mesmo critério já usado para
     Meses Empenhados/Liquidados (ver bullet acima), em vez do valor antigo de mostrar os dois
     lado a lado com uma tag "Diverge"/"Bate" quando discordavam. Com o cartão passando a
     exibir sempre o número autoritativo, não sobra o que divergir dali; a tag de status virou
-    "Via Execução Anual"/"Sem Execução" (se nenhuma NE foi encontrada lá, os campos
+    "Via Execução Mensal"/"Sem Execução" (se nenhuma NE foi encontrada lá, os campos
     continuam editáveis a partir da planilha, fallback inalterado). O "Valor Empenhado" do
     Resumo Consolidado usa `valor_empenhado_execucao`, com `valor_empenhado_tg` (planilha)
     como reserva só para NE sem correspondência na Execução — mesmo padrão de fallback do
@@ -114,7 +114,7 @@ Diferenças deliberadas em relação ao handoff:
   * Os tokens de cor/tipografia são os reais do projeto (`src/design_tokens.py`), não os do
     pacote de handoff.
   * KPIs no topo: Despesa Anual Total, Valor Mensal, Necessidade de Reforço, Programas e
-    Saldo via Execução Anual — "Beneficiários Efetivos" saiu por pedido explícito (trocado
+    Saldo via Execução Mensal — "Beneficiários Efetivos" saiu por pedido explícito (trocado
     por Despesa Anual Total, mesmo rótulo já usado em `contratos_continuos.py`). "Sem
     Empenho/Não Localizado" e "Saldo Divergente" também saíram do topo antes, por pedido
     explícito — continuam visíveis por cartão (tag vermelha "Sem Empenho"/"Não Localizado"/
@@ -174,20 +174,17 @@ from src.design_tokens import (
     TRACK,
     WARNING,
 )
-from src.execucao_anual import agregar_por_ne, ne_curta as _ne_curta_execucao, saldo_por_ne
-from src.importacao_dotacao import Manifesto as ManifestoDotacao
+from src.execucao_ne_utils import ne_curta as _ne_curta_execucao, saldo_por_ne
+from src.importacao_dotacao import DIRETORIO_MANIFESTOS_PADRAO, Manifesto as ManifestoDotacao
 from src.importacao_dotacao import NOME_PONTEIRO as NOME_PONTEIRO_DOTACAO
 from src.importacao_dotacao import carregar_atual as carregar_dotacao_atual
-from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, Manifesto
-from src.importacao_execucao import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO
-from src.importacao_execucao import carregar_atual as carregar_execucao_atual
 from src.importacao_execucao_mensal import DIRETORIO_MANIFESTOS_PADRAO as DIRETORIO_MANIFESTOS_EXECUCAO_MENSAL
 from src.importacao_execucao_mensal import Manifesto as ManifestoExecucaoMensal
 from src.importacao_execucao_mensal import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO_MENSAL
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
 from src.necessidade_empenho import calcular_necessidade_empenho
 from src.relatorio_reforco_empenho import BOLSAS_AUXILIOS as RELATORIO_BOLSAS_AUXILIOS
-from src.tesouro_execucao_mensal import linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
+from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_linha_do_tempo import MESES_ABREV, abrir_linha_do_tempo
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
 from src.ui_theme import format_brl_compact, render_metric_grid, render_page_header
@@ -201,7 +198,7 @@ SITUACAO_OPCOES = ["ATUALIZADO", "SEM EMPENHO", "NÃO LOCALIZADO"]
 def _cached_linha_do_tempo(caminho_ponteiro: str, sha_manifesto: str) -> pd.DataFrame:
     """Empenhado/Liquidado/Pago por (NE, mês), a partir da base MENSAL (`carregar_atual`,
     importação versionada — ver `src/importacao_execucao_mensal.py`) — com `ne_curta` (forma
-    "2026NE000123", ver `src.execucao_anual.ne_curta`) acrescentada, pra poder ligar com o
+    "2026NE000123", ver `src.execucao_ne_utils.ne_curta`) acrescentada, pra poder ligar com o
     `ne_curta` já usado no cadastro de Bolsas (`src/bolsas_auxilios.py`). Pop-up "Linha do
     tempo mensal" (`src/ui_linha_do_tempo.py`), pedido explícito: mesmo formato de
     `app_pages/consulta_empenhos.py`. `caminho_ponteiro`/`sha_manifesto` só participam da
@@ -212,13 +209,17 @@ def _cached_linha_do_tempo(caminho_ponteiro: str, sha_manifesto: str) -> pd.Data
     return tempo
 
 
-@st.cache_data(show_spinner="Lendo a base de Execução Anual...")
+@st.cache_data(show_spinner="Lendo a base de Execução Mensal...")
 def _cached_por_ne_execucao(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
-    """`caminho_ponteiro`/`mtime_ponteiro` só participam da chave de cache — força reler
-    quando o manifesto atual mudar. `carregar_atual` já devolve a base composta por ano (ver
-    `src/importacao_execucao.py`)."""
+    """Saldo autoritativo por NE, a partir da Execução MENSAL (2024+) — não mais a Anual (ver
+    decisão de 22/09/2026, pedido do usuário: parar de depender da Execução Mensal).
+    `agregar_por_ne` aqui é a de `src.tesouro_execucao_mensal` (soma correta entre meses e
+    blocos, já deduplicada — ver docstring de lá), não a de `src.execucao_anual`.
+    `caminho_ponteiro`/`mtime_ponteiro` só participam da chave de cache — força reler quando
+    o manifesto atual mudar. `carregar_atual` já devolve a base composta por ano (ver
+    `src/importacao_execucao_mensal.py`)."""
 
-    return saldo_por_ne(agregar_por_ne(carregar_execucao_atual()))
+    return saldo_por_ne(agregar_por_ne(carregar_execucao_mensal_atual()))
 
 
 @st.cache_data(show_spinner="Lendo a base de Dotação Anual...")
@@ -528,9 +529,9 @@ def _campo_inicio_execucao(col, valor_persistido: object, sugestao_auto: object,
 def _rotulo_expander(linha: pd.Series) -> str:
     """Prévia do cartão minimizado — a partir dos valores brutos da linha (não dos widgets,
     que só existem depois de abrir o expander). `valor_a_empenhar` já vem resolvido pelo
-    pipeline (Execução Anual quando disponível, planilha como fallback — ver
+    pipeline (Execução Mensal quando disponível, planilha como fallback — ver
     `com_saldo_execucao`); recalcular aqui a partir de `meses_empenhados`/`meses_liquidados`
-    mostraria um número desatualizado sempre que a Execução Anual estiver disponível."""
+    mostraria um número desatualizado sempre que a Execução Mensal estiver disponível."""
 
     programa = _ou_vazio(linha["programa_bolsa"]) or "(sem item de despesa)"
     processo = _ou_vazio(linha["processo"])
@@ -587,15 +588,15 @@ def _render_card(linha: pd.Series, ano: int, source_key: str, sugestao_inicio_po
         valor_unitario = _campo_numero(r3[2], "Valor Unit. (R$)", _ou_zero(linha["valor_unitario"]), f"{k}_valorunit", step=10.0)
 
         # Empenhado/Saldo: mesmo critério de Meses Empenhados/Liquidados logo abaixo — com NE
-        # já encontrada na Execução Anual, o campo passa a EXIBIR o valor autoritativo (não
+        # já encontrada na Execução Mensal, o campo passa a EXIBIR o valor autoritativo (não
         # editável) em vez do valor colado na planilha, pedido explícito pra o cartão
-        # acompanhar a Execução Anual sempre que ela tiver o dado, não só nos quadros de
+        # acompanhar a Execução Mensal sempre que ela tiver o dado, não só nos quadros de
         # cima (Resumo Consolidado, KPIs). Sem NE encontrada, continua editável a partir da
         # planilha (fallback inalterado).
         valor_empenhado_execucao = linha["valor_empenhado_execucao"]
         via_execucao_valor_empenhado = pd.notna(valor_empenhado_execucao)
         if via_execucao_valor_empenhado:
-            r3[3].markdown("<div class='bls-label'>Empenhado (Execução Anual)</div>", unsafe_allow_html=True)
+            r3[3].markdown("<div class='bls-label'>Empenhado (Execução Mensal)</div>", unsafe_allow_html=True)
             r3[3].markdown(f"<div class='bls-calc'>{_brl(float(valor_empenhado_execucao))}</div>", unsafe_allow_html=True)
             valor_empenhado_tg_persistir = _ou_zero(linha["valor_empenhado_tg"])
         else:
@@ -605,16 +606,16 @@ def _render_card(linha: pd.Series, ano: int, source_key: str, sugestao_inicio_po
 
         r4 = st.columns(4)
         # Mesmo critério de `app_pages/contratos_continuos.py::_render_card`: com NE já
-        # encontrada na Execução Anual, os campos manuais viram exibição (ver
+        # encontrada na Execução Mensal, os campos manuais viram exibição (ver
         # `com_saldo_execucao`), não editáveis — digitar ali deixaria de ter efeito no
         # "Empenhar" mostrado, e reintroduziria o bug de dois quadros com números diferentes.
         via_execucao = pd.notna(linha["meses_empenhados_execucao"])
         if via_execucao:
             meses_empenhados = float(linha["meses_empenhados_execucao"])
             meses_liquidados = float(linha["meses_liquidados_execucao"])
-            r4[0].markdown("<div class='bls-label'>Meses Empenhados (Execução Anual)</div>", unsafe_allow_html=True)
+            r4[0].markdown("<div class='bls-label'>Meses Empenhados (Execução Mensal)</div>", unsafe_allow_html=True)
             r4[0].markdown(f"<div class='bls-calc'>{_num(meses_empenhados)}</div>", unsafe_allow_html=True)
-            r4[1].markdown("<div class='bls-label'>Meses Liquidados (Execução Anual)</div>", unsafe_allow_html=True)
+            r4[1].markdown("<div class='bls-label'>Meses Liquidados (Execução Mensal)</div>", unsafe_allow_html=True)
             r4[1].markdown(f"<div class='bls-calc'>{_num(meses_liquidados)}</div>", unsafe_allow_html=True)
             meses_empenhados_persistir = _ou_zero(linha["meses_empenhados"])
             meses_liquidados_persistir = _ou_zero(linha["meses_liquidados"])
@@ -627,7 +628,7 @@ def _render_card(linha: pd.Series, ano: int, source_key: str, sugestao_inicio_po
         saldo_execucao = linha["saldo_execucao"]
         via_execucao_saldo = pd.notna(saldo_execucao)
         if via_execucao_saldo:
-            r4[2].markdown("<div class='bls-label'>Saldo (Execução Anual)</div>", unsafe_allow_html=True)
+            r4[2].markdown("<div class='bls-label'>Saldo (Execução Mensal)</div>", unsafe_allow_html=True)
             r4[2].markdown(f"<div class='bls-calc'>{_brl(float(saldo_execucao))}</div>", unsafe_allow_html=True)
             saldo_colado_planilha_persistir = _ou_zero(linha["saldo_colado_planilha"])
         else:
@@ -656,7 +657,7 @@ def _render_card(linha: pd.Series, ano: int, source_key: str, sugestao_inicio_po
         r5 = st.columns(3)
         r5[0].markdown("<div class='bls-label'>Meses de Saldo</div>", unsafe_allow_html=True)
         r5[0].markdown(f"<div class='bls-calc'>{_num(meses_a_empenhar)}</div>", unsafe_allow_html=True)
-        rotulo_empenhar = "Empenhar (Execução Anual)" if via_execucao else "Empenhar (planilha)"
+        rotulo_empenhar = "Empenhar (Execução Mensal)" if via_execucao else "Empenhar (planilha)"
         r5[1].markdown(f"<div class='bls-label'>{rotulo_empenhar}</div>", unsafe_allow_html=True)
         r5[1].markdown(f"<div class='bls-calc strong'>{_brl(valor_a_empenhar)}</div>", unsafe_allow_html=True)
         sugestao_inicio = sugestao_inicio_por_ne.get(linha["ne_curta"]) if pd.notna(linha["ne_curta"]) else None
@@ -672,11 +673,11 @@ def _render_card(linha: pd.Series, ano: int, source_key: str, sugestao_inicio_po
             tag_txt, tag_cls = "Necessita Reforço", "warn"
         else:
             tag_txt, tag_cls = "Atualizado", "ok"
-        # Sem "Diverge": Saldo/Empenhado agora exibem o valor da Execução Anual diretamente
+        # Sem "Diverge": Saldo/Empenhado agora exibem o valor da Execução Mensal diretamente
         # quando ela tem a NE (ver acima), não mais um campo separado colado da planilha ao
         # lado do valor autoritativo — não sobra o que comparar/divergir dentro do cartão.
         if via_execucao_saldo or via_execucao_valor_empenhado:
-            tag_div_txt, tag_div_cls = "Via Execução Anual", "ok"
+            tag_div_txt, tag_div_cls = "Via Execução Mensal", "ok"
         else:
             tag_div_txt, tag_div_cls = "Sem Execução", "warn"
 
@@ -807,7 +808,7 @@ def _render_resumo_consolidado(
     necessidade_ate_dezembro = valor_mensal * meses_restantes
     saldo_por_linha = filtrado["saldo_execucao"].fillna(filtrado["saldo_colado_planilha"]).fillna(0.0)
     empenhar_ate_fim = (necessidade_ate_dezembro - saldo_por_linha).clip(lower=0)
-    # valor empenhado autoritativo (Execução Anual), com o valor colado na planilha como
+    # valor empenhado autoritativo (Execução Mensal), com o valor colado na planilha como
     # reserva só para NE sem correspondência lá — mesmo padrão de fallback do saldo.
     valor_empenhado_exibido = filtrado["valor_empenhado_execucao"].fillna(filtrado["valor_empenhado_tg"])
 
@@ -1132,40 +1133,37 @@ col_titulo, col_relatorio, col_novo = st.columns([4, 1.4, 1])
 with col_titulo:
     render_page_header(
         "Bolsas e Auxílios",
-        "Necessidade de reforço de empenho por programa de bolsa/auxílio, cruzado com a Execução Anual.",
+        "Necessidade de reforço de empenho por programa de bolsa/auxílio, cruzado com a Execução Mensal.",
         "Bolsas",
     )
 with col_novo:
     st.write("")
     _render_novo_programa(ano_selecionado, source_key)
 
-manifesto_execucao = Manifesto.atual()
-if manifesto_execucao is None:
+manifesto_execucao_mensal = ManifestoExecucaoMensal.atual()
+if manifesto_execucao_mensal is None:
     st.info(
-        "Nenhuma base de Execução Anual foi importada ainda — é dela que vem o saldo "
-        "autoritativo por NE. Importe a Execução Anual antes de usar esta página."
+        "Nenhuma base de Execução Mensal foi importada ainda — é dela que vem o saldo "
+        "autoritativo por NE. Importe a Execução Mensal antes de usar esta página."
     )
     st.stop()
 
-caminho_ponteiro_execucao = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO_EXECUCAO
+caminho_ponteiro_execucao_mensal = DIRETORIO_MANIFESTOS_EXECUCAO_MENSAL / NOME_PONTEIRO_EXECUCAO_MENSAL
 
 try:
     registros = carregar_programas(ano_selecionado)
     dataframe = como_dataframe(registros)
     por_ne_execucao = _cached_por_ne_execucao(
-        str(caminho_ponteiro_execucao), caminho_ponteiro_execucao.stat().st_mtime
+        str(caminho_ponteiro_execucao_mensal), caminho_ponteiro_execucao_mensal.stat().st_mtime
     )
 except Exception as error:
     st.error(f"Não foi possível ler os dados: {error}")
     st.stop()
 
-# Base mensal (2024+) só para o pop-up "Linha do tempo mensal" do Resumo Consolidado —
-# opcional: sem importação ainda feita, o resumo continua funcionando normal, só sem nenhuma
-# bolsa clicável.
+# Linha do tempo mensal (pop-up "Linha do tempo mensal" do Resumo Consolidado) usa a MESMA
+# base já carregada acima para o saldo — reaproveita o manifesto já confirmado presente.
 tempo_por_ne_curta: pd.DataFrame | None = None
-manifesto_execucao_mensal = ManifestoExecucaoMensal.atual()
 if manifesto_execucao_mensal is not None:
-    caminho_ponteiro_execucao_mensal = DIRETORIO_MANIFESTOS_EXECUCAO_MENSAL / NOME_PONTEIRO_EXECUCAO_MENSAL
     try:
         tempo_por_ne_curta = _cached_linha_do_tempo(
             str(caminho_ponteiro_execucao_mensal), manifesto_execucao_mensal.sha256
@@ -1206,7 +1204,7 @@ dataframe["inicio_execucao_efetivo"] = dataframe["inicio_execucao_mes"].fillna(
 
 with col_relatorio:
     st.write("")
-    render_botao_relatorio(dataframe, RELATORIO_BOLSAS_AUXILIOS, f"bolsas_{ano_selecionado}")
+    render_botao_relatorio(dataframe, RELATORIO_BOLSAS_AUXILIOS, f"bolsas_{ano_selecionado}", ano_selecionado)
 
 busca = st.text_input(
     "Buscar",
@@ -1231,7 +1229,7 @@ render_metric_grid(
         {"label": "Despesa Anual Total", "value": format_brl_compact(filtrado["valor_anual"].sum())},
         {"label": "Valor Mensal", "value": format_brl_compact(filtrado["valor_mensal"].sum())},
         # "Necessidade de Reforço" saiu daqui (pedido explícito) — `valor_a_empenhar`, quando a
-        # NE já vem da Execução Anual, é matematicamente igual a `saldo_execucao`
+        # NE já vem da Execução Mensal, é matematicamente igual a `saldo_execucao`
         # (empenhado − liquidado nos dois, só chegando lá por contas diferentes — ver
         # `com_saldo_execucao`), então os dois cartões sempre mostravam o mesmo número. No
         # lugar, "Bolsas Ativas" soma `qtd_efetiva` (QUANT. EFETIVA DE BOLSAS da origem — já é,
@@ -1239,7 +1237,7 @@ render_metric_grid(
         # contagem de programas/linhas.
         {"label": "Bolsas Ativas", "value": str(int(filtrado["qtd_efetiva"].sum()))},
         {"label": "Programas", "value": str(len(filtrado))},
-        {"label": "Saldo (Execução Anual)", "value": format_brl_compact(_somar_unico_por_ne(filtrado, "saldo_execucao"))},
+        {"label": "Saldo (Execução Mensal)", "value": format_brl_compact(_somar_unico_por_ne(filtrado, "saldo_execucao"))},
     ],
     columns=5,
 )
@@ -1285,7 +1283,7 @@ elif len(filtrado):
 st.caption(
     "Cadastro nativo de Bolsas e Auxílios (não depende mais de planilha) — uma linha por "
     "programa de bolsa/auxílio, não por bolsista individual (o cadastro não guarda nome/CPF "
-    "de beneficiário). Saldo Execução vem da Execução Anual do projeto, cruzado pela NE. "
+    "de beneficiário). Saldo Execução vem da Execução Mensal do projeto, cruzado pela NE. "
     f"Exercício em tela: {ano_selecionado}. Edição de cartão só é gravada ao clicar em "
     "'💾 Salvar'; '+ Novo programa' e 'Remover' gravam/apagam de imediato."
 )

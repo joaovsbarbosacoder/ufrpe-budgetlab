@@ -28,6 +28,7 @@ from src.despesas_pessoal import (
     consolidar_por_elemento,
     consolidar_relatorio_ativo,
     comparar_com_dotacao,
+    dotacao_atualizada_por_acao_beneficios,
     dotacao_atualizada_por_grupo,
     dotacao_atualizada_por_plano_orcamentario,
     execucao_ano_anterior,
@@ -38,6 +39,7 @@ from src.despesas_pessoal import (
     projetar,
     regra_para_natureza,
     saldo_remanescente,
+    saldo_remanescente_beneficios_por_acao,
     substituir_beneficios_por_plano_orcamentario,
     ultimo_mes_fechado,
     valor_mes_referencia,
@@ -233,6 +235,33 @@ class TestUltimoMesFechado(unittest.TestCase):
         ])
         self.assertEqual(ultimo_mes_fechado(df), 202701)
 
+    def test_rejeita_mes_com_grupos_se_compensando(self):
+        # Decisão 9 (22/09/2026) — achado real: set/2026 tinha Ativo quase zero mas
+        # Inativo normal, então a SOMA do escopo inteiro ainda ficava > 0 (regra antiga
+        # passava). Cada grupo precisa estar perto do seu próprio histórico — aqui Ativo
+        # despenca em 202609 (10, vs. média de 1000 nos 2 meses anteriores) mesmo com a
+        # soma total (10 + 600 = 610) positiva; deve rejeitar e cair para 202608.
+        linhas = []
+        for ano_mes in (202607, 202608):
+            linhas.append(_linha_execucao(
+                ACAO_ATIVO, "319011", "31901101",
+                tipo_linha="item_execucao", ano_mes=ano_mes, liquidada=1000.0, paga=0.0,
+            ))
+            linhas.append(_linha_execucao(
+                ACAO_INATIVO, "319001", "31900101",
+                tipo_linha="item_execucao", ano_mes=ano_mes, liquidada=500.0, paga=0.0,
+            ))
+        linhas.append(_linha_execucao(
+            ACAO_ATIVO, "319011", "31901101",
+            tipo_linha="item_execucao", ano_mes=202609, liquidada=10.0, paga=0.0,
+        ))
+        linhas.append(_linha_execucao(
+            ACAO_INATIVO, "319001", "31900101",
+            tipo_linha="item_execucao", ano_mes=202609, liquidada=600.0, paga=0.0,
+        ))
+        df = pd.DataFrame(linhas)
+        self.assertEqual(ultimo_mes_fechado(df), 202608)
+
 
 class TestProjetar(unittest.TestCase):
     """Cenário sintético cobrindo as 5 regras + o caso "sem regra" nos dois níveis de
@@ -379,6 +408,32 @@ class TestDotacaoAtualizadaPorPlanoOrcamentario(unittest.TestCase):
         self.assertTrue(resultado.empty)
 
 
+class TestDotacaoAtualizadaPorAcaoBeneficios(unittest.TestCase):
+    """Decisão 12 (22/09/2026): dotação de Outros Benefícios por AÇÃO (2004/212B), um
+    nível acima de Plano Orçamentário — pedido do usuário pra separar o Saldo
+    Remanescente entre as 2 ações."""
+
+    def test_soma_todos_os_po_da_mesma_acao(self):
+        df = pd.DataFrame([
+            _linha_dotacao(ACAO_ASSISTENCIA_MEDICA, "dotacao_atualizada", 2026, 500_000.0, plano_orcamentario_codigo="0001"),
+            _linha_dotacao(ACAO_ASSISTENCIA_MEDICA, "dotacao_atualizada", 2026, 100_000.0, plano_orcamentario_codigo="0002"),
+            _linha_dotacao(ACAO_BENEFICIOS_OBRIGATORIOS, "dotacao_atualizada", 2026, 300_000.0, plano_orcamentario_codigo="0001"),
+        ])
+        resultado = dotacao_atualizada_por_acao_beneficios(df, 2026)
+        self.assertAlmostEqual(float(resultado[ACAO_ASSISTENCIA_MEDICA]), 600_000.0)
+        self.assertAlmostEqual(float(resultado[ACAO_BENEFICIOS_OBRIGATORIOS]), 300_000.0)
+
+    def test_exclui_regra_de_ouro_e_acoes_fora_do_escopo(self):
+        df = pd.DataFrame([
+            _linha_dotacao(ACAO_BENEFICIOS_OBRIGATORIOS, "dotacao_atualizada", 2026, 300_000.0, plano_orcamentario_codigo="0005"),
+            _linha_dotacao(ACAO_BENEFICIOS_OBRIGATORIOS, "dotacao_atualizada", 2026, 999_999.0, plano_orcamentario_codigo="RO05"),
+            _linha_dotacao(ACAO_ATIVO, "dotacao_atualizada", 2026, 1_000_000.0, plano_orcamentario_codigo="0001"),
+        ])
+        resultado = dotacao_atualizada_por_acao_beneficios(df, 2026)
+        self.assertAlmostEqual(float(resultado[ACAO_BENEFICIOS_OBRIGATORIOS]), 300_000.0)
+        self.assertNotIn(ACAO_ATIVO, resultado.index)
+
+
 class TestCompararComDotacao(unittest.TestCase):
     """Objetivo central do módulo (pedido explícito do usuário): dotação suficiente ou
     não, por grupo."""
@@ -451,15 +506,31 @@ class TestGradeMensal(unittest.TestCase):
         # Set (índice 8) é futuro e não é mês de 13º/parcela extra — repete liso.
         self.assertAlmostEqual(linha["meses"][8], valor_ref)
 
-    def test_mes_futuro_x13_3333_concentra_extra_em_junho_e_novembro(self):
+    def test_mes_futuro_x13_3333_concentra_extra_em_novembro_e_dezembro_repete_no_ativo(self):
         resultado = grade_mensal(self._mensal(), self._anual_vazio(), 2026, 202608)
         linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319004"].iloc[0]
         valor_ref = 9_000.0
         extra_total = valor_ref * (MULTIPLICADOR_13_3333 - 12.0)
-        # jun e nov já passaram (mês de referência é agosto) — este cenário não tem
-        # meses futuros de jun/nov pra testar o bump diretamente aqui; testa então que
-        # um mês futuro comum (dezembro) fica no valor liso, sem receber o extra.
-        self.assertAlmostEqual(linha["meses"][11], valor_ref)  # Dez: sem bump
+        metade_extra = extra_total / 2
+        # jun já passou (mês de referência é agosto) — este cenário não tem mês futuro
+        # de junho pra testar o bump diretamente aqui; novembro é o único mês de
+        # parcela ainda futuro, recebendo o extra.
+        self.assertAlmostEqual(linha["meses"][MES_PARCELA_DECIMO_TERCEIRO - 1], valor_ref + metade_extra)
+
+    def test_obrigacoes_patronais_concentram_extra_inteiro_em_novembro(self):
+        # Decisão 11 (22/09/2026): a antecipação de junho do 13º não gera desconto
+        # previdenciário — Obrigações Patronais (319013/319113) não levam bônus em
+        # junho, e o extra inteiro (não a metade) cai em novembro. Mês de referência
+        # bem cedo no ano (fevereiro) pra jun/nov ainda serem futuros.
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_RPPS, "319113", "31911301", tipo_linha="item_execucao", ano_mes=202601, liquidada=10_000.0, paga=0.0),
+        ])
+        resultado = grade_mensal(mensal, self._anual_vazio(), 2026, 202601)
+        linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319113"].iloc[0]
+        valor_ref = 10_000.0
+        extra_total = valor_ref * (MULTIPLICADOR_13 - 12.0)
+        self.assertAlmostEqual(linha["meses"][MES_ANTECIPACAO_DECIMO_TERCEIRO - 1], valor_ref)  # Jun: sem bônus
+        self.assertAlmostEqual(linha["meses"][MES_PARCELA_DECIMO_TERCEIRO - 1], valor_ref + extra_total)  # Nov: extra inteiro (dobro)
 
     def test_decimo_terceiro_futuro_concentrado_meio_a_meio_em_junho_e_novembro(self):
         # mês de referência bem cedo no ano (fevereiro) pra jun/nov ainda serem futuros.
@@ -474,6 +545,33 @@ class TestGradeMensal(unittest.TestCase):
         # meses futuros que não são jun/nov ficam em zero (não é um valor recorrente
         # todo mês, só nos dois meses de pagamento).
         self.assertAlmostEqual(linha13["meses"][2], 0.0)  # Março
+
+    def test_dezembro_repete_novembro_real_quando_novembro_ja_fechou(self):
+        # Decisão 10: quando o mês de referência já passa de novembro, novembro é
+        # REAL (não projetado) — dezembro (ainda futuro) deve copiar esse valor real,
+        # não recalcular a partir de agosto.
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202601 + i, liquidada=50_000.0 + i, paga=0.0)
+            for i in range(11)  # 202601..202611, incluindo novembro real
+        ])
+        resultado = grade_mensal(mensal, self._anual_vazio(), 2026, 202611)
+        linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319011"].iloc[0]
+        self.assertAlmostEqual(linha["meses"][10], 50_010.0)  # Nov: real
+        self.assertAlmostEqual(linha["meses"][11], 50_010.0)  # Dez: repete o real de nov
+
+    def test_dezembro_nao_repete_novembro_fora_do_ativo(self):
+        # Decisão 10 é exclusiva do grupo Ativo — Inativo/RPPS/Outros Benefícios
+        # continuam com o valor liso mesmo em novembro/dezembro. Usa sentença judicial
+        # (x13 no Inativo) justamente porque ELA tem bump em novembro — se a cópia de
+        # dezembro estivesse vazando pra fora do Ativo, este teste pegaria (Dez
+        # ficaria igual ao Nov com bump, em vez de continuar liso).
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_INATIVO, "319091", "31909101", tipo_linha="item_execucao", ano_mes=202608, liquidada=10_000.0, paga=0.0),
+        ])
+        resultado = grade_mensal(mensal, self._anual_vazio(), 2026, 202608)
+        linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319091"].iloc[0]
+        self.assertAlmostEqual(linha["meses"][10], 15_000.0)  # Nov: liso + metade do extra (x13)
+        self.assertAlmostEqual(linha["meses"][11], 10_000.0)  # Dez: continua liso, sem repetir nov
 
     def test_regra_zero_fica_zero_em_todos_os_meses_futuros(self):
         mensal = pd.DataFrame([
@@ -816,6 +914,39 @@ class TestSaldoRemanescente(unittest.TestCase):
         self.assertAlmostEqual(linha["meses"][0], 100_000.0 - 40_000.0)  # após Jan
         self.assertAlmostEqual(linha["meses"][1], 100_000.0 - 80_000.0)  # após Fev
         self.assertLess(linha["meses"][11], 0)  # estoura antes de dezembro
+
+
+class TestSaldoRemanescenteBeneficiosPorAcao(unittest.TestCase):
+    """Decisão 12 (22/09/2026): separar o Saldo Remanescente de Outros Benefícios entre
+    2004 (Assistência Médica) e 212B (Benefícios Obrigatórios) — pedido do usuário pra
+    não mascarar déficit de UMA ação com a folga da outra."""
+
+    def test_deficit_de_uma_acao_nao_e_mascarado_pela_folga_da_outra(self):
+        # Ambas x12 (sem 13º) pra manter a conta simples e previsível: 2004 projeta
+        # 10.000 x 12 = 120.000 (> 100.000 de dotação, estoura); 212B projeta
+        # 1.000 x 12 = 12.000 (<< 100.000 de dotação, sobra folgada).
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_ASSISTENCIA_MEDICA, "339008", "339008", tipo_linha="item_execucao", ano_mes=202601, liquidada=10_000.0, paga=0.0,
+                             po_cod="0001", po_desc="X", acao_desc=""),
+            _linha_execucao(ACAO_BENEFICIOS_OBRIGATORIOS, "339046", "339046", tipo_linha="item_execucao", ano_mes=202601, liquidada=1_000.0, paga=0.0,
+                             po_cod="0005", po_desc="Y", acao_desc=""),
+        ])
+        grade = consolidar_relatorio_ativo(consolidar_por_elemento(grade_mensal(mensal, _ANUAL_VAZIO, 2026, 202601)))
+        grade = substituir_beneficios_por_plano_orcamentario(grade, mensal, _ANUAL_VAZIO)
+        # 2004 tem dotação apertada (estoura); 212B tem dotação folgada — juntas (nível
+        # de grupo) ainda sobra saldo, escondendo o déficit específico de 2004.
+        dotacao_por_acao = pd.Series({ACAO_ASSISTENCIA_MEDICA: 100_000.0, ACAO_BENEFICIOS_OBRIGATORIOS: 100_000.0})
+        saldo = saldo_remanescente_beneficios_por_acao(grade, dotacao_por_acao)
+
+        linha_2004 = saldo[saldo["acao_cod"] == ACAO_ASSISTENCIA_MEDICA].iloc[0]
+        linha_212b = saldo[saldo["acao_cod"] == ACAO_BENEFICIOS_OBRIGATORIOS].iloc[0]
+        self.assertLess(linha_2004["meses"][11], 0)  # 2004 estoura sozinha
+        self.assertGreater(linha_212b["meses"][11], 0)  # 212B sobra sozinha
+
+        dotacao_grupo = pd.Series({GRUPO_OUTROS_BENEFICIOS: 200_000.0})
+        saldo_grupo = saldo_remanescente(grade, dotacao_grupo)
+        linha_grupo = saldo_grupo[saldo_grupo["grupo"] == GRUPO_OUTROS_BENEFICIOS].iloc[0]
+        self.assertGreater(linha_grupo["meses"][11], 0)  # nível de grupo esconde o déficit
 
 
 if __name__ == "__main__":

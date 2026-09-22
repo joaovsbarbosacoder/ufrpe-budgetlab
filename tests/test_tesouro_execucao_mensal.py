@@ -18,6 +18,12 @@ Lançamento") para 1 aba POR EXERCÍCIO, com banner de relatório antes do cabe�
 dimensionais novas — ver docstring de `src/tesouro_execucao_mensal.py`. O leitor atual só
 entende o layout novo; `execucao_mensal_2026-09-03.xlsx` (layout antigo) fica no repositório
 como registro histórico, mas não é mais lida por nenhum teste aqui.
+
+HISTÓRICO DE LAYOUT (22/09/2026): par `Fonte Recursos Detalhada` (código/descrição) inserido
+logo após `Fonte Recursos` — pedido do usuário, viabiliza cruzar com a Dotação Anual no mesmo
+nível de detalhe (ver `src/painel_acoes_empenho.py`). `CAMINHO_BASE` passou a apontar para
+`execucao_mensal_2026-09-22.xlsx`; `execucao_mensal_2026-09-21.xlsx` (layout sem esse par) fica
+como registro histórico, referência `672398fd` em `REFERENCIAS`.
 """
 
 from __future__ import annotations
@@ -41,7 +47,7 @@ from src.tesouro_execucao_mensal import (
     validar,
 )
 
-CAMINHO_BASE = Path("tests/fixtures/execucao_mensal_2026-09-21.xlsx")
+CAMINHO_BASE = Path("tests/fixtures/execucao_mensal_2026-09-22.xlsx")
 
 # Extração recebida em 21/09/2026 (repassada pelo usuário via Downloads, hash 672398fd...),
 # primeira no layout novo (multi-aba, 2024-2026). Ao trocar a fixture, NÃO edite estes
@@ -52,7 +58,10 @@ CAMINHO_BASE = Path("tests/fixtures/execucao_mensal_2026-09-21.xlsx")
 REFERENCIAS = {
     "672398fd": {
         "descricao": "Extração recebida em 21/09/2026, abas 2024/2025/2026 (JAN-DEZ exceto "
-        "2026: JAN-SET); blocos de encerramento '013'/'014' presentes em 2024/2025, ignorados.",
+        "2026: JAN-SET); blocos de encerramento '013'/'014' presentes em 2024/2025, ignorados. "
+        "Layout SEM Fonte Recursos Detalhada (ver hash 0fa6c314 para o layout com esse par de "
+        "colunas, 22/09/2026) — fixture não é mais apontada por CAMINHO_BASE, mantida como "
+        "registro histórico.",
         "linhas_originais": 5773,
         "linhas_empenho": 4588,
         "linhas_item_execucao": 1185,
@@ -71,6 +80,32 @@ REFERENCIAS = {
             2024: {"empenhada": 784086352.51, "liquidada": 759877180.18, "paga": 687779472.58},
             2025: {"empenhada": 931345340.39, "liquidada": 882774236.76, "paga": 790633667.10},
             2026: {"empenhada": 780953617.34, "liquidada": 583980523.88, "paga": 565915469.44},
+        },
+    },
+    "0fa6c314": {
+        "descricao": "Extração recebida em 22/09/2026, abas 2024/2025/2026 (JAN-DEZ exceto "
+        "2026: JAN-SET); primeira com o par Fonte Recursos Detalhada (código/descrição) logo "
+        "após Fonte Recursos — ver seção de layout na docstring de "
+        "`src/tesouro_execucao_mensal.py`. Mesma extração-base de 672398fd, um dia depois "
+        "(pequenas variações de totais e +1 NE nova).",
+        "linhas_originais": 5773,
+        "linhas_empenho": 4588,
+        "linhas_item_execucao": 1185,
+        "notas_empenho_distintas": 2568,
+        "meses": [
+            202401, 202402, 202403, 202404, 202405, 202406, 202407, 202408, 202409, 202410, 202411, 202412,
+            202501, 202502, 202503, 202504, 202505, 202506, 202507, 202508, 202509, 202510, 202511, 202512,
+            202601, 202602, 202603, 202604, 202605, 202606, 202607, 202608, 202609,
+        ],
+        "totais": {
+            "empenhada": 2496385910.24,
+            "liquidada": 2226639772.51,
+            "paga": 2044402004.58,
+        },
+        "totais_por_ano": {
+            2024: {"empenhada": 784086352.51, "liquidada": 759877180.18, "paga": 687779472.58},
+            2025: {"empenhada": 931345340.39, "liquidada": 882774236.76, "paga": 790633667.10},
+            2026: {"empenhada": 780954217.34, "liquidada": 583988355.57, "paga": 565988864.90},
         },
     },
 }
@@ -184,6 +219,20 @@ class TestLeituraEValidacaoAssinatura(unittest.TestCase):
         self.assertEqual(int(contagem.get("empenho", 0)), 4588)
         self.assertEqual(int(contagem.get("item_execucao", 0)), 1185)
 
+    def test_fonte_recursos_detalhada_presente_e_com_10_caracteres(self):
+        # Par código/descrição novo (22/09/2026, ver docstring do módulo) — inserido logo
+        # após Fonte Recursos, desloca Grupo Despesa/PTRES/Unidade Orçamentária/NE em +2
+        # posições (ver `_ANCORAS_LINHA1`); este teste garante que a coluna existe e que o
+        # deslocamento não bagunçou as colunas vizinhas.
+        codigos = self.df["fonte_recursos_detalhada_cod"].dropna()
+        self.assertGreater(len(codigos), 0)
+        self.assertTrue((codigos.str.len() == 10).all())
+        self.assertTrue(self.df["fonte_recursos_detalhada_desc"].notna().any())
+        # coluna vizinha seguinte (Grupo Despesa) não pode ter vazado dígitos de Fonte
+        # Detalhada nem ficar vazia por causa do deslocamento de posição.
+        self.assertTrue(self.df["gnd_cod"].notna().any())
+        self.assertTrue(self.df["gnd_cod"].dropna().isin(["1", "2", "3", "4", "5", "6"]).all())
+
     def test_nenhum_bloco_de_encerramento_vaza_para_ano_mes(self):
         # "013"/"014" não têm mês real (1-12) — confirma que o descarte em _blocos_mensais
         # realmente não deixou nada com mes fora do intervalo válido.
@@ -272,8 +321,8 @@ class TestLinhaDoTempoPorNe(unittest.TestCase):
         # exercício, a base agora cobre 2024-2026) — o invariante é NÃO DUPLICAR o par
         # (NE, mês), não uma contagem fixa de meses por NE.
         self.assertEqual(len(self.tempo), len(self.tempo.drop_duplicates(["ne_ccor", "ano_mes"])))
-        self.assertEqual(self.tempo["ne_ccor"].nunique(), 2567)
-        self.assertEqual(len(self.tempo), 29115)
+        self.assertEqual(self.tempo["ne_ccor"].nunique(), 2568)
+        self.assertEqual(len(self.tempo), 29124)
 
     def test_empenhado_soma_entre_blocos_diferentes_da_mesma_ne(self):
         # NE 153165152392026NE000036 tem 153 blocos (Natureza Detalhada/Subitem × mês)

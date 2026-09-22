@@ -78,6 +78,45 @@ nunca presumir:
      a mesma base que já alimenta a proporção histórica (item 3) — em vez do valor da
      própria rubrica de 13º. Sem mudança na distribuição temporal (ainda metade em
      junho/metade em novembro, decisão 6) nem nas demais regras.
+  9. (22/09/2026) BUG CORRIGIDO — `ultimo_mes_fechado` escolhia um mês com folha ainda
+     não fechada como referência, subestimando TODOS os meses futuros na grade (achado
+     real: set/2026 tinha Inativo=R$0, RPPS/Benefícios negativos e Ativo quase zero,
+     mas a soma bruta do escopo inteiro ainda ficava > 0 — passava no teste antigo).
+     CORRIGIDO: mês só conta como fechado se cada um dos 4 grupos tiver Liquidada >= 50%
+     da média dos 3 meses anteriores DAQUELE grupo (não um limiar fixo em R$, pedido
+     explícito do usuário: "deve ser mantida a projeção até que seja identificado
+     execução" — comparativo, não estático) — ver `ultimo_mes_fechado` para o raciocínio
+     completo. Recalculado a cada chamada, sem estado persistido: uma reimportação que
+     corrija um mês anterior já entra na comparação na próxima chamada.
+  10. (22/09/2026) Achado real, a partir de um relatório histórico anexado pelo usuário
+      (Liquidada Out/Nov/Dez, 2020-2025, por Ação): Dezembro do grupo Ativo (20TP) fica
+      consistentemente entre 95% e 99% de Novembro em TODOS os 6 anos — "quase uma
+      repetição", nas palavras do usuário — bem diferente do valor-base plano que a
+      regra de multiplicador projetava antes (~R$34mi vs. o ~R$46-51mi real). O mesmo
+      NÃO vale para Inativo (Dez ≈ 67% de Nov, estável) nem RPPS (Dez ≈ 50% de Nov, um
+      ano fugiu do padrão) — nenhum dos dois foi alterado, por falta de evidência de
+      repetição. CONFIRMADO pelo usuário (não uma razão aprendida automaticamente):
+      dezembro projetado do grupo Ativo passa a usar o MESMO valor de novembro daquela
+      rubrica (seja novembro real ou projetado) — ver o bloco em `grade_mensal` logo
+      após montar `meses_valores`.
+  11. (22/09/2026) Ponto trazido pelo usuário: a ANTECIPAÇÃO de junho do 13º é paga por
+      fora da folha normal e não gera desconto/contribuição previdenciária — só o 13º
+      fechado em novembro gera a obrigação patronal correspondente. Isso significa que,
+      para as rubricas de Obrigações Patronais (319013 RGPS, 319113 RPPS — as únicas
+      deste módulo que representam a PRÓPRIA contribuição previdenciária, não a folha
+      em si), a regra geral da decisão 6 (metade do extra em junho, metade em novembro)
+      está errada: o extra INTEIRO (× o multiplicador acima de 12) precisa cair em
+      novembro, e junho fica sem bônus nenhum. CONFIRMADO pelo usuário, escopo restrito
+      só a essas 2 naturezas (não a vencimentos, contratação temporária etc., que
+      continuam com a divisão meio a meio) — ver `RegraRubrica.extra_concentrado_em_novembro`
+      e `_distribuir_mes_futuro`.
+  12. (22/09/2026) Pedido do usuário: no Saldo Remanescente por grupo, separar Outros
+      Benefícios nas 2 ações que o compõem (2004 Assistência Médica/Odontológica, 212B
+      Benefícios Obrigatórios) em vez de uma linha só — permite ver se UMA delas
+      especificamente fica sem dotação, mascarada hoje pela folga da outra. RPPS (09HB)
+      não muda — já é uma linha própria (grupo `rpps` corresponde 1:1 à ação 09HB, ao
+      contrário de Outros Benefícios, que sempre foi 2 ações debaixo do mesmo grupo).
+      Ver `saldo_remanescente_beneficios_por_acao`/`dotacao_atualizada_por_acao_beneficios`.
 
 Contrato público:
     classificar_grupo(acao_cod) -> str | None
@@ -100,6 +139,8 @@ Contrato público:
     execucao_ano_anterior_beneficios(anual_df, ano) -> pd.DataFrame
     grade_mensal_beneficios(mensal_df, anual_df, ano, ano_mes_referencia) -> ResultadoGradeMensal
     substituir_beneficios_por_plano_orcamentario(grade, mensal_df, anual_df) -> ResultadoGradeMensal
+    dotacao_atualizada_por_acao_beneficios(dotacao_df, ano) -> pd.Series
+    saldo_remanescente_beneficios_por_acao(grade, dotacao_por_acao) -> pd.DataFrame
 """
 
 from __future__ import annotations
@@ -180,12 +221,24 @@ class RegraRubrica:
     multiplicador: float | None = None
     #: só para `REGRA_SENTENCA_POR_GRUPO` — multiplicador depende do grupo (ativo/inativo).
     multiplicador_por_grupo: dict[str, float] | None = None
+    #: decisão 11 (22/09/2026): Obrigações Patronais (contribuição previdenciária sobre
+    #: a folha) não incide sobre a ANTECIPAÇÃO de junho do 13º — só sobre o valor
+    #: fechado em novembro. Quando True, `_distribuir_mes_futuro` concentra o extra
+    #: (acima de 12×) inteiro em novembro, sem bônus em junho (ver `TABELA_REGRAS`,
+    #: 319013/319113 — as únicas rubricas de contribuição patronal do módulo).
+    extra_concentrado_em_novembro: bool = False
     #: origem da regra, para rastreabilidade (aparece nos relatórios/testes).
     origem: str = ""
 
 
-def _regra(cod: str, desc: str, tipo: str, mult: float | None = None, origem: str = "") -> RegraRubrica:
-    return RegraRubrica(natureza_despesa_cod=cod, descricao=desc, tipo=tipo, multiplicador=mult, origem=origem)
+def _regra(
+    cod: str, desc: str, tipo: str, mult: float | None = None, origem: str = "",
+    extra_concentrado_em_novembro: bool = False,
+) -> RegraRubrica:
+    return RegraRubrica(
+        natureza_despesa_cod=cod, descricao=desc, tipo=tipo, multiplicador=mult, origem=origem,
+        extra_concentrado_em_novembro=extra_concentrado_em_novembro,
+    )
 
 
 #: tabela indexada por `natureza_despesa_cod` (6 dígitos) — a granularidade que o
@@ -218,8 +271,18 @@ TABELA_REGRAS: dict[str, RegraRubrica] = {
         "Inativo (0181) -> x13, alinhado ao relatório-modelo (antes x12 para todos).",
     ),
     # --- grupo ×13 (12 meses + 13º, sem 1/3 férias) ---
-    "319013": _regra("319013", "Obrigações Patronais (RGPS)", REGRA_MULTIPLICADOR, MULTIPLICADOR_13),
-    "319113": _regra("319113", "Obrigações Patronais — RPPS (Ação 09HB)", REGRA_MULTIPLICADOR, MULTIPLICADOR_13),
+    "319013": _regra(
+        "319013", "Obrigações Patronais (RGPS)", REGRA_MULTIPLICADOR, MULTIPLICADOR_13,
+        extra_concentrado_em_novembro=True,
+        origem="Decisão 11 (22/09/2026): contribuição patronal não incide sobre a antecipação "
+        "de junho, só sobre o 13º fechado em novembro — extra 100% em novembro, sem bônus em junho.",
+    ),
+    "319113": _regra(
+        "319113", "Obrigações Patronais — RPPS (Ação 09HB)", REGRA_MULTIPLICADOR, MULTIPLICADOR_13,
+        extra_concentrado_em_novembro=True,
+        origem="Decisão 11 (22/09/2026): mesma razão de 319013 — contribuição patronal não incide "
+        "sobre a antecipação de junho, só sobre o 13º fechado em novembro.",
+    ),
     # --- grupo ×12 (sem 13º nem férias — linhas separadas) ---
     "319001": _regra("319001", "Aposentadorias, Reserva Remunerada e Reformas (excl. 13º)", REGRA_MULTIPLICADOR, MULTIPLICADOR_12),
     "319003": _regra("319003", "Pensões (excl. 13º)", REGRA_MULTIPLICADOR, MULTIPLICADOR_12),
@@ -363,20 +426,65 @@ def valor_mes_referencia(mensal_df: pd.DataFrame, ano_mes: int) -> pd.DataFrame:
     return agrupado.rename(columns={"liquidada": "valor_mes_referencia"})
 
 
+#: janela de meses anteriores usada como referência de comparação (decisão 9) e fração
+#: mínima da média desses meses que cada grupo precisa atingir para o mês contar como
+#: "fechado" — ver `ultimo_mes_fechado`.
+_JANELA_MESES_FECHAMENTO = 3
+_FRACAO_MINIMA_FECHAMENTO = 0.5
+
+
 def ultimo_mes_fechado(mensal_df: pd.DataFrame) -> int | None:
-    """`ano_mes` do último mês com Liquidada de pessoal (escopo do módulo) maior que
-    zero — heurística de "mês fechado" pedida pelo briefing como valor padrão do
-    parâmetro (o mês corrente costuma aparecer na extração já com algumas linhas, mas
-    ainda incompleto/zerado; usar o último mês com movimento real evita escolher um
-    mês em aberto). `None` se a base mensal não tiver nenhum mês com dado de pessoal."""
+    """`ano_mes` do último mês de pessoal considerado "fechado" — heurística pedida pelo
+    briefing como valor padrão do parâmetro de referência (o mês corrente costuma
+    aparecer na extração já com algumas linhas, mas ainda incompleto: folha não fechada
+    na data da extração). `None` se a base mensal não tiver nenhum mês fechado.
+
+    (Decisão 9, 22/09/2026) A soma bruta > 0 do escopo inteiro (regra original) não
+    detecta um mês parcialmente aberto quando os grupos se compensam: achado real —
+    set/2026 apareceu com Inativo = R$0, RPPS e Outros Benefícios NEGATIVOS e Ativo
+    quase zero, mas passava no teste porque a soma total ainda ficava > 0. O usuário
+    pediu um critério comparativo, não estático ("deve ser mantida a projeção até que
+    seja identificado execução"): um mês só conta como fechado se TODOS os 4 grupos
+    tiverem Liquidada de pelo menos `_FRACAO_MINIMA_FECHAMENTO` (50%) da média dos
+    `_JANELA_MESES_FECHAMENTO` (3) meses anteriores àquele grupo — não um limiar fixo em
+    R$, que ficaria desatualizado conforme a folha cresce/encolhe ao longo dos anos.
+    Recalculado a cada chamada a partir da base atual (sem estado persistido) — uma
+    reimportação que corrija um mês anterior muda tanto o candidato quanto a própria
+    média de comparação automaticamente.
+
+    Sem meses anteriores suficientes para formar a média (grupo novo, começo da série):
+    esse grupo não bloqueia o mês (nada para comparar); se NENHUM grupo tiver histórico
+    algum, cai na salvaguarda original (soma simples > 0)."""
 
     escopo = filtrar_escopo(mensal_df)
     do_tipo_item = escopo.loc[escopo["tipo_linha"] == "item_execucao"]
-    por_mes = do_tipo_item.groupby("ano_mes")["liquidada"].sum(min_count=1)
-    com_movimento = por_mes[por_mes.fillna(0.0) > 0]
-    if com_movimento.empty:
+    por_mes_grupo = do_tipo_item.groupby(["ano_mes", "grupo"])["liquidada"].sum(min_count=1).unstack("grupo")
+    if por_mes_grupo.empty:
         return None
-    return int(com_movimento.index.max())
+
+    meses_ordenados = sorted(por_mes_grupo.index, reverse=True)
+    for ano_mes in meses_ordenados:
+        anteriores = sorted((m for m in por_mes_grupo.index if m < ano_mes), reverse=True)
+        anteriores = anteriores[:_JANELA_MESES_FECHAMENTO]
+        if not anteriores:
+            if float(por_mes_grupo.loc[ano_mes].fillna(0.0).sum()) > 0:
+                return int(ano_mes)
+            continue
+
+        baseline = por_mes_grupo.loc[anteriores].mean()
+        atual = por_mes_grupo.loc[ano_mes]
+        fechado = True
+        for grupo in por_mes_grupo.columns:
+            base_grupo = baseline.get(grupo)
+            if pd.isna(base_grupo) or base_grupo <= 0:
+                continue  # sem histórico válido para este grupo — não bloqueia o mês
+            valor_grupo = atual.get(grupo)
+            if pd.isna(valor_grupo) or float(valor_grupo) < _FRACAO_MINIMA_FECHAMENTO * float(base_grupo):
+                fechado = False
+                break
+        if fechado:
+            return int(ano_mes)
+    return None
 
 
 # --------------------------------------------------------------------------------------
@@ -596,6 +704,20 @@ def dotacao_atualizada_por_grupo(dotacao_df: pd.DataFrame, ano: int) -> pd.Serie
 _PREFIXO_PO_REGRA_DE_OURO = "RO"
 
 
+def _recorte_dotacao_beneficios(dotacao_df: pd.DataFrame, ano: int) -> pd.DataFrame:
+    """Linhas de Dotação Atualizada do ano `ano` das 2 ações de Outros Benefícios
+    (2004/212B, decisão 2), sem a Regra de Ouro — recorte comum de
+    `dotacao_atualizada_por_plano_orcamentario` (por PO) e
+    `dotacao_atualizada_por_acao_beneficios` (por Ação, decisão 12)."""
+
+    return dotacao_df.loc[
+        (dotacao_df["item_informacao_codigo"] == _ITEM_DOTACAO_ATUALIZADA)
+        & (dotacao_df["ano_lancamento"] == ano)
+        & (dotacao_df["acao_codigo"].isin(_ACOES_EXTRAS_USUARIO))
+        & (~dotacao_df["plano_orcamentario_codigo"].astype(str).str.startswith(_PREFIXO_PO_REGRA_DE_OURO))
+    ]
+
+
 def dotacao_atualizada_por_plano_orcamentario(dotacao_df: pd.DataFrame, ano: int) -> pd.Series:
     """Dotação Atualizada do ano `ano`, por (Ação, Plano Orçamentário) — só as 2 ações
     de Outros Benefícios (2004/212B, decisão 2). Pedido do usuário (10/09/2026): ao
@@ -606,13 +728,19 @@ def dotacao_atualizada_por_plano_orcamentario(dotacao_df: pd.DataFrame, ano: int
     o código de PO sozinho NÃO é único entre as 2 ações (ex. "0001" é "Assistência
     Médica" em 2004 mas "Assistência Pré-Escolar" em 212B)."""
 
-    recorte = dotacao_df.loc[
-        (dotacao_df["item_informacao_codigo"] == _ITEM_DOTACAO_ATUALIZADA)
-        & (dotacao_df["ano_lancamento"] == ano)
-        & (dotacao_df["acao_codigo"].isin(_ACOES_EXTRAS_USUARIO))
-        & (~dotacao_df["plano_orcamentario_codigo"].astype(str).str.startswith(_PREFIXO_PO_REGRA_DE_OURO))
-    ]
+    recorte = _recorte_dotacao_beneficios(dotacao_df, ano)
     return recorte.groupby(["acao_codigo", "plano_orcamentario_codigo"])["valor_movimento_liquido"].sum(min_count=1)
+
+
+def dotacao_atualizada_por_acao_beneficios(dotacao_df: pd.DataFrame, ano: int) -> pd.Series:
+    """Dotação Atualizada do ano `ano`, por AÇÃO — só 2004/212B, um nível acima de
+    `dotacao_atualizada_por_plano_orcamentario` (soma todos os PO de cada ação).
+    Pedido do usuário (22/09/2026): separar o Saldo Remanescente de Outros Benefícios
+    entre as 2 ações, sem descer ao nível de PO pra isso. Devolve uma `pd.Series`
+    indexada por `acao_codigo` ("2004"/"212B")."""
+
+    recorte = _recorte_dotacao_beneficios(dotacao_df, ano)
+    return recorte.groupby("acao_codigo")["valor_movimento_liquido"].sum(min_count=1)
 
 
 def comparar_com_dotacao(resultado: ResultadoProjecao, dotacao_df: pd.DataFrame, ano_dotacao: int) -> pd.DataFrame:
@@ -707,15 +835,24 @@ def _distribuir_mes_futuro(
         # regra definitiva. Ver docstring do módulo.
         return {mes: valor_referencia for mes in meses_a_projetar}
     # REGRA_MULTIPLICADOR / REGRA_SENTENCA_POR_GRUPO / REGRA_INDENIZACAO_POR_GRUPO: valor cheio em todo mês futuro,
-    # mais a fração "acima de 12" do multiplicador, metade em cada mês de 13º.
+    # mais a fração "acima de 12" do multiplicador.
     multiplicador = multiplicador_efetivo(regra, grupo)
     extra_total = valor_referencia * (multiplicador - 12.0)
-    metade_extra = extra_total / 2
+    if regra.extra_concentrado_em_novembro:
+        # Decisão 11: Obrigações Patronais — a antecipação de junho não gera desconto
+        # previdenciário, então não leva bônus algum; o extra INTEIRO cai em novembro,
+        # quando o 13º é de fato fechado.
+        bonus_junho, bonus_novembro = 0.0, extra_total
+    else:
+        # Decisão 6 (regra geral): metade em cada mês de 13º (junho/novembro).
+        bonus_junho = bonus_novembro = extra_total / 2
     resultado: dict[int, float | None] = {}
     for mes in meses_a_projetar:
         valor = valor_referencia
-        if mes in (MES_ANTECIPACAO_DECIMO_TERCEIRO, MES_PARCELA_DECIMO_TERCEIRO):
-            valor += metade_extra
+        if mes == MES_ANTECIPACAO_DECIMO_TERCEIRO:
+            valor += bonus_junho
+        elif mes == MES_PARCELA_DECIMO_TERCEIRO:
+            valor += bonus_novembro
         resultado[mes] = valor
     return resultado
 
@@ -797,6 +934,12 @@ def grade_mensal(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano: int, ano_
             else:
                 meses_valores.append(projetados.get(mes))
 
+        if chave.grupo == GRUPO_ATIVO and 12 in meses_futuros:
+            # Decisão 10 (22/09/2026): dezembro projetado do Ativo repete o valor de
+            # novembro (real ou projetado, o que já estiver em meses_valores[10]) — ver
+            # decisão 10 no cabeçalho do módulo para a evidência histórica.
+            meses_valores[11] = meses_valores[10]
+
         linhas.append({
             "grupo": chave.grupo,
             "natureza_despesa_cod": chave.natureza_despesa_cod,
@@ -845,6 +988,20 @@ def aplicar_overrides(grade: ResultadoGradeMensal, overrides: dict[ChaveRubrica,
     )
 
 
+def _saldo_acumulado(totais_mes: list[float | None], dotacao: float | None) -> list[float | None]:
+    """Saldo mês a mês: `dotacao` (fixa no ano) menos a soma acumulada (executado real +
+    projetado) até aquele mês — núcleo comum de `saldo_remanescente`/
+    `saldo_remanescente_beneficios_por_acao` (decisão 6)."""
+
+    acumulado = 0.0
+    saldos: list[float | None] = []
+    for valor_mes in totais_mes:
+        if valor_mes is not None:
+            acumulado += valor_mes
+        saldos.append((dotacao - acumulado) if dotacao is not None else None)
+    return saldos
+
+
 def saldo_remanescente(grade: ResultadoGradeMensal, dotacao_por_grupo: pd.Series) -> pd.DataFrame:
     """Saldo acumulado por grupo, mês a mês: Dotação Atualizada (fixa no ano) menos a
     soma acumulada (executado real + projetado) até aquele mês — decisão 6, confirmada
@@ -857,15 +1014,32 @@ def saldo_remanescente(grade: ResultadoGradeMensal, dotacao_por_grupo: pd.Series
     linhas = []
     for grupo in totais.index:
         dotacao = float(dotacao_por_grupo.get(grupo)) if grupo in dotacao_por_grupo.index and pd.notna(dotacao_por_grupo.get(grupo)) else None
-        acumulado = 0.0
-        saldos: list[float | None] = []
-        for mes in range(1, 13):
-            valor_mes = totais.loc[grupo, mes]
-            if valor_mes is not None:
-                acumulado += valor_mes
-            saldos.append((dotacao - acumulado) if dotacao is not None else None)
-        linhas.append({"grupo": grupo, "meses": saldos})
+        linhas.append({"grupo": grupo, "meses": _saldo_acumulado(list(totais.loc[grupo]), dotacao)})
     return pd.DataFrame(linhas)
+
+
+def saldo_remanescente_beneficios_por_acao(grade: ResultadoGradeMensal, dotacao_por_acao: pd.Series) -> pd.DataFrame:
+    """Como `saldo_remanescente`, mas só para o grupo Outros Benefícios, quebrado por
+    AÇÃO (2004/212B) em vez de uma linha só — decisão 12 (22/09/2026), pedido do
+    usuário: hoje o Saldo Remanescente mistura Assistência Médica/Odontológica (2004) e
+    Benefícios Obrigatórios (212B) numa única linha "Outros Benefícios", escondendo se
+    UMA das duas ações especificamente está ficando sem dotação. `grade.linhas` do
+    grupo Outros Benefícios já guarda `acao_cod` em `natureza_despesa_cod` (mesma
+    convenção de `grade_mensal_beneficios`/`substituir_beneficios_por_plano_orcamentario`
+    — ver seção 11), então basta agrupar por ela em vez de por `grupo`.
+    `dotacao_por_acao` indexada por `acao_codigo` (`dotacao_atualizada_por_acao_beneficios`).
+    Devolve uma `pd.DataFrame` com colunas `acao_cod`/`meses`."""
+
+    linhas_beneficios = grade.linhas.loc[grade.linhas["grupo"] == GRUPO_OUTROS_BENEFICIOS]
+    resultado = []
+    for acao_cod, subgrupo in linhas_beneficios.groupby("natureza_despesa_cod"):
+        totais_mes: list[float | None] = []
+        for indice in range(12):
+            valores = [linha[indice] for linha in subgrupo["meses"] if linha[indice] is not None]
+            totais_mes.append(sum(valores) if valores else None)
+        dotacao = float(dotacao_por_acao.get(acao_cod)) if acao_cod in dotacao_por_acao.index and pd.notna(dotacao_por_acao.get(acao_cod)) else None
+        resultado.append({"acao_cod": acao_cod, "meses": _saldo_acumulado(totais_mes, dotacao)})
+    return pd.DataFrame(resultado)
 
 
 # --------------------------------------------------------------------------------------

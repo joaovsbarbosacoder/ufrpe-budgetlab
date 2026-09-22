@@ -5,7 +5,7 @@ Camada: regra específica de base (não é leitor genérico, não é analítica,
 Depende só de pandas/openpyxl. Não importa Streamlit.
 
 Origem: planilha de trabalho mantida manualmente (`SERVIÇOS CONTÍNUOS - 2026 - AGO A DEZ.xlsm`),
-não um export único e estável como o BI CPOC da Execução Anual — por isso o casamento de
+não um export único e estável como o BI CPOC da Execução Mensal — por isso o casamento de
 colunas é por NOME normalizado (sem acento, maiúsculo), não por posição: numa planilha editada
 à mão a ordem das colunas muda com mais facilidade do que o texto do cabeçalho.
 
@@ -22,7 +22,7 @@ vira `saldo_colado_planilha` — não `SALDO TG ATUALIZADO`, que é o mesmo sald
 item de licitação quando o contrato tem mais de um (`% ITEM LIC.`); comparar essa fração
 contra `saldo_execucao` (sempre no nível da NE inteira) geraria falsa divergência em todo
 contrato com vários itens. Ver `com_saldo_execucao` para o saldo autoritativo, derivado da
-Execução Anual já validada do projeto.
+Execução Mensal já validada do projeto.
 
 Contrato público:
     ler_contratos_continuos(caminho) -> pd.DataFrame
@@ -39,7 +39,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.contratos_pagamentos import normalizar_numero_contrato
-from src.execucao_anual import (
+from src.execucao_ne_utils import (
     indice_liquidado_por_ne_curta,
     indice_saldo_por_ne_curta,
     indice_valor_empenhado_por_ne_curta,
@@ -117,7 +117,7 @@ _COLUNAS_NUMERICAS = {
 def ler_contratos_continuos(caminho: str | Path) -> pd.DataFrame:
     """Lê a aba "Planilha atualizada" e devolve o DataFrame normalizado, com as colunas
     derivadas `meses_a_empenhar`/`valor_a_empenhar` (ver docstring do módulo). Não liga com a
-    Execução Anual — para isso, `com_saldo_execucao`."""
+    Execução Mensal — para isso, `com_saldo_execucao`."""
 
     caminho = Path(caminho)
     if not caminho.exists():
@@ -175,12 +175,13 @@ def com_saldo_execucao(
     por_ne_execucao: pd.DataFrame,
     indice_liquidado_competencia: pd.Series | None = None,
 ) -> pd.DataFrame:
-    """Acrescenta, via `ne_curta`, dois pares de campos buscados na Execução Anual já
+    """Acrescenta, via `ne_curta`, dois pares de campos buscados na Execução Mensal já
     validada do projeto: `saldo_execucao`/`diverge_saldo` (contra `saldo_colado_planilha`,
     sempre no nível da NE nos dois lados) e `valor_empenhado_execucao`/
     `diverge_valor_empenhado` (contra a soma de `valor_empenhado` por NE, não o valor da
     linha) — ambos com divergência True quando a diferença passa de R$ 0,01.
-    `por_ne_execucao` é o resultado de `execucao_anual.saldo_por_ne(agregar_por_ne(...))`.
+    `por_ne_execucao` é o resultado de
+    `execucao_ne_utils.saldo_por_ne(tesouro_execucao_mensal.agregar_por_ne(...))`.
 
     `valor_empenhado` da planilha é rateado por item de licitação quando o contrato tem mais
     de um (mesmo problema de `SALDO TG ATUALIZADO` vs. `SALDO TOTAL TG`, ver docstring do
@@ -194,13 +195,13 @@ def com_saldo_execucao(
     fica com os campos de comparação nulos — não é erro, é ausência de dado para comparar.
 
     Também recalcula `meses_a_empenhar`/`valor_a_empenhar` (a "Necessidade de Empenho") a
-    partir da Execução Anual em vez das colunas manuais `meses_empenhados`/`meses_liquidados`
+    partir da Execução Mensal em vez das colunas manuais `meses_empenhados`/`meses_liquidados`
     da planilha, para todo contrato cuja NE já foi encontrada acima: `valor_liquidado_execucao`
     (novo campo) e `valor_empenhado_execucao` ÷ `despesa_mensal_total_ne` (despesa mensal
     somada por NE, mesmo motivo do rateio acima) viram
     `meses_liquidados_execucao`/`meses_empenhados_execucao` — fração exata, sem arredondar
     (decisão confirmada com o usuário). Assim a Necessidade de Empenho atualiza sozinha a cada
-    reimportação de Execução Anual, sem precisar tocar na planilha de Contratos Contínuos.
+    reimportação de Execução Mensal, sem precisar tocar na planilha de Contratos Contínuos.
     Contrato sem NE, ou com NE ainda não encontrada na Execução carregada, mantém
     `meses_empenhados`/`meses_liquidados` da planilha (fallback inalterado) — `necessidade_via`
     (novo campo) marca "execucao" ou "planilha" conforme a fonte usada em cada linha, para a
@@ -208,15 +209,15 @@ def com_saldo_execucao(
 
     `indice_liquidado_competencia` (opcional, pedido explícito do usuário): quando informado
     (Série `ne_curta` -> total por Liquidação por Competência, ver
-    `src.liquidacao_competencia.liquidado_por_ne` + `execucao_anual.ne_curta`),
-    `valor_liquidado_execucao` vem dele em vez da Execução Anual (mês de LANÇAMENTO) — a
-    Execução Anual só sabe dizer quando a liquidação foi formalmente lançada, não a que mês a
+    `src.liquidacao_competencia.liquidado_por_ne` + `execucao_ne_utils.ne_curta`),
+    `valor_liquidado_execucao` vem dele em vez da Execução Mensal (mês de LANÇAMENTO) — a
+    Execução Mensal só sabe dizer quando a liquidação foi formalmente lançada, não a que mês a
     despesa se refere; a competência é a fonte mais correta para "quanto já foi de fato
     incorrido". NE sem nenhuma linha de competência fica nula em `valor_liquidado_execucao`
     (mesmo tratamento de "sem correspondência" de sempre — cai em `tem_base_para_calculo`
     abaixo, volta pros campos manuais da planilha, nunca usa o valor de lançamento como
     substituto silencioso). `None` (arquivo de competência indisponível) preserva o
-    comportamento anterior a este pedido (Execução Anual). `liquidado_via_competencia` (novo
+    comportamento anterior a este pedido (Execução Mensal). `liquidado_via_competencia` (novo
     campo, booleano constante no resultado) sinaliza qual fonte foi usada, para a interface
     ajustar o rótulo mostrado.
     """

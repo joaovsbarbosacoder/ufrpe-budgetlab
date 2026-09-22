@@ -52,6 +52,13 @@ from src.dotacao_anual_analysis import (
     build_item_indicators,
 )
 from src.importacao_dotacao import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
+from src.importacao_execucao import (
+    DIRETORIO_MANIFESTOS_PADRAO as DIRETORIO_MANIFESTOS_EXECUCAO,
+    NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO,
+    Manifesto as ManifestoExecucao,
+    carregar_atual as carregar_execucao_atual,
+)
+from src.painel_acoes_empenho import anexar_empenhado_por_subdivisao, empenhado_total_por_acao
 from src.ui_theme import (
     format_brl_compact,
     render_alert,
@@ -68,6 +75,14 @@ def _cached_leitura(caminho_ponteiro: str, sha_manifesto: str) -> pd.DataFrame:
     `importacao_dotacao.carregar_atual`), não só o arquivo do manifesto atual."""
 
     return carregar_atual()
+
+
+@st.cache_data(show_spinner="Lendo a base de Execução Anual...")
+def _cached_leitura_execucao(caminho_ponteiro: str, sha_manifesto: str) -> pd.DataFrame:
+    """Mesmo padrão de `_cached_leitura`, para a base de Execução Anual — usada só para
+    a coluna "Empenhado" (`src.painel_acoes_empenho`)."""
+
+    return carregar_execucao_atual()
 
 
 INDICATOR_DISPLAY_ORDER = (
@@ -316,7 +331,7 @@ CABECALHO = [
     ("Plano orçamentário", ""), ("Fonte de recursos detalhada", ""),
     ("Grupo de despesa", ""), ("Res. prim. lei", ""), ("Iduso", ""), ("PTRES", ""),
     ("Inicial", "right"), ("Suplem.", "right"),
-    ("Canc./remanej.", "right"), ("Atualizada", "right"),
+    ("Canc./remanej.", "right"), ("Atualizada", "right"), ("Empenhado", "right"),
 ]
 
 
@@ -349,11 +364,19 @@ def _html_linha(r) -> str:
         + f'<span class="po-val">{_num(r.dotacao_suplementar)}</span>'
         + f'<span class="po-val">{_num(r.dotacao_cancelada_remanejada)}</span>'
         + f'<span class="po-val-strong">{_num(r.dotacao_atualizada)}</span>'
+        + f'<span class="po-val">{_num(r.empenhada)}</span>'
         + "</div>"
     )
 
 
-def _render_card(codigo: str, nome: object, grupo: pd.DataFrame, source_key: str) -> None:
+def _render_card(
+    codigo: str, nome: object, grupo: pd.DataFrame, source_key: str, empenhado_acao: object = None,
+) -> None:
+    """`empenhado_acao` (opcional): total de Empenhada da Ação, calculado à parte pelo
+    chamador (`painel_acoes_empenho.empenhado_total_por_acao`) — NUNCA a soma da coluna
+    `empenhada` de `grupo`, que pode repetir o mesmo valor em mais de uma subdivisão
+    quando duas Fontes Detalhadas caem na mesma Fonte de 3 dígitos da Execução (ver
+    docstring de `src.painel_acoes_empenho`)."""
     tags = [
         ("PTRES", _resumo_atributo(grupo["ptres_codigo"])),
         ("IDUSO", _resumo_atributo(grupo["iduso_codigo"])),
@@ -398,6 +421,7 @@ def _render_card(codigo: str, nome: object, grupo: pd.DataFrame, source_key: str
               <span class="po-foot-val">{_num(somas['dotacao_suplementar'])}</span>
               <span class="po-foot-val">{_num(somas['dotacao_cancelada_remanejada'])}</span>
               <span class="po-foot-total">{_num(somas['dotacao_atualizada'])}</span>
+              <span class="po-foot-val">{_num(empenhado_acao)}</span>
             </div>
           </div>
         </div>
@@ -435,6 +459,19 @@ _inject_css()
 
 render_alert("Base de Dotação Anual carregada a partir do manifesto atual.", "success")
 
+# Coluna "Empenhado": degrada sem quebrar a página — a Dotação Anual sozinha já é
+# funcional; a Execução Anual só acrescenta a coluna quando disponível.
+manifesto_execucao = ManifestoExecucao.atual()
+execucao_df: pd.DataFrame | None = None
+if manifesto_execucao is None:
+    st.caption("⚠ Execução Anual não importada — coluna \"Empenhado\" indisponível.")
+else:
+    caminho_ponteiro_execucao = DIRETORIO_MANIFESTOS_EXECUCAO / NOME_PONTEIRO_EXECUCAO
+    try:
+        execucao_df = _cached_leitura_execucao(str(caminho_ponteiro_execucao), manifesto_execucao.sha256)
+    except Exception as error:
+        st.caption(f"⚠ Não foi possível ler a Execução Anual: {error} — coluna \"Empenhado\" indisponível.")
+
 ano, selections = _render_filters(dataframe, source_key, ano_extracao)
 filtered = apply_dotacao_anual_filters(dataframe, selections)
 
@@ -471,6 +508,14 @@ subdivisions = subdivisions[subdivisions["acao_codigo"].notna()]
 has_any_indicator = subdivisions[list(KNOWN_ITEM_INDICATORS)].notna().any(axis=1)
 subdivisions = subdivisions[has_any_indicator]
 
+if execucao_df is not None:
+    subdivisions = anexar_empenhado_por_subdivisao(subdivisions, execucao_df, ano)
+    empenhado_por_acao = empenhado_total_por_acao(execucao_df, ano)
+else:
+    subdivisions = subdivisions.copy()
+    subdivisions["empenhada"] = pd.array([None] * len(subdivisions), dtype="Float64")
+    empenhado_por_acao = pd.Series(dtype="Float64")
+
 acao_groups = subdivisions.groupby(["acao_codigo", "acao_descricao"], dropna=False, sort=False)
 st.caption(
     f"{acao_groups.ngroups} ações · {len(subdivisions)} subdivisões · ano {ano}"
@@ -497,7 +542,8 @@ ordem = (
 )
 for codigo, nome in ordem:
     grupo = subdivisions[subdivisions["acao_codigo"] == codigo]
-    _render_card(codigo, nome, grupo, source_key)
+    empenhado_acao = empenhado_por_acao.get(codigo)
+    _render_card(codigo, nome, grupo, source_key, empenhado_acao)
 
 data_extracao_texto = datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y")
 st.caption(

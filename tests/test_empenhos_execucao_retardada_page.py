@@ -30,7 +30,7 @@ from src.importacao_execucao_mensal import gerar_manifesto
 from src.tesouro_execucao_mensal import ler_execucao_mensal
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CAMINHO_FIXTURE = PROJECT_ROOT / "tests/fixtures/execucao_mensal_2026-09-21.xlsx"
+CAMINHO_FIXTURE = PROJECT_ROOT / "tests/fixtures/execucao_mensal_2026-09-22.xlsx"
 
 
 class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):

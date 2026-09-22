@@ -37,7 +37,7 @@ from src.tesouro_execucao_mensal import agregar_por_ne, ler_execucao_mensal
 from src.ui_theme import format_brl_full
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CAMINHO_FIXTURE = PROJECT_ROOT / "tests/fixtures/execucao_mensal_2026-09-21.xlsx"
+CAMINHO_FIXTURE = PROJECT_ROOT / "tests/fixtures/execucao_mensal_2026-09-22.xlsx"
 
 
 class ConsultaEmpenhosPageTests(unittest.TestCase):

@@ -24,7 +24,7 @@ como `meses_a_empenhar`/`valor_a_empenhar` via `src/necessidade_empenho.py`.
 
 `SALDO NO EMPENHO (TG)` (colado manualmente na aba Base TG desta planilha) vira
 `saldo_colado_planilha` — ver `com_saldo_execucao` para o saldo autoritativo, derivado da
-Execução Anual já validada do projeto.
+Execução Mensal já validada do projeto.
 
 Contrato público:
     ler_bolsas_auxilios(caminho) -> pd.DataFrame
@@ -39,7 +39,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.execucao_anual import (
+from src.execucao_ne_utils import (
     indice_liquidado_por_ne_curta,
     indice_saldo_por_ne_curta,
     indice_valor_empenhado_por_ne_curta,
@@ -108,7 +108,7 @@ _COLUNAS_NUMERICAS = {
 def ler_bolsas_auxilios(caminho: str | Path) -> pd.DataFrame:
     """Lê a aba "Bolsas e auxílios" e devolve o DataFrame normalizado, com as colunas
     derivadas `meses_a_empenhar`/`valor_a_empenhar` (ver docstring do módulo). Não liga com a
-    Execução Anual — para isso, `com_saldo_execucao`."""
+    Execução Mensal — para isso, `com_saldo_execucao`."""
 
     caminho = Path(caminho)
     if not caminho.exists():
@@ -155,11 +155,11 @@ def _diverge(execucao: pd.Series, planilha: pd.Series, tolerancia: float = 0.01)
 
 
 def com_saldo_execucao(df: pd.DataFrame, por_ne_execucao: pd.DataFrame) -> pd.DataFrame:
-    """Acrescenta, via `ne_curta`, dois pares de campos buscados na Execução Anual já
+    """Acrescenta, via `ne_curta`, dois pares de campos buscados na Execução Mensal já
     validada do projeto: `saldo_execucao`/`diverge_saldo` (contra `saldo_colado_planilha`) e
     `valor_empenhado_execucao`/`diverge_valor_empenhado` (contra `valor_empenhado_tg`) —
     ambos com divergência True quando a diferença passa de R$ 0,01. `por_ne_execucao` é o
-    resultado de `execucao_anual.saldo_por_ne(agregar_por_ne(...))`.
+    resultado de `execucao_ne_utils.saldo_por_ne(tesouro_execucao_mensal.agregar_por_ne(...))`.
 
     NE sem correspondência na Execução (ou linha sem `ne_curta`, processo ainda sem empenho)
     fica com os quatro campos nulos — não é erro, é ausência de dado para comparar. Uma linha
@@ -167,13 +167,13 @@ def com_saldo_execucao(df: pd.DataFrame, por_ne_execucao: pd.DataFrame) -> pd.Da
     somar por NE como em `contratos_continuos.com_saldo_execucao`.
 
     Também recalcula `meses_a_empenhar`/`valor_a_empenhar` (a "Necessidade de Empenho") a
-    partir da Execução Anual em vez das colunas manuais `meses_empenhados`/`meses_liquidados`
+    partir da Execução Mensal em vez das colunas manuais `meses_empenhados`/`meses_liquidados`
     da planilha, para todo processo cuja NE já foi encontrada acima: `valor_liquidado_execucao`
     (novo campo, via `indice_liquidado_por_ne_curta`) e `valor_empenhado_execucao` ÷
     `valor_mensal` viram `meses_liquidados_execucao`/`meses_empenhados_execucao` — fração
     exata, sem arredondar (decisão confirmada com o usuário; mesmo critério de
     `contratos_continuos.com_saldo_execucao`). Assim a Necessidade de Empenho atualiza sozinha
-    a cada reimportação de Execução Anual, sem precisar tocar na planilha de Bolsas. Processo
+    a cada reimportação de Execução Mensal, sem precisar tocar na planilha de Bolsas. Processo
     sem NE, ou com NE ainda não encontrada na Execução carregada, mantém
     `meses_empenhados`/`meses_liquidados` da planilha (fallback inalterado) — `necessidade_via`
     (novo campo) marca "execucao" ou "planilha" conforme a fonte usada em cada linha, para a
