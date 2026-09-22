@@ -28,16 +28,65 @@ Ajustes pedidos pelo usuário em 22/09/2026, após a primeira versão:
     pedido. Corrigido reaproveitando `build_dotacao_anual_subdivision_analysis` +
     `has_any_indicator`, o mesmo filtro que "Painel por Ação" já usa — ver
     `src/limite_empenho.py`.
+
+REDESENHO VISUAL (pedido explícito do usuário, 22/09/2026, a partir de um mockup enviado por
+imagem — "Painel orçamentário"): cartões de KPI com % de referência, painel de barras "Limite
+por ação" (Empenhado vs. Disponível), painel "Saldo por grupo de despesa", cartão "Pontos de
+atenção" com os piores saldos negativos, e tabela "Detalhamento por PTRES" com selo de
+Situação, ordenada do menor saldo para o maior. Só a CAMADA DE APRESENTAÇÃO mudou — nenhuma
+coluna, filtro de escopo ou regra de agregação de `src/limite_empenho.py` foi alterada; os
+filtros de Resultado Primário/Ação/GND desta página operam sobre o `DataFrame` já calculado
+por `saldo_disponivel_a_empenhar`, sem reabrir o cruzamento Dotação×Execução.
+
+Decisões tomadas para adaptar o mockup sem violar as regras permanentes do projeto (nunca
+descartar dado financeiro silenciosamente):
+  * O mockup mostra "8 de 32 registros" na tabela — isso sugeriria truncar a lista. Em vez
+    disso, a tabela mostra TODOS os registros do recorte. Primeira versão usava um cartão com
+    altura fixa e rolagem interna; pedido explícito do usuário (22/09/2026) trocou isso por
+    exibição completa, sem corte — a rolagem passa a ser a da própria página, não de uma caixa
+    interna (`overflow: visible` em `.le-table-scroll`, cabeçalho de colunas não fica mais
+    "grudado" no topo por seção, já que não há mais caixa com rolagem própria para grudar).
+  * O painel de barras por ação agrupa as ações menores num item "Outras (N ações)" — é só
+    uma agregação de apresentação (a soma bate com o total, nada é somado fora da tabela
+    detalhada abaixo), mesmo princípio já usado no filtro `has_any_indicator`.
+  * O filtro "Fonte" do mockup é fixo em "000 — Recursos Livres da União" (não um seletor
+    real): o escopo Discricionário desta ferramenta já restringe TODA a base a essa única
+    fonte (ver `src/limite_empenho.py`), então um seletor com outras opções seria enganoso.
+  * A situação "Saldo baixo" (selo amarelo) é uma HEURÍSTICA DE EXIBIÇÃO, não uma regra de
+    negócio confirmada com o usuário — ver `_LIMIAR_SALDO_BAIXO_PCT` abaixo. Sinalizado aqui
+    porque o AGENTS.md pede para não presumir regra orçamentária sem confirmação; o limiar é
+    fácil de ajustar (ou remover) quando o usuário validar o valor certo.
+
+AGRUPAMENTO POR IDUSO/AÇÃO na tabela "Detalhamento por PTRES" (pedido explícito do usuário,
+22/09/2026, com duas perguntas de confirmação respondidas antes de implementar):
+  * Confirmado com dados reais: as 29 linhas atuais se dividem só entre IDUSO 0 e IDUSO 8 —
+    ações desses dois grupos têm um limite GLOBAL que pode ser compartilhado entre elas. A
+    tabela agora agrupa por IDUSO (com um resumo "Limite/Saldo compartilhado" = soma de todo
+    o grupo) e, dentro de cada IDUSO, por Ação — escolha do usuário: "resumo do grupo +
+    detalhe individual" (não a opção que recalcularia a Situação de cada PTRES pelo saldo do
+    grupo). Isso não muda NENHUM valor calculado por `src/limite_empenho.py`: o "Limite
+    compartilhado"/"Saldo compartilhado" do resumo é matematicamente a soma dos valores
+    individuais já mostrados nas linhas (a fórmula linha-a-linha é linear na fração), só
+    reapresentado como total do grupo — Situação de cada PTRES continua vindo do saldo
+    daquele PTRES, sem alteração.
+  * "Eliminar a exibição de RP1" (Resultado Primário = 1, "PRIMARIO OBRIGATORIO") — o usuário
+    escolheu excluí-lo de TODA a ferramenta (KPIs, gráficos, tabela), não só desta tabela, já
+    que incluir despesa obrigatória numa ferramenta "Discricionária" era inconsistente com o
+    próprio escopo dela. Implementado em `src/limite_empenho.py` (mesmo tratamento já dado a
+    emendas parlamentares, RP=6), não nesta página — ver `RESULTADO_PRIMARIO_OBRIGATORIO`
+    naquele módulo.
 """
 
 from __future__ import annotations
 
+import html as html_lib
 from datetime import datetime
 from fractions import Fraction
 
 import pandas as pd
 import streamlit as st
 
+from src import design_tokens as dt
 from src.importacao_dotacao import DIRETORIO_MANIFESTOS_PADRAO as DIR_MANIFESTOS_DOTACAO
 from src.importacao_dotacao import Manifesto as ManifestoDotacao
 from src.importacao_dotacao import NOME_PONTEIRO as PONTEIRO_DOTACAO
@@ -48,6 +97,21 @@ from src.importacao_execucao_mensal import NOME_PONTEIRO as PONTEIRO_EXECUCAO_ME
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
 from src.limite_empenho import saldo_disponivel_a_empenhar
 from src.ui_theme import format_brl_compact, render_metric_grid, render_page_header
+
+#: heurística de EXIBIÇÃO (não regra de negócio confirmada, ver docstring do módulo): abaixo
+#: desta fração do limite liberado, um saldo ainda positivo aparece como "Saldo baixo" em vez
+#: de "Disponível". Ajuste livremente até o usuário confirmar o valor certo.
+_LIMIAR_SALDO_BAIXO_PCT = 0.10
+
+#: quantos exemplos aparecem no cartão "Pontos de atenção" — a lista completa está sempre na
+#: tabela "Detalhamento por PTRES" logo abaixo (nenhum registro fica só nesta prévia).
+_MAX_EXEMPLOS_ATENCAO = 5
+
+#: quantas ações aparecem nomeadas no painel de barras; o restante entra em "Outras" (só
+#: agregação de apresentação — ver docstring do módulo).
+_MAX_ACOES_BARRAS = 6
+
+_TEXTO_FONTE_FIXA = "000 — Recursos Livres da União"
 
 
 @st.cache_data(show_spinner="Lendo a base de Dotação Anual...")
@@ -60,47 +124,426 @@ def _cached_execucao_mensal(caminho_ponteiro: str, sha_manifesto: str) -> pd.Dat
     return carregar_execucao_mensal_atual()
 
 
-def _situacao(saldo: object) -> str:
-    # saldo só fica nulo quando Dotação Atualizada em si é nula na origem (zero seria um
-    # número real, não NaN — ver docstring de `src/limite_empenho.py`).
-    if pd.isna(saldo):
-        return "Sem valor de Dotação Atualizada"
-    if float(saldo) < 0:
-        return "Estourado"
-    return "Dentro do limite"
+# --------------------------------------------------------------- formatação
+def _esc(value: object) -> str:
+    return html_lib.escape("" if value is None or pd.isna(value) else str(value))
 
 
-def _render_tabela(resultado: pd.DataFrame) -> None:
-    tabela = resultado.copy()
-    tabela["Ação"] = tabela["acao_cod"] + " — " + tabela["acao_desc"].fillna("")
-    tabela["PTRES"] = tabela["ptres"]
-    tabela["Plano Orçamentário"] = tabela["po_cod"] + " — " + tabela["po_desc"].fillna("")
-    tabela["GND"] = tabela["gnd_cod"] + " — " + tabela["gnd_desc"].fillna("")
-    tabela["Situação"] = tabela["saldo_disponivel"].apply(_situacao)
+def _fmt_pct(value: float | None) -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    return f"{value:.1f}".replace(".", ",") + "%"
 
-    st.dataframe(
-        tabela[
-            [
-                "Ação", "PTRES", "Plano Orçamentário", "GND",
-                "dotacao_atualizada", "empenhada", "limite_liberado", "saldo_disponivel", "Situação",
-            ]
-        ].rename(
-            columns={
-                "dotacao_atualizada": "Dotação Atualizada",
-                "empenhada": "Despesas Empenhadas",
-                "limite_liberado": "Limite Liberado",
-                "saldo_disponivel": "Saldo Disponível a Empenhar",
-            }
-        ),
-        hide_index=True,
-        width="stretch",
-        column_config={
-            "Dotação Atualizada": st.column_config.NumberColumn(format="R$ %.2f"),
-            "Despesas Empenhadas": st.column_config.NumberColumn(format="R$ %.2f"),
-            "Limite Liberado": st.column_config.NumberColumn(format="R$ %.2f"),
-            "Saldo Disponível a Empenhar": st.column_config.NumberColumn(format="R$ %.2f"),
-        },
+
+def _pct_of(numerator: object, denominator: object) -> str:
+    if pd.isna(numerator) or pd.isna(denominator) or not denominator:
+        return "—"
+    return _fmt_pct(float(numerator) / float(denominator) * 100)
+
+
+# ------------------------------------------------------------------- estilos
+def _inject_css() -> None:
+    st.markdown(
+        f"""
+        <style>
+        .le-filter-row {{ margin-bottom: {dt.SPACE['sm']}; }}
+        .le-legend {{ display: flex; gap: {dt.SPACE['lg']}; margin: -0.3rem 0 {dt.SPACE['md']}; }}
+        .le-legend-item {{
+            display: inline-flex; align-items: center; gap: 6px;
+            font-size: {dt.SIZE['small']}; color: {dt.TEXT_MUTED};
+        }}
+        .le-dot {{ width: 10px; height: 10px; border-radius: 50%; display: inline-block; }}
+        .le-bar-list {{ display: flex; flex-direction: column; gap: {dt.SPACE['md']}; }}
+        .le-bar-row {{
+            display: grid; grid-template-columns: minmax(120px, 1fr) 220px 92px;
+            gap: {dt.SPACE['md']}; align-items: center;
+        }}
+        .le-bar-cod {{ font-family: {dt.FONT_HEADING}; font-weight: 700; font-size: {dt.SIZE['value']}; color: {dt.TEXT}; }}
+        .le-bar-desc {{
+            font-size: {dt.SIZE['small']}; color: {dt.TEXT_MUTED}; white-space: nowrap;
+            overflow: hidden; text-overflow: ellipsis;
+        }}
+        .le-bar-track {{
+            position: relative; width: 220px; height: 10px; border-radius: 999px;
+            background: {dt.BORDER_SOFT}; overflow: hidden;
+        }}
+        .le-bar-fill {{ position: absolute; top: 0; left: 0; height: 100%; display: flex; }}
+        .le-bar-fill-empenhado {{ height: 100%; background: {dt.POSITIVE}; }}
+        .le-bar-fill-disponivel {{ height: 100%; background: {dt.BORDER}; }}
+        .le-bar-valor {{
+            text-align: right; font-variant-numeric: tabular-nums; font-size: {dt.SIZE['value']};
+            color: {dt.TEXT}; white-space: nowrap;
+        }}
+        .le-gnd-row {{ margin-bottom: {dt.SPACE['md']}; }}
+        .le-gnd-row:last-child {{ margin-bottom: 0; }}
+        .le-gnd-head {{ display: flex; justify-content: space-between; gap: {dt.SPACE['sm']}; margin-bottom: 4px; }}
+        .le-gnd-label {{ font-size: {dt.SIZE['small']}; color: {dt.TEXT}; font-weight: 600; }}
+        .le-gnd-valor {{ font-size: {dt.SIZE['small']}; color: {dt.TEXT}; font-variant-numeric: tabular-nums; white-space: nowrap; }}
+        .le-gnd-track {{
+            width: 100%; height: 8px; border-radius: 999px; background: {dt.BORDER_SOFT}; overflow: hidden;
+        }}
+        .le-gnd-fill {{ height: 100%; background: {dt.POSITIVE}; border-radius: 999px; }}
+        .le-gnd-pct {{ margin-top: 3px; font-size: {dt.SIZE['micro']}; color: {dt.TEXT_MUTED}; }}
+        .le-attention-banner {{
+            background: {dt.NEGATIVE_SOFT}; border-radius: {dt.RADIUS_SM}; padding: 10px 12px;
+            font-size: {dt.SIZE['body']}; color: {dt.NEGATIVE}; margin-bottom: {dt.SPACE['md']};
+        }}
+        .le-attention-count {{ font-weight: 800; font-size: {dt.SIZE['value_strong']}; }}
+        .le-attention-total {{ font-weight: 700; }}
+        .le-attention-ok {{ font-size: {dt.SIZE['small']}; color: {dt.TEXT_MUTED}; }}
+        .le-attention-item {{ padding: 8px 0; border-top: 1px solid {dt.BORDER_SOFT}; }}
+        .le-attention-item:first-of-type {{ border-top: 0; }}
+        .le-attention-item-head {{ display: flex; justify-content: space-between; gap: {dt.SPACE['sm']}; }}
+        .le-attention-ptres {{ font-weight: 700; font-size: {dt.SIZE['small']}; color: {dt.TEXT}; }}
+        .le-attention-valor {{ font-weight: 700; font-size: {dt.SIZE['small']}; color: {dt.NEGATIVE}; white-space: nowrap; }}
+        .le-attention-desc {{ margin-top: 2px; font-size: {dt.SIZE['micro']}; color: {dt.TEXT_MUTED}; }}
+        .le-badge {{
+            display: inline-block; padding: 2px 10px; border-radius: 999px;
+            font-size: {dt.SIZE['micro']}; font-weight: 750; letter-spacing: 0.02em; white-space: nowrap;
+        }}
+        .le-badge-exceeded {{ color: {dt.NEGATIVE}; background: {dt.NEGATIVE_SOFT}; }}
+        .le-badge-low {{ color: {dt.WARNING}; background: {dt.WARNING_SOFT}; }}
+        .le-badge-ok {{ color: {dt.POSITIVE}; background: {dt.POSITIVE_SOFT}; }}
+        .le-badge-null {{ color: {dt.TEXT_MUTED}; background: {dt.SURFACE_ALT}; }}
+        .le-table-scroll {{ overflow: visible; }}
+        .le-iduso-section {{ margin-bottom: {dt.SPACE['xl']}; }}
+        .le-iduso-section:last-child {{ margin-bottom: 0; }}
+        .le-iduso-head {{
+            background: {dt.ACCENT_SOFT}; border-radius: {dt.RADIUS_SM}; padding: 10px 14px;
+            margin-bottom: {dt.SPACE['sm']}; display: flex; flex-wrap: wrap;
+            justify-content: space-between; align-items: center; gap: {dt.SPACE['md']};
+        }}
+        .le-iduso-title {{ font-family: {dt.FONT_HEADING}; font-weight: 700; color: {dt.TEXT}; font-size: {dt.SIZE['value_strong']}; }}
+        .le-iduso-stats {{ display: flex; gap: {dt.SPACE['lg']}; flex-wrap: wrap; font-size: {dt.SIZE['small']}; color: {dt.TEXT_MUTED}; }}
+        .le-iduso-stats strong {{ color: {dt.TEXT}; font-weight: 700; }}
+        .le-acao-section {{ margin: 4px 0 {dt.SPACE['md']}; }}
+        .le-acao-head {{
+            display: flex; justify-content: space-between; gap: {dt.SPACE['sm']};
+            padding: 6px 2px; border-bottom: 1px dashed {dt.BORDER}; margin-bottom: 4px;
+        }}
+        .le-acao-title {{ font-weight: 700; font-size: {dt.SIZE['small']}; color: {dt.ACCENT_STRONG}; }}
+        .le-acao-subtotal {{ font-size: {dt.SIZE['micro']}; color: {dt.TEXT_MUTED}; white-space: nowrap; }}
+        .le-table-head, .le-table-row {{
+            display: grid;
+            grid-template-columns: minmax(70px, 0.6fr) minmax(200px, 2fr) 46px
+                minmax(90px, 0.9fr) minmax(90px, 0.9fr) minmax(90px, 0.9fr) minmax(90px, 0.9fr)
+                minmax(120px, 0.95fr);
+            gap: {dt.SPACE['sm']}; align-items: center;
+        }}
+        .le-table-head {{
+            background: {dt.SURFACE};
+            padding-bottom: {dt.SPACE['xs']}; border-bottom: 1px solid {dt.BORDER};
+            font-family: {dt.FONT_HEADING}; font-size: {dt.SIZE['micro']};
+            letter-spacing: 0.08em; text-transform: uppercase; color: {dt.TEXT_MUTED};
+        }}
+        .le-table-row {{ padding: 9px 0; border-bottom: 1px solid {dt.BORDER_SOFT}; }}
+        .le-table-ptres {{ font-family: {dt.FONT_HEADING}; font-weight: 700; color: {dt.TEXT}; }}
+        .le-table-po {{ font-size: {dt.SIZE['small']}; color: {dt.TEXT}; overflow-wrap: anywhere; }}
+        .le-table-po-cod {{ color: {dt.TEXT_MUTED}; }}
+        .le-table-val {{ text-align: right; font-variant-numeric: tabular-nums; font-size: {dt.SIZE['small']}; color: {dt.TEXT}; white-space: nowrap; }}
+        .le-negativo {{ color: {dt.NEGATIVE}; font-weight: 700; }}
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
+
+
+# -------------------------------------------------------------------- filtros
+def _opcoes(dataframe: pd.DataFrame, coluna_cod: str, coluna_desc: str) -> dict[str, object]:
+    pares = dataframe[[coluna_cod, coluna_desc]].drop_duplicates()
+    pares = pares.sort_values(coluna_cod, na_position="last", kind="stable")
+    opcoes: dict[str, object] = {}
+    for cod, desc in pares.itertuples(index=False):
+        if pd.isna(cod):
+            continue
+        label = str(cod) if pd.isna(desc) or str(desc) == str(cod) else f"{cod} — {desc}"
+        opcoes[label] = cod
+    return opcoes
+
+
+def _render_filtros(resultado: pd.DataFrame) -> pd.DataFrame:
+    opcoes_rp = _opcoes(resultado, "resultado_primario_cod", "resultado_primario_desc")
+    opcoes_acao = _opcoes(resultado, "acao_cod", "acao_desc")
+    opcoes_gnd = _opcoes(resultado, "gnd_cod", "gnd_desc")
+
+    col_rp, col_acao, col_gnd, col_fonte, col_limpar = st.columns([1.1, 1.4, 1.1, 1, 0.8])
+    with col_rp:
+        rotulo_rp = st.selectbox("Resultado Primário", ["Todos"] + list(opcoes_rp), key="le_filtro_rp")
+    with col_acao:
+        rotulo_acao = st.selectbox("Ação de Governo", ["Todas"] + list(opcoes_acao), key="le_filtro_acao")
+    with col_gnd:
+        rotulo_gnd = st.selectbox("Grupo de Despesa", ["Todos"] + list(opcoes_gnd), key="le_filtro_gnd")
+    with col_fonte:
+        st.selectbox(
+            "Fonte", [_TEXTO_FONTE_FIXA], key="le_filtro_fonte_fixa", disabled=True,
+            help='Escopo fixo desta ferramenta ("Discricionário"): todo o recorte já é só '
+            'Fonte de Recursos "000" — Recursos Livres da União. Não é um filtro real porque '
+            "não haveria outra opção para escolher (ver docstring de src/limite_empenho.py).",
+        )
+    with col_limpar:
+        st.markdown("<div style='height: 1.7rem'></div>", unsafe_allow_html=True)
+        if st.button("Limpar filtros", key="le_limpar_filtros", width="stretch"):
+            for chave in ("le_filtro_rp", "le_filtro_acao", "le_filtro_gnd"):
+                st.session_state.pop(chave, None)
+            st.rerun()
+
+    filtrado = resultado
+    if rotulo_rp != "Todos":
+        filtrado = filtrado[filtrado["resultado_primario_cod"] == opcoes_rp[rotulo_rp]]
+    if rotulo_acao != "Todas":
+        filtrado = filtrado[filtrado["acao_cod"] == opcoes_acao[rotulo_acao]]
+    if rotulo_gnd != "Todos":
+        filtrado = filtrado[filtrado["gnd_cod"] == opcoes_gnd[rotulo_gnd]]
+    return filtrado
+
+
+# --------------------------------------------------------- painel: por ação
+def _render_barras_acao(filtrado: pd.DataFrame, numerador: int, denominador: int) -> None:
+    st.markdown(f"##### Limite {numerador}/{denominador} por ação")
+    st.caption("Composição entre valores empenhados e saldo disponível")
+    st.markdown(
+        '<div class="le-legend">'
+        f'<span class="le-legend-item"><span class="le-dot" style="background:{dt.POSITIVE}"></span>Empenhado</span>'
+        f'<span class="le-legend-item"><span class="le-dot" style="background:{dt.BORDER}"></span>Disponível</span>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    agrupado = (
+        filtrado.groupby(["acao_cod", "acao_desc"], dropna=False, sort=False)[
+            ["limite_liberado", "empenhada", "saldo_disponivel"]
+        ]
+        .sum(min_count=1)
+        .reset_index()
+    )
+    for coluna in ("limite_liberado", "empenhada", "saldo_disponivel"):
+        agrupado[coluna] = agrupado[coluna].fillna(0.0)
+    agrupado = agrupado.sort_values("limite_liberado", ascending=False, kind="stable")
+
+    principais = agrupado.head(_MAX_ACOES_BARRAS)
+    restante = agrupado.iloc[_MAX_ACOES_BARRAS:]
+
+    registros = [
+        {
+            "rotulo": row["acao_cod"],
+            "descricao": row["acao_desc"] if pd.notna(row["acao_desc"]) else "",
+            "limite": float(row["limite_liberado"]),
+            "empenhado": float(row["empenhada"]),
+        }
+        for _, row in principais.iterrows()
+    ]
+    if not restante.empty:
+        registros.append(
+            {
+                "rotulo": "Outras",
+                "descricao": f"{len(restante)} ações",
+                "limite": float(restante["limite_liberado"].sum()),
+                "empenhado": float(restante["empenhada"].sum()),
+            }
+        )
+
+    maximo = max((registro["limite"] for registro in registros), default=0.0) or 1.0
+    linhas_html = []
+    for registro in registros:
+        escala_pct = max(min(registro["limite"] / maximo * 100, 100.0), 2.0)
+        if registro["limite"] > 0:
+            empenhado_pct = max(min(registro["empenhado"] / registro["limite"] * 100, 100.0), 0.0)
+        else:
+            empenhado_pct = 100.0 if registro["empenhado"] > 0 else 0.0
+        disponivel_pct = max(100.0 - empenhado_pct, 0.0)
+        linhas_html.append(
+            f'<div class="le-bar-row">'
+            f'<div><div class="le-bar-cod">{_esc(registro["rotulo"])}</div>'
+            f'<div class="le-bar-desc" title="{_esc(registro["descricao"])}">{_esc(registro["descricao"])}</div></div>'
+            f'<div class="le-bar-track"><div class="le-bar-fill" style="width:{escala_pct:.1f}%">'
+            f'<div class="le-bar-fill-empenhado" style="width:{empenhado_pct:.1f}%"></div>'
+            f'<div class="le-bar-fill-disponivel" style="width:{disponivel_pct:.1f}%"></div>'
+            f"</div></div>"
+            f'<div class="le-bar-valor">{format_brl_compact(registro["limite"])}</div>'
+            f"</div>"
+        )
+    st.markdown(f'<div class="le-bar-list">{"".join(linhas_html)}</div>', unsafe_allow_html=True)
+
+
+# -------------------------------------------------------- painel: saldo GND
+def _render_saldo_gnd(filtrado: pd.DataFrame) -> None:
+    st.markdown("##### Saldo por grupo de despesa")
+    st.caption("Participação no saldo filtrado (grupos com saldo positivo)")
+
+    agrupado = (
+        filtrado.groupby(["gnd_cod", "gnd_desc"], dropna=False, sort=False)["saldo_disponivel"]
+        .sum(min_count=1)
+        .reset_index()
+    )
+    agrupado["saldo_disponivel"] = agrupado["saldo_disponivel"].fillna(0.0)
+    positivos = agrupado[agrupado["saldo_disponivel"] > 0].sort_values("saldo_disponivel", ascending=False)
+    if positivos.empty:
+        st.caption("Nenhum grupo de despesa com saldo positivo no recorte atual.")
+        return
+
+    total_positivo = float(positivos["saldo_disponivel"].sum())
+    linhas_html = []
+    for _, row in positivos.iterrows():
+        pct = (float(row["saldo_disponivel"]) / total_positivo * 100) if total_positivo else 0.0
+        descricao = row["gnd_desc"] if pd.notna(row["gnd_desc"]) else ""
+        linhas_html.append(
+            '<div class="le-gnd-row">'
+            '<div class="le-gnd-head">'
+            f'<span class="le-gnd-label">GND {_esc(row["gnd_cod"])} · {_esc(descricao)}</span>'
+            f'<span class="le-gnd-valor">{format_brl_compact(row["saldo_disponivel"])}</span>'
+            "</div>"
+            f'<div class="le-gnd-track"><div class="le-gnd-fill" style="width:{pct:.1f}%"></div></div>'
+            f'<div class="le-gnd-pct">{_fmt_pct(pct)} do saldo positivo</div>'
+            "</div>"
+        )
+    st.markdown("".join(linhas_html), unsafe_allow_html=True)
+
+
+# ------------------------------------------------- painel: pontos de atenção
+def _render_pontos_atencao(filtrado: pd.DataFrame, numerador: int, denominador: int) -> None:
+    st.markdown("##### Pontos de atenção")
+    st.caption(f"Registros que ultrapassaram o limite {numerador}/{denominador}")
+
+    negativos = filtrado[filtrado["saldo_disponivel"] < 0].sort_values("saldo_disponivel", kind="stable")
+    if negativos.empty:
+        st.markdown(
+            '<div class="le-attention-ok">Nenhum registro ultrapassou o limite no recorte atual.</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    total_negativo = float(negativos["saldo_disponivel"].sum())
+    st.markdown(
+        '<div class="le-attention-banner">'
+        f'<span class="le-attention-count">{len(negativos)}</span> registro(s) negativo(s) · '
+        f'<span class="le-attention-total">{format_brl_compact(total_negativo)}</span>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    exemplos_html = []
+    for _, row in negativos.head(_MAX_EXEMPLOS_ATENCAO).iterrows():
+        descricao = row["acao_desc"] if pd.notna(row["acao_desc"]) else ""
+        exemplos_html.append(
+            '<div class="le-attention-item">'
+            '<div class="le-attention-item-head">'
+            f'<span class="le-attention-ptres">{_esc(row["ptres"])} · {_esc(row["acao_cod"])}</span>'
+            f'<span class="le-attention-valor">{format_brl_compact(row["saldo_disponivel"])}</span>'
+            "</div>"
+            f'<div class="le-attention-desc">{_esc(descricao)} — fonte {_TEXTO_FONTE_FIXA}</div>'
+            "</div>"
+        )
+    st.markdown("".join(exemplos_html), unsafe_allow_html=True)
+
+    if len(negativos) > _MAX_EXEMPLOS_ATENCAO:
+        st.caption(
+            f"+ {len(negativos) - _MAX_EXEMPLOS_ATENCAO} registro(s) negativo(s) — lista "
+            "completa, com todos os campos, na tabela abaixo."
+        )
+
+
+# ------------------------------------------------ tabela: detalhamento PTRES
+def _situacao(row: pd.Series) -> tuple[str, str]:
+    if pd.isna(row["dotacao_atualizada"]):
+        return "Sem Dotação", "le-badge-null"
+    saldo = row["saldo_disponivel"]
+    if pd.isna(saldo) or saldo < 0:
+        return "Limite excedido", "le-badge-exceeded"
+    limite = row["limite_liberado"]
+    if pd.notna(limite) and limite > 0 and (saldo / limite) < _LIMIAR_SALDO_BAIXO_PCT:
+        return "Saldo baixo", "le-badge-low"
+    return "Disponível", "le-badge-ok"
+
+
+def _html_linha_ptres(row: pd.Series) -> str:
+    texto_situacao, classe_situacao = _situacao(row)
+    po_desc = row["po_desc"] if pd.notna(row["po_desc"]) else ""
+    saldo_negativo = pd.notna(row["saldo_disponivel"]) and row["saldo_disponivel"] < 0
+    return (
+        '<div class="le-table-row">'
+        f'<span class="le-table-ptres">{_esc(row["ptres"])}</span>'
+        f'<span class="le-table-po"><span class="le-table-po-cod">{_esc(row["po_cod"])}</span> — {_esc(po_desc)}</span>'
+        f'<span>{_esc(row["gnd_cod"])}</span>'
+        f'<span class="le-table-val">{format_brl_compact(row["dotacao_atualizada"])}</span>'
+        f'<span class="le-table-val">{format_brl_compact(row["empenhada"])}</span>'
+        f'<span class="le-table-val">{format_brl_compact(row["limite_liberado"])}</span>'
+        f'<span class="le-table-val{" le-negativo" if saldo_negativo else ""}">{format_brl_compact(row["saldo_disponivel"])}</span>'
+        f'<span><span class="le-badge {classe_situacao}">{texto_situacao}</span></span>'
+        "</div>"
+    )
+
+
+def _html_bloco_acao(acao_cod: object, acao_desc: object, dados_acao: pd.DataFrame) -> str:
+    totais = dados_acao[["limite_liberado", "saldo_disponivel"]].sum()
+    descricao = acao_desc if pd.notna(acao_desc) else ""
+    saldo_negativo = pd.notna(totais["saldo_disponivel"]) and totais["saldo_disponivel"] < 0
+    cabecalho_acao = (
+        '<div class="le-acao-head">'
+        f'<span class="le-acao-title">{_esc(acao_cod)} — {_esc(descricao)}</span>'
+        f'<span class="le-acao-subtotal">Limite {format_brl_compact(totais["limite_liberado"])} · '
+        f'Saldo <span class="{"le-negativo" if saldo_negativo else ""}">{format_brl_compact(totais["saldo_disponivel"])}</span></span>'
+        "</div>"
+    )
+    ordenado = dados_acao.sort_values("saldo_disponivel", ascending=True, na_position="last", kind="stable")
+    linhas = "".join(_html_linha_ptres(row) for _, row in ordenado.iterrows())
+    return f'<div class="le-acao-section">{cabecalho_acao}{linhas}</div>'
+
+
+def _html_bloco_iduso(iduso_cod: object, iduso_desc: object, dados_iduso: pd.DataFrame, cabecalho_colunas: str) -> str:
+    totais = dados_iduso[["dotacao_atualizada", "empenhada", "limite_liberado", "saldo_disponivel"]].sum()
+    descricao = iduso_desc if pd.notna(iduso_desc) else ""
+    saldo_negativo = pd.notna(totais["saldo_disponivel"]) and totais["saldo_disponivel"] < 0
+    resumo = (
+        '<div class="le-iduso-head">'
+        f'<div class="le-iduso-title">IDUSO {_esc(iduso_cod)} — {_esc(descricao)}</div>'
+        '<div class="le-iduso-stats">'
+        f'<span>Dotação <strong>{format_brl_compact(totais["dotacao_atualizada"])}</strong></span>'
+        f'<span>Empenhado <strong>{format_brl_compact(totais["empenhada"])}</strong></span>'
+        f'<span>Limite compartilhado <strong>{format_brl_compact(totais["limite_liberado"])}</strong></span>'
+        f'<span>Saldo compartilhado <strong class="{"le-negativo" if saldo_negativo else ""}">{format_brl_compact(totais["saldo_disponivel"])}</strong></span>'
+        "</div></div>"
+    )
+
+    totais_por_acao = (
+        dados_iduso.groupby(["acao_cod", "acao_desc"], dropna=False, sort=False)["limite_liberado"]
+        .sum(min_count=1)
+        .fillna(0.0)
+        .sort_values(ascending=False)
+    )
+    blocos_acao = "".join(
+        _html_bloco_acao(acao_cod, acao_desc, dados_iduso[dados_iduso["acao_cod"] == acao_cod])
+        for acao_cod, acao_desc in totais_por_acao.index
+    )
+    return f'<div class="le-iduso-section">{resumo}{cabecalho_colunas}{blocos_acao}</div>'
+
+
+def _render_tabela_ptres(filtrado: pd.DataFrame) -> None:
+    st.markdown("##### Detalhamento por PTRES")
+    st.caption(
+        "Agrupado por IDUSO (limite compartilhado entre as ações do grupo) e por Ação · "
+        f"dentro de cada ação, prioridade para menores saldos disponíveis · "
+        f"{len(filtrado)} registro(s) no recorte"
+    )
+
+    cabecalho_colunas = (
+        '<div class="le-table-head">'
+        "<span>PTRES</span><span>Plano Orçamentário</span><span>GND</span>"
+        '<span style="text-align:right">Dotação</span><span style="text-align:right">Empenhado</span>'
+        '<span style="text-align:right">Limite</span><span style="text-align:right">Saldo</span>'
+        "<span>Situação</span></div>"
+    )
+
+    totais_por_iduso = (
+        filtrado.groupby(["iduso_cod", "iduso_desc"], dropna=False, sort=False)["limite_liberado"]
+        .sum(min_count=1)
+        .fillna(0.0)
+        .sort_values(ascending=False)
+    )
+    blocos_iduso = "".join(
+        _html_bloco_iduso(iduso_cod, iduso_desc, filtrado[filtrado["iduso_cod"] == iduso_cod], cabecalho_colunas)
+        for iduso_cod, iduso_desc in totais_por_iduso.index
+    )
+    st.markdown(f'<div class="le-table-scroll">{blocos_iduso}</div>', unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------- página
@@ -138,15 +581,25 @@ except Exception as error:
     st.stop()
 
 ano = datetime.fromisoformat(manifesto_dotacao.data_extracao).year
-st.caption(
-    f"Exercício {ano} (corrente, conforme a extração da Dotação Anual) — cota liberada só "
-    "existe para o exercício em andamento, não há seleção de anos passados."
-)
 if ano not in set(execucao_mensal["ano"].dropna().unique().tolist()):
     st.warning(
         f"A Execução Mensal não tem nenhum dado para {ano} — Despesas Empenhadas vai "
         "aparecer como R$ 0,00 em toda a tabela, não porque nada foi empenhado, mas porque "
         "esse exercício ainda não está nessa base."
+    )
+
+_inject_css()
+
+col_titulo, col_exercicio = st.columns([4, 1])
+with col_titulo:
+    st.caption(
+        f"Exercício {ano} (corrente, conforme a extração da Dotação Anual) — cota liberada "
+        "só existe para o exercício em andamento, não há seleção de anos passados."
+    )
+with col_exercicio:
+    st.markdown(
+        f'<div style="text-align:right"><span class="le-badge le-badge-ok">Exercício {ano}</span></div>',
+        unsafe_allow_html=True,
     )
 
 col_num, col_den = st.columns([1, 1])
@@ -164,34 +617,24 @@ with col_den:
         value=st.session_state.get("limite_empenho_denominador", 12), step=1,
         key="limite_empenho_denominador",
     )
-
 if numerador > denominador:
     st.warning('O numerador da fração é maior que o denominador (ex.: "13/12") — confira os valores.')
 
 fracao = Fraction(int(numerador), int(denominador))
-
 resultado = saldo_disponivel_a_empenhar(dotacao, execucao_mensal, int(ano), fracao)
 if resultado.empty:
     st.info("Nenhuma combinação Ação/PTRES no escopo discricionário para este exercício.")
     st.stop()
 
-sem_valor_dotacao = resultado["dotacao_atualizada"].isna().sum()
-estourados = (resultado["saldo_disponivel"] < 0).sum()
+with st.container(border=True):
+    st.markdown("###### Filtros")
+    filtrado = _render_filtros(resultado)
 
-totais = resultado[["dotacao_atualizada", "empenhada", "limite_liberado", "saldo_disponivel"]].sum()
+if filtrado.empty:
+    st.warning("Nenhum registro corresponde à combinação de filtros selecionada.")
+    st.stop()
 
-render_metric_grid(
-    [
-        {"label": "Dotação Atualizada", "value": format_brl_compact(float(totais["dotacao_atualizada"]))},
-        {"label": "Despesas Empenhadas", "value": format_brl_compact(float(totais["empenhada"]))},
-        {"label": f"Limite Liberado ({numerador}/{denominador})", "value": format_brl_compact(float(totais["limite_liberado"]))},
-        {"label": "Saldo Disponível a Empenhar", "value": format_brl_compact(float(totais["saldo_disponivel"]))},
-        {"label": "Estourados", "value": str(int(estourados))},
-        {"label": "Sem valor de Dotação", "value": str(int(sem_valor_dotacao))},
-    ],
-    columns=6,
-)
-
+sem_valor_dotacao = int(filtrado["dotacao_atualizada"].isna().sum())
 if sem_valor_dotacao:
     st.warning(
         f"{sem_valor_dotacao} combinação(ões) Ação/PTRES têm uma linha de Dotação nesta base, "
@@ -199,13 +642,52 @@ if sem_valor_dotacao:
         "branco para elas (não dá pra liberar cota de um valor que não se conhece)."
     )
 
+totais = filtrado[["dotacao_atualizada", "empenhada", "limite_liberado", "saldo_disponivel"]].sum()
+saldo_total = float(totais["saldo_disponivel"]) if pd.notna(totais["saldo_disponivel"]) else 0.0
+
+render_metric_grid(
+    [
+        {
+            "label": "Dotação Atualizada",
+            "value": format_brl_compact(totais["dotacao_atualizada"]),
+            "subtitle": f"{len(filtrado)} registro(s) no recorte",
+            "icon": "▥", "tone": dt.ACCENT,
+        },
+        {
+            "label": "Despesas Empenhadas",
+            "value": format_brl_compact(totais["empenhada"]),
+            "subtitle": f"{_pct_of(totais['empenhada'], totais['dotacao_atualizada'])} da dotação",
+            "icon": "!", "tone": dt.WARNING,
+        },
+        {
+            "label": f"Limite {numerador}/{denominador}",
+            "value": format_brl_compact(totais["limite_liberado"]),
+            "subtitle": f"{_pct_of(totais['limite_liberado'], totais['dotacao_atualizada'])} da dotação",
+            "icon": "▥", "tone": dt.ACCENT,
+        },
+        {
+            "label": "Saldo Disponível",
+            "value": format_brl_compact(totais["saldo_disponivel"]),
+            "subtitle": f"{_pct_of(totais['saldo_disponivel'], totais['limite_liberado'])} do limite",
+            "icon": "✓" if saldo_total >= 0 else "!",
+            "tone": dt.POSITIVE if saldo_total >= 0 else dt.NEGATIVE,
+        },
+    ],
+    columns=4,
+)
+
+col_esquerda, col_direita = st.columns([2, 1])
+with col_esquerda:
+    with st.container(border=True):
+        _render_barras_acao(filtrado, int(numerador), int(denominador))
+with col_direita:
+    with st.container(border=True):
+        _render_saldo_gnd(filtrado)
+    with st.container(border=True):
+        _render_pontos_atencao(filtrado, int(numerador), int(denominador))
+
 with st.container(border=True):
-    st.subheader("Saldo por Ação / PTRES")
-    st.caption(
-        "Escopo Discricionário: exclui despesas de pessoal (GND 1) e emendas parlamentares "
-        '(Resultado Primário 6), só Fonte de Recursos "000" (Recursos Livres da União).'
-    )
-    _render_tabela(resultado)
+    _render_tabela_ptres(filtrado)
 
 data_extracao_dotacao = manifesto_dotacao.data_extracao[:10]
 data_extracao_execucao = manifesto_execucao_mensal.data_extracao[:10]
