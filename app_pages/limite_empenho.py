@@ -604,17 +604,24 @@ with col_exercicio:
 
 col_num, col_den = st.columns([1, 1])
 with col_num:
+    # `value=` NÃO é passado de propósito: com `key=` sozinho, o Streamlit já persiste o
+    # valor em `st.session_state["limite_empenho_numerador"]` sozinho, usando `value` só na
+    # primeira renderização (quando a chave ainda não existe). Passar
+    # `value=st.session_state.get(chave, 12)` JUNTO com `key=` (bug relatado pelo usuário,
+    # 22/09/2026: "o campo não guarda o dado após atualização") faz o Streamlit reavaliar
+    # `value` a cada rerun a partir do próprio session_state — se outro widget da página
+    # disparar um rerun antes do número digitado ser "confirmado" (Enter/Tab), o valor em
+    # edição podia ser sobrescrito de volta pelo `value` reavaliado. Mesmo padrão corrigido
+    # abaixo, no denominador.
     numerador = st.number_input(
-        "Fração liberada — numerador", min_value=1, max_value=12,
-        value=st.session_state.get("limite_empenho_numerador", 12), step=1,
+        "Fração liberada — numerador", min_value=1, max_value=12, value=12, step=1,
         key="limite_empenho_numerador",
         help='A fração que a PROPLAD comunica a cada liberação de cota (ex.: "9/12"). '
         "Nunca é calculada por este sistema — atualize aqui quando chegar uma nova liberação.",
     )
 with col_den:
     denominador = st.number_input(
-        "Fração liberada — denominador", min_value=1, max_value=12,
-        value=st.session_state.get("limite_empenho_denominador", 12), step=1,
+        "Fração liberada — denominador", min_value=1, max_value=12, value=12, step=1,
         key="limite_empenho_denominador",
     )
 if numerador > denominador:
