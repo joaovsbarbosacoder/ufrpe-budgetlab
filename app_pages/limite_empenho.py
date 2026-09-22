@@ -75,6 +75,21 @@ AGRUPAMENTO POR IDUSO/AÇÃO na tabela "Detalhamento por PTRES" (pedido explíci
     próprio escopo dela. Implementado em `src/limite_empenho.py` (mesmo tratamento já dado a
     emendas parlamentares, RP=6), não nesta página — ver `RESULTADO_PRIMARIO_OBRIGATORIO`
     naquele módulo.
+
+PERSISTÊNCIA DA FRAÇÃO EM DISCO (pedido explícito do usuário, 22/09/2026, após reportar "ao
+atualizar a página, ele volta pra o 12"): `st.session_state` sozinho só sobrevive DENTRO de uma
+sessão do navegador — um F5 cria uma sessão nova, então a fração sempre voltava ao padrão
+12/12. O usuário aprovou explicitamente persistir em arquivo (AGENTS.md exige essa aprovação
+antes de qualquer persistência) — ver `src/limite_empenho_preferencias.py`. A fração agora é
+lida do disco na primeira renderização da sessão (não a cada rerun) e regravada só quando o
+valor efetivamente muda, para não gerar I/O a cada interação não relacionada na página (trocar
+um filtro, por exemplo).
+
+FAIXA DOS CAMPOS DE FRAÇÃO (pedido explícito do usuário, 22/09/2026): os campos numerador e
+denominador não têm mais `min_value`/`max_value` fixos em 1-12 — aquela faixa era uma suposição
+nossa (o exemplo "9/12" da planilha de referência), não uma regra confirmada com a PROPLAD. O
+único valor bloqueado é denominador = 0 (indefinido matematicamente — `Fraction` lançaria
+`ZeroDivisionError`), com aviso explícito em vez de deixar a página quebrar.
 """
 
 from __future__ import annotations
@@ -96,7 +111,8 @@ from src.importacao_execucao_mensal import Manifesto as ManifestoExecucaoMensal
 from src.importacao_execucao_mensal import NOME_PONTEIRO as PONTEIRO_EXECUCAO_MENSAL
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
 from src.limite_empenho import saldo_disponivel_a_empenhar
-from src.ui_theme import format_brl_compact, render_metric_grid, render_page_header
+from src.limite_empenho_preferencias import carregar_fracao_liberada, salvar_fracao_liberada
+from src.ui_theme import format_brl_compact, format_brl_full, render_metric_grid, render_page_header
 
 #: heurística de EXIBIÇÃO (não regra de negócio confirmada, ver docstring do módulo): abaixo
 #: desta fração do limite liberado, um saldo ainda positivo aparece como "Saldo baixo" em vez
@@ -225,8 +241,8 @@ def _inject_css() -> None:
         .le-acao-subtotal {{ font-size: {dt.SIZE['micro']}; color: {dt.TEXT_MUTED}; white-space: nowrap; }}
         .le-table-head, .le-table-row {{
             display: grid;
-            grid-template-columns: minmax(70px, 0.6fr) minmax(200px, 2fr) 46px
-                minmax(90px, 0.9fr) minmax(90px, 0.9fr) minmax(90px, 0.9fr) minmax(90px, 0.9fr)
+            grid-template-columns: minmax(70px, 0.6fr) minmax(200px, 1.8fr) 46px
+                minmax(140px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr)
                 minmax(120px, 0.95fr);
             gap: {dt.SPACE['sm']}; align-items: center;
         }}
@@ -464,10 +480,10 @@ def _html_linha_ptres(row: pd.Series) -> str:
         f'<span class="le-table-ptres">{_esc(row["ptres"])}</span>'
         f'<span class="le-table-po"><span class="le-table-po-cod">{_esc(row["po_cod"])}</span> — {_esc(po_desc)}</span>'
         f'<span>{_esc(row["gnd_cod"])}</span>'
-        f'<span class="le-table-val">{format_brl_compact(row["dotacao_atualizada"])}</span>'
-        f'<span class="le-table-val">{format_brl_compact(row["empenhada"])}</span>'
-        f'<span class="le-table-val">{format_brl_compact(row["limite_liberado"])}</span>'
-        f'<span class="le-table-val{" le-negativo" if saldo_negativo else ""}">{format_brl_compact(row["saldo_disponivel"])}</span>'
+        f'<span class="le-table-val">{format_brl_full(row["dotacao_atualizada"])}</span>'
+        f'<span class="le-table-val">{format_brl_full(row["empenhada"])}</span>'
+        f'<span class="le-table-val">{format_brl_full(row["limite_liberado"])}</span>'
+        f'<span class="le-table-val{" le-negativo" if saldo_negativo else ""}">{format_brl_full(row["saldo_disponivel"])}</span>'
         f'<span><span class="le-badge {classe_situacao}">{texto_situacao}</span></span>'
         "</div>"
     )
@@ -480,8 +496,8 @@ def _html_bloco_acao(acao_cod: object, acao_desc: object, dados_acao: pd.DataFra
     cabecalho_acao = (
         '<div class="le-acao-head">'
         f'<span class="le-acao-title">{_esc(acao_cod)} — {_esc(descricao)}</span>'
-        f'<span class="le-acao-subtotal">Limite {format_brl_compact(totais["limite_liberado"])} · '
-        f'Saldo <span class="{"le-negativo" if saldo_negativo else ""}">{format_brl_compact(totais["saldo_disponivel"])}</span></span>'
+        f'<span class="le-acao-subtotal">Limite {format_brl_full(totais["limite_liberado"])} · '
+        f'Saldo <span class="{"le-negativo" if saldo_negativo else ""}">{format_brl_full(totais["saldo_disponivel"])}</span></span>'
         "</div>"
     )
     ordenado = dados_acao.sort_values("saldo_disponivel", ascending=True, na_position="last", kind="stable")
@@ -497,10 +513,10 @@ def _html_bloco_iduso(iduso_cod: object, iduso_desc: object, dados_iduso: pd.Dat
         '<div class="le-iduso-head">'
         f'<div class="le-iduso-title">IDUSO {_esc(iduso_cod)} — {_esc(descricao)}</div>'
         '<div class="le-iduso-stats">'
-        f'<span>Dotação <strong>{format_brl_compact(totais["dotacao_atualizada"])}</strong></span>'
-        f'<span>Empenhado <strong>{format_brl_compact(totais["empenhada"])}</strong></span>'
-        f'<span>Limite compartilhado <strong>{format_brl_compact(totais["limite_liberado"])}</strong></span>'
-        f'<span>Saldo compartilhado <strong class="{"le-negativo" if saldo_negativo else ""}">{format_brl_compact(totais["saldo_disponivel"])}</strong></span>'
+        f'<span>Dotação <strong>{format_brl_full(totais["dotacao_atualizada"])}</strong></span>'
+        f'<span>Empenhado <strong>{format_brl_full(totais["empenhada"])}</strong></span>'
+        f'<span>Limite compartilhado <strong>{format_brl_full(totais["limite_liberado"])}</strong></span>'
+        f'<span>Saldo compartilhado <strong class="{"le-negativo" if saldo_negativo else ""}">{format_brl_full(totais["saldo_disponivel"])}</strong></span>'
         "</div></div>"
     )
 
@@ -602,30 +618,63 @@ with col_exercicio:
         unsafe_allow_html=True,
     )
 
+# Lida do disco só na primeira renderização desta sessão (não a cada rerun) — depois disso
+# `st.session_state`, via `key=`, é quem manda, exatamente como no resto da página. Isso é o
+# que faz a fração sobreviver a um F5 (que cria uma sessão nova, sem essas chaves ainda): sem
+# isso no session_state, os widgets abaixo cairiam no padrão 12/12 outra vez.
+if "limite_empenho_numerador" not in st.session_state:
+    fracao_salva_em_disco = carregar_fracao_liberada()
+    st.session_state["limite_empenho_numerador"] = fracao_salva_em_disco[0] if fracao_salva_em_disco else 12
+    st.session_state["limite_empenho_denominador"] = fracao_salva_em_disco[1] if fracao_salva_em_disco else 12
+    st.session_state["_limite_empenho_fracao_gravada"] = fracao_salva_em_disco
+
 col_num, col_den = st.columns([1, 1])
 with col_num:
     # `value=` NÃO é passado de propósito: com `key=` sozinho, o Streamlit já persiste o
     # valor em `st.session_state["limite_empenho_numerador"]` sozinho, usando `value` só na
-    # primeira renderização (quando a chave ainda não existe). Passar
-    # `value=st.session_state.get(chave, 12)` JUNTO com `key=` (bug relatado pelo usuário,
-    # 22/09/2026: "o campo não guarda o dado após atualização") faz o Streamlit reavaliar
-    # `value` a cada rerun a partir do próprio session_state — se outro widget da página
-    # disparar um rerun antes do número digitado ser "confirmado" (Enter/Tab), o valor em
-    # edição podia ser sobrescrito de volta pelo `value` reavaliado. Mesmo padrão corrigido
-    # abaixo, no denominador.
+    # primeira renderização (quando a chave ainda não existe — e aqui ela já foi semeada
+    # acima, a partir do disco). Passar `value=st.session_state.get(chave, 12)` JUNTO com
+    # `key=` (bug relatado pelo usuário, 22/09/2026: "o campo não guarda o dado após
+    # atualização") faz o Streamlit reavaliar `value` a cada rerun a partir do próprio
+    # session_state — se outro widget da página disparar um rerun antes do número digitado
+    # ser "confirmado" (Enter/Tab), o valor em edição podia ser sobrescrito de volta pelo
+    # `value` reavaliado. Mesmo padrão corrigido abaixo, no denominador.
     numerador = st.number_input(
-        "Fração liberada — numerador", min_value=1, max_value=12, value=12, step=1,
+        # Sem min_value/max_value de propósito (pedido explícito do usuário, 22/09/2026): a
+        # PROPLAD não está necessariamente presa a uma escala "de 1 a 12" — o limite antigo de
+        # 1-12 era uma suposição nossa, não uma regra confirmada. O único valor que quebraria a
+        # conta (denominador = 0) é bloqueado abaixo, depois dos dois campos, com aviso
+        # explícito em vez de deixar a página quebrar com ZeroDivisionError.
+        "Fração liberada — numerador", value=12, step=1,
         key="limite_empenho_numerador",
         help='A fração que a PROPLAD comunica a cada liberação de cota (ex.: "9/12"). '
-        "Nunca é calculada por este sistema — atualize aqui quando chegar uma nova liberação.",
+        "Nunca é calculada por este sistema — atualize aqui quando chegar uma nova liberação. "
+        "Fica salva em disco, sobrevive a uma atualização de página. Sem faixa fixa — aceita "
+        "qualquer valor.",
     )
 with col_den:
     denominador = st.number_input(
-        "Fração liberada — denominador", min_value=1, max_value=12, value=12, step=1,
+        "Fração liberada — denominador", value=12, step=1,
         key="limite_empenho_denominador",
     )
+
+if denominador == 0:
+    st.error(
+        "O denominador da fração não pode ser zero — não dá pra calcular Limite/Saldo com "
+        "isso. Ajuste o valor acima antes de continuar."
+    )
+    st.stop()
 if numerador > denominador:
     st.warning('O numerador da fração é maior que o denominador (ex.: "13/12") — confira os valores.')
+if numerador < 0 or denominador < 0:
+    st.warning("Fração com valor negativo — confira se é isso mesmo que a PROPLAD comunicou.")
+
+# Só grava em disco quando o valor efetivamente muda (comparado ao que já está persistido) —
+# evita escrever a cada rerun disparado por algo sem relação (trocar um filtro, por exemplo).
+_fracao_atual = (int(numerador), int(denominador))
+if _fracao_atual != st.session_state.get("_limite_empenho_fracao_gravada"):
+    salvar_fracao_liberada(*_fracao_atual)
+    st.session_state["_limite_empenho_fracao_gravada"] = _fracao_atual
 
 fracao = Fraction(int(numerador), int(denominador))
 resultado = saldo_disponivel_a_empenhar(dotacao, execucao_mensal, int(ano), fracao)

@@ -55,6 +55,12 @@ data/contratos_continuos/*
 data/teds/*
 !data/teds/.gitkeep
 
+# Fracao liberada do Limite de Empenho, editada manualmente pelo usuario e persistida em
+# disco a pedido dele (mesmo motivo de data/demandas/ acima) — ver
+# src/limite_empenho_preferencias.py.
+data/limite_empenho/*
+!data/limite_empenho/.gitkeep
+
 # Sistema operacional
 .DS_Store
 Thumbs.db
