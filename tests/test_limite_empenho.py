@@ -17,6 +17,7 @@ from src.limite_empenho import (
     FONTE_LIVRE_UNIAO,
     GND_PESSOAL,
     RESULTADO_PRIMARIO_EMENDA,
+    RESULTADO_PRIMARIO_OBRIGATORIO,
     saldo_disponivel_a_empenhar,
 )
 
@@ -172,6 +173,20 @@ class SaldoDisponivelAEmpenharTests(unittest.TestCase):
         resultado = saldo_disponivel_a_empenhar(dotacao, execucao, 2026, Fraction(9, 12))
         self.assertTrue(resultado.empty)
 
+    def test_exclui_primario_obrigatorio_resultado_primario_1(self):
+        # pedido explicito do usuario (22/09/2026), confirmado apos a extracao real revelar
+        # linhas RP1 ("PRIMARIO OBRIGATORIO") nesta ferramenta "Discricionaria" — inconsistente
+        # com o proprio escopo da pagina, ver docstring de src/limite_empenho.py.
+        dotacao = pd.DataFrame(
+            [_linha_dotacao("100012", "dotacao_atualizada", 1000.0, resultado_primario_codigo=RESULTADO_PRIMARIO_OBRIGATORIO)]
+        )
+        execucao = pd.DataFrame(
+            [_linha_execucao("NE012", "100012", 202601, 500.0, resultado_primario_cod=RESULTADO_PRIMARIO_OBRIGATORIO)]
+        )
+
+        resultado = saldo_disponivel_a_empenhar(dotacao, execucao, 2026, Fraction(9, 12))
+        self.assertTrue(resultado.empty)
+
     def test_exclui_fonte_diferente_de_recursos_livres_da_uniao(self):
         # fonte detalhada "1050000000" -> digitos 1:4 = "050", nao "000".
         dotacao = pd.DataFrame([_linha_dotacao("100006", "dotacao_atualizada", 1000.0, fonte_recursos_detalhada_codigo="1050000000")])
@@ -221,6 +236,7 @@ class SaldoDisponivelAEmpenharTests(unittest.TestCase):
     def test_constantes_de_escopo(self):
         self.assertEqual(GND_PESSOAL, "1")
         self.assertEqual(RESULTADO_PRIMARIO_EMENDA, "6")
+        self.assertEqual(RESULTADO_PRIMARIO_OBRIGATORIO, "1")
         self.assertEqual(FONTE_LIVRE_UNIAO, "000")
 
 

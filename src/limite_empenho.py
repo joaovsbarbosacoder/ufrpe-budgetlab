@@ -19,6 +19,13 @@ uma regra derivável sozinha dos dados; mudar isso exige nova confirmação):
   - Exclui despesas de pessoal: Grupo de Despesa (GND) = 1.
   - Exclui emendas parlamentares: Resultado Primário = 6 (mesmo código de
     `src.alertas_gerenciais.RP_EMENDA_COM_DOTACAO`).
+  - Exclui Resultado Primário = 1 ("PRIMARIO OBRIGATORIO") — pedido explícito do usuário
+    (22/09/2026), confirmado via pergunta direta depois que a extração real revelou 7 das 29
+    linhas com esse código: incluir despesa OBRIGATÓRIA numa ferramenta cujo próprio nome é
+    "Discricionário" era inconsistente. Só Resultado Primário = 2 ("PRIMARIO DISCRICIONARIO")
+    permanece no escopo (nenhum outro código apareceu nos dados reais até agora, mas o filtro
+    é por exclusão dos códigos 1 e 6, não por uma lista fechada de "só 2" — se a PROPLAD um dia
+    lançar outro código discricionário, ele continua aparecendo aqui).
   - Só Fonte de Recursos "000" (RECURSOS LIVRES DA UNIÃO). A Dotação Anual só tem a Fonte
     DETALHADA (10 dígitos, ex. "1000000000"), não a curta usada na Execução — o usuário
     confirmou que o 1º dígito da fonte detalhada indica o exercício (corrente/anterior) e os
@@ -63,6 +70,10 @@ GND_PESSOAL = "1"
 #: caractere é mais simples que criar uma dependência cruzada entre duas regras de negócio
 #: independentes que só coincidem em usar o mesmo código).
 RESULTADO_PRIMARIO_EMENDA = "6"
+
+#: código do Resultado Primário "PRIMARIO OBRIGATORIO" — excluído do escopo discricionário
+#: (pedido explícito do usuário, 22/09/2026, ver docstring do módulo).
+RESULTADO_PRIMARIO_OBRIGATORIO = "1"
 
 #: Fonte de Recursos "RECURSOS LIVRES DA UNIÃO" — código curto (Execução) e os 3 dígitos
 #: centrais equivalentes dentro da Fonte Detalhada (Dotação), ver docstring do módulo.
@@ -117,6 +128,7 @@ def _dotacao_atualizada_no_escopo(dotacao: pd.DataFrame, ano: int) -> pd.DataFra
         (dotacao["ano_lancamento"] == ano)
         & (dotacao["grupo_despesa_codigo"] != GND_PESSOAL)
         & (dotacao["resultado_primario_codigo"] != RESULTADO_PRIMARIO_EMENDA)
+        & (dotacao["resultado_primario_codigo"] != RESULTADO_PRIMARIO_OBRIGATORIO)
         & (fonte_curta == FONTE_LIVRE_UNIAO)
     ]
 
@@ -137,6 +149,7 @@ def _empenhado_no_escopo(execucao_mensal: pd.DataFrame, ano: int) -> pd.DataFram
     no_escopo = dedup.loc[
         (dedup["gnd_cod"] != GND_PESSOAL)
         & (dedup["resultado_primario_cod"] != RESULTADO_PRIMARIO_EMENDA)
+        & (dedup["resultado_primario_cod"] != RESULTADO_PRIMARIO_OBRIGATORIO)
         & (dedup["fonte_cod"] == FONTE_LIVRE_UNIAO)
     ]
 
