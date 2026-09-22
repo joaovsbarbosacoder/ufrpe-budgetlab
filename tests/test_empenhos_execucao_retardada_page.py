@@ -1,10 +1,19 @@
-"""Testes da página Empenhos com Execução Retardada.
+"""Testes da página Empenhos com Execução Retardada, com fixture congelada da Execução Mensal.
 
-Espelha `test_consulta_empenhos_page.py`/`test_execucao_orcamentaria_page.py`: usa a extração
-real apontada pelo manifesto atual, sem fixtures sintéticas — pulado se esse manifesto não
-existir. Cobre as regras descritas na docstring de `app_pages/empenhos_execucao_retardada.py`:
-exercício vigente pré-selecionado, os dois cortes de destaque (R$ e %, independentes,
-combinados com OU quando ambos ligados), aviso quando nenhum corte está ligado, e busca livre.
+Migrada em 22/09/2026 (pedido explícito: "os filtros da seção consulta de empenho sejam
+replicados na seção execução retardada") junto com a própria página — de leitura direta do
+manifesto real da Execução Anual para o mesmo padrão de mock já usado em
+`test_consulta_empenhos_page.py`: a página lê `Manifesto.atual()`/`carregar_atual()` de
+`src.importacao_execucao_mensal`, a suíte mocka essas duas funções (não a página em si, ver
+docstring de `test_consulta_empenhos_page.py` para o motivo) contra a MESMA fixture congelada
+(`tests/fixtures/execucao_mensal_2026-09-21.xlsx`) que aquela página já usa — não depende de
+nenhum manifesto real em `data/manifestos/`, nem de a extração real estar disponível/atualizada
+no ambiente de teste.
+
+Cobre as regras descritas na docstring de `app_pages/empenhos_execucao_retardada.py`: exercício
+vigente pré-selecionado, os dois cortes de destaque (R$ e %, independentes, combinados com OU
+quando ambos ligados), aviso quando nenhum corte está ligado, busca livre, e os 2 filtros
+avançados que só existem na Execução Mensal (paridade com Consulta de Empenhos).
 """
 
 from __future__ import annotations
@@ -12,17 +21,37 @@ from __future__ import annotations
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
-from src.importacao_execucao import Manifesto
+from src.importacao_execucao_mensal import gerar_manifesto
+from src.tesouro_execucao_mensal import ler_execucao_mensal
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MANIFESTO_ATUAL = Path("data/manifestos/execucao_anual_atual.json")
+CAMINHO_FIXTURE = PROJECT_ROOT / "tests/fixtures/execucao_mensal_2026-09-21.xlsx"
 
 
-@unittest.skipUnless(MANIFESTO_ATUAL.exists(), f"Manifesto ausente em {MANIFESTO_ATUAL}")
 class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.dataframe = ler_execucao_mensal(CAMINHO_FIXTURE)
+        cls.manifesto = gerar_manifesto(cls.dataframe, CAMINHO_FIXTURE)
+
+    def setUp(self) -> None:
+        self._patch_manifesto = patch(
+            "src.importacao_execucao_mensal.Manifesto.atual", return_value=self.manifesto
+        )
+        self._patch_carregar = patch(
+            "src.importacao_execucao_mensal.carregar_atual", return_value=self.dataframe.copy()
+        )
+        self._patch_manifesto.start()
+        self._patch_carregar.start()
+
+    def tearDown(self) -> None:
+        self._patch_carregar.stop()
+        self._patch_manifesto.stop()
+
     def _open_page(self) -> AppTest:
         app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
         app.run()
@@ -40,14 +69,12 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
 
     def test_shows_procedencia_footer_with_manifest_hash(self) -> None:
         app = self._open_page()
-        manifesto = Manifesto.atual()
 
-        self.assertTrue(any(f"hash {manifesto.sha256[:8]}" in item.value for item in app.caption))
+        self.assertTrue(any(f"hash {self.manifesto.sha256[:8]}" in item.value for item in app.caption))
 
     def test_exercicio_vigente_pre_selecionado(self) -> None:
         app = self._open_page()
-        manifesto = Manifesto.atual()
-        ano_extracao = datetime.fromisoformat(manifesto.data_extracao).year
+        ano_extracao = datetime.fromisoformat(self.manifesto.data_extracao).year
 
         filtro_ano = next(m for m in app.multiselect if m.label == "Exercício")
         self.assertEqual(filtro_ano.value, [str(ano_extracao)])
@@ -99,8 +126,8 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
         # mesmo bug relatado e corrigido em consulta_empenhos.py (mesmo mecanismo de filtro
         # aqui, ver src/ui_filtros_execucao.py) — os filtros ofereciam atributos de NEs fora
         # da busca. "informatica", dentro do exercício vigente pré-selecionado (2026, ver
-        # `ano_extracao`), bate numa única "Ação de Governo" (conferido contra a extração
-        # real, 15/08/2026): "FUNCIONAMENTO DE INSTITUICOES FEDERAIS DE ENSINO SUPERIOR".
+        # `ano_extracao`), bate numa única "Ação de Governo" nesta fixture:
+        # "FUNCIONAMENTO DE INSTITUICOES FEDERAIS DE ENSINO SUPERIOR".
         app = self._open_page()
         busca = next(t for t in app.text_input if t.label == "Busca livre")
         busca.set_value("informatica")
@@ -110,6 +137,18 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
         acao_filter = next(m for m in app.multiselect if m.label == "Ação de Governo")
         self.assertEqual(len(acao_filter.options), 1)
         self.assertTrue(any("FUNCIONAMENTO DE INSTITUICOES FEDERAIS DE ENSINO SUPERIOR" in o for o in acao_filter.options))
+
+    def test_filtros_avancados_incluem_as_2_dimensoes_exclusivas_da_execucao_mensal(self) -> None:
+        # Paridade com Consulta de Empenhos (pedido explícito, 22/09/2026): os 13 avançados
+        # compartilhados (`src/ui_filtros_execucao.py`) mais estas 2, exclusivas desta base —
+        # ver `_CAMPO_NE_INFORMACAO_COMPLEMENTAR`/`_CAMPO_UNIDADE_ORCAMENTARIA` na página.
+        app = self._open_page()
+
+        self.assertEqual(len(app.exception), 0)
+        rotulos = {m.label for m in app.multiselect}
+        self.assertIn("NE - Informação Complementar", rotulos)
+        self.assertIn("Unidade Orçamentária", rotulos)
+        self.assertTrue(any("15 atributos cruzados" in item.value for item in app.caption))
 
 
 if __name__ == "__main__":

@@ -125,11 +125,16 @@ Ordem vertical de renderização. "N cols" indica quantas colunas a linha usa. B
 - Caption (rodapé): procedência
 
 ### 2.6 Empenhos com Execução Retardada (`empenhos_execucao_retardada.py`)
+- Fonte de dados: Execução Mensal (`src/tesouro_execucao_mensal.py`, BI CPOC), desde 22/09/2026
+  — antes lia da Execução Anual; migrada para replicar os mesmos filtros de Consulta de
+  Empenhos (só cobre 2024 em diante)
 - Header
 - Linha de ação (`st.columns([1,4])`): botão "Limpar filtros"
 - Linha de busca (`st.columns([2,1,1,1,1])`): mesmo padrão de Consulta de Empenhos (campo
   compartilhado `src/ui_filtros_execucao.py`)
-- `st.expander` — "Filtros por atributo" (12 campos)
+- `st.expander` — "Filtros por atributo" (15 campos: 13 compartilhados com Consulta de
+  Empenhos + 2 exclusivos da Execução Mensal — NE - Informação Complementar, Unidade
+  Orçamentária)
 - Dois cortes de sensibilidade (`st.columns(2)`), cada um `st.columns([3,1], vertical_alignment="bottom")`:
   valor mínimo (R$) + toggle de percentual mínimo
 - Faixa de KPIs (`st.columns(4)`, `st.metric`)
@@ -761,7 +766,7 @@ interatividade de tabela "rica" (seleção, grupo, expansão) é construída à 
 Colunas exatas (nome interno, em `snake_case`) e 2 linhas reais (dados públicos de execução
 orçamentária, extração de 26/08/2026) para as bases principais.
 
-### 7.1 Execução Anual — agregado por NE (`agregar_por_ne` + `saldo_por_ne`, usado em Execução Orçamentária, Consulta de Empenhos, Empenhos com Execução Retardada)
+### 7.1 Execução Anual — agregado por NE (`agregar_por_ne` + `saldo_por_ne`, usado em Execução Orçamentária; `saldo_por_ne`/`detalhar_nota_empenho` também reaproveitados, sem alteração, por Empenhos com Execução Retardada — que desde 22/09/2026 agrega pela Execução Mensal, mesmo contrato de colunas, não pela Execução Anual)
 
 Colunas: `ne_ccor, ano, iduso_cod, iduso_desc, resultado_primario_cod, resultado_primario_desc, categoria_economica_cod, categoria_economica_desc, acao_cod, acao_desc, elemento_cod, elemento_desc, fonte_cod, fonte_desc, gnd_cod, gnd_desc, natureza_despesa_cod, natureza_despesa_desc, pi_cod, pi_desc, po_acao_cod, po_cod, po_desc, ptres, ug_executora_cod, ug_executora_desc, ug_responsavel_cod, ug_responsavel_desc, ugr_cod, ugr_desc, ne_favorecido, natureza_detalhada_label, subitem_resumo, empenhada, liquidada, paga, ne_descricao, processo_ne, saldo`
 

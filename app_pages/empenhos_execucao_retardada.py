@@ -1,16 +1,34 @@
 """Empenhos com Execução Retardada — NEs com saldo alto (empenhado sem liquidar), para
 priorizar a baixa/liquidação de empenhos represados.
 
-Esquema aprovado antes da implementação (ver histórico da conversa):
-  * Fonte: `src/execucao_anual.py::ler_execucao_anual`, a partir do `Manifesto.atual()` — a
-    mesma base já validada usada por Consulta de Empenhos, Contratos Contínuos e Bolsas. Não
-    tem manifesto/leitor próprios.
+FONTE DE DADOS (troca deliberada, 22/09/2026, pedido explícito: "os filtros da seção consulta
+de empenho sejam replicados na seção execução retardada"): esta página lia da Execução ANUAL
+(`src/execucao_anual.py::ler_execucao_anual`) — mesma base ainda usada por Contratos Contínuos
+e Bolsas. Passou a ler da Execução MENSAL (`src/tesouro_execucao_mensal.py`, BI CPOC), via
+`Manifesto.atual()`/`carregar_atual()` de `src/importacao_execucao_mensal.py` — mesma troca já
+feita em `app_pages/consulta_empenhos.py` em 21/09/2026, pelo mesmo motivo: só a base mensal
+tem as dimensões `NE - Informação Complementar`/`Unidade Orçamentária`
+(`_CAMPO_NE_INFORMACAO_COMPLEMENTAR`/`_CAMPO_UNIDADE_ORCAMENTARIA`, acrescentadas aos filtros
+avançados fora do módulo compartilhado, mesmo padrão de `consulta_empenhos.py` — ver comentário
+ao lado de `CAMPOS_AVANCADOS_PAGINA`), sem as quais não havia como replicar os mesmos filtros
+daquela página aqui. `agregar_por_ne()` (agora a versão de `src/tesouro_execucao_mensal.py`)
+tem o mesmo contrato de saída da versão antiga (mesmos nomes de coluna, inclusive
+`subitem_resumo`) — troca de fonte não exigiu reescrever o resto da página, só a
+leitura/gating/cache no rodapé do script e os 2 campos novos nos filtros avançados.
+`saldo_por_ne`/`detalhar_nota_empenho` continuam vindo de `src/execucao_anual.py` sem
+alteração: são genéricos (só dependem de `empenhada`/`liquidada`/`ne_ccor`/`linha_origem`),
+confirmado que a base mensal também tem essas colunas. Consequência aceita explicitamente
+(mesma de `consulta_empenhos.py`): a Execução Mensal só cobre 2024 em diante — 2023 não
+aparece mais nesta página até essa base ganhar uma importação cobrindo aquele exercício.
+Reimportar pela página "Atualizar Planilhas", card "Execução Mensal".
+
+Esquema aprovado antes da implementação original (ver histórico da conversa):
   * Exercício vigente pré-selecionado no filtro "Exercício", usando a MESMA convenção já
     estabelecida em `execucao_orcamentaria.py`/`dotacao_orcamentaria.py`/`painel_acoes.py`:
     `ano_extracao = datetime.fromisoformat(manifesto.data_extracao).year` (ano da data de
     extração do manifesto, não `datetime.now().year`). Só define o valor padrão na primeira
     renderização (`if chave not in st.session_state`) — depois disso o usuário troca livre.
-  * Filtro de escopo (busca + 4 rápidos + 12 avançados) — reaproveitado de
+  * Filtro de escopo (busca + 4 rápidos + 13+2 avançados) — reaproveitado de
     `src/ui_filtros_execucao.py` (extraído de `app_pages/consulta_empenhos.py` no mesmo
     trabalho que criou esta página), aplicado linha a linha ANTES de agregar por NE — mesma
     ordem de Consulta de Empenhos, pelo mesmo motivo (Natureza Detalhada/Subitem podem variar
@@ -44,8 +62,8 @@ Esquema aprovado antes da implementação (ver histórico da conversa):
   * Fora de escopo, por pedido explícito: nenhum cálculo de ritmo/atraso temporal (% liquidado
     vs. % do exercício decorrido).
 
-Não altera `src/execucao_anual.py`, os leitores de Contratos/Bolsas, nem a lógica de saldo já
-validada — só lê e reaproveita.
+Não altera `src/execucao_anual.py`, `src/tesouro_execucao_mensal.py`, os leitores de
+Contratos/Bolsas, nem a lógica de saldo já validada — só lê e reaproveita.
 """
 
 from __future__ import annotations
@@ -55,13 +73,14 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from src.execucao_anual import agregar_por_ne, detalhar_nota_empenho, saldo_por_ne
+from src.execucao_anual import detalhar_nota_empenho, saldo_por_ne
 from src.execucao_anual import ne_curta as _ne_curta_execucao
-from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
+from src.importacao_execucao_mensal import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
+from src.tesouro_execucao_mensal import agregar_por_ne
 from src.ui_filtros_execucao import (
     CAMPOS_AVANCADOS_EXECUCAO,
-    CAMPOS_EXECUCAO,
     CAMPOS_RAPIDOS_EXECUCAO,
+    CampoFiltro,
     apply_filters,
     limpar_filtros,
     render_filtros_avancados,
@@ -73,6 +92,26 @@ from src.ui_theme import render_metric_grid, render_page_header
 #: Consulta de Empenhos, para as duas páginas conviverem sem colidir chaves.
 _PREFIXO_FILTRO = "empenhos_retardada"
 
+# Pedido explícito (22/09/2026): paridade de filtros com `app_pages/consulta_empenhos.py`,
+# que desde 21/09/2026 lê da Execução MENSAL (ver import acima e docstring do módulo) e
+# acrescenta 2 dimensões avançadas que só existem naquela base (`ne_informacao_complementar`,
+# `unidade_orcamentaria_cod`/`_desc` — ausentes na Execução Anual, ver
+# `src/execucao_anual.py::_DIMENSOES_CONSTANTES_POR_NE`). Para replicar os mesmos filtros aqui,
+# esta página também passou a ler da Execução Mensal (mesma troca de fonte, mesmo contrato de
+# saída de `agregar_por_ne`/`saldo_por_ne`/`detalhar_nota_empenho`, que continuam genéricos o
+# bastante para reaproveitar de `src/execucao_anual.py` sem alteração — confirmado que a base
+# mensal também tem `linha_origem`/`tipo_linha`, ver `src/tesouro_execucao_mensal.py`).
+# Consequência aceita (mesma da Consulta de Empenhos): a Execução Mensal só cobre 2024 em
+# diante — 2023 deixa de aparecer nesta página.
+_CAMPO_NE_INFORMACAO_COMPLEMENTAR: CampoFiltro = (
+    "ne_informacao_complementar", "NE - Informação Complementar", "ne_informacao_complementar", None,
+)
+_CAMPO_UNIDADE_ORCAMENTARIA: CampoFiltro = (
+    "unidade_orcamentaria", "Unidade Orçamentária", "unidade_orcamentaria_cod", "unidade_orcamentaria_desc",
+)
+CAMPOS_AVANCADOS_PAGINA = CAMPOS_AVANCADOS_EXECUCAO + (_CAMPO_NE_INFORMACAO_COMPLEMENTAR, _CAMPO_UNIDADE_ORCAMENTARIA)
+CAMPOS_PAGINA = CAMPOS_RAPIDOS_EXECUCAO + CAMPOS_AVANCADOS_PAGINA
+
 CORTE_RS_PADRAO = 10_000.0
 CORTE_PCT_PADRAO = 20.0  # %
 
@@ -82,11 +121,13 @@ COLUNAS_BUSCA = [
 ]
 
 
-@st.cache_data(show_spinner="Lendo a base de Execução Anual...")
-def _cached_leitura(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
-    """`caminho_ponteiro`/`mtime_ponteiro` só participam da chave de cache — força reler
-    quando o manifesto atual mudar. O DataFrame devolvido já é a base composta por ano (ver
-    `importacao_execucao.carregar_atual`), não só o arquivo do manifesto atual."""
+@st.cache_data(show_spinner="Lendo a base de Execução Mensal...")
+def _cached_leitura(caminho_ponteiro: str, sha_manifesto: str) -> pd.DataFrame:
+    """`caminho_ponteiro`/`sha_manifesto` só participam da chave de cache — força reler
+    quando a extração atual mudar (mesmo padrão de
+    `consulta_empenhos.py::_cached_leitura`). O DataFrame devolvido já é a base composta por
+    ano (ver `importacao_execucao_mensal.carregar_atual`), não só o arquivo do manifesto
+    atual."""
 
     return carregar_atual()
 
@@ -159,10 +200,10 @@ def _abrir_detalhe(dataframe: pd.DataFrame, linha: pd.Series) -> None:
     """Todas as informações da NE clicada na tabela "Em destaque", num pop-up dentro da própria
     aba (pedido explícito — nem inline role-abaixo, nem aba/página separada). Mesmo conjunto de
     campos do painel de detalhe de `consulta_empenhos.py::_render_detalhe` (dimensões
-    constantes por NE, ver `execucao_anual.py::_DIMENSOES_CONSTANTES_POR_NE`), mesmo padrão de
-    `@st.dialog` já usado em `contratos_vigencia.py::_abrir_detalhe` — sem reaproveitar as
-    classes CSS `.ce-*` daquela página (específicas dela), só com os widgets nativos do
-    Streamlit."""
+    constantes por NE, ver `tesouro_execucao_mensal.py::_DIMENSOES_CONSTANTES_POR_NE`), mesmo
+    padrão de `@st.dialog` já usado em `contratos_vigencia.py::_abrir_detalhe` — sem
+    reaproveitar as classes CSS `.ce-*` daquela página (específicas dela), só com os widgets
+    nativos do Streamlit."""
 
     st.markdown(f"##### {_ne_exibicao(linha['ne_ccor'], linha['ano'])}")
     st.caption(_dash(linha["ne_favorecido"]))
@@ -222,16 +263,16 @@ render_page_header(
 manifesto = Manifesto.atual()
 if manifesto is None:
     st.info(
-        "Nenhuma base de Execução Anual foi importada ainda. Rode a importação inicial "
-        "(ver docs/base_execucao_anual.md) antes de usar esta página."
+        "Nenhuma base de Execução Mensal foi importada ainda. Envie a extração pela página "
+        '"Atualizar Planilhas", card "Execução Mensal", antes de usar esta página.'
     )
     st.stop()
 
 caminho_ponteiro = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO
 try:
-    dataframe = _cached_leitura(str(caminho_ponteiro), caminho_ponteiro.stat().st_mtime)
+    dataframe = _cached_leitura(str(caminho_ponteiro), manifesto.sha256)
 except Exception as error:
-    st.error(f"Não foi possível ler a base de Execução Anual: {error}")
+    st.error(f"Não foi possível ler a base de Execução Mensal: {error}")
     st.stop()
 
 source_key = manifesto.sha256[:12]
@@ -272,7 +313,7 @@ with st.container(border=True, key="er_filter_panel"):
     selections = render_filtros_rapidos(
         dataframe_buscado,
         CAMPOS_RAPIDOS_EXECUCAO,
-        CAMPOS_EXECUCAO,
+        CAMPOS_PAGINA,
         _PREFIXO_FILTRO,
         source_key,
         list(filter_columns[1:]),
@@ -280,11 +321,11 @@ with st.container(border=True, key="er_filter_panel"):
     advanced_column, clear_column = st.columns([5, 1], vertical_alignment="top")
     with advanced_column:
         with st.expander("Filtros avançados"):
-            st.caption("12 atributos cruzados; combinações sem registro não aparecem nas listas.")
+            st.caption(f"{len(CAMPOS_AVANCADOS_PAGINA)} atributos cruzados; combinações sem registro não aparecem nas listas.")
             render_filtros_avancados(
                 dataframe_buscado,
-                CAMPOS_AVANCADOS_EXECUCAO,
-                CAMPOS_EXECUCAO,
+                CAMPOS_AVANCADOS_PAGINA,
+                CAMPOS_PAGINA,
                 _PREFIXO_FILTRO,
                 source_key,
                 selections,
@@ -295,10 +336,10 @@ with st.container(border=True, key="er_filter_panel"):
             key=f"{_PREFIXO_FILTRO}_limpar_{source_key}",
             use_container_width=True,
         ):
-            limpar_filtros(CAMPOS_EXECUCAO, _PREFIXO_FILTRO, source_key)
+            limpar_filtros(CAMPOS_PAGINA, _PREFIXO_FILTRO, source_key)
             st.rerun()
 
-filtrado = apply_filters(dataframe_buscado, CAMPOS_EXECUCAO, selections)
+filtrado = apply_filters(dataframe_buscado, CAMPOS_PAGINA, selections)
 if filtrado.empty:
     st.warning("Nenhum registro corresponde à combinação de filtros selecionada.")
     st.stop()
