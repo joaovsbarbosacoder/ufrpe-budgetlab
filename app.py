@@ -42,6 +42,11 @@ page = st.navigation(
                 icon="🟪",
             ),
             st.Page(
+                "app_pages/limite_empenho.py",
+                title="Limite de Empenho",
+                icon="🧮",
+            ),
+            st.Page(
                 "app_pages/execucao_orcamentaria.py",
                 title="Execução Orçamentária",
                 icon="💳",

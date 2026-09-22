@@ -329,6 +329,10 @@ _DIMENSOES_EXTRA_BLOCO = {
     "fonte_cod": "fonte_cod", "fonte_desc": "fonte_desc",
     "acao_cod": "acao_cod", "acao_desc": "acao_desc",
     "ugr_cod": "ugr_cod", "ugr_desc": "ugr_desc",
+    "ptres": "ptres",
+    "po_cod": "po_cod", "po_desc": "po_desc",
+    "resultado_primario_cod": "resultado_primario_cod", "resultado_primario_desc": "resultado_primario_desc",
+    "iduso_cod": "iduso_cod", "iduso_desc": "iduso_desc",
 }
 
 
