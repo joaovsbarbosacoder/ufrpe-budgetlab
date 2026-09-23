@@ -147,56 +147,75 @@ def _renderiza_conteudo(tipo_id: str, processo_key: str = "teste") -> AppTest:
 
 
 class TestGradeFeitaAMao(unittest.TestCase):
-    """Grade de edição feita à mão (`st.columns` + `st.number_input`, uma célula por widget)
-    que substituiu o `st.data_editor` — ver docstring do módulo sobre o motivo. Testada aqui
-    de verdade (com interação simulada, não só presença de widgets), coisa que o
-    `st.data_editor` antigo nunca teve (bloqueado pela limitação de `AppTest` com dialogs)."""
+    """Grade de edição feita à mão (`st.columns` + `st.text_input` mascarado em pt-BR, uma
+    célula por widget) que substituiu o `st.data_editor` — ver docstring do módulo sobre o
+    motivo (e sobre a troca de `number_input` por `text_input`, pra ganhar pontuação de milhar,
+    pedido explícito). Testada aqui de verdade (com interação simulada, não só presença de
+    widgets), coisa que o `st.data_editor` antigo nunca teve (bloqueado pela limitação de
+    `AppTest` com dialogs)."""
 
     def test_reforco_sugere_valor_inicial_a_partir_de_meses_sugeridos(self) -> None:
         app = _renderiza_conteudo("reforco")
 
         self.assertEqual(len(app.exception), 0)
-        meses = [ni for ni in app.number_input if ni.label == "Meses a Empenhar"]
+        meses = [ti for ti in app.text_input if ti.label == "Meses a Empenhar"]
         self.assertEqual(len(meses), 2)
-        self.assertAlmostEqual(meses[0].value, 0.9, places=2)
+        self.assertEqual(meses[0].value, "0,90")
 
     def test_anulacao_comeca_zerada(self) -> None:
         app = _renderiza_conteudo("anulacao")
 
         self.assertEqual(len(app.exception), 0)
-        meses = [ni for ni in app.number_input if ni.label == "Meses a Anular"]
-        valores = [ni for ni in app.number_input if ni.label == "ANULAR (R$)"]
-        self.assertTrue(all(m.value == 0.0 for m in meses))
-        self.assertTrue(all(v.value == 0.0 for v in valores))
+        meses = [ti for ti in app.text_input if ti.label == "Meses a Anular"]
+        valores = [ti for ti in app.text_input if ti.label == "ANULAR (R$)"]
+        self.assertTrue(all(m.value == "0,00" for m in meses))
+        self.assertTrue(all(v.value == "0,00" for v in valores))
         self.assertEqual(app.metric[0].value, "R$ 0,00")
 
     def test_editar_meses_recalcula_valor_sem_atraso(self) -> None:
         app = _renderiza_conteudo("anulacao")
-        meses = [ni for ni in app.number_input if ni.label == "Meses a Anular"]
-        meses[0].set_value(2.0).run()
+        meses = [ti for ti in app.text_input if ti.label == "Meses a Anular"]
+        meses[0].set_value("2").run()
 
         self.assertEqual(len(app.exception), 0)
-        valores = [ni for ni in app.number_input if ni.label == "ANULAR (R$)"]
-        # valor_mensal da linha 0 no fixture sintético é 15750.0 -> 2 meses = 31500.0
-        self.assertAlmostEqual(valores[0].value, 31500.0, places=2)
+        valores = [ti for ti in app.text_input if ti.label == "ANULAR (R$)"]
+        # valor_mensal da linha 0 no fixture sintético é 15750.0 -> 2 meses = 31500.0, com
+        # pontuação de milhar (pedido explícito) já aplicada no próprio campo.
+        self.assertEqual(valores[0].value, "31.500,00")
         self.assertEqual(app.metric[0].value, "R$ 31.500,00")
+        # "Meses" também reformata (pedido explícito: pontuação correta nas duas colunas).
+        meses2 = [ti for ti in app.text_input if ti.label == "Meses a Anular"]
+        self.assertEqual(meses2[0].value, "2,00")
 
     def test_editar_valor_direto_nao_mexe_em_meses_e_persiste(self) -> None:
         app = _renderiza_conteudo("anulacao")
-        valores = [ni for ni in app.number_input if ni.label == "ANULAR (R$)"]
-        valores[1].set_value(999.0).run()
+        valores = [ti for ti in app.text_input if ti.label == "ANULAR (R$)"]
+        valores[1].set_value("999").run()
 
         self.assertEqual(len(app.exception), 0)
-        meses = [ni for ni in app.number_input if ni.label == "Meses a Anular"]
-        valores2 = [ni for ni in app.number_input if ni.label == "ANULAR (R$)"]
-        self.assertEqual(meses[1].value, 0.0)
-        self.assertAlmostEqual(valores2[1].value, 999.0, places=2)
+        meses = [ti for ti in app.text_input if ti.label == "Meses a Anular"]
+        valores2 = [ti for ti in app.text_input if ti.label == "ANULAR (R$)"]
+        self.assertEqual(meses[1].value, "0,00")
+        self.assertEqual(valores2[1].value, "999,00")
 
         # editar "Meses" de novo na MESMA linha ainda sobrescreve o valor digitado direto.
-        meses[1].set_value(1.0).run()
-        valores3 = [ni for ni in app.number_input if ni.label == "ANULAR (R$)"]
+        meses[1].set_value("1").run()
+        valores3 = [ti for ti in app.text_input if ti.label == "ANULAR (R$)"]
         # valor_mensal da linha 1 no fixture sintético é 2500.0
-        self.assertAlmostEqual(valores3[1].value, 2500.0, places=2)
+        self.assertEqual(valores3[1].value, "2.500,00")
+
+    def test_editar_valor_direto_aplica_pontuacao_de_milhar(self) -> None:
+        """Pedido explícito: pontuação correta também quando o valor é digitado direto (não só
+        quando vem do recálculo por "Meses") — "123456,7" (sem separador de milhar, como
+        alguém digitaria de corrido) vira "123.456,70" assim que o campo perde o foco."""
+
+        app = _renderiza_conteudo("anulacao")
+        valores = [ti for ti in app.text_input if ti.label == "ANULAR (R$)"]
+        valores[0].set_value("123456,7").run()
+
+        self.assertEqual(len(app.exception), 0)
+        valores2 = [ti for ti in app.text_input if ti.label == "ANULAR (R$)"]
+        self.assertEqual(valores2[0].value, "123.456,70")
 
 
 if __name__ == "__main__":

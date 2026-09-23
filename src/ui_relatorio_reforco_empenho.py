@@ -15,9 +15,11 @@ botão levar adiante, com a variável local já atualizada no mesmo run (sem exi
 clique).
 
 Uma tabela só por relatório (pedido explícito — nada de tabela de referência + tabela de
-edição separadas): Item de Despesa / Empenho (só leitura) e Meses a Empenhar|Anular / Rótulo
-de valor (R$) (as duas editáveis, pedido explícito — as duas são campos personalizáveis, não
-só "Meses"). GRADE FEITA À MÃO (`st.columns` + `st.number_input` por linha, uma linha do
+edição separadas): Item de Despesa / Empenho / Valor Mensal / Saldo (só leitura, as duas
+últimas evidenciando o valor mensal da despesa e o saldo do empenho — pedido explícito,
+válido para Reforço e Anulação) e Meses a Empenhar|Anular / Rótulo de valor (R$) (as duas
+editáveis, pedido explícito — as duas são campos personalizáveis, não só "Meses"). GRADE FEITA
+À MÃO (`st.columns` + `st.text_input` mascarado por linha, ver mais abaixo — uma linha do
 `st.dialog` por vez) — NÃO `st.data_editor` (bug real visto em produção, corrigido: a grade
 nativa ficava permanentemente em branco no navegador dentro deste `st.dialog`, sem exceção
 nenhuma e com o dado certo confirmado chegando até o front-end — ver `_render_conteudo_relatorio`
@@ -28,7 +30,7 @@ Regra de prioridade entre as duas colunas editáveis (pedido explícito): editar
 meses SEMPRE recalcula a coluna de valor (= meses × valor mensal da linha), mesmo que a
 célula já tivesse um valor digitado à mão antes — a edição de meses vence. Editar o valor
 direto fica valendo como está (sem alterar a coluna de meses) até a próxima vez que a coluna
-de meses for editada nessa mesma linha. Implementado com `on_change` no `st.number_input` de
+de meses for editada nessa mesma linha. Implementado com `on_change` no `st.text_input` de
 meses (`_recalcular_valor_por_meses`) — roda ANTES do script recomeçar do topo, então o campo
 de valor já nasce com o número recalculado na mesma execução (sem o atraso de um rerun que um
 recálculo feito só depois de desenhar os dois widgets teria).
@@ -50,11 +52,20 @@ que abre o pop-up é clicado — único jeito de "reabrir" (`st.dialog` não avi
 fechado), então limpar no clique do botão equivale a limpar no fechamento anterior; reabrir
 sempre volta à tela de escolha do relatório.
 
-SEM PONTUAÇÃO DE MILHAR nas colunas editáveis (`st.number_input` não formata o valor exibido
-com separador nenhum, "94500.00") — só leitura consegue o pt-BR completo de `format_brl_full`
-("1.234,57"), usado no `st.metric` de total abaixo da grade. Mesma limitação que o
-`st.data_editor` já tinha (nem "1,234.57" americano, nem "1.234,57" pt-BR, dentro da própria
-célula editável).
+PONTUAÇÃO PT-BR NAS DUAS COLUNAS EDITÁVEIS (pedido explícito, corrige limitação documentada
+antes aqui): `st.number_input` não formata com separador de milhar de jeito nenhum (nem
+"1,234.57" americano, nem "1.234,57" pt-BR — mesma limitação que o `st.data_editor` já tinha).
+Por isso "Meses a Empenhar/Anular" e "Empenhar/Anular (R$)" viraram `st.text_input` com máscara
+manual: a própria key do widget guarda o TEXTO já formatado ("1.234,57"), não o float — reformata
+no `on_change` (`_recalcular_valor_por_meses`/`_reformatar_valor`), e o valor numérico só é
+extraído de volta (`_parse_valor_brl`) na hora de usar (recálculo, soma do total, `linhas_finais`
+pro PDF). Perde os botões de incremento (+/-) do `number_input`, aceito como troca pela
+pontuação correta. `_parse_valor_brl` tolera tanto "94.500,00" (pt-BR) quanto "94500,00"/"94500"
+quanto "94500.00" (americano, sem vírgula nenhuma) — sem vírgula, o ponto NUNCA é tratado como
+milhar sozinho (evita multiplicar por 1000 sem querer); "94.500" digitado à mão SEM vírgula
+(pt-BR "noventa e quatro mil" sem centavos) é a única ambiguidade genuína que sobra — vira 94,5,
+não 94500 — mas ela nunca sobrevive a um primeiro `on_change` (a formatação de volta sempre
+inclui vírgula), então só existe no instante entre digitar e sair do campo.
 
 Contrato público:
     render_botao_relatorio(df, spec, chave, ano_referencia) -> None
@@ -80,21 +91,63 @@ from src.ui_theme import format_brl_full
 
 _TIPOS = (TIPO_REFORCO, TIPO_ANULACAO)
 
-#: proporções das 4 colunas da grade feita à mão (`_render_conteudo_relatorio`) — Item de
-#: Despesa ganha o espaço que sobra (nomes de fornecedor/programa variam bastante de tamanho),
-#: Empenho (NE) e as duas colunas numéricas ficam mais estreitas.
-_PROPORCOES_LINHA = [3.2, 1.6, 1.1, 1.4]
+#: proporções das 6 colunas da grade feita à mão (`_render_conteudo_relatorio`) — Item de
+#: Despesa ganha o espaço que sobra (nomes de fornecedor/programa variam bastante de tamanho);
+#: Empenho (NE) e as quatro colunas numéricas ficam mais estreitas. Valor Mensal/Saldo (pedido
+#: explícito: "evidenciar também" — só leitura, para quem emite decidir quanto reforçar/anular
+#: com o dado à vista) ficam ANTES das duas editáveis (Meses/Valor), mesma ordem de leitura de
+#: "quanto a bolsa/contrato custa por mês e quanto ainda tem de saldo" → "quanto empenhar/anular
+#: agora".
+_PROPORCOES_LINHA = [2.6, 1.2, 1.15, 1.15, 1.0, 1.3]
+
+
+def _formatar_valor_brl(valor: float) -> str:
+    """Pontuação pt-BR (milhar com ponto, decimal com vírgula) — mesmo formato de
+    `src.relatorio_reforco_empenho._formatar_valor`, aplicado aqui às duas colunas editáveis
+    (ver docstring do módulo). O texto formatado é o que fica guardado na própria key do
+    widget — `_parse_valor_brl`, abaixo, é o inverso."""
+
+    return f"{valor:,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def _parse_valor_brl(texto: str) -> float:
+    """Inverso de `_formatar_valor_brl` — ver docstring do módulo pra a ambiguidade genuína que
+    sobra (milhar pt-BR sem vírgula). Texto vazio ou não numérico vira 0.0 (mesmo critério de
+    zero explícito do resto do módulo — campo sem preenchimento não é "sem dado", é "nada a
+    lançar aqui"). Nunca negativo (mesmo limite que o `min_value=0.0` do `number_input` aplicava
+    antes)."""
+
+    texto = (texto or "").strip()
+    if not texto:
+        return 0.0
+    limpo = texto.replace(".", "").replace(",", ".") if "," in texto else texto
+    try:
+        valor = float(limpo)
+    except ValueError:
+        return 0.0
+    return valor if valor > 0.0 else 0.0
 
 
 def _recalcular_valor_por_meses(meses_key: str, valor_key: str, valor_mensal: float) -> None:
-    """`on_change` do `st.number_input` de meses — recalcula e grava o valor em R$ ANTES do
-    campo "Valor" ser desenhado nesta mesma execução (callbacks de `on_change` rodam antes do
-    script recomeçar do topo — diferente de detectar a mudança só depois de já ter desenhado
-    os dois widgets, o que deixaria "Valor" um rerun atrasado). Editar "Valor" diretamente não
-    passa por aqui — fica valendo como foi digitado até a próxima edição de "Meses" nessa
-    mesma linha (pedido explícito, mesma regra de prioridade de antes)."""
+    """`on_change` do campo de meses — recalcula e grava o valor em R$ ANTES do campo "Valor"
+    ser desenhado nesta mesma execução (callbacks de `on_change` rodam antes do script
+    recomeçar do topo — diferente de detectar a mudança só depois de já ter desenhado os dois
+    widgets, o que deixaria "Valor" um rerun atrasado). Também reformata o próprio campo de
+    meses (pontuação pt-BR, ver docstring do módulo). Editar "Valor" diretamente não passa por
+    aqui — fica valendo como foi digitado até a próxima edição de "Meses" nessa mesma linha
+    (pedido explícito, mesma regra de prioridade de antes)."""
 
-    st.session_state[valor_key] = round(st.session_state[meses_key] * valor_mensal, 2)
+    meses = _parse_valor_brl(st.session_state[meses_key])
+    st.session_state[meses_key] = _formatar_valor_brl(meses)
+    st.session_state[valor_key] = _formatar_valor_brl(round(meses * valor_mensal, 2))
+
+
+def _reformatar_valor(valor_key: str) -> None:
+    """`on_change` do campo "Valor" quando editado direto — só reaplica a pontuação pt-BR no
+    que foi digitado (`_parse_valor_brl` → `_formatar_valor_brl`), nunca mexe em "Meses" (mesma
+    regra de prioridade: editar valor direto não recalcula meses)."""
+
+    st.session_state[valor_key] = _formatar_valor_brl(_parse_valor_brl(st.session_state[valor_key]))
 
 
 @st.dialog("Relatórios", width="large")
@@ -172,19 +225,19 @@ def _render_conteudo_relatorio(
         "zero não entra no PDF."
     )
 
-    # Grade feita à mão (`st.columns` + `st.number_input` por linha) — NÃO `st.data_editor`
-    # (pedido explícito, correção de um bug real visto em produção: o `st.data_editor` dentro
-    # deste `st.dialog` ficava permanentemente em branco no navegador real — sem exceção
-    # nenhuma, com o dado certo confirmado chegando até o front-end via inspeção direta do
-    # Arrow transmitido pelo servidor, mas a grade nunca desenhava as células visualmente;
-    # aparenta ser um bug do próprio componente nativo nesta versão do Streamlit dentro de um
-    # dialog, não reproduzível a partir do servidor). Mesmo padrão já usado em outras telas do
-    # projeto (ex. `despesas_pessoal`) que evitam esse componente por limitação semelhante —
-    # "nunca misturar grade HTML com widget nativo tentando ocupar uma célula dela: ou tudo é
-    # `st.columns`/widgets nativos, ou tudo é HTML" (mesma lição já documentada ali) — aqui é
-    # tudo `st.columns`.
+    # Grade feita à mão (`st.columns` + `st.text_input` por linha, ver docstring do módulo pra
+    # o porquê de `text_input` e não `number_input`) — NÃO `st.data_editor` (pedido explícito,
+    # correção de um bug real visto em produção: o `st.data_editor` dentro deste `st.dialog`
+    # ficava permanentemente em branco no navegador real — sem exceção nenhuma, com o dado certo
+    # confirmado chegando até o front-end via inspeção direta do Arrow transmitido pelo servidor,
+    # mas a grade nunca desenhava as células visualmente; aparenta ser um bug do próprio
+    # componente nativo nesta versão do Streamlit dentro de um dialog, não reproduzível a partir
+    # do servidor). Mesmo padrão já usado em outras telas do projeto (ex. `despesas_pessoal`) que
+    # evitam esse componente por limitação semelhante — "nunca misturar grade HTML com widget
+    # nativo tentando ocupar uma célula dela: ou tudo é `st.columns`/widgets nativos, ou tudo é
+    # HTML" (mesma lição já documentada ali) — aqui é tudo `st.columns`.
     #
-    # Cada célula editável é um widget PRÓPRIO (`st.number_input`, key fixa por linha/coluna —
+    # Cada célula editável é um widget PRÓPRIO (`st.text_input`, key fixa por linha/coluna —
     # `f"{prefixo_linha}_meses_{i}"`/`f"{prefixo_linha}_valor_{i}"`), não uma grade única — isso
     # elimina de vez o truque de "geração" que o `st.data_editor` exigia: um widget comum já
     # respeita um novo valor colocado em `st.session_state[sua_key]` ANTES dele ser instanciado
@@ -198,8 +251,10 @@ def _render_conteudo_relatorio(
     cabecalho = st.columns(_PROPORCOES_LINHA)
     cabecalho[0].caption("Item de Despesa")
     cabecalho[1].caption("Empenho")
-    cabecalho[2].caption(tipo.rotulo_coluna_meses)
-    cabecalho[3].caption(tipo.rotulo_coluna_valor)
+    cabecalho[2].caption("Valor Mensal")
+    cabecalho[3].caption("Saldo")
+    cabecalho[4].caption(tipo.rotulo_coluna_meses)
+    cabecalho[5].caption(tipo.rotulo_coluna_valor)
 
     meses_finais = []
     valores_finais = []
@@ -214,25 +269,31 @@ def _render_conteudo_relatorio(
         # sempre zerada.
         if meses_key not in st.session_state:
             meses_inicial = round(float(linha.meses_sugeridos), 2) if tipo.id == "reforco" else 0.0
-            st.session_state[meses_key] = meses_inicial
+            st.session_state[meses_key] = _formatar_valor_brl(meses_inicial)
         if valor_key not in st.session_state:
-            st.session_state[valor_key] = round(st.session_state[meses_key] * valor_mensal_linha, 2)
+            valor_inicial = _parse_valor_brl(st.session_state[meses_key]) * valor_mensal_linha
+            st.session_state[valor_key] = _formatar_valor_brl(round(valor_inicial, 2))
 
         linha_cols = st.columns(_PROPORCOES_LINHA, vertical_alignment="center")
         linha_cols[0].write(linha.item_despesa)
         linha_cols[1].write(linha.ne_curta)
-        linha_cols[2].number_input(
-            tipo.rotulo_coluna_meses, key=meses_key, min_value=0.0, step=0.01, format="%.2f",
+        # só leitura (pedido explícito: "evidenciar também" o valor mensal da despesa e o saldo
+        # do empenho) — `format_brl_full` já distingue nulo de zero ("Valor nulo" vs "R$ 0,00",
+        # mesma regra permanente do projeto), diferente de zero silencioso.
+        linha_cols[2].write(format_brl_full(linha.valor_mensal))
+        linha_cols[3].write(format_brl_full(getattr(linha, "saldo", None)))
+        linha_cols[4].text_input(
+            tipo.rotulo_coluna_meses, key=meses_key,
             label_visibility="collapsed", on_change=_recalcular_valor_por_meses,
             args=(meses_key, valor_key, valor_mensal_linha),
         )
-        linha_cols[3].number_input(
-            tipo.rotulo_coluna_valor, key=valor_key, min_value=0.0, step=0.01, format="%.2f",
-            label_visibility="collapsed",
+        linha_cols[5].text_input(
+            tipo.rotulo_coluna_valor, key=valor_key,
+            label_visibility="collapsed", on_change=_reformatar_valor, args=(valor_key,),
         )
 
-        meses_finais.append(st.session_state[meses_key])
-        valores_finais.append(st.session_state[valor_key])
+        meses_finais.append(_parse_valor_brl(st.session_state[meses_key]))
+        valores_finais.append(_parse_valor_brl(st.session_state[valor_key]))
 
     linhas_finais = linhas_indexadas.assign(meses=meses_finais, empenhar=valores_finais)
 
@@ -268,7 +329,7 @@ def _render_conteudo_relatorio(
 
 def _limpar_estado_relatorio(chave: str) -> None:
     """Apaga todo o estado de edição do relatório (tipo escolhido + as keys de cada
-    `st.number_input` de cada linha, uma por célula editável — ver `_render_conteudo_relatorio`)
+    `st.text_input` de cada linha, uma por célula editável — ver `_render_conteudo_relatorio`)
     — pedido explícito: o valor editado só vale enquanto o pop-up continua aberto. Ao fechar
     (X, Esc, clicar fora, ou "← Voltar") e reabrir, os valores voltam ao padrão de cada tipo e
     a tela de escolha reaparece — chamada sempre que o botão que abre o pop-up é clicado, já
