@@ -106,6 +106,23 @@ class EspecificacaoRelatorio:
     #: empenhado − liquidado) — ver `necessidade_ate_mes_vigente`.
     coluna_valor_empenhado: str | None = None
     coluna_inicio_execucao: str | None = None
+    #: coluna com o saldo autoritativo da NE (Execução Mensal, com o valor colado na planilha
+    #: como reserva — mesmo padrão de fallback de `coluna_valor_empenhado`; a página monta essa
+    #: coluna antes de chamar `render_botao_relatorio`, ver `app_pages/bolsas_auxilios.py`/
+    #: `app_pages/contratos_continuos.py`). Pedido explícito: evidenciar o saldo do empenho na
+    #: tela do relatório, junto do valor mensal, pra quem emite decidir quanto reforçar/anular
+    #: com o dado à vista, sem precisar sair do pop-up. Sempre no nível da NE, nunca rateado por
+    #: item de licitação (mesmo critério de `meses_sugeridos`, ver `_linha_base` — a liquidação
+    #: não é dividida por item).
+    coluna_saldo: str | None = None
+    #: coluna com o total de meses que o item é pago no exercício (cadastro nativo de Bolsas,
+    #: `meses_no_ano` — ausente em Contratos Contínuos, que não tem esse conceito, sempre
+    #: `None` pra essa base). Teto de `meses_sugeridos` na sugestão "por calendário" (pedido
+    #: explícito, corrige bug real relatado pelo usuário: sem esse teto, uma bolsa "parcela
+    #: única" já paga por completo continuava sugerindo reforço só porque o calendário já tinha
+    #: passado vários meses desde o início da execução — ver
+    #: `necessidade_ate_mes_vigente`/`_com_sugestao_por_calendario`).
+    coluna_meses_no_ano: str | None = None
 
 
 BOLSAS_AUXILIOS = EspecificacaoRelatorio(
@@ -116,6 +133,8 @@ BOLSAS_AUXILIOS = EspecificacaoRelatorio(
     coluna_valor_mensal="valor_mensal",
     coluna_valor_empenhado="valor_empenhado_autoritativo",
     coluna_inicio_execucao="inicio_execucao_efetivo",
+    coluna_saldo="saldo_autoritativo",
+    coluna_meses_no_ano="meses_no_ano",
 )
 
 CONTRATOS_CONTINUOS = EspecificacaoRelatorio(
@@ -127,6 +146,8 @@ CONTRATOS_CONTINUOS = EspecificacaoRelatorio(
     coluna_itens="itens",
     coluna_valor_empenhado="valor_empenhado_autoritativo",
     coluna_inicio_execucao="inicio_execucao_efetivo",
+    coluna_saldo="saldo_autoritativo",
+    coluna_meses_no_ano="meses_no_ano",
 )
 
 @dataclass(frozen=True)
@@ -203,12 +224,12 @@ def processos_disponiveis(df: pd.DataFrame, spec: EspecificacaoRelatorio) -> lis
 _COLUNAS_LINHAS = [
     "processo", "item_despesa", "item_despesa_base", "unidade_cod", "acao_cod", "ptres",
     "fonte_cod", "natureza_despesa_cod", "ugr_cod", "pi_cod", "ne_curta", "valor_mensal",
-    "meses_sugeridos", "item_licitacao",
+    "saldo", "meses_sugeridos", "item_licitacao",
 ]
 
 #: colunas intermediárias, usadas só por `_com_sugestao_por_calendario` — descartadas do
 #: resultado final de `linhas_para_processo` (ver docstring de `coluna_valor_empenhado`).
-_COLUNAS_CALENDARIO = ["_valor_empenhado_item", "_inicio_execucao_mes"]
+_COLUNAS_CALENDARIO = ["_valor_empenhado_item", "_inicio_execucao_mes", "_meses_no_ano"]
 
 
 def _linha_base(linha: pd.Series, spec: EspecificacaoRelatorio) -> dict:
@@ -222,6 +243,11 @@ def _linha_base(linha: pd.Series, spec: EspecificacaoRelatorio) -> dict:
         "ugr_cod": linha["ugr_cod"],
         "pi_cod": linha["pi_cod"],
         "ne_curta": linha["ne_curta"],
+        # saldo, igual a meses_sugeridos logo abaixo, é sempre no nível da NE inteira — nunca
+        # rateado por item (a liquidação não é dividida por item, ver docstring de
+        # `coluna_itens`/`coluna_saldo`), mesmo valor repetido em toda linha expandida do mesmo
+        # contrato.
+        "saldo": linha.get(spec.coluna_saldo) if spec.coluna_saldo else None,
         # meses_sugeridos é sempre no nível da NE (liquidação não é dividida por item, ver
         # docstring de `coluna_itens`) — igual em toda linha expandida do mesmo contrato. Pode
         # ser substituído pela sugestão "por calendário" logo abaixo, ver
@@ -236,6 +262,9 @@ def _linha_base(linha: pd.Series, spec: EspecificacaoRelatorio) -> dict:
         "item_despesa_base": None,
         "_valor_empenhado_item": linha.get(spec.coluna_valor_empenhado) if spec.coluna_valor_empenhado else None,
         "_inicio_execucao_mes": linha.get(spec.coluna_inicio_execucao) if spec.coluna_inicio_execucao else None,
+        # meses_no_ano, como saldo/meses_sugeridos acima, nunca é rateado por item — é o total
+        # de meses que o CONTRATO/NE inteiro é pago no exercício, não do item de licitação.
+        "_meses_no_ano": linha.get(spec.coluna_meses_no_ano) if spec.coluna_meses_no_ano else None,
     }
 
 
@@ -285,14 +314,19 @@ def _com_sugestao_por_calendario(resultado: pd.DataFrame, ano_referencia: int) -
 
     `ano_referencia` é o exercício do cadastro em tela (não necessariamente o ano corrente do
     calendário) — repassado a `necessidade_ate_mes_vigente` para não misturar o mês real de
-    hoje com um `inicio_execucao_mes` de um exercício diferente (ver docstring de lá)."""
+    hoje com um `inicio_execucao_mes` de um exercício diferente (ver docstring de lá).
+
+    `_meses_no_ano` (teto da sugestão, pedido explícito — ver docstring de
+    `coluna_meses_no_ano`) é sempre repassado como Series, mesmo em Contratos Contínuos (sem
+    esse conceito): fica inteira `NA` nesse caso, e `Series.clip(upper=NA)` não recorta nada
+    (NaN no limite = sem limite), então o comportamento de lá não muda."""
 
     if resultado.empty or "_inicio_execucao_mes" not in resultado.columns:
         return resultado.drop(columns=_COLUNAS_CALENDARIO, errors="ignore")
 
     meses_calendario, _ = necessidade_ate_mes_vigente(
         resultado["valor_mensal"], resultado["_valor_empenhado_item"], resultado["_inicio_execucao_mes"],
-        ano_referencia,
+        ano_referencia, meses_no_ano=resultado["_meses_no_ano"],
     )
     resultado["meses_sugeridos"] = meses_calendario.where(meses_calendario.notna(), resultado["meses_sugeridos"])
     return resultado.drop(columns=_COLUNAS_CALENDARIO, errors="ignore")
@@ -343,6 +377,10 @@ def linhas_para_processo(
                 "pi_cod": filtrado["pi_cod"],
                 "ne_curta": filtrado["ne_curta"],
                 "valor_mensal": filtrado[spec.coluna_valor_mensal],
+                "saldo": (
+                    filtrado[spec.coluna_saldo]
+                    if spec.coluna_saldo and spec.coluna_saldo in filtrado.columns else pd.NA
+                ),
                 "meses_sugeridos": filtrado["meses_a_empenhar"],
                 # sem `coluna_itens` (Bolsas e Auxílios) não há número de item — coluna
                 # presente mas sempre nula, pro esquema ficar igual ao de Contratos Contínuos
@@ -355,6 +393,10 @@ def linhas_para_processo(
                 "_inicio_execucao_mes": (
                     filtrado[spec.coluna_inicio_execucao]
                     if spec.coluna_inicio_execucao and spec.coluna_inicio_execucao in filtrado.columns else pd.NA
+                ),
+                "_meses_no_ano": (
+                    filtrado[spec.coluna_meses_no_ano]
+                    if spec.coluna_meses_no_ano and spec.coluna_meses_no_ano in filtrado.columns else pd.NA
                 ),
             }
         )

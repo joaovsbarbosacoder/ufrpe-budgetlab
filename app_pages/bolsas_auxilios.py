@@ -51,8 +51,9 @@ atualizar `saldo_execucao`/`valor_empenhado_execucao` daquela linha, não só os
 planilha já trazia prontos.
 
 Antes da lista, um card único "Resumo Consolidado — por Bolsa" lista, uma linha por bolsa (não
-um total agregado), o valor empenhado, o saldo (Execução Mensal) e a necessidade de empenho até
-o fim do exercício de cada programa — esta última É a métrica de calendário
+um total agregado), o valor mensal, o valor empenhado, o saldo (Execução Mensal) e a
+necessidade de empenho até o fim do exercício de cada programa — esta última É a métrica de
+calendário
 (`valor_mensal × meses restantes até dezembro`) que a "Diferença deliberada" abaixo explica
 por que NÃO virou a fórmula de "Empenhar" de cada cartão: aqui ela tem um propósito diferente
 (projeção por bolsa até dezembro), não substitui a fórmula validada por cartão (que mede
@@ -106,10 +107,12 @@ Diferenças deliberadas em relação ao handoff:
     prefixo próprio `.bls-resumo-*` (classes de nome global — como não há um `st.container`
     envolvendo o card, não precisa nem pode ser escopado por `st-key-...`; os nomes já são
     específicos o bastante para não colidir com `.po-*`/`.bls-*` de outras páginas). Lista uma
-    linha por bolsa (não um total único) e usa `valor_mensal × meses restantes até dezembro`
-    para a "Necessidade até Dezembro" — a ÚNICA métrica de calendário desta página. Ela não
-    substitui nem se confunde com "Empenhar" por cartão (que continua vindo de
-    `meses_empenhados − meses_liquidados`, ver bullet acima): "Empenhar" mede atraso já
+    linha por bolsa (não um total único) e usa `valor_mensal × meses ainda devidos no ano`
+    (`meses_no_ano − meses já empenhados, nunca calendário puro — ver
+    `_render_resumo_consolidado`, corrigido depois de um bug real: bolsa "parcela única" já
+    paga continuava pedindo reforço só por causa do calendário) para a "Necessidade até
+    Dezembro". Ela não substitui nem se confunde com "Empenhar" por cartão (que continua vindo
+    de `meses_empenhados − meses_liquidados`, ver bullet acima): "Empenhar" mede atraso já
     ocorrido; "Necessidade até Dezembro" projeta o gasto restante do exercício.
   * Os tokens de cor/tipografia são os reais do projeto (`src/design_tokens.py`), não os do
     pacote de handoff.
@@ -137,7 +140,6 @@ Diferenças deliberadas em relação ao handoff:
 from __future__ import annotations
 
 import html as html_lib
-from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -293,12 +295,6 @@ def _somar_unico_por_ne(dataframe: pd.DataFrame, coluna: str) -> float:
     return float(unicos[coluna].sum())
 
 
-def _meses_restantes_no_ano(hoje: date | None = None) -> int:
-    """Meses restantes até dezembro (inclusive o atual) — só para o Resumo Consolidado, não
-    para a fórmula por cartão (ver docstring do módulo)."""
-
-    hoje = hoje or date.today()
-    return max(1, 12 - hoje.month + 1)
 
 
 def _inject_css() -> None:
@@ -776,7 +772,7 @@ def _render_novo_programa(ano: int, source_key: str) -> None:
 
 #: larguras relativas usadas por `st.columns` no cabeçalho de rótulos, em cada linha e no
 #: rodapé do Resumo Consolidado — as três precisam ser exatamente as mesmas pra alinhar.
-_LARGURAS_RESUMO = [2.4, 1, 1, 1.3]
+_LARGURAS_RESUMO = [2.4, 1, 1, 1, 1.3]
 
 
 def _html_valor_resumo(valor: object, forte: bool = False) -> str:
@@ -787,7 +783,6 @@ def _html_valor_resumo(valor: object, forte: bool = False) -> str:
 
 def _render_resumo_consolidado(
     filtrado: pd.DataFrame,
-    meses_restantes: int,
     tempo_por_ne_curta: pd.DataFrame | None,
     source_key: str,
 ) -> None:
@@ -805,16 +800,29 @@ def _render_resumo_consolidado(
     cartão em si virou `st.container(border=True)` pelo mesmo motivo (ver `_inject_css`)."""
 
     valor_mensal = filtrado["valor_mensal"].fillna(0.0)
-    necessidade_ate_dezembro = valor_mensal * meses_restantes
-    saldo_por_linha = filtrado["saldo_execucao"].fillna(filtrado["saldo_colado_planilha"]).fillna(0.0)
-    empenhar_ate_fim = (necessidade_ate_dezembro - saldo_por_linha).clip(lower=0)
     # valor empenhado autoritativo (Execução Mensal), com o valor colado na planilha como
     # reserva só para NE sem correspondência lá — mesmo padrão de fallback do saldo.
     valor_empenhado_exibido = filtrado["valor_empenhado_execucao"].fillna(filtrado["valor_empenhado_tg"])
+    # Meses AINDA DEVIDOS no exercício (pedido explícito, corrige bug real relatado pelo
+    # usuário: caso concreto AUXÍLIO BEXT — Parcela Única, `meses_no_ano=1`, já com sua única
+    # parcela empenhada e liquidada, continuava mostrando necessidade pelos meses restantes do
+    # CALENDÁRIO — 4 meses, R$ 280 mil — mesmo sem nenhum pagamento programado pra eles).
+    # Substitui de vez o antigo "meses restantes até dezembro" GLOBAL (mesmo número pra toda
+    # bolsa, sem olhar quantas ela já teve nem quantas tem no total — removido junto de
+    # `_meses_restantes_no_ano`): cada bolsa tem seu próprio teto anual (`meses_no_ano`) menos
+    # quanto dela já foi empenhado (`valor_empenhado ÷ valor_mensal`, mesma conta usada em
+    # `necessidade_ate_mes_vigente` pro pop-up de Relatórios). Bolsa sem `meses_no_ano`
+    # cadastrado (não deveria acontecer — campo obrigatório no cadastro) cai no padrão de 12
+    # (mesmo critério "contínuo" de antes desta correção).
+    meses_ja_empenhados = (valor_empenhado_exibido / valor_mensal.replace(0.0, pd.NA)).fillna(0.0)
+    meses_restantes_da_bolsa = (filtrado["meses_no_ano"].fillna(12) - meses_ja_empenhados).clip(lower=0)
+    necessidade_ate_dezembro = valor_mensal * meses_restantes_da_bolsa
+    saldo_por_linha = filtrado["saldo_execucao"].fillna(filtrado["saldo_colado_planilha"]).fillna(0.0)
+    empenhar_ate_fim = (necessidade_ate_dezembro - saldo_por_linha).clip(lower=0)
 
-    ordenado = filtrado.assign(_necessidade=empenhar_ate_fim, _valor_empenhado=valor_empenhado_exibido).sort_values(
-        "_necessidade", ascending=False
-    )
+    ordenado = filtrado.assign(
+        _necessidade=empenhar_ate_fim, _valor_empenhado=valor_empenhado_exibido, _valor_mensal=valor_mensal
+    ).sort_values("_necessidade", ascending=False)
     necessidade_total = empenhar_ate_fim.sum()
     nes_com_tempo = set(tempo_por_ne_curta["ne_curta"]) if tempo_por_ne_curta is not None else set()
 
@@ -827,7 +835,7 @@ def _render_resumo_consolidado(
                 <div class="bls-resumo-title">Necessidade de Empenho por Bolsa</div>
               </div>
               <div style="text-align:right">
-                <div class="bls-resumo-metric-label">Necessidade até Dezembro ({meses_restantes}m)</div>
+                <div class="bls-resumo-metric-label">Necessidade até Dezembro</div>
                 <div class="bls-resumo-metric">{_brl(necessidade_total)}</div>
                 <div class="bls-resumo-metric-label" style="margin-top:4px">
                   {len(filtrado)} {"bolsa" if len(filtrado) == 1 else "bolsas"}
@@ -839,9 +847,10 @@ def _render_resumo_consolidado(
         )
         cabecalho = st.columns(_LARGURAS_RESUMO)
         cabecalho[0].markdown('<div class="bls-resumo-col-label">Bolsa / Programa</div>', unsafe_allow_html=True)
-        cabecalho[1].markdown('<div class="bls-resumo-col-label" style="text-align:right">Valor Empenhado</div>', unsafe_allow_html=True)
-        cabecalho[2].markdown('<div class="bls-resumo-col-label" style="text-align:right">Saldo</div>', unsafe_allow_html=True)
-        cabecalho[3].markdown('<div class="bls-resumo-col-label" style="text-align:right">Necessidade até Dez.</div>', unsafe_allow_html=True)
+        cabecalho[1].markdown('<div class="bls-resumo-col-label" style="text-align:right">Valor Mensal</div>', unsafe_allow_html=True)
+        cabecalho[2].markdown('<div class="bls-resumo-col-label" style="text-align:right">Valor Empenhado</div>', unsafe_allow_html=True)
+        cabecalho[3].markdown('<div class="bls-resumo-col-label" style="text-align:right">Saldo</div>', unsafe_allow_html=True)
+        cabecalho[4].markdown('<div class="bls-resumo-col-label" style="text-align:right">Necessidade até Dez.</div>', unsafe_allow_html=True)
 
         # Pedido explícito: 5 bolsas visíveis por padrão; para ver mais, rolar — não "Ver
         # mais" clicado repetidamente (mesmo padrão de app_pages/consulta_empenhos.py: caixa
@@ -861,15 +870,17 @@ def _render_resumo_consolidado(
                         abrir_linha_do_tempo(legenda, tempo_ne)
                 else:
                     linha[0].markdown(f'<div class="bls-resumo-nome-simples">{_esc(rotulo)}</div>', unsafe_allow_html=True)
-                linha[1].markdown(_html_valor_resumo(row["_valor_empenhado"]), unsafe_allow_html=True)
-                linha[2].markdown(_html_valor_resumo(row["saldo_execucao"]), unsafe_allow_html=True)
-                linha[3].markdown(_html_valor_resumo(row["_necessidade"], forte=True), unsafe_allow_html=True)
+                linha[1].markdown(_html_valor_resumo(row["_valor_mensal"]), unsafe_allow_html=True)
+                linha[2].markdown(_html_valor_resumo(row["_valor_empenhado"]), unsafe_allow_html=True)
+                linha[3].markdown(_html_valor_resumo(row["saldo_execucao"]), unsafe_allow_html=True)
+                linha[4].markdown(_html_valor_resumo(row["_necessidade"], forte=True), unsafe_allow_html=True)
 
         rodape = st.columns(_LARGURAS_RESUMO)
         rodape[0].markdown('<div class="bls-resumo-foot-label">Total</div>', unsafe_allow_html=True)
-        rodape[1].markdown(_html_valor_resumo(valor_empenhado_exibido.sum()), unsafe_allow_html=True)
-        rodape[2].markdown(_html_valor_resumo(_somar_unico_por_ne(filtrado, "saldo_execucao")), unsafe_allow_html=True)
-        rodape[3].markdown(_html_valor_resumo(necessidade_total, forte=True), unsafe_allow_html=True)
+        rodape[1].markdown(_html_valor_resumo(valor_mensal.sum()), unsafe_allow_html=True)
+        rodape[2].markdown(_html_valor_resumo(valor_empenhado_exibido.sum()), unsafe_allow_html=True)
+        rodape[3].markdown(_html_valor_resumo(_somar_unico_por_ne(filtrado, "saldo_execucao")), unsafe_allow_html=True)
+        rodape[4].markdown(_html_valor_resumo(necessidade_total, forte=True), unsafe_allow_html=True)
 
 
 _CABECALHO_DOTACAO = [
@@ -1198,6 +1209,10 @@ if tempo_por_ne_curta is not None:
 else:
     sugestao_inicio_por_ne = pd.Series(dtype="Int64")
 dataframe["valor_empenhado_autoritativo"] = dataframe["valor_empenhado_execucao"].fillna(dataframe["valor_empenhado_tg"])
+# mesmo padrão de fallback do Resumo Consolidado (`_render_resumo_consolidado`) — autoritativo
+# (Execução Mensal) com o valor colado na planilha como reserva. Usado só para evidenciar o
+# saldo na tela do Relatório de Reforço/Anulação (pedido explícito), nenhum outro quadro usa.
+dataframe["saldo_autoritativo"] = dataframe["saldo_execucao"].fillna(dataframe["saldo_colado_planilha"])
 dataframe["inicio_execucao_efetivo"] = dataframe["inicio_execucao_mes"].fillna(
     dataframe["ne_curta"].map(sugestao_inicio_por_ne)
 )
@@ -1242,7 +1257,7 @@ render_metric_grid(
     columns=5,
 )
 
-_render_resumo_consolidado(filtrado, _meses_restantes_no_ano(), tempo_por_ne_curta, source_key)
+_render_resumo_consolidado(filtrado, tempo_por_ne_curta, source_key)
 
 if dotacao_dimensoes is not None:
     st.subheader("Cobertura Orçamentária por PTRES")

@@ -36,6 +36,7 @@ def necessidade_ate_mes_vigente(
     valor_mensal: pd.Series, valor_empenhado: pd.Series, inicio_execucao_mes: pd.Series,
     ano_referencia: int,
     hoje: date | None = None,
+    meses_no_ano: pd.Series | None = None,
 ) -> tuple[pd.Series, pd.Series]:
     """Quanto falta empenhar para acompanhar o calendário até o mês vigente — métrica
     diferente de `calcular_necessidade_empenho` (que compara empenhado × liquidado, execução
@@ -68,12 +69,23 @@ def necessidade_ate_mes_vigente(
     sugestão inicial do Relatório de Reforço de Empenho (pedido explícito de escopo) — o
     "Meses de Saldo"/"Empenhar" de cada cartão continua vindo de
     `calcular_necessidade_empenho`, inalterado.
+
+    `meses_no_ano` (opcional — Contratos Contínuos não tem esse conceito, sempre `None` pra
+    essa base) é o total de meses que o item é pago no exercício, vindo do cadastro (ex.: bolsa
+    "parcela única" tem `meses_no_ano=1`) — teto de `meses_decorridos`: sem ele, uma bolsa já
+    paga por completo (ex. parcela única já empenhada e liquidada) continuava sugerindo mais
+    meses só porque o calendário já passou vários meses desde o início da execução, mesmo sem
+    nenhum pagamento programado pra eles (bug real reportado pelo usuário, caso concreto:
+    AUXÍLIO BEXT — Parcela Única, `meses_no_ano=1`, sugeria 6 meses de reforço já tendo pago o
+    único mês devido).
     """
     hoje = hoje or date.today()
     mes_vigente = 12 if hoje.year > ano_referencia else max(0, min(hoje.month, 12))
     if hoje.year < ano_referencia:
         mes_vigente = 0
     meses_decorridos = (mes_vigente - inicio_execucao_mes + 1).clip(lower=0)
+    if meses_no_ano is not None:
+        meses_decorridos = meses_decorridos.clip(upper=meses_no_ano)
     meses_empenhados_equivalente = valor_empenhado / valor_mensal.replace(0, pd.NA)
     meses_sugeridos = (meses_decorridos - meses_empenhados_equivalente).clip(lower=0)
     valor_sugerido = meses_sugeridos * valor_mensal

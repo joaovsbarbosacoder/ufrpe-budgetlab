@@ -96,6 +96,50 @@ class TestNecessidadeAteMesVigente(unittest.TestCase):
         self.assertAlmostEqual(meses.iloc[0], 3.0)
         self.assertAlmostEqual(valor.iloc[0], 30_000.0)
 
+    # ---------------------------------------------------------------- teto de meses_no_ano
+    # Reproduz o bug real reportado: bolsa "parcela única" (AUXÍLIO BEXT) tem `meses_no_ano=1`
+    # — só é paga uma vez no ano. Sem o teto, o cálculo assumia pagamento em TODO mês desde o
+    # início da execução, sugerindo reforço mesmo já com a única parcela paga.
+
+    def test_meses_no_ano_limita_parcela_unica_ja_paga_por_completo(self):
+        # início em março, "hoje" setembro -> 7 meses decorridos sem o teto; com
+        # meses_no_ano=1, nunca passa de 1 -- e como já foi empenhado o equivalente a 1 mês
+        # (70.000 / 70.000), a sugestão fica em zero (caso real da BEXT).
+        meses, valor = necessidade_ate_mes_vigente(
+            pd.Series([70_000.0]), pd.Series([70_000.0]), pd.Series([3]), 2026,
+            hoje=date(2026, 9, 23), meses_no_ano=pd.Series([1]),
+        )
+        self.assertEqual(meses.iloc[0], 0.0)
+        self.assertEqual(valor.iloc[0], 0.0)
+
+    def test_meses_no_ano_limita_mesmo_sem_nenhum_pagamento_ainda(self):
+        # mesma bolsa parcela única, mas AINDA não empenhada -- teto limita a sugestão a 1 mês
+        # (a própria parcela única), nunca aos 7 meses que o calendário sozinho sugeriria.
+        meses, valor = necessidade_ate_mes_vigente(
+            pd.Series([70_000.0]), pd.Series([0.0]), pd.Series([3]), 2026,
+            hoje=date(2026, 9, 23), meses_no_ano=pd.Series([1]),
+        )
+        self.assertEqual(meses.iloc[0], 1.0)
+        self.assertEqual(valor.iloc[0], 70_000.0)
+
+    def test_meses_no_ano_nao_afeta_bolsa_dentro_do_teto(self):
+        # meses_no_ano=12 (padrão) nunca é o fator limitante -- mesmo resultado do teste do
+        # exemplo do pedido (120 mil/ano, 70 mil empenhado, início janeiro, hoje outubro).
+        meses, valor = necessidade_ate_mes_vigente(
+            pd.Series([10_000.0]), pd.Series([70_000.0]), pd.Series([1]), 2026,
+            hoje=date(2026, 10, 15), meses_no_ano=pd.Series([12]),
+        )
+        self.assertAlmostEqual(meses.iloc[0], 3.0)
+        self.assertAlmostEqual(valor.iloc[0], 30_000.0)
+
+    def test_meses_no_ano_ausente_mantem_comportamento_de_antes(self):
+        # None (default, usado por Contratos Contínuos -- sem esse conceito) não muda nada.
+        meses, valor = necessidade_ate_mes_vigente(
+            pd.Series([70_000.0]), pd.Series([70_000.0]), pd.Series([3]), 2026, hoje=date(2026, 9, 23),
+        )
+        self.assertAlmostEqual(meses.iloc[0], 6.0)
+        self.assertAlmostEqual(valor.iloc[0], 420_000.0)
+
 
 if __name__ == "__main__":
     unittest.main()

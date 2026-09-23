@@ -138,6 +138,87 @@ class TestLinhasParaProcessoContinuos(unittest.TestCase):
         self.assertEqual(itens_tekis["meses_sugeridos"].nunique(), 1)
 
 
+def _continuos_com_calendario_sintetico() -> pd.DataFrame:
+    """Mesmas colunas de `_continuos_sintetico()` + as usadas na sugestão "por calendário" (ver
+    docstring de `_bolsas_com_calendario_sintetico`, abaixo) — pedido explícito posterior: a
+    mesma correção de `meses_no_ano` aplicada a Bolsas vale também para Contratos Contínuos."""
+
+    base = _continuos_sintetico()
+    base["inicio_execucao_efetivo"] = [1, 1, 1, 1]
+    base["valor_empenhado_autoritativo"] = [30_000.0, 2000.0, 5000.0, 10_000.0]
+    base["meses_no_ano"] = [1, 12, 12, 12]
+    return base
+
+
+class TestSugestaoPorCalendarioRespeitaMesesNoAnoContinuos(unittest.TestCase):
+    """Mesma correção de `TestSugestaoPorCalendarioRespeitaMesesNoAno` (Bolsas, mais abaixo),
+    agora também para Contratos Contínuos (pedido explícito: "implemente essa mesma validação
+    que aplicamos para bolsas")."""
+
+    def test_contrato_com_meses_no_ano_1_ja_pago_nao_sugere_reforco(self) -> None:
+        # "APC": despesa_mensal 3.000, mas já empenhado o equivalente a 10 meses (30.000) —
+        # excede sozinho o teto de meses_no_ano=1, cravado em zero.
+        linhas = linhas_para_processo(
+            _continuos_com_calendario_sintetico(), CONTRATOS_CONTINUOS, "001370/2026-44", 2026
+        )
+        linha_apc = linhas[linhas["ne_curta"] == "2026NE000100"].iloc[0]
+        self.assertEqual(linha_apc["meses_sugeridos"], 0.0)
+
+    def test_contrato_de_12_meses_nao_e_afetado_pelo_teto(self) -> None:
+        # "Brascon": meses_no_ano=12 (não é o fator limitante) — continua vindo do calendário
+        # normalmente, mesmo comportamento de antes desta correção.
+        linhas = linhas_para_processo(
+            _continuos_com_calendario_sintetico(), CONTRATOS_CONTINUOS, "001370/2026-44", 2026
+        )
+        linha_brascon = linhas[linhas["ne_curta"] == "2026NE000101"].iloc[0]
+        self.assertFalse(pd.isna(linha_brascon["meses_sugeridos"]))
+
+
+def _bolsas_com_calendario_sintetico() -> pd.DataFrame:
+    """Mesmas colunas de `_bolsas_sintetico()` + as usadas na sugestão "por calendário"
+    (`inicio_execucao_efetivo`/`valor_empenhado_autoritativo`/`meses_no_ano`), que a página
+    monta antes de chamar `render_botao_relatorio` (ver `app_pages/bolsas_auxilios.py`) — sem
+    elas, `linhas_para_processo` cai de volta pra `meses_a_empenhar` puro (já coberto em
+    `TestLinhasParaProcessoBolsas`)."""
+
+    base = _bolsas_sintetico()
+    base["inicio_execucao_efetivo"] = [3, 1, None, 6, None]
+    base["valor_empenhado_autoritativo"] = [70_000.0, 7500.0, None, 1000.0, None]
+    base["meses_no_ano"] = [1, 12, 1, 12, 12]
+    return base
+
+
+class TestSugestaoPorCalendarioRespeitaMesesNoAno(unittest.TestCase):
+    """Reproduz o bug real reportado: bolsa "parcela única" (AUXÍLIO BEXT, `meses_no_ano=1`)
+    continuava sugerindo reforço pelos meses decorridos do calendário mesmo já paga por
+    completo — ver `tests/test_necessidade_empenho.py` para a cobertura na função pura; aqui
+    end-to-end via `linhas_para_processo`, com a base já como a página monta (`ano_referencia`
+    2026, "hoje" real do teste vem de `date.today()` dentro de `necessidade_ate_mes_vigente` —
+    por isso o cenário usa uma bolsa JÁ TOTALMENTE PAGA, cujo resultado zero independe de qual
+    mês é hoje)."""
+
+    def setUp(self):
+        self.linhas = linhas_para_processo(
+            _bolsas_com_calendario_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78", 2026
+        )
+
+    def test_parcela_unica_ja_paga_por_completo_nao_sugere_reforco(self):
+        # "PADPG": valor_mensal 15.750, mas valor_empenhado_autoritativo/meses_no_ano simulam
+        # uma bolsa de 70.000/mês já paga (1 mês, igual ao caso real da BEXT) — sem o teto de
+        # meses_no_ano, o calendário (início em março) sugeriria vários meses a mais.
+        linha = self.linhas[self.linhas["ne_curta"] == "2026NE000020"].iloc[0]
+        self.assertEqual(linha["valor_mensal"], 15_750.0)
+        # meses_empenhados_equivalente = 70.000 / 15.750 já excede o teto de 1 mês sozinho —
+        # cravado em zero, nunca negativo.
+        self.assertEqual(linha["meses_sugeridos"], 0.0)
+
+    def test_bolsa_de_12_meses_nao_e_afetada_pelo_teto(self):
+        # "ESO": meses_no_ano=12 (não é o fator limitante) -- continua vindo do calendário
+        # normalmente, mesmo comportamento de antes desta correção.
+        linha = self.linhas[self.linhas["ne_curta"] == "2026NE000056"].iloc[0]
+        self.assertFalse(pd.isna(linha["meses_sugeridos"]))
+
+
 class TestExcluirLinhasZeradas(unittest.TestCase):
     def _linhas(self, meses: list[float], empenhar: list[float]) -> pd.DataFrame:
         return pd.DataFrame({"item_despesa": [f"item{i}" for i in range(len(meses))], "meses": meses, "empenhar": empenhar})
