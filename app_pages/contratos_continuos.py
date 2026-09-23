@@ -60,9 +60,10 @@ Diferenças deliberadas em relação aos handoffs anteriores:
     (métrica prospectiva de calendário nunca validada neste projeto) — vêm de
     `meses_empenhados − meses_liquidados` (`src/necessidade_empenho.py`, fórmula da coluna
     "MESES DE SALDO" da planilha, validada linha a linha contra a origem). O Resumo
-    Consolidado usa `despesa_mensal × meses restantes até dezembro` só para a "Necessidade
-    até Dezembro" agregada — mesma ressalva de `bolsas_auxilios.py`: não substitui nem se
-    confunde com "Empenhar" por cartão.
+    Consolidado usa `despesa_mensal × meses ainda devidos no ano` (`meses_no_ano − meses já
+    empenhados, nunca calendário puro — corrigido depois de um bug real, ver
+    `_render_resumo_consolidado`) só para a "Necessidade até Dezembro" agregada — mesma
+    ressalva de `bolsas_auxilios.py`: não substitui nem se confunde com "Empenhar" por cartão.
   * Para contratos cuja NE já foi encontrada na Execução Mensal, `meses_empenhados`/
     `meses_liquidados` deixam de vir da planilha e passam a vir da própria Execução Mensal
     (`com_saldo_execucao`, campos `meses_empenhados_execucao`/`meses_liquidados_execucao`) —
@@ -148,7 +149,6 @@ saldo formal, sempre por lançamento.
 from __future__ import annotations
 
 import html as html_lib
-from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -328,14 +328,6 @@ def _fmt_mes(valor: object) -> str:
     if valor is None or pd.isna(valor):
         return "—"
     return f"{MESES_ORDEM[valor.month - 1][:3]}/{valor.year % 100:02d}"
-
-
-def _meses_restantes_no_ano(hoje: date | None = None) -> int:
-    """Meses restantes até dezembro (inclusive o atual) — só para o Resumo Consolidado, não
-    para a fórmula por cartão (ver docstring do módulo)."""
-
-    hoje = hoje or date.today()
-    return max(1, 12 - hoje.month + 1)
 
 
 def _brl(value: object) -> str:
@@ -672,14 +664,19 @@ def _render_card(
         ugr = _campo_texto(r2[3], "UGR", _ou_vazio(linha["ugr_cod"]), f"{k}_ugr")
         pi = _campo_texto(r2[4], "PI", _ou_vazio(linha["pi_cod"]), f"{k}_pi")
 
-        r3 = st.columns(4)
+        r3 = st.columns(5)
         ne_curta = _campo_texto(r3[0], "Empenho (NE)", _ou_vazio(linha["ne_curta"]), f"{k}_ne")
         # sem min_value=0.0: a base real tem meses_liquidados negativo em pelo menos um
         # registro (anulação/ajuste retroativo) — um piso de zero quebraria a leitura desse
         # valor já existente na origem.
         despesa_mensal = _campo_numero(r3[1], "Despesa Mensal Total (R$)", _ou_zero(linha["despesa_mensal"]), f"{k}_despmensal", step=100.0)
-        valor_empenhado = _campo_numero(r3[2], "Empenhado (R$)", _ou_zero(linha["valor_empenhado"]), f"{k}_empenhado", step=100.0)
-        saldo_planilha = _campo_numero(r3[3], "Saldo TG (R$)", _ou_zero(linha["saldo_colado_planilha"]), f"{k}_saldotg", step=100.0)
+        # meses_no_ano (pedido explícito, mesmo campo/motivo de app_pages/bolsas_auxilios.py):
+        # total de meses que o contrato é pago no exercício — a maioria é 12 (contrato
+        # "contínuo" de verdade), mas um contrato que só roda parte do ano tem menos. Usado em
+        # "Despesa Anual" (abaixo) e na sugestão "por calendário" do Relatório de Reforço.
+        meses_no_ano = _campo_numero(r3[2], "Meses no Ano", _ou_zero(linha["meses_no_ano"]) or 12, f"{k}_mesesano", step=1.0, fmt="%d", min_value=1.0)
+        valor_empenhado = _campo_numero(r3[3], "Empenhado (R$)", _ou_zero(linha["valor_empenhado"]), f"{k}_empenhado", step=100.0)
+        saldo_planilha = _campo_numero(r3[4], "Saldo TG (R$)", _ou_zero(linha["saldo_colado_planilha"]), f"{k}_saldotg", step=100.0)
 
         r4 = st.columns(4)
         # Quando a NE já foi encontrada na Execução Mensal, `meses_empenhados_execucao`/
@@ -710,7 +707,7 @@ def _render_card(
             meses_empenhados_persistir = meses_empenhados
             meses_liquidados_persistir = meses_liquidados
 
-        despesa_anual = despesa_mensal * 12
+        despesa_anual = despesa_mensal * meses_no_ano
         meses_a_empenhar, valor_a_empenhar = calcular_necessidade_empenho(
             meses_empenhados, meses_liquidados, despesa_mensal
         )
@@ -833,6 +830,7 @@ def _render_card(
                     "unidade_cod": unidade or None, "acao_cod": acao or None, "ptres": ptres or None,
                     "natureza_despesa_cod": nd or None, "ugr_cod": ugr or None, "pi_cod": pi or None,
                     "ne_curta": ne_curta.strip() or None, "despesa_mensal": despesa_mensal,
+                    "meses_no_ano": meses_no_ano,
                     "valor_empenhado": valor_empenhado, "saldo_colado_planilha": saldo_planilha,
                     "meses_empenhados": meses_empenhados_persistir, "meses_liquidados": meses_liquidados_persistir,
                     "itens": [dict(item) for item in itens_sessao],
@@ -894,11 +892,16 @@ def _render_novo_contrato(ano_exercicio: int, source_key: str) -> None:
             c11, c12 = st.columns(2)
             ne_curta = c11.text_input("NE (opcional)", placeholder="ex. 2026NE000999")
             despesa_mensal = c12.number_input("Despesa mensal (R$)", min_value=0.0, step=100.0)
-            c13, c14 = st.columns(2)
+            c12b, c13 = st.columns(2)
+            # meses_no_ano (pedido explícito, mesmo campo/motivo de bolsas_auxilios.py): total
+            # de meses que o contrato é pago no exercício — 12 por padrão (contrato "contínuo"
+            # de verdade), menor para um contrato que só roda parte do ano.
+            meses_no_ano = c12b.number_input("Meses no ano", min_value=1, max_value=12, value=12)
             valor_empenhado = c13.number_input("Valor empenhado (R$)", min_value=0.0, step=100.0)
+            c14, c15 = st.columns(2)
             saldo_colado = c14.number_input("Saldo colado na planilha (R$)", min_value=0.0, step=100.0)
-            c15, c16 = st.columns(2)
             meses_empenhados = c15.number_input("Meses empenhados", min_value=0.0, step=0.1)
+            c16, _c17 = st.columns(2)
             meses_liquidados = c16.number_input("Meses liquidados", min_value=0.0, step=0.1)
 
             if st.form_submit_button("Adicionar contrato"):
@@ -911,6 +914,7 @@ def _render_novo_contrato(ano_exercicio: int, source_key: str) -> None:
                         unidade_cod=unidade, acao_cod=acao, ptres=ptres,
                         natureza_despesa_cod=nd, ugr_cod=ugr, pi_cod=pi,
                         ne_curta=ne_curta.strip() or None, despesa_mensal=despesa_mensal,
+                        meses_no_ano=meses_no_ano,
                         valor_empenhado=valor_empenhado, saldo_colado_planilha=saldo_colado,
                         meses_empenhados=meses_empenhados, meses_liquidados=meses_liquidados,
                     )
@@ -1107,7 +1111,6 @@ def _abrir_resumo_completo(
 
 def _render_resumo_consolidado(
     filtrado: pd.DataFrame,
-    meses_restantes: int,
     tempo_por_ne_curta: pd.DataFrame | None,
     source_key: str,
     liquidacao_competencia_por_mes: pd.DataFrame | None = None,
@@ -1157,7 +1160,17 @@ def _render_resumo_consolidado(
     Coluna "Meses Liquidados" (pedido explícito posterior — antes "Meses Pagos", vinda da
     planilha separada de Pagamentos): agora vem de `meses_liquidados_por_ne`
     (`_meses_liquidados_por_ne_curta`, Liquidação por Competência) — quantos meses a NE já tem
-    de liquidação apurada por competência, não quantos meses tiveram pagamento registrado."""
+    de liquidação apurada por competência, não quantos meses tiveram pagamento registrado.
+
+    Meses AINDA DEVIDOS no exercício (pedido explícito, mesma correção de
+    `app_pages/bolsas_auxilios.py::_render_resumo_consolidado` — ver lá para o caso real que
+    motivou, AUXÍLIO BEXT parcela única): substitui o antigo "meses restantes até dezembro"
+    GLOBAL (removido junto de `_meses_restantes_no_ano`) por um teto POR NE/CONTRATO
+    (`meses_no_ano`, cadastro) menos quanto dele já foi empenhado (`valor_empenhado ÷
+    despesa_mensal`) — sem isso, um contrato com vigência menor que o exercício (ou já com toda
+    sua despesa anual empenhada) continuava sugerindo reforço só por causa do calendário. NE/
+    contrato sem `meses_no_ano` cadastrado cai no padrão de 12 (mesmo critério "contínuo" de
+    antes desta correção — a maioria dos contratos continua nesse padrão)."""
 
     if meses_liquidados_por_ne is None:
         meses_liquidados_por_ne = pd.DataFrame(columns=_COLUNAS_MESES_LIQUIDADOS)
@@ -1169,6 +1182,7 @@ def _render_resumo_consolidado(
         fornecedor=("fornecedor", "first"),
         contrato_numero=("contrato_numero", "first"),
         despesa_mensal=("despesa_mensal", "sum"),
+        meses_no_ano=("meses_no_ano", "first"),
         valor_empenhado_execucao=("valor_empenhado_execucao", "first"),
         valor_empenhado_planilha_total_ne=("valor_empenhado_planilha_total_ne", "first"),
         valor_liquidado_execucao=("valor_liquidado_execucao", "first"),
@@ -1192,11 +1206,15 @@ def _render_resumo_consolidado(
     saldo_competencia = por_ne["valor_empenhado_exibido"] - por_ne["valor_liquidado_execucao"]
     saldo_lancamento_fallback = por_ne["saldo_execucao"].fillna(por_ne["saldo_colado_planilha"]).fillna(0.0)
     por_ne["saldo_para_necessidade"] = saldo_competencia.where(usa_competencia_na_necessidade, saldo_lancamento_fallback)
-    por_ne["necessidade"] = (por_ne["despesa_mensal"] * meses_restantes - por_ne["saldo_para_necessidade"]).clip(lower=0)
+    meses_ja_empenhados_ne = (por_ne["valor_empenhado_exibido"] / por_ne["despesa_mensal"].replace(0.0, pd.NA)).fillna(0.0)
+    por_ne["meses_restantes"] = (por_ne["meses_no_ano"].fillna(12) - meses_ja_empenhados_ne).clip(lower=0)
+    por_ne["necessidade"] = (por_ne["despesa_mensal"] * por_ne["meses_restantes"] - por_ne["saldo_para_necessidade"]).clip(lower=0)
     algum_ne_via_competencia = bool(usa_competencia_na_necessidade.any())
 
     sem_ne["valor_empenhado_exibido"] = sem_ne["valor_empenhado"]
-    sem_ne["necessidade"] = (sem_ne["despesa_mensal"] * meses_restantes).clip(lower=0)
+    meses_ja_empenhados_sem_ne = (sem_ne["valor_empenhado_exibido"] / sem_ne["despesa_mensal"].replace(0.0, pd.NA)).fillna(0.0)
+    meses_restantes_sem_ne = (sem_ne["meses_no_ano"].fillna(12) - meses_ja_empenhados_sem_ne).clip(lower=0)
+    sem_ne["necessidade"] = (sem_ne["despesa_mensal"] * meses_restantes_sem_ne).clip(lower=0)
 
     linhas = [
         (
@@ -1229,7 +1247,7 @@ def _render_resumo_consolidado(
                 <div class="cc-resumo-title">Necessidade de Empenho por NE</div>
               </div>
               <div style="text-align:right">
-                <div class="cc-resumo-metric-label">Necessidade até Dezembro ({meses_restantes}m)</div>
+                <div class="cc-resumo-metric-label">Necessidade até Dezembro</div>
                 <div class="cc-resumo-metric">{_brl(necessidade_total)}</div>
                 <div class="cc-resumo-metric-label" style="margin-top:4px">
                   {total_linhas} {"NE/contrato" if total_linhas == 1 else "NEs/contratos"}
@@ -1549,8 +1567,9 @@ def _render_quadro_dotacao(filtrado: pd.DataFrame, dotacao_dimensoes: pd.DataFra
 
 #: sufixo da key do widget (ver `_render_card`) -> coluna do DataFrame que ele edita.
 _CAMPOS_EDITAVEIS_NUMERICOS = {
-    "ano": "ano_contrato", "despmensal": "despesa_mensal", "empenhado": "valor_empenhado",
-    "saldotg": "saldo_colado_planilha", "mesesemp": "meses_empenhados", "mesesliq": "meses_liquidados",
+    "ano": "ano_contrato", "despmensal": "despesa_mensal", "mesesano": "meses_no_ano",
+    "empenhado": "valor_empenhado", "saldotg": "saldo_colado_planilha",
+    "mesesemp": "meses_empenhados", "mesesliq": "meses_liquidados",
 }
 _CAMPOS_EDITAVEIS_TEXTO = {
     "fornecedor": "fornecedor", "numero": "contrato_numero", "cnpj": "fornecedor_cnpj_cpf",
@@ -1585,8 +1604,10 @@ def _aplicar_edicoes_da_sessao(dataframe: pd.DataFrame, source_key: str) -> pd.D
             resultado.at[indice, "status_contrato"] = status
 
     # mesmas fórmulas usadas dentro do cartão (`_render_card`) e na leitura original
-    # (`ler_contratos_continuos`) — reaproveitadas aqui, não reimplementadas.
-    resultado["despesa_anual"] = resultado["despesa_mensal"] * 12
+    # (`ler_contratos_continuos`) — reaproveitadas aqui, não reimplementadas. `meses_no_ano`
+    # sem valor (contrato anterior a esta correção) cai no padrão de 12, mesmo critério de
+    # `src.contratos_continuos_cadastro.como_dataframe`.
+    resultado["despesa_anual"] = resultado["despesa_mensal"] * resultado["meses_no_ano"].fillna(12)
     resultado["meses_a_empenhar"], resultado["valor_a_empenhar"] = calcular_necessidade_empenho(
         resultado["meses_empenhados"], resultado["meses_liquidados"], resultado["despesa_mensal"]
     )
@@ -1773,6 +1794,10 @@ if tempo_por_ne_curta is not None:
 else:
     sugestao_inicio_por_ne = pd.Series(dtype="Int64")
 dataframe["valor_empenhado_autoritativo"] = dataframe["valor_empenhado_execucao"].fillna(dataframe["valor_empenhado"])
+# mesmo padrão de fallback usado no resto da página (ex. linha 1193, divergência de saldo) —
+# autoritativo (Execução Mensal) com o valor colado na planilha como reserva. Usado só para
+# evidenciar o saldo na tela do Relatório de Reforço/Anulação (pedido explícito).
+dataframe["saldo_autoritativo"] = dataframe["saldo_execucao"].fillna(dataframe["saldo_colado_planilha"])
 dataframe["inicio_execucao_efetivo"] = dataframe["inicio_execucao_mes"].fillna(
     dataframe["ne_curta"].map(sugestao_inicio_por_ne)
 )
@@ -1810,7 +1835,7 @@ render_metric_grid(
 )
 
 _render_resumo_consolidado(
-    filtrado, _meses_restantes_no_ano(), tempo_por_ne_curta, source_key, liquidacao_competencia_por_mes,
+    filtrado, tempo_por_ne_curta, source_key, liquidacao_competencia_por_mes,
     meses_liquidados_por_ne,
 )
 if indice_liquidado_competencia is not None:

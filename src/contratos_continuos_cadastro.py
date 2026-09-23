@@ -27,6 +27,13 @@ esse total na hora do relatório: `valor_mensal_do_item = despesa_mensal × perc
 "Duplicar cadastro" copia o contrato inteiro, itens incluídos (identidade/classificação, não
 execução).
 
+`meses_no_ano` (pedido explícito, mesmo campo/motivo de `src.bolsas_auxilios_cadastro`): total
+de meses que o contrato é pago no exercício — a maioria é 12 (contrato "contínuo" de verdade),
+mas um contrato que só roda parte do ano (ex.: iniciado no meio do exercício, ou com vigência
+menor que 12 meses) tem menos. Usado em `despesa_anual` (abaixo) e na sugestão "por calendário"
+do Relatório de Reforço (`src.necessidade_empenho.necessidade_ate_mes_vigente`) — sem ele
+(registro anterior a esta correção), cai no padrão de 12, idêntico ao comportamento de antes.
+
 `meses_pagos`/`ultimo_mes_pago` (`src.contratos_pagamentos`) continuam vindo de uma planilha
 separada, cruzada por número de contrato em tempo de render (`com_meses_pagos`) — fora do
 escopo desta desvinculação.
@@ -88,7 +95,7 @@ CAMPOS_IDENTIDADE = [
     "ano_contrato", "contrato_numero", "processo_contratacao", "processo_empenho", "fornecedor",
     "tipo_contrato", "tipo_despesa", "fornecedor_cnpj_cpf", "vigencia_fim", "unidade_cod",
     "acao_cod", "ptres", "fonte_cod", "natureza_despesa_cod", "ugr_cod", "pi_cod",
-    "despesa_mensal", "itens",
+    "despesa_mensal", "meses_no_ano", "itens",
 ]
 
 #: em branco/zerados no exercício novo — o vínculo com a Execução Anual se refaz quando o
@@ -113,7 +120,7 @@ _COLUNAS_TEXTO = [
     "fonte_cod", "natureza_despesa_cod", "ugr_cod", "pi_cod", "ne_curta",
 ]
 _COLUNAS_NUMERICAS = [
-    "ano_contrato", "despesa_mensal", "valor_empenhado", "saldo_colado_planilha",
+    "ano_contrato", "despesa_mensal", "meses_no_ano", "valor_empenhado", "saldo_colado_planilha",
     "meses_empenhados", "meses_liquidados", "inicio_execucao_mes",
 ]
 _COLUNAS_VAZIAS = [
@@ -192,7 +199,11 @@ def como_dataframe(contratos: list[dict]) -> pd.DataFrame:
     df["itens"] = df["itens"].apply(_itens_validos)
     df["tem_varios_itens"] = df["itens"].apply(lambda itens: len(itens) > 1)
 
-    df["despesa_anual"] = df["despesa_mensal"] * 12
+    # meses_no_ano (pedido explícito, mesmo campo de src.bolsas_auxilios_cadastro): total de
+    # meses que o contrato é pago no exercício — contrato sem esse campo ainda preenchido
+    # (registro anterior a esta correção) cai no padrão de 12 (mesmo critério "contínuo" já
+    # usado antes desta mudança, nenhum contrato existente muda de valor).
+    df["despesa_anual"] = df["despesa_mensal"] * df["meses_no_ano"].fillna(12)
     df["meses_a_empenhar"], df["valor_a_empenhar"] = calcular_necessidade_empenho(
         df["meses_empenhados"], df["meses_liquidados"], df["despesa_mensal"]
     )
