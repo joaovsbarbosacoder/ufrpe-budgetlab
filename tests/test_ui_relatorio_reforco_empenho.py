@@ -146,6 +146,50 @@ def _renderiza_conteudo(tipo_id: str, processo_key: str = "teste") -> AppTest:
     return app
 
 
+def _app_fn_continuos_vigencia() -> None:
+    from datetime import date, timedelta
+
+    import pandas as pd
+
+    from src.relatorio_reforco_empenho import CONTRATOS_CONTINUOS, TIPO_REFORCO
+    from src.ui_relatorio_reforco_empenho import _render_conteudo_relatorio
+
+    hoje = date.today()
+    df = pd.DataFrame(
+        {
+            "processo_empenho": ["P1", "P1", "P1"],
+            "fornecedor": ["Expirado SA", "Sem Data Ltda", "Vigente ME"],
+            "unidade_cod": ["SEDE"] * 3, "acao_cod": ["20TP"] * 3, "ptres": ["1"] * 3,
+            "fonte_cod": ["1000"] * 3, "natureza_despesa_cod": ["339039"] * 3,
+            "ugr_cod": ["1"] * 3, "pi_cod": ["A", "B", "C"],
+            "ne_curta": ["2026NE000001", "2026NE000002", "2026NE000003"],
+            "despesa_mensal": [1000.0, 1000.0, 1000.0], "meses_a_empenhar": [1.0, 1.0, 1.0],
+            "itens": [[{"numero": 1, "percentual": 100.0}]] * 3,
+            "vigencia_fim": pd.to_datetime([hoje - timedelta(days=5), None, hoje + timedelta(days=900)]),
+        }
+    )
+    _render_conteudo_relatorio(df, CONTRATOS_CONTINUOS, TIPO_REFORCO, "teste_vig", 2026)
+
+
+class TestVigenciaNaTelaDoRelatorio(unittest.TestCase):
+    def test_contratos_mostram_vigencia_so_quando_ha_data(self) -> None:
+        app = AppTest.from_function(_app_fn_continuos_vigencia)
+        app.run()
+
+        self.assertEqual(len(app.exception), 0)
+        legendas = [c.value for c in app.caption if "Vigência" in c.value]
+        self.assertEqual(len(legendas), 2)  # o contrato sem data não mostra nada
+        self.assertTrue(any("expirada há 5 d" in t for t in legendas))
+        # o vigente (900 dias) mostra só a data, sem aviso de expirada/a vencer
+        self.assertTrue(any("expirada" not in t and "vence" not in t for t in legendas))
+
+    def test_bolsas_nao_mostram_vigencia(self) -> None:
+        app = _renderiza_conteudo("reforco")
+
+        self.assertEqual(len(app.exception), 0)
+        self.assertFalse(any("Vigência" in c.value for c in app.caption))
+
+
 class TestGradeFeitaAMao(unittest.TestCase):
     """Grade de edição feita à mão (`st.columns` + `st.text_input` mascarado em pt-BR, uma
     célula por widget) que substituiu o `st.data_editor` — ver docstring do módulo sobre o

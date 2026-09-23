@@ -7,6 +7,7 @@ Dados sintéticos — a lógica é pura reorganização de colunas já validadas
 from __future__ import annotations
 
 import unittest
+from datetime import date
 
 import pandas as pd
 
@@ -21,6 +22,7 @@ from src.relatorio_reforco_empenho import (
     gerar_pdf_resumido,
     linhas_para_processo,
     processos_disponiveis,
+    texto_vigencia,
 )
 
 
@@ -136,6 +138,60 @@ class TestLinhasParaProcessoContinuos(unittest.TestCase):
         # meses_sugeridos é sempre no nível da NE (liquidação não é dividida por item) —
         # idêntico nas duas linhas expandidas do mesmo contrato.
         self.assertEqual(itens_tekis["meses_sugeridos"].nunique(), 1)
+
+
+class TestVigenciaNoRelatorio(unittest.TestCase):
+    """Vigência é só informativa: repassada às linhas de Contratos Contínuos, nunca altera
+    valores e nunca aparece em Bolsas e Auxílios."""
+
+    HOJE = date(2026, 9, 23)
+
+    def _continuos_com_vigencia(self) -> pd.DataFrame:
+        df = _continuos_sintetico()
+        df["vigencia_fim"] = pd.to_datetime(
+            ["2026-08-22", None, "2026-10-03", "2027-12-31"]
+        )
+        return df
+
+    def test_vigencia_e_repassada_por_contrato_inclusive_nos_itens_expandidos(self):
+        linhas = linhas_para_processo(self._continuos_com_vigencia(), CONTRATOS_CONTINUOS, "001370/2026-44", 2026)
+        tekis = linhas[linhas["ne_curta"] == "2026NE000084"]
+        self.assertEqual(len(tekis), 2)
+        self.assertTrue((tekis["vigencia_fim"] == pd.Timestamp("2027-12-31")).all())
+        brascon = linhas[linhas["ne_curta"] == "2026NE000101"].iloc[0]
+        self.assertTrue(pd.isna(brascon["vigencia_fim"]))
+
+    def test_vigencia_nao_altera_valores_do_relatorio(self):
+        sem = linhas_para_processo(_continuos_sintetico(), CONTRATOS_CONTINUOS, "001370/2026-44", 2026)
+        com = linhas_para_processo(self._continuos_com_vigencia(), CONTRATOS_CONTINUOS, "001370/2026-44", 2026)
+        colunas = ["item_despesa", "ne_curta", "valor_mensal", "meses_sugeridos", "saldo"]
+        pd.testing.assert_frame_equal(sem[colunas], com[colunas])
+        self.assertTrue(sem["vigencia_fim"].isna().all())  # base sem a coluna: tudo nulo
+
+    def test_bolsas_continuam_sem_vigencia(self):
+        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78", 2026)
+        self.assertTrue(linhas["vigencia_fim"].isna().all())
+        self.assertIsNone(BOLSAS_AUXILIOS.coluna_vigencia)
+
+    def test_pdfs_nao_recebem_coluna_de_vigencia(self):
+        linhas = linhas_para_processo(self._continuos_com_vigencia(), CONTRATOS_CONTINUOS, "001370/2026-44", 2026)
+        linhas = linhas.assign(meses=1.0, empenhar=100.0)
+        self.assertTrue(gerar_pdf_detalhado(CONTRATOS_CONTINUOS, TIPO_REFORCO, "001370/2026-44", linhas).startswith(b"%PDF"))
+        self.assertTrue(gerar_pdf_resumido(CONTRATOS_CONTINUOS, TIPO_REFORCO, "001370/2026-44", linhas).startswith(b"%PDF"))
+
+    def test_texto_vigencia(self):
+        casos = {
+            "2026-08-22": "Vigência até 22/08/2026 · expirada há 32 d",
+            "2026-09-23": "Vigência até 23/09/2026 · vence hoje",
+            "2026-10-03": "Vigência até 03/10/2026 · vence em 10 d",
+            "2027-12-31": "Vigência até 31/12/2027",
+        }
+        for entrada, esperado in casos.items():
+            self.assertEqual(texto_vigencia(entrada, self.HOJE), esperado)
+
+    def test_sem_data_nao_gera_texto(self):
+        for vazio in (None, pd.NaT, pd.NA, float("nan"), ""):
+            self.assertEqual(texto_vigencia(vazio, self.HOJE), "")
 
 
 def _continuos_com_calendario_sintetico() -> pd.DataFrame:
