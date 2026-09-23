@@ -150,7 +150,7 @@ lote que gravou/atualizou aquele registro pela última vez, e o histórico de lo
 
 ## 8. Alertas implementados
 
-Dez tipos (`src/teds_alertas.py`), cada um com funções puras testáveis sem banco e uma
+Onze tipos (`src/teds_alertas.py`), cada um com funções puras testáveis sem banco e uma
 `sincronizar_alertas_*` que lê do SQLite e grava alertas novos sem duplicar um alerta já
 aberto para o mesmo documento — e sem nunca fechar um alerta sozinha (resolução é sempre ação
 humana, registrada na Central de Alertas):
@@ -194,11 +194,17 @@ humana, registrada na Central de Alertas):
     caixa); os demais (prestação de contas, diligência, comprovado, finalizado) não. Um estado
     novo do SIMEC não gera alerta até ser classificado.
 
-  Não implementados por falta de definição: "TED em execução sem movimentação" (o que conta
-  como movimentação?) e "estado incompatível com os documentos". Sem número de TED, sem SIAFI e
+  - `ted_sem_movimentacao` (média) — TED em execução sem NC ou PF emitida há mais de **180
+    dias**. O briefing não define o prazo: 180 é uma escolha inicial (parâmetro
+    `PRAZO_SEM_MOVIMENTACAO_DIAS`), a ajustar por quem conhece o ritmo dos TEDs. Movimentação =
+    NC ou PF com data de emissão (documento sem data ou com data futura não conta); a **NE não
+    entra** porque `vinculo_ne` não guarda data. Sem nenhum documento, a referência é o início da
+    vigência (TED recém-iniciado ainda não é "sem movimentação").
+
+  Não implementado por falta de definição: "estado incompatível com os documentos". Sem número de TED, sem SIAFI e
   mesma chave TED–SIAFI com descrições conflitantes não podem ocorrer hoje (a chave exige os
-  dois e a descrição fica numa linha por TED). Com o banco atual: 3 TEDs vencidos em execução e
-  3 documentos (PF) fora da vigência.
+  dois e a descrição fica numa linha por TED). Com o banco atual: 3 TEDs vencidos em execução, 3
+  documentos (PF) fora da vigência e 9 TEDs em execução sem movimentação.
 
 Os demais alertas previstos no briefing (crédito sem empenho etc.) ficam para uma fase
 seguinte, fora do escopo aprovado até aqui.
@@ -287,7 +293,7 @@ válido. O mesmo arquivo pode ser reimportado depois (vira um lote novo). Na pá
 
 - Competência real no TEDs (Documento Hábil × mês de referência, via Liquidação por
   Competência) — ver seção 6.
-- Alertas além dos dez da seção 8.
+- Alertas além dos onze da seção 8.
 - Edição do mapeamento de colunas na tela de Importações.
 - Campo de observação manual por TED.
 - Persistência dos parâmetros de Configurações além da sessão do navegador.

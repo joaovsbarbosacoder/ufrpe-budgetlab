@@ -165,6 +165,9 @@ with col_detalhe:
                 "casos legítimos, que pedem justificativa — o documento nunca é excluído.",
                 "ted_vencido_em_execucao": "TED com vigência encerrada não deveria continuar no estado "
                 "\"Termo em Execução\" — conferir prorrogação ou encerramento.",
+                "ted_sem_movimentacao": "TED em execução deveria ter NC ou PF emitida dentro do prazo (padrão 180 "
+                "dias); o prazo é uma escolha inicial, não uma regra do briefing, e a NE não conta por não ter "
+                "data no banco.",
             }.get(alvo.tipo, "—")
             st.caption(regra)
 

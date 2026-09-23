@@ -414,6 +414,12 @@ TIPO_TED_SEM_UG_DESCENTRALIZADORA = "ted_sem_ug_descentralizadora"
 TIPO_SIAFI_EM_MULTIPLOS_TEDS = "siafi_em_multiplos_teds"
 TIPO_DOCUMENTO_FORA_DA_VIGENCIA = "documento_fora_da_vigencia"
 TIPO_TED_VENCIDO_EM_EXECUCAO = "ted_vencido_em_execucao"
+TIPO_TED_SEM_MOVIMENTACAO = "ted_sem_movimentacao"
+
+#: Prazo padrão de "TED em execução sem movimentação" (briefing, seção 7, não define o prazo — este
+#: valor é uma escolha inicial, ajustável por parâmetro). Movimentação = NC ou PF emitida; a NE não
+#: entra porque `vinculo_ne` não guarda data de emissão.
+PRAZO_SEM_MOVIMENTACAO_DIAS = 180
 
 #: Único estado tratado como "em execução" (texto exato da extração real do SIMEC, comparado sem
 #: acento e sem diferença de caixa). Os demais estados (prestação de contas, diligência,
@@ -460,7 +466,10 @@ def _data_br(valor: date) -> str:
 
 
 def gerar_alertas_cadastrais(
-    teds: list[TedCadastro], documentos: list[DocumentoDatado], hoje: date
+    teds: list[TedCadastro],
+    documentos: list[DocumentoDatado],
+    hoje: date,
+    prazo_sem_movimentacao_dias: int = PRAZO_SEM_MOVIMENTACAO_DIAS,
 ) -> list[Alerta]:
     """Todas as verificações são descritivas: apontam a inconsistência sem alterar, excluir ou
     deixar de importar nada. Documento fora da vigência pode ser legítimo (briefing, seção 7),
@@ -499,6 +508,36 @@ def gerar_alertas_cadastrais(
                     f"atual ainda é \"{t.estado_atual}\". Conferir prorrogação ou encerramento."
                 ),
             ))
+
+    ultima_movimentacao: dict[str, date] = {}
+    for d in documentos:
+        if d.data_emissao is not None and d.data_emissao <= hoje:
+            atual = ultima_movimentacao.get(d.chave_ted)
+            if atual is None or d.data_emissao > atual:
+                ultima_movimentacao[d.chave_ted] = d.data_emissao
+    for t in sorted(teds, key=lambda x: x.chave_ted):
+        if not estado_em_execucao(t.estado_atual):
+            continue
+        # Sem nenhum documento datado, a referência é o início da vigência: um TED recém-iniciado
+        # ainda não é "sem movimentação". Sem documento e sem início, não há como datar: alerta.
+        ultima = ultima_movimentacao.get(t.chave_ted)
+        referencia = ultima or t.inicio_vigencia
+        if referencia is not None and (hoje - referencia).days <= prazo_sem_movimentacao_dias:
+            continue
+        if ultima is not None:
+            detalhe = f"última NC/PF emitida em {_data_br(ultima)}"
+        elif referencia is not None:
+            detalhe = f"nenhuma NC/PF emitida desde o início da vigência ({_data_br(referencia)})"
+        else:
+            detalhe = "nenhuma NC/PF emitida e sem data de início da vigência"
+        alertas.append(Alerta(
+            tipo=TIPO_TED_SEM_MOVIMENTACAO, gravidade="media", documento=t.chave_ted, chave_ted=t.chave_ted,
+            descricao=(
+                f"TED {t.ted} (SIAFI {t.codigo_siafi}) em execução sem movimentação há mais de "
+                f"{prazo_sem_movimentacao_dias} dias: {detalhe}. Movimentação = NC ou PF emitida "
+                "(a NE não tem data no banco)."
+            ),
+        ))
 
     teds_por_siafi: dict[str, set[str]] = {}
     for t in teds:
@@ -567,12 +606,19 @@ def _carregar_cadastro(conn: sqlite3.Connection) -> tuple[list[TedCadastro], lis
     return teds, documentos
 
 
-def sincronizar_alertas_cadastrais(conn: sqlite3.Connection, hoje: date | None = None) -> list[Alerta]:
-    """Grava as validações cadastrais/de vigência ainda não sinalizadas. `hoje` só é usado para
-    "TED vencido em execução" (injetável para teste). Nunca fecha alerta existente."""
+def sincronizar_alertas_cadastrais(
+    conn: sqlite3.Connection,
+    hoje: date | None = None,
+    prazo_sem_movimentacao_dias: int = PRAZO_SEM_MOVIMENTACAO_DIAS,
+) -> list[Alerta]:
+    """Grava as validações cadastrais/de vigência ainda não sinalizadas. `hoje` e o prazo são
+    injetáveis para teste. Nunca fecha alerta existente."""
 
     teds, documentos = _carregar_cadastro(conn)
-    return _gravar_alertas_novos(conn, gerar_alertas_cadastrais(teds, documentos, hoje or date.today()))
+    return _gravar_alertas_novos(
+        conn,
+        gerar_alertas_cadastrais(teds, documentos, hoje or date.today(), prazo_sem_movimentacao_dias),
+    )
 
 
 # --------------------------------------------------------------------------------------

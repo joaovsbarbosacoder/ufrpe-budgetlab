@@ -33,6 +33,7 @@ from src.teds_alertas import (
     TIPO_PF_MAIOR_QUE_NC,
     TIPO_DOCUMENTO_FORA_DA_VIGENCIA,
     TIPO_SIAFI_EM_MULTIPLOS_TEDS,
+    TIPO_TED_SEM_MOVIMENTACAO,
     TIPO_TED_SEM_UG_DESCENTRALIZADORA,
     TIPO_TED_VENCIDO_EM_EXECUCAO,
     TIPO_TED_VIGENCIA_INVERTIDA,
@@ -67,6 +68,7 @@ _ROTULO_TIPO_ALERTA = {
     TIPO_SIAFI_EM_MULTIPLOS_TEDS: "SIAFI associado a mais de um TED",
     TIPO_DOCUMENTO_FORA_DA_VIGENCIA: "Documento fora da vigência",
     TIPO_TED_VENCIDO_EM_EXECUCAO: "TED vencido ainda em execução",
+    TIPO_TED_SEM_MOVIMENTACAO: "TED em execução sem movimentação",
 }
 
 #: Todos os tipos de alerta que as telas listam por padrão.
@@ -81,6 +83,7 @@ TIPOS_ALERTA = (
     TIPO_TED_SEM_UG_DESCENTRALIZADORA,
     TIPO_TED_VENCIDO_EM_EXECUCAO,
     TIPO_TED_VIGENCIA_INVERTIDA,
+    TIPO_TED_SEM_MOVIMENTACAO,
 )
 
 
