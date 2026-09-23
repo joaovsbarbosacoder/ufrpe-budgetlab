@@ -172,6 +172,41 @@ rubricas é comparada ao total da base anual no mesmo escopo, com diferença exp
 a soma do mês de referência. Os cálculos de férias e 13º existentes não foram
 revisados nesta mudança de apresentação.
 
+### TEDs (Termos de Execução Descentralizada)
+
+O módulo de TEDs é a única base do projeto com persistência própria: em vez do padrão
+"manifesto versionado + recarregar do Excel", grava num banco SQLite isolado
+(`data/teds/teds.db`), porque precisa cruzar cinco fontes (TED, DOC NC, DOC PF, DOC NE e a
+execução no Tesouro Gerencial) e manter uma fila de decisões humanas (vínculo de NE
+pendente, alertas com justificativa e histórico) que não cabe em "recarregar tudo a cada
+acesso". Valores monetários trafegam como `Decimal` em todo o módulo (nunca `float`) e são
+persistidos como texto decimal exato — decisão deliberada, diferente das demais bases, porque
+o módulo compara e soma valores entre fontes distintas onde arredondamento acumulado poderia
+mascarar ou criar divergências.
+
+A importação é idempotente em duas camadas: arquivo idêntico (mesmo hash SHA-256 já
+importado) é um no-op; linha a linha, reimportar um arquivo que traga uma linha já conhecida
+atualiza aquela linha em vez de duplicá-la. `linha_origem` preserva a linha original da
+planilha para auditoria, e o histórico de lotes de importação nunca é sobrescrito.
+
+O grupo "TEDs" na barra lateral tem 6 páginas: Visão geral, Lista (com detalhe em
+drill-down), Central de Alertas, Importações (assistente de 4 passos: Arquivo → Mapeamento →
+Validação → Confirmação), Conciliação (SIMEC × Tesouro Gerencial) e Configurações. Dois
+alertas estão implementados: empenho associado a mais de um TED, e NC sem UG emitente (achado
+real da extração do SIMEC, não do briefing original — a coluna vem vazia em cerca de 41% das
+linhas). Os demais alertas previstos no briefing original (crédito sem empenho, PF maior que
+NC, vigência etc.) ficam para uma fase seguinte, fora do escopo já aprovado.
+
+A fonte do Tesouro Gerencial é a mesma extração de Execução Mensal já usada por outra página
+do projeto (`src/tesouro_execucao_mensal.py`) — não uma extração separada, como se presumia
+antes. A integração está planejada (mapeamento de campos em `docs/base_teds.md`) mas ainda não
+implementada, porque a Execução Mensal está em reestruturação ativa; até lá, os indicadores de
+Liquidado/Pago e a conciliação contra o Tesouro Gerencial mostram "Sem dado" em vez de um
+valor inventado.
+
+O contrato completo (tabelas, chaves, decisões de projeto e a dúvida em aberto) está em
+`docs/base_teds.md`.
+
 ### Limitações atuais
 
 - não há soma, reconciliação ou identidade rígida entre itens de dotação;
@@ -181,8 +216,10 @@ revisados nesta mudança de apresentação.
   ano nas exportações mensais do Tesouro Gerencial, hoje fora do projeto;
   ausência de um "as of" comum entre extrações de bases diferentes); ver
   `docs/base_execucao_anual.md`;
-- cada base tem seu próprio manifesto versionado (`data/manifestos/`); não
-  há banco de dados nem view unificada entre bases.
+- cada base usa manifesto versionado (`data/manifestos/`), sem banco de dados
+  nem view unificada entre elas — exceto TEDs, que tem persistência própria
+  em SQLite (`data/teds/teds.db`) por precisar cruzar cinco fontes e manter
+  uma fila de decisões humanas; ver `docs/base_teds.md`.
 
 ## Visual e tema
 

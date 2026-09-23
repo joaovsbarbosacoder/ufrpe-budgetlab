@@ -88,7 +88,7 @@ class TestProcessosDisponiveis(unittest.TestCase):
 
 class TestLinhasParaProcessoBolsas(unittest.TestCase):
     def setUp(self):
-        self.linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
+        self.linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78", 2026)
 
     def test_so_linhas_do_processo_escolhido(self):
         self.assertEqual(len(self.linhas), 2)
@@ -109,23 +109,23 @@ class TestLinhasParaProcessoBolsas(unittest.TestCase):
 
 class TestLinhasParaProcessoContinuos(unittest.TestCase):
     def test_item_despesa_vem_do_fornecedor(self):
-        linhas = linhas_para_processo(_continuos_sintetico(), CONTRATOS_CONTINUOS, "001370/2026-44")
+        linhas = linhas_para_processo(_continuos_sintetico(), CONTRATOS_CONTINUOS, "001370/2026-44", 2026)
         self.assertEqual(len(linhas), 4)
         self.assertIn("Brascon Gestão Ambiental Ltda", set(linhas["item_despesa"]))
 
     def test_contrato_de_1_item_nao_ganha_sufixo_de_item(self):
-        linhas = linhas_para_processo(_continuos_sintetico(), CONTRATOS_CONTINUOS, "000214/2026-66")
+        linhas = linhas_para_processo(_continuos_sintetico(), CONTRATOS_CONTINUOS, "000214/2026-66", 2026)
         self.assertEqual(linhas.iloc[0]["item_despesa"], "Companhia Energética de Pernambuco")
 
     def test_valor_mensal_vem_de_despesa_mensal(self):
-        linhas = linhas_para_processo(_continuos_sintetico(), CONTRATOS_CONTINUOS, "000214/2026-66")
+        linhas = linhas_para_processo(_continuos_sintetico(), CONTRATOS_CONTINUOS, "000214/2026-66", 2026)
         self.assertEqual(linhas.iloc[0]["valor_mensal"], 5000.0)
 
     def test_contrato_com_varios_itens_vira_uma_linha_por_item_com_valor_rateado(self):
         # pedido explícito: o item não é uma entidade própria no cadastro (1 registro por
         # contrato/NE) — só vira linha própria aqui, no relatório, ratreando "despesa_mensal"
         # do contrato pelo percentual de cada item (não colapsado, nem indistinguível).
-        linhas = linhas_para_processo(_continuos_sintetico(), CONTRATOS_CONTINUOS, "001370/2026-44")
+        linhas = linhas_para_processo(_continuos_sintetico(), CONTRATOS_CONTINUOS, "001370/2026-44", 2026)
         itens_tekis = linhas[linhas["ne_curta"] == "2026NE000084"]
         self.assertEqual(len(itens_tekis), 2)
         valores = dict(zip(itens_tekis["item_despesa"], itens_tekis["valor_mensal"]))
@@ -165,7 +165,7 @@ class TestExcluirLinhasZeradas(unittest.TestCase):
 
 class TestGerarPdfDetalhado(unittest.TestCase):
     def test_pdf_valido_com_total_correto(self):
-        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
+        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78", 2026)
         linhas = linhas.assign(empenhar=linhas["meses_sugeridos"] * linhas["valor_mensal"])
 
         pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, TIPO_REFORCO, "001167/2026-78", linhas)
@@ -176,7 +176,7 @@ class TestGerarPdfDetalhado(unittest.TestCase):
     def test_linha_com_empenhar_nulo_nao_quebra_o_pdf(self):
         # "Meses a Empenhar" sem preencher (dado incompleto na origem, ver
         # `meses_a_empenhar` em necessidade_empenho.py) não pode virar "nan" no PDF.
-        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
+        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78", 2026)
         linhas = linhas.assign(empenhar=[float("nan"), 5000.0])
 
         pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, TIPO_REFORCO, "001167/2026-78", linhas)
@@ -195,7 +195,7 @@ class TestGerarPdfDetalhado(unittest.TestCase):
     def test_pdf_de_anulacao_e_valido(self):
         # Mesmo modelo do Reforço, só que com TIPO_ANULACAO — pedido explícito de escopo
         # (relatório de Anulação de Saldo de Empenho, mesma mecânica/layout do Reforço).
-        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
+        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78", 2026)
         linhas = linhas.assign(empenhar=[3000.0, 0.0])
 
         pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, TIPO_ANULACAO, "001167/2026-78", linhas)
@@ -228,7 +228,7 @@ class TestAgrupadoPorClassificacao(unittest.TestCase):
 
 class TestGerarPdfResumido(unittest.TestCase):
     def test_pdf_valido_com_total_correto(self):
-        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
+        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78", 2026)
         linhas = linhas.assign(empenhar=linhas["meses_sugeridos"] * linhas["valor_mensal"])
 
         pdf_bytes = gerar_pdf_resumido(BOLSAS_AUXILIOS, TIPO_REFORCO, "001167/2026-78", linhas)
@@ -237,7 +237,7 @@ class TestGerarPdfResumido(unittest.TestCase):
         self.assertGreater(len(pdf_bytes), 500)
 
     def test_linha_com_empenhar_nulo_nao_quebra_o_pdf(self):
-        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
+        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78", 2026)
         linhas = linhas.assign(empenhar=[float("nan"), 5000.0])
 
         pdf_bytes = gerar_pdf_resumido(BOLSAS_AUXILIOS, TIPO_REFORCO, "001167/2026-78", linhas)
@@ -254,7 +254,7 @@ class TestGerarPdfResumido(unittest.TestCase):
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
 
     def test_pdf_de_anulacao_e_valido(self):
-        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78")
+        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78", 2026)
         linhas = linhas.assign(empenhar=[3000.0, 0.0])
 
         pdf_bytes = gerar_pdf_resumido(BOLSAS_AUXILIOS, TIPO_ANULACAO, "001167/2026-78", linhas)

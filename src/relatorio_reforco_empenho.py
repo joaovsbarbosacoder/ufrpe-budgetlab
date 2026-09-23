@@ -53,7 +53,7 @@ mesma linha.
 Contrato público:
     EspecificacaoRelatorio (dataclass) — BOLSAS_AUXILIOS / CONTRATOS_CONTINUOS, prontas
     TipoRelatorio (dataclass) — TIPO_REFORCO / TIPO_ANULACAO, prontos
-    linhas_para_processo(df, spec, processo) -> pd.DataFrame
+    linhas_para_processo(df, spec, processo, ano_referencia) -> pd.DataFrame
     excluir_linhas_zeradas(linhas) -> pd.DataFrame
     gerar_pdf_detalhado(spec, tipo, processo, linhas) -> bytes
     gerar_pdf_resumido(spec, tipo, processo, linhas) -> bytes
@@ -276,29 +276,39 @@ def _linhas_expandidas_por_item(filtrado: pd.DataFrame, spec: EspecificacaoRelat
     return linhas
 
 
-def _com_sugestao_por_calendario(resultado: pd.DataFrame) -> pd.DataFrame:
+def _com_sugestao_por_calendario(resultado: pd.DataFrame, ano_referencia: int) -> pd.DataFrame:
     """Substitui `meses_sugeridos` pela sugestão "por calendário" (pedido explícito: "fique
     pronto para empenhar o que falta para o mês vigente" — ver
     `necessidade_ate_mes_vigente`) em toda linha com mês de início conhecido; linha sem
     início conhecido mantém `meses_sugeridos` como estava (execução: empenhado − liquidado).
-    As colunas intermediárias (`_COLUNAS_CALENDARIO`) nunca aparecem no resultado final."""
+    As colunas intermediárias (`_COLUNAS_CALENDARIO`) nunca aparecem no resultado final.
+
+    `ano_referencia` é o exercício do cadastro em tela (não necessariamente o ano corrente do
+    calendário) — repassado a `necessidade_ate_mes_vigente` para não misturar o mês real de
+    hoje com um `inicio_execucao_mes` de um exercício diferente (ver docstring de lá)."""
 
     if resultado.empty or "_inicio_execucao_mes" not in resultado.columns:
         return resultado.drop(columns=_COLUNAS_CALENDARIO, errors="ignore")
 
     meses_calendario, _ = necessidade_ate_mes_vigente(
         resultado["valor_mensal"], resultado["_valor_empenhado_item"], resultado["_inicio_execucao_mes"],
+        ano_referencia,
     )
     resultado["meses_sugeridos"] = meses_calendario.where(meses_calendario.notna(), resultado["meses_sugeridos"])
     return resultado.drop(columns=_COLUNAS_CALENDARIO, errors="ignore")
 
 
-def linhas_para_processo(df: pd.DataFrame, spec: EspecificacaoRelatorio, processo: str) -> pd.DataFrame:
+def linhas_para_processo(
+    df: pd.DataFrame, spec: EspecificacaoRelatorio, processo: str, ano_referencia: int
+) -> pd.DataFrame:
     """Linhas do processo escolhido, no esquema comum do relatório (independente da base de
     origem) — `meses_sugeridos` vem de `meses_a_empenhar` (já calculado na leitura da base),
     ponto de partida para a edição por linha na página, não o valor final. Linhas sem NE
     reconhecível ficam de fora — não há empenho para reforçar (a bolsa/contrato ainda não foi
     empenhado), mesmo critério de `processos_disponiveis`.
+
+    `ano_referencia` é o exercício do cadastro em tela — ver docstring de
+    `_com_sugestao_por_calendario`/`necessidade_ate_mes_vigente`.
 
     Um contrato pode virar mais de uma linha aqui — um item de licitação por linha (ver
     `_linhas_expandidas_por_item`/`coluna_itens`), cada uma com o valor mensal do contrato
@@ -348,7 +358,7 @@ def linhas_para_processo(df: pd.DataFrame, spec: EspecificacaoRelatorio, process
                 ),
             }
         )
-    resultado = _com_sugestao_por_calendario(resultado)
+    resultado = _com_sugestao_por_calendario(resultado, ano_referencia)
     return resultado.reset_index(drop=True)
 
 

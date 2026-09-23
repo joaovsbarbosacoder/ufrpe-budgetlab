@@ -57,7 +57,7 @@ com separador nenhum, "94500.00") — só leitura consegue o pt-BR completo de `
 célula editável).
 
 Contrato público:
-    render_botao_relatorio(df, spec, chave) -> None
+    render_botao_relatorio(df, spec, chave, ano_referencia) -> None
 """
 
 from __future__ import annotations
@@ -98,7 +98,9 @@ def _recalcular_valor_por_meses(meses_key: str, valor_key: str, valor_mensal: fl
 
 
 @st.dialog("Relatórios", width="large")
-def _abrir_relatorios(df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str) -> None:
+def _abrir_relatorios(
+    df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str, ano_referencia: int
+) -> None:
     tipo_key = f"reforco_tipo_{chave}"
     tipo_id = st.session_state.get(tipo_key)
 
@@ -136,11 +138,11 @@ def _abrir_relatorios(df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str
 
     tipo = TIPO_REFORCO if tipo_id == "reforco" else TIPO_ANULACAO
     st.divider()
-    _render_conteudo_relatorio(df, spec, tipo, chave)
+    _render_conteudo_relatorio(df, spec, tipo, chave, ano_referencia)
 
 
 def _render_conteudo_relatorio(
-    df: pd.DataFrame, spec: EspecificacaoRelatorio, tipo: TipoRelatorio, chave: str
+    df: pd.DataFrame, spec: EspecificacaoRelatorio, tipo: TipoRelatorio, chave: str, ano_referencia: int
 ) -> None:
     """Seletor de processo + tabela editável + os dois PDFs — conteúdo compartilhado entre
     Reforço e Anulação (`_abrir_relatorios`, acima), parametrizado por `tipo`. Toda key de
@@ -154,7 +156,7 @@ def _render_conteudo_relatorio(
 
     processo = st.selectbox("Processo", processos, key=f"reforco_processo_{chave}_{tipo.id}")
 
-    linhas = linhas_para_processo(df, spec, processo)
+    linhas = linhas_para_processo(df, spec, processo, ano_referencia)
     if linhas.empty:
         st.warning("Nenhuma linha de empenho para este processo.")
         return
@@ -280,13 +282,20 @@ def _limpar_estado_relatorio(chave: str) -> None:
     st.session_state.pop(f"reforco_tipo_{chave}", None)
 
 
-def render_botao_relatorio(df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str) -> None:
+def render_botao_relatorio(
+    df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str, ano_referencia: int
+) -> None:
     """Botão que abre o pop-up de emissão de relatório — chamar de dentro da página, com o
     DataFrame já lido por ela (não relê a planilha) e uma `chave` distinta por página
     (namespace de `st.session_state`, para as páginas conviverem sem colidir chaves de
     widget). Um botão só para os dois relatórios (Reforço/Anulação, pedido explícito) — o
-    pop-up pergunta qual emitir antes de mostrar a tabela (ver `_abrir_relatorios`)."""
+    pop-up pergunta qual emitir antes de mostrar a tabela (ver `_abrir_relatorios`).
+
+    `ano_referencia` é o exercício do cadastro em tela (`ano_selecionado` na página chamadora)
+    — nunca inferido daqui, repassado até `necessidade_ate_mes_vigente` para a sugestão "por
+    calendário" não misturar o mês real de hoje com um exercício diferente do que está sendo
+    exibido (ex.: cadastro do ano anterior ainda não duplicado para o novo exercício)."""
 
     if st.button("📄 Relatórios", key=f"reforco_abrir_{chave}"):
         _limpar_estado_relatorio(chave)
-        _abrir_relatorios(df, spec, chave)
+        _abrir_relatorios(df, spec, chave, ano_referencia)

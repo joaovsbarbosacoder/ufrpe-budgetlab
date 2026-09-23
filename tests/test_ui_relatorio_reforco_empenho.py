@@ -132,7 +132,7 @@ def _app_fn(tipo_id: str, processo_key: str) -> None:
     from tests.test_ui_relatorio_reforco_empenho import _bolsas_sintetico
 
     tipo = TIPO_REFORCO if tipo_id == "reforco" else TIPO_ANULACAO
-    _render_conteudo_relatorio(_bolsas_sintetico(), BOLSAS_AUXILIOS, tipo, processo_key)
+    _render_conteudo_relatorio(_bolsas_sintetico(), BOLSAS_AUXILIOS, tipo, processo_key, 2026)
 
 
 def _renderiza_conteudo(tipo_id: str, processo_key: str = "teste") -> AppTest:

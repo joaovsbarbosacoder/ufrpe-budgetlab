@@ -34,6 +34,7 @@ def calcular_necessidade_empenho(
 
 def necessidade_ate_mes_vigente(
     valor_mensal: pd.Series, valor_empenhado: pd.Series, inicio_execucao_mes: pd.Series,
+    ano_referencia: int,
     hoje: date | None = None,
 ) -> tuple[pd.Series, pd.Series]:
     """Quanto falta empenhar para acompanhar o calendário até o mês vigente — métrica
@@ -42,14 +43,25 @@ def necessidade_ate_mes_vigente(
     que falta para o mês vigente" (ex.: despesa anual R$ 120 mil, já empenhado R$ 70 mil,
     estamos em outubro → deveria estar empenhado R$ 100 mil → sugestão R$ 30 mil).
 
-    `inicio_execucao_mes` é o mês (1-12) em que a NE recebeu o primeiro empenho — auto-
-    detectado a partir da base mensal (`src.tesouro_execucao_mensal.primeiro_mes_com_empenho_por_ne`)
-    ou informado manualmente no cadastro, quando o usuário perceber um erro na detecção (ver
+    `inicio_execucao_mes` é o mês (1-12) em que a NE recebeu o primeiro empenho DENTRO do
+    exercício `ano_referencia` — auto-detectado a partir da base mensal (`src.
+    tesouro_execucao_mensal.primeiro_mes_com_empenho_por_ne`) ou informado manualmente no
+    cadastro, quando o usuário perceber um erro na detecção (ver
     `app_pages/bolsas_auxilios.py`/`app_pages/contratos_continuos.py::_render_card`). Meses
     decorridos contados de forma inclusiva a partir desse mês (mês de início conta como 1º
-    mês) até `hoje.month` (`date.today()` por padrão) — mesmo critério de calendário (ano
-    civil, não vigência do contrato) já usado em "Necessidade até Dezembro" no Resumo
-    Consolidado.
+    mês) — mesmo critério de calendário (ano civil, não vigência do contrato) já usado em
+    "Necessidade até Dezembro" no Resumo Consolidado.
+
+    `ano_referencia` é o exercício do cadastro sendo calculado (não necessariamente o ano
+    corrente) — corrige um bug real na virada de exercício: sem ele, um cadastro de 2026 ainda
+    não duplicado para 2027 (`src.cadastro_por_exercicio`, duplicação é manual) calculava
+    `hoje.month - inicio_execucao_mes + 1` misturando o mês real de HOJE (já em 2027) com um
+    `inicio_execucao_mes` de 2026 — para uma NE iniciada em outubro, isso dava `1 - 10 + 1 =
+    -8`, sempre limitado (`clip`) a zero, subestimando a sugestão silenciosamente, sem nenhum
+    aviso na tela. Regra: `hoje.year` só entra na conta quando bate com `ano_referencia`
+    (exercício em andamento, comportamento de sempre); se `hoje` já passou do exercício
+    (`ano_referencia` encerrado), o exercício inteiro já decorreu — usa dezembro (12) como mês
+    vigente, não o mês real de hoje, que pertence a outro exercício.
 
     Nunca fica negativo: já ter empenhado mais do que o alvo do mês vigente não sugere
     "desempenhar", vira zero (mesmo critério de "Necessidade até Dezembro"). Usada só na
@@ -58,7 +70,10 @@ def necessidade_ate_mes_vigente(
     `calcular_necessidade_empenho`, inalterado.
     """
     hoje = hoje or date.today()
-    meses_decorridos = (hoje.month - inicio_execucao_mes + 1).clip(lower=0)
+    mes_vigente = 12 if hoje.year > ano_referencia else max(0, min(hoje.month, 12))
+    if hoje.year < ano_referencia:
+        mes_vigente = 0
+    meses_decorridos = (mes_vigente - inicio_execucao_mes + 1).clip(lower=0)
     meses_empenhados_equivalente = valor_empenhado / valor_mensal.replace(0, pd.NA)
     meses_sugeridos = (meses_decorridos - meses_empenhados_equivalente).clip(lower=0)
     valor_sugerido = meses_sugeridos * valor_mensal

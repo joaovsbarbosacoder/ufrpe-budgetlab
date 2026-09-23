@@ -1,14 +1,16 @@
 """
 Leitor da execução por empenho do Tesouro Gerencial, para o módulo de TEDs.
 
-Dúvida sinalizada (AGENTS.md pede para não presumir regra de negócio não definida): o
-briefing descreve DUAS bases do Tesouro Gerencial ("execução da despesa por empenho" e
-"liquidação por competência") mas um único modelo de tabela (`execucao_tg`) com os campos
-das duas misturados. Sem uma extração real em mãos, este leitor assume o cenário mais
-permissivo — uma linha por (NE, documento hábil, documento contábil, competência) — e
-`ano_competencia`/`mes_competencia`/`valor_competencia` ficam `None` quando a extração não
-traz a granularidade de competência (arquivo de execução por empenho "puro"). Isso precisa
-ser revisto assim que a extração real for importada.
+RESOLVIDO em 22/09/2026 (confirmado pelo usuário, ver `docs/base_teds.md` seção 6): a base do
+Tesouro Gerencial usada aqui É a extração de Execução Mensal já implementada em
+`src/tesouro_execucao_mensal.py` — não uma extração separada. Este leitor ainda assume o
+formato antigo (uma linha por NE/documento hábil/documento contábil/competência, lido de
+arquivo próprio) porque a integração com `tesouro_execucao_mensal.py` está planejada mas AINDA
+NÃO IMPLEMENTADA: aquela base está em reestruturação ativa no momento desta decisão, e
+conectar TEDs a ela agora significa construir sobre um contrato que ainda está mudando. Ver
+`docs/base_teds.md` seção 6 para o mapeamento de campos planejado (inclui a remoção decidida
+de `documento_habil`/`documento_contabil` do schema `execucao_tg`, sem fonte na Execução
+Mensal) e o gatilho para implementar (usuário confirmar que a Execução Mensal estabilizou).
 
 A chave de relacionamento com o SIMEC é o número completo da NE (`numero_completo_ne`), que
 deve bater com `src.teds_normalizacao.chave_empenho` depois de decompor UG/gestão/número —
