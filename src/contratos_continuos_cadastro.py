@@ -67,7 +67,6 @@ Contrato público:
 
 from __future__ import annotations
 
-from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -165,60 +164,6 @@ def anos_disponiveis() -> list[int]:
 
 def excluir_exercicio(ano: int) -> None:
     _excluir_exercicio(DIRETORIO_PADRAO, ano)
-
-
-#: janela (dias) para avisar que a vigência está acabando. Valor operacional presumido — a
-#: regra de negócio não foi definida pelo usuário; ajustar aqui se necessário.
-DIAS_ALERTA_VIGENCIA = 60
-
-
-def situacao_vigencia(
-    vigencia_fim: object, hoje: date | None = None, dias_alerta: int = DIAS_ALERTA_VIGENCIA,
-) -> tuple[str, int | None]:
-    """Classifica a vigência de um contrato — apenas informativo, NÃO altera o Status (que
-    continua digitado pelo usuário). Devolve `(situacao, dias)`:
-      * `"sem_data"` — vigência não cadastrada (nulo/ inválido; nunca presumida), `dias=None`;
-      * `"expirada"` — fim anterior a hoje, `dias` negativo (dias desde o vencimento);
-      * `"a_vencer"` — fim entre hoje (inclusive) e `dias_alerta` dias, `dias` restantes;
-      * `"vigente"` — fim além da janela de alerta."""
-
-    fim = pd.to_datetime(vigencia_fim, errors="coerce")
-    if pd.isna(fim):
-        return "sem_data", None
-    dias = (fim.date() - (hoje or date.today())).days
-    if dias < 0:
-        return "expirada", dias
-    return ("a_vencer" if dias <= dias_alerta else "vigente"), dias
-
-
-def situacoes_vigencia(vigencias: pd.Series, hoje: date | None = None) -> pd.Series:
-    """`situacao_vigencia` aplicada a cada valor de `vigencias` (mesmo índice de entrada)."""
-
-    return vigencias.apply(lambda valor: situacao_vigencia(valor, hoje)[0]).astype("string")
-
-
-def resumo_vigencia(vigencias: pd.Series, hoje: date | None = None) -> dict[str, int]:
-    """Contagem por situação de vigência. Contrato sem data entra só em `sem_data` — nunca em
-    expiradas/a vencer/vigentes (não se presume data). `total` = soma das quatro partes."""
-
-    contagem = situacoes_vigencia(vigencias, hoje).value_counts()
-    resumo = {
-        situacao: int(contagem.get(situacao, 0))
-        for situacao in ("expirada", "a_vencer", "vigente", "sem_data")
-    }
-    resumo["total"] = sum(resumo.values())
-    return resumo
-
-
-def aviso_vigencia_duplicacao(
-    registros_novos: list[dict], hoje: date | None = None,
-) -> tuple[int, int, int]:
-    """`(expiradas, a_vencer, sem_data)` dos registros recém-duplicados — só informativo, nada
-    é alterado nem descartado (a vigência é copiada como estava no exercício de origem, ver
-    `CAMPOS_IDENTIDADE`). Contrato sem data conta apenas em `sem_data`."""
-
-    resumo = resumo_vigencia(pd.Series([r.get("vigencia_fim") for r in registros_novos], dtype="object"), hoje)
-    return resumo["expirada"], resumo["a_vencer"], resumo["sem_data"]
 
 
 def _itens_validos(valor: object) -> list[dict]:

@@ -156,9 +156,7 @@ import streamlit as st
 
 from src.contratos_continuos import com_meses_pagos, com_saldo_execucao
 from src.contratos_continuos_cadastro import (
-    DIAS_ALERTA_VIGENCIA,
     anos_disponiveis,
-    aviso_vigencia_duplicacao,
     atualizar_contrato,
     carregar_contratos,
     como_dataframe,
@@ -166,10 +164,7 @@ from src.contratos_continuos_cadastro import (
     excluir_contrato,
     excluir_exercicio,
     novo_contrato,
-    resumo_vigencia,
     salvar_contrato,
-    situacao_vigencia,
-    situacoes_vigencia,
 )
 from src.contratos_pagamentos import MESES_ORDEM, meses_pagos_por_contrato, ler_pagamentos
 from src.design_tokens import (
@@ -189,8 +184,6 @@ from src.design_tokens import (
     TEXT,
     TEXT_MUTED,
     TRACK,
-    WARNING,
-    WARNING_SOFT,
 )
 from src.execucao_ne_utils import (
     indice_liquidado_por_ne_curta,
@@ -384,7 +377,6 @@ def _inject_css() -> None:
         }}
         .cc-tag.ok {{ background: rgba(34,197,94,0.12); color: {POSITIVE}; }}
         .cc-tag.bad {{ background: rgba(240,87,107,0.12); color: {NEGATIVE}; }}
-        .cc-tag.warn {{ background: {WARNING_SOFT}; color: {WARNING}; }}
         /* Resumo Consolidado: mesmo padrão de cartão + grade HTML de app_pages/painel_acoes.py
            (.po-*) e app_pages/bolsas_auxilios.py (.bls-resumo-*), com prefixo próprio
            (.cc-resumo-*) — não é um st.dataframe: grade fixa, tipografia do projeto, sem cara
@@ -615,18 +607,6 @@ def _campo_inicio_execucao(col, valor_persistido: object, sugestao_auto: object,
     return None if escolha == "Automático" else _OPCOES_INICIO_EXECUCAO.index(escolha)
 
 
-def _texto_vigencia(vigencia_fim: object) -> tuple[str, str] | None:
-    """`(texto, classe css)` do aviso de vigência, ou `None` quando não há o que avisar
-    (vigente com folga ou sem data cadastrada — sem data, nenhuma tag: nunca se presume)."""
-
-    situacao, dias = situacao_vigencia(vigencia_fim)
-    if situacao == "expirada":
-        return f"Vigência expirada há {-dias} d", "bad"
-    if situacao == "a_vencer":
-        return ("Vence hoje" if dias == 0 else f"Vence em {dias} d"), "warn"
-    return None
-
-
 def _rotulo_expander(linha: pd.Series) -> str:
     """Prévia do cartão minimizado — a partir dos valores brutos da linha (não dos widgets,
     que só existem depois de abrir o expander). `valor_a_empenhar` já vem resolvido pelo
@@ -648,9 +628,6 @@ def _rotulo_expander(linha: pd.Series) -> str:
     if numero:
         partes.append(f"— Nº {numero}")
     partes.append(f"· {_brl(valor_a_empenhar)}")
-    aviso_vigencia = _texto_vigencia(linha["vigencia_fim"])
-    if aviso_vigencia:
-        partes.append(f"· ⏳ {aviso_vigencia[0]}")
     return " ".join(partes)
 
 
@@ -777,17 +754,9 @@ def _render_card(
         r5[3].markdown(f"<div class='cc-calc'>{texto_meses_pagos}</div>", unsafe_allow_html=True)
 
         sugestao_inicio = sugestao_inicio_por_ne.get(linha["ne_curta"]) if pd.notna(linha["ne_curta"]) else None
-        col_inicio, col_vigencia, _ = st.columns([1, 1, 2])
+        col_inicio, _ = st.columns([1, 3])
         inicio_execucao_mes_editado = _campo_inicio_execucao(
             col_inicio, linha["inicio_execucao_mes"], sugestao_inicio, f"{k}_inicio",
-        )
-        # Vigência (fim) — campo `vigencia_fim` do cadastro, opcional: vazio fica `None`, nunca
-        # uma data presumida (mesma regra de nulo ≠ zero do projeto).
-        col_vigencia.markdown("<div class='cc-label'>Vigência (fim)</div>", unsafe_allow_html=True)
-        vigencia_atual = linha["vigencia_fim"]
-        vigencia_fim = col_vigencia.date_input(
-            "Vigência (fim)", value=vigencia_atual.date() if pd.notna(vigencia_atual) else None,
-            format="DD/MM/YYYY", key=f"{k}_vigencia", label_visibility="collapsed",
         )
 
         # Itens de licitação — rateiam "Despesa Mensal Total" entre si (pedido explícito: no
@@ -846,12 +815,7 @@ def _render_card(
         f1, f2, f3 = st.columns([4, 1, 1])
         f1.markdown(
             f"<span class='cc-tag {tag_status_cls}'>{tag_status_txt}</span>"
-            f"<span class='cc-tag {tag_div_cls}'>{tag_div_txt}</span>"
-            + (
-                f"<span class='cc-tag {aviso[1]}'>{aviso[0]}</span>"
-                if (aviso := _texto_vigencia(vigencia_fim))
-                else ""
-            ),
+            f"<span class='cc-tag {tag_div_cls}'>{tag_div_txt}</span>",
             unsafe_allow_html=True,
         )
         if f2.button("💾 Salvar", key=f"{k}_salvar", use_container_width=True):
@@ -871,7 +835,6 @@ def _render_card(
                     "meses_empenhados": meses_empenhados_persistir, "meses_liquidados": meses_liquidados_persistir,
                     "itens": [dict(item) for item in itens_sessao],
                     "inicio_execucao_mes": inicio_execucao_mes_editado,
-                    "vigencia_fim": vigencia_fim.isoformat() if vigencia_fim else None,
                 }
                 for chave_extra in (
                     "despesa_anual", "meses_a_empenhar", "valor_a_empenhar", "saldo_execucao",
@@ -938,9 +901,8 @@ def _render_novo_contrato(ano_exercicio: int, source_key: str) -> None:
             c14, c15 = st.columns(2)
             saldo_colado = c14.number_input("Saldo colado na planilha (R$)", min_value=0.0, step=100.0)
             meses_empenhados = c15.number_input("Meses empenhados", min_value=0.0, step=0.1)
-            c16, c17 = st.columns(2)
+            c16, _c17 = st.columns(2)
             meses_liquidados = c16.number_input("Meses liquidados", min_value=0.0, step=0.1)
-            vigencia_fim = c17.date_input("Vigência (fim)", value=None, format="DD/MM/YYYY")
 
             if st.form_submit_button("Adicionar contrato"):
                 if not numero or not fornecedor:
@@ -955,7 +917,6 @@ def _render_novo_contrato(ano_exercicio: int, source_key: str) -> None:
                         meses_no_ano=meses_no_ano,
                         valor_empenhado=valor_empenhado, saldo_colado_planilha=saldo_colado,
                         meses_empenhados=meses_empenhados, meses_liquidados=meses_liquidados,
-                        vigencia_fim=vigencia_fim.isoformat() if vigencia_fim else None,
                     )
                     salvar_contrato(ano_exercicio, registro)
                     st.success("Contrato cadastrado.")
@@ -1677,19 +1638,6 @@ source_key = str(ano_selecionado)
 # para o próximo) e "Excluir exercício" com uma caixa de seleção do ano a apagar (pedido
 # explícito), em vez de só o ano em tela. Mesmo padrão de app_pages/bolsas_auxilios.py. O
 # exercício mais antigo (migrado da planilha original) nunca aparece como opção de exclusão.
-aviso_duplicacao = st.session_state.pop("cc_aviso_duplicacao", None)
-if aviso_duplicacao:
-    _origem, _destino, _qtd, (_expiradas, _a_vencer, _sem_data) = aviso_duplicacao
-    st.success(f"Exercício {_destino} criado a partir de {_origem}: {_qtd} contrato(s) copiado(s).")
-    if _expiradas or _a_vencer:
-        st.warning(
-            f"Vigência copiada como estava: {_expiradas} contrato(s) já com vigência expirada e "
-            f"{_a_vencer} vencendo em até {DIAS_ALERTA_VIGENCIA} dias — revise a vigência de cada um "
-            "no cartão (use o filtro 'Só com alerta de vigência')."
-        )
-    if _sem_data:
-        st.info(f"{_sem_data} contrato(s) sem vigência cadastrada.")
-
 cols_ano = st.columns([1] * (len(anos) + 1) + [10])
 for coluna, ano_opcao in zip(cols_ano, anos):
     if coluna.button(
@@ -1709,15 +1657,9 @@ with cols_ano[len(anos)]:
             key=f"cc_duplicar_{destino_duplicar}", use_container_width=True,
             help="Copia identidade/classificação dos contratos; execução fica em branco.",
         ):
-            novos_contratos = duplicar_exercicio(origem_duplicar, destino_duplicar)
+            duplicar_exercicio(origem_duplicar, destino_duplicar)
             st.session_state[ano_key] = destino_duplicar
-            # guardado em session_state e exibido após o rerun (um st.success direto aqui
-            # sumiria junto com o st.rerun logo abaixo). Vigência é copiada como estava — o
-            # aviso só informa quantos contratos já chegam expirados/perto de vencer.
-            st.session_state["cc_aviso_duplicacao"] = (
-                origem_duplicar, destino_duplicar, len(novos_contratos),
-                aviso_vigencia_duplicacao(novos_contratos),
-            )
+            st.success(f"Exercício {destino_duplicar} criado a partir de {origem_duplicar}.")
             st.rerun()
 
         if anos_excluiveis:
@@ -1864,27 +1806,12 @@ with col_relatorio:
     st.write("")
     render_botao_relatorio(dataframe, RELATORIO_CONTRATOS_CONTINUOS, f"continuos_{ano_selecionado}", ano_selecionado)
 
-col_busca, col_alerta = st.columns([3, 1], vertical_alignment="bottom")
-busca = col_busca.text_input(
+busca = st.text_input(
     "Buscar",
     key=f"contratos_continuos_busca_{source_key}",
     placeholder="Contrato, fornecedor, tipo de despesa, ação, PI, NE…",
 )
-so_alerta_vigencia = col_alerta.toggle(
-    "Só com alerta de vigência", key=f"contratos_continuos_so_alerta_vigencia_{source_key}",
-    help="Mostra apenas contratos com vigência expirada ou vencendo nos próximos "
-    f"{DIAS_ALERTA_VIGENCIA} dias.",
-)
-encontrados_na_busca = _aplicar_busca(dataframe, busca)
-# contadores de vigência sobre o resultado da busca (não do filtro de alerta, para não zerarem
-# quando o filtro está ligado) — com base na vigência JÁ SALVA, não em edição pendente no cartão.
-resumo_vig = resumo_vigencia(encontrados_na_busca["vigencia_fim"])
-if so_alerta_vigencia:
-    filtrado = encontrados_na_busca[
-        situacoes_vigencia(encontrados_na_busca["vigencia_fim"]).isin(["expirada", "a_vencer"])
-    ]
-else:
-    filtrado = encontrados_na_busca
+filtrado = _aplicar_busca(dataframe, busca)
 
 if filtrado.empty:
     if dataframe.empty:
@@ -1893,8 +1820,6 @@ if filtrado.empty:
             "'+ Novo contrato' ou, se este for o exercício mais recente, 'Duplicar cadastro' "
             "acima para partir do exercício anterior."
         )
-    elif so_alerta_vigencia and not encontrados_na_busca.empty:
-        st.success("Nenhum contrato com vigência expirada ou a vencer na janela de alerta.")
     else:
         st.warning("Nenhum contrato corresponde à busca informada.")
     st.stop()
@@ -1907,19 +1832,6 @@ render_metric_grid(
         {"label": "Necessidade de Empenho Total", "value": format_brl_compact(filtrado["valor_a_empenhar"].sum())},
     ],
     columns=4,
-)
-render_metric_grid(
-    [
-        {"label": "Vigência expirada", "value": str(resumo_vig["expirada"])},
-        {
-            "label": f"Vencem em até {DIAS_ALERTA_VIGENCIA} dias", "value": str(resumo_vig["a_vencer"]),
-        },
-        {
-            "label": "Sem vigência cadastrada", "value": str(resumo_vig["sem_data"]),
-            "help": "Contratos sem data de vigência não entram nos outros dois contadores.",
-        },
-    ],
-    columns=3,
 )
 
 _render_resumo_consolidado(

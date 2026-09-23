@@ -55,7 +55,6 @@ Contrato público:
     TipoRelatorio (dataclass) — TIPO_REFORCO / TIPO_ANULACAO, prontos
     linhas_para_processo(df, spec, processo, ano_referencia) -> pd.DataFrame
     excluir_linhas_zeradas(linhas) -> pd.DataFrame
-    texto_vigencia(vigencia_fim, hoje=None) -> str
     gerar_pdf_detalhado(spec, tipo, processo, linhas) -> bytes
     gerar_pdf_resumido(spec, tipo, processo, linhas) -> bytes
 """
@@ -63,7 +62,6 @@ Contrato público:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
 from io import BytesIO
 
 import pandas as pd
@@ -73,7 +71,6 @@ from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 
-from src.contratos_continuos_cadastro import situacao_vigencia
 from src.necessidade_empenho import necessidade_ate_mes_vigente
 
 
@@ -126,12 +123,6 @@ class EspecificacaoRelatorio:
     #: passado vários meses desde o início da execução — ver
     #: `necessidade_ate_mes_vigente`/`_com_sugestao_por_calendario`).
     coluna_meses_no_ano: str | None = None
-    #: coluna opcional com a data de fim da vigência do contrato (`vigencia_fim`, só Contratos
-    #: Contínuos — Bolsas e Auxílios não têm esse conceito). Puramente informativa: aparece na
-    #: tela do relatório (`texto_vigencia`), NÃO entra no PDF (layout oficial da PROPLAD) e NÃO
-    #: altera nenhum valor sugerido/calculado. Sempre no nível do contrato/NE, repetida em cada
-    #: linha expandida por item de licitação.
-    coluna_vigencia: str | None = None
 
 
 BOLSAS_AUXILIOS = EspecificacaoRelatorio(
@@ -157,7 +148,6 @@ CONTRATOS_CONTINUOS = EspecificacaoRelatorio(
     coluna_inicio_execucao="inicio_execucao_efetivo",
     coluna_saldo="saldo_autoritativo",
     coluna_meses_no_ano="meses_no_ano",
-    coluna_vigencia="vigencia_fim",
 )
 
 @dataclass(frozen=True)
@@ -234,7 +224,7 @@ def processos_disponiveis(df: pd.DataFrame, spec: EspecificacaoRelatorio) -> lis
 _COLUNAS_LINHAS = [
     "processo", "item_despesa", "item_despesa_base", "unidade_cod", "acao_cod", "ptres",
     "fonte_cod", "natureza_despesa_cod", "ugr_cod", "pi_cod", "ne_curta", "valor_mensal",
-    "saldo", "meses_sugeridos", "item_licitacao", "vigencia_fim",
+    "saldo", "meses_sugeridos", "item_licitacao",
 ]
 
 #: colunas intermediárias, usadas só por `_com_sugestao_por_calendario` — descartadas do
@@ -264,7 +254,6 @@ def _linha_base(linha: pd.Series, spec: EspecificacaoRelatorio) -> dict:
         # `_com_sugestao_por_calendario`.
         "meses_sugeridos": linha["meses_a_empenhar"],
         "item_licitacao": None,
-        "vigencia_fim": linha.get(spec.coluna_vigencia) if spec.coluna_vigencia else None,
         # "ITEM DE DESPESA" sem o sufixo "— Item N" — usado só pelo modelo detalhado do PDF
         # (`gerar_pdf_detalhado`), que já tem "ITEM LIC." como coluna própria (pedido
         # explícito de correção: o sufixo ali ficou redundante com a coluna nova). O editor na
@@ -397,10 +386,6 @@ def linhas_para_processo(
                 # presente mas sempre nula, pro esquema ficar igual ao de Contratos Contínuos
                 # (`gerar_pdf_detalhado` lê essa coluna pelas duas bases).
                 "item_licitacao": pd.NA,
-                "vigencia_fim": (
-                    filtrado[spec.coluna_vigencia]
-                    if spec.coluna_vigencia and spec.coluna_vigencia in filtrado.columns else pd.NA
-                ),
                 "_valor_empenhado_item": (
                     filtrado[spec.coluna_valor_empenhado]
                     if spec.coluna_valor_empenhado and spec.coluna_valor_empenhado in filtrado.columns else pd.NA
@@ -417,23 +402,6 @@ def linhas_para_processo(
         )
     resultado = _com_sugestao_por_calendario(resultado, ano_referencia)
     return resultado.reset_index(drop=True)
-
-
-def texto_vigencia(vigencia_fim: object, hoje: date | None = None) -> str:
-    """Texto informativo de vigência para a tela do relatório — `""` quando não há data
-    cadastrada (nada a mostrar; nunca se presume data nem se trata como expirado). Ex.:
-    "Vigência até 22/08/2026 · expirada há 31 d", "… · vence em 10 d", "Vigência até
-    31/12/2027"."""
-
-    situacao, dias = situacao_vigencia(vigencia_fim, hoje)
-    if situacao == "sem_data":
-        return ""
-    texto = f"Vigência até {pd.Timestamp(vigencia_fim):%d/%m/%Y}"
-    if situacao == "expirada":
-        return f"{texto} · expirada há {-dias} d"
-    if situacao == "a_vencer":
-        return f"{texto} · vence hoje" if dias == 0 else f"{texto} · vence em {dias} d"
-    return texto
 
 
 def excluir_linhas_zeradas(linhas: pd.DataFrame) -> pd.DataFrame:

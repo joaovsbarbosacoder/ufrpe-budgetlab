@@ -86,7 +86,6 @@ from src.relatorio_reforco_empenho import (
     gerar_pdf_resumido,
     linhas_para_processo,
     processos_disponiveis,
-    texto_vigencia,
 )
 from src.ui_theme import format_brl_full
 
@@ -277,12 +276,6 @@ def _render_conteudo_relatorio(
 
         linha_cols = st.columns(_PROPORCOES_LINHA, vertical_alignment="center")
         linha_cols[0].write(linha.item_despesa)
-        # vigência: só informativa (não entra no PDF nem altera valores) e só quando a base tem
-        # esse conceito e o contrato tem data cadastrada — sem data, nada é exibido.
-        if spec.coluna_vigencia:
-            texto_vig = texto_vigencia(getattr(linha, "vigencia_fim", None))
-            if texto_vig:
-                linha_cols[0].caption(f"⏳ {texto_vig}")
         linha_cols[1].write(linha.ne_curta)
         # só leitura (pedido explícito: "evidenciar também" o valor mensal da despesa e o saldo
         # do empenho) — `format_brl_full` já distingue nulo de zero ("Valor nulo" vs "R$ 0,00",
