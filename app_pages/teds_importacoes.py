@@ -47,6 +47,7 @@ from src.teds_lotes import (
     status_sincronizacao_execucao_tg,
 )
 from src.teds_normalizacao import ColunaObrigatoriaAusente, mapear_colunas
+from src.teds_reversao import ReversaoNaoPermitida, lotes_reversiveis, reverter_lote
 from src.teds_ui import brl, conexao, formatar_historico_lotes, historico_importacoes, injetar_css, render_kpi_strip
 from src.ui_theme import render_page_header
 
@@ -54,6 +55,12 @@ injetar_css()
 render_page_header("Importações", "Importe e processe arquivos de dados para atualização dos TEDs.", "TEDs")
 
 conn = conexao()
+
+_ROTULO_LOTE = {
+    "simec_execucao_anual": "SIMEC — Execução", "simec_doc_nc": "SIMEC — DOC NC",
+    "simec_doc_ne": "SIMEC — DOC NE", "simec_doc_pf": "SIMEC — DOC PF",
+    "tesouro_gerencial_execucao": "Tesouro Gerencial — Execução",
+}
 
 _TIPOS = {
     "SIMEC — Execução: Orçamentário e Financeiro": ("simec_execucao_anual", _MAPA_EXECUCAO_ANUAL, ler_execucao_anual_simec, importar_execucao_anual),
@@ -63,12 +70,14 @@ _TIPOS = {
 }
 
 historico = historico_importacoes(conn)
-ultima = historico["data_importacao"].max() if not historico.empty else None
-total_aceitos = int(historico["quantidade_registros"].sum()) if not historico.empty else 0
+# Lotes revertidos continuam no histórico, mas não contam como "importados" nem como aceitos.
+ativos = historico[historico["status"] == "ok"]
+ultima = ativos["data_importacao"].max() if not ativos.empty else None
+total_aceitos = int(ativos["quantidade_registros"].sum()) if not ativos.empty else 0
 
 render_kpi_strip([
     {"label": "Última atualização", "value": pd.Timestamp(ultima).strftime("%d/%m/%Y %H:%M") if ultima else "—", "icon": "□", "tone": design_tokens.ACCENT},
-    {"label": "Arquivos importados", "value": len(historico), "icon": "▤", "tone": design_tokens.POSITIVE},
+    {"label": "Arquivos importados", "value": len(ativos), "icon": "▤", "tone": design_tokens.POSITIVE},
     {"label": "Registros aceitos", "value": total_aceitos, "icon": "✓", "tone": design_tokens.ACCENT},
     {"label": "Com avisos", "value": st.session_state.get("imp_ultimo_avisos", "—"), "icon": "!", "tone": design_tokens.WARNING},
     {"label": "Rejeitados", "value": st.session_state.get("imp_ultimo_rejeitados", 0), "icon": "×", "tone": design_tokens.NEGATIVE},
@@ -262,3 +271,48 @@ if historico.empty:
     st.caption("Nenhuma importação registrada ainda.")
 else:
     st.dataframe(formatar_historico_lotes(historico), hide_index=True, width="stretch")
+
+st.markdown("#### Reverter lote")
+mensagem_reversao = st.session_state.pop("imp_rev_msg", None)
+if mensagem_reversao:
+    st.success(mensagem_reversao)
+st.caption(
+    "Desfaz uma importação inteira: as linhas que o lote criou saem dos totais e as que ele "
+    "sobrescreveu voltam ao valor anterior. Nada é apagado — as linhas retiradas ficam guardadas e a "
+    "ação entra na trilha de auditoria. Alertas já criados não são fechados automaticamente."
+)
+reversiveis = lotes_reversiveis(conn)
+if not reversiveis:
+    st.info(
+        "Nenhum lote pode ser revertido. Só lotes importados depois do histórico de versões podem ser "
+        "revertidos com segurança; lotes anteriores e lotes já revertidos não aparecem aqui."
+    )
+else:
+    opcoes = {
+        f"#{id_lote} — {_ROTULO_LOTE.get(tipo, tipo)} — {arquivo} — "
+        f"{pd.Timestamp(data).strftime('%d/%m/%Y %H:%M')} — {registros} registro(s)": id_lote
+        for id_lote, tipo, arquivo, data, registros in reversiveis
+    }
+    with st.form("imp_reverter_lote", border=False):
+        rotulo_lote = st.selectbox("Lote", list(opcoes), key="imp_rev_lote")
+        responsavel_rev = st.text_input("Responsável pela reversão", key="imp_rev_resp")
+        motivo_rev = st.text_area("Motivo da reversão", key="imp_rev_motivo", placeholder="Por que este lote deve ser desfeito?")
+        confirmou = st.checkbox("Entendo que o lote sairá dos totais e que os alertas dele continuam abertos.", key="imp_rev_confirma")
+        enviar = st.form_submit_button("Reverter lote", type="primary", disabled=False)
+    if enviar:
+        if not confirmou:
+            st.error("Marque a confirmação antes de reverter.")
+        else:
+            try:
+                resultado_rev = reverter_lote(
+                    conn, opcoes[rotulo_lote], responsavel=responsavel_rev, motivo=motivo_rev,
+                    origem="tela:importacoes",
+                )
+            except ReversaoNaoPermitida as erro:
+                st.error(str(erro))
+            else:
+                st.session_state["imp_rev_msg"] = (
+                    f"Lote #{resultado_rev.import_batch_id} revertido — {resultado_rev.total_removidas} linha(s) "
+                    f"retirada(s) dos totais e {resultado_rev.total_restauradas} restaurada(s) ao valor anterior."
+                )
+                st.rerun()

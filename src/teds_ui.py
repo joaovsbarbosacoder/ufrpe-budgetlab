@@ -697,8 +697,9 @@ _ROTULO_TIPO_RELATORIO = {
 }
 
 _ROTULOS_COLUNA_LOTE = {
-    "tipo_relatorio": "Tipo", "nome_arquivo": "Arquivo", "data_importacao": "Data e hora",
-    "quantidade_registros": "Registros aceitos", "status": "Status",
+    "id": "Lote", "tipo_relatorio": "Tipo", "nome_arquivo": "Arquivo", "data_importacao": "Data e hora",
+    "quantidade_registros": "Registros aceitos", "status": "Status", "revertido_em": "Revertido em",
+    "revertido_por": "Revertido por", "motivo_reversao": "Motivo da reversão",
 }
 
 
@@ -708,6 +709,10 @@ def formatar_historico_lotes(df: pd.DataFrame) -> pd.DataFrame:
     formatado = df.copy()
     formatado["tipo_relatorio"] = formatado["tipo_relatorio"].map(lambda t: _ROTULO_TIPO_RELATORIO.get(t, t))
     formatado["data_importacao"] = pd.to_datetime(formatado["data_importacao"]).dt.strftime("%d/%m/%Y %H:%M")
+    if "revertido_em" in formatado:
+        formatado["revertido_em"] = formatado["revertido_em"].map(
+            lambda v: None if pd.isna(v) or not v else pd.Timestamp(v).strftime("%d/%m/%Y %H:%M")
+        )
     return formatado.rename(columns=_ROTULOS_COLUNA_LOTE)
 
 
@@ -741,10 +746,11 @@ def historico_lotes_do_ted(conn: sqlite3.Connection, chave_ted: str) -> pd.DataF
 
 
 def historico_importacoes(conn: sqlite3.Connection) -> pd.DataFrame:
+    colunas = [
+        "id", "tipo_relatorio", "nome_arquivo", "data_importacao", "quantidade_registros", "status",
+        "revertido_em", "revertido_por", "motivo_reversao",
+    ]
     linhas = conn.execute(
-        "SELECT tipo_relatorio, nome_arquivo, data_importacao, quantidade_registros, status "
-        "FROM import_batch ORDER BY data_importacao DESC"
+        f"SELECT {', '.join(colunas)} FROM import_batch ORDER BY data_importacao DESC, id DESC"
     ).fetchall()
-    return pd.DataFrame(
-        linhas, columns=["tipo_relatorio", "nome_arquivo", "data_importacao", "quantidade_registros", "status"]
-    )
+    return pd.DataFrame(linhas, columns=colunas)

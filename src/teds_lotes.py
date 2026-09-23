@@ -157,8 +157,8 @@ def _registrar_lote(
         INSERT INTO import_batch
             (tipo_relatorio, nome_arquivo, hash_arquivo, data_importacao, quantidade_registros, status,
              quantidade_linhas_lidas, quantidade_rejeitadas, quantidade_com_aviso,
-             soma_bruta, soma_positiva, soma_negativa, soma_liquida)
-        VALUES (?, ?, ?, ?, ?, 'ok', ?, ?, ?, ?, ?, ?, ?)
+             soma_bruta, soma_positiva, soma_negativa, soma_liquida, versionado)
+        VALUES (?, ?, ?, ?, ?, 'ok', ?, ?, ?, ?, ?, ?, ?, 1)
         """,
         (
             tipo_relatorio,

@@ -209,6 +209,11 @@ sha256 da extração, nunca apaga linhas). Antes da primeira sincronização, os
 Liquidado/Pago e a conciliação contra o Tesouro Gerencial mostram "Sem dado" em vez de um valor
 inventado. Competência real (Documento Hábil × mês de referência) fica para uma fase futura.
 
+Um lote de importação pode ser revertido na página Importações: as linhas que ele criou saem dos
+totais e as que sobrescreveu voltam ao valor anterior (o gatilho de histórico de versões guarda a
+versão antiga), nada é apagado, e a ação é auditada. Só lotes importados depois do histórico
+existir podem ser revertidos com segurança.
+
 O contrato completo (tabelas, chaves e decisões de projeto) está em
 `docs/base_teds.md`.
 

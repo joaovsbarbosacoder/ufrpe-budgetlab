@@ -41,6 +41,13 @@ _COLUNAS_CONTROLE_IMPORT_BATCH: dict[str, str] = {
     "soma_positiva": "TEXT",
     "soma_negativa": "TEXT",
     "soma_liquida": "TEXT",
+    # Reversão de lote (`src/teds_reversao.py`). `versionado` = 1 só nos lotes gravados quando
+    # o histórico de versões já existia: um lote anterior a isso pode ter sobrescrito linhas sem
+    # deixar o valor antigo guardado, então NÃO pode ser revertido com segurança.
+    "versionado": "INTEGER",
+    "revertido_em": "TEXT",
+    "revertido_por": "TEXT",
+    "motivo_reversao": "TEXT",
 }
 
 _DDL = """
@@ -248,6 +255,137 @@ CREATE INDEX IF NOT EXISTS ix_vinculo_ne_chave_empenho ON vinculo_ne (chave_empe
 CREATE INDEX IF NOT EXISTS ix_decisao_vinculo_ne_empenho
     ON decisao_vinculo_ne (chave_empenho, id);
 """
+
+
+# --------------------------------------------------------------------------------------
+# Histórico de versões e reversão de lote (`src/teds_reversao.py`, briefing seção 6.4)
+# --------------------------------------------------------------------------------------
+
+#: Tabelas cujas linhas carregam `import_batch_id` e podem ser sobrescritas por um lote novo
+#: (`INSERT ... ON CONFLICT DO UPDATE`). Para cada uma: (colunas da chave natural, todas as
+#: colunas). Um gatilho `BEFORE UPDATE` copia a versão ANTERIOR para `historico_linha` toda vez
+#: que um lote diferente sobrescreve a linha — é isso que permite reverter um lote de verdade.
+#: `tests/test_teds_reversao.py` confere que estas listas batem com o esquema real (uma coluna
+#: nova esquecida aqui deixaria de ser preservada no histórico).
+TABELAS_VERSIONADAS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "ted": (
+        ("chave_ted",),
+        ("chave_ted", "ted", "codigo_siafi", "descricao", "estado_atual", "inicio_vigencia",
+         "fim_vigencia", "ug_descentralizadora", "ug_descentralizada", "import_batch_id"),
+    ),
+    "execucao_anual": (
+        ("chave_ted", "ano_emissao"),
+        ("chave_ted", "ano_emissao", "total_nc_descentralizacao", "total_nc_devolucao",
+         "total_descentralizado", "total_pf_repasse", "total_pf_devolucao", "total_repassado",
+         "import_batch_id", "linha_origem"),
+    ),
+    "vinculo_ne": (
+        ("chave_ted", "chave_empenho"),
+        ("chave_ted", "chave_empenho", "ug_emitente", "gestao_emitente", "numero_ne", "valor_ne",
+         "descricao_ne", "status_validacao", "import_batch_id", "linha_origem"),
+    ),
+    "documento_nc_linha": (
+        ("chave_nc_linha",),
+        ("chave_nc_linha", "chave_nc_documento", "chave_ted", "ted", "codigo_siafi", "numero_nc",
+         "ug_emitente", "data_emissao", "operacao", "valor_original", "valor_assinado",
+         "status_relacionamento", "avisos", "import_batch_id", "linha_origem"),
+    ),
+    "documento_nc": (
+        ("chave_nc_documento",),
+        ("chave_nc_documento", "chave_ted", "ted", "codigo_siafi", "numero_nc", "ug_emitente",
+         "data_emissao", "operacao", "valor_original_total", "valor_assinado_total",
+         "quantidade_linhas", "status_relacionamento", "import_batch_id"),
+    ),
+    "documento_pf": (
+        ("ug_emitente", "numero_pf"),
+        ("chave_ted", "ug_emitente", "numero_pf", "data_emissao", "operacao", "valor_original",
+         "valor_assinado", "import_batch_id", "linha_origem"),
+    ),
+    "execucao_tg": (
+        ("numero_completo_ne", "ano_lancamento", "mes_lancamento"),
+        ("id", "numero_completo_ne", "favorecido", "descricao", "empenhado", "liquidado", "pago",
+         "ano_lancamento", "mes_lancamento", "import_batch_id", "linha_origem"),
+    ),
+}
+
+
+def _json_object_sql(prefixo: str, colunas: tuple[str, ...]) -> str:
+    return "json_object(" + ", ".join(f"'{c}', {prefixo}.{c}" for c in colunas) + ")"
+
+
+def _gerar_ddl_versionamento() -> str:
+    partes = [
+        """
+-- Versão ANTERIOR de uma linha, copiada por gatilho quando um lote diferente a sobrescreve.
+-- `import_batch_id_origem` é o lote que escreveu a versão guardada; `..._sobrescritor`, o lote
+-- que a substituiu. Append-only, como a auditoria.
+CREATE TABLE IF NOT EXISTS historico_linha (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tabela TEXT NOT NULL,
+    chave TEXT NOT NULL,
+    import_batch_id_origem INTEGER,
+    import_batch_id_sobrescritor INTEGER,
+    conteudo TEXT NOT NULL,
+    data_hora TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_historico_linha_sobrescritor
+    ON historico_linha (tabela, import_batch_id_sobrescritor);
+
+-- Linhas que uma reversão de lote retirou das tabelas de trabalho (a linha do lote revertido,
+-- inteira, em JSON). Nada é descartado: sai dos totais mas continua consultável aqui.
+CREATE TABLE IF NOT EXISTS linha_revertida (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_batch_id INTEGER NOT NULL,
+    tabela TEXT NOT NULL,
+    chave TEXT NOT NULL,
+    conteudo TEXT NOT NULL,
+    acao TEXT NOT NULL,
+    data_hora TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_linha_revertida_lote ON linha_revertida (import_batch_id);
+
+-- Interruptor de uma linha só: a reversão o liga para restaurar linhas sem que o gatilho
+-- registre a própria restauração como se fosse uma nova sobrescrita.
+CREATE TABLE IF NOT EXISTS versionamento_controle (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    pausado INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO versionamento_controle (id, pausado) VALUES (1, 0) ON CONFLICT (id) DO NOTHING;
+"""
+    ]
+    for tabela in ("historico_linha", "linha_revertida"):
+        for operacao in ("UPDATE", "DELETE"):
+            partes.append(
+                f"""
+CREATE TRIGGER IF NOT EXISTS trg_{tabela}_sem_{operacao.lower()}
+BEFORE {operacao} ON {tabela}
+BEGIN
+    SELECT RAISE(ABORT, '{tabela} é append-only: não pode ser alterada nem apagada');
+END;
+"""
+            )
+    for tabela, (chave, colunas) in TABELAS_VERSIONADAS.items():
+        partes.append(
+            f"""
+CREATE TRIGGER IF NOT EXISTS trg_versao_{tabela}
+BEFORE UPDATE ON {tabela}
+WHEN OLD.import_batch_id IS NOT NEW.import_batch_id
+     AND (SELECT pausado FROM versionamento_controle WHERE id = 1) = 0
+BEGIN
+    INSERT INTO historico_linha
+        (tabela, chave, import_batch_id_origem, import_batch_id_sobrescritor, conteudo, data_hora)
+    VALUES
+        ('{tabela}', {_json_object_sql("OLD", chave)}, OLD.import_batch_id, NEW.import_batch_id,
+         {_json_object_sql("OLD", colunas)}, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+END;
+"""
+        )
+    return "".join(partes)
+
+
+_DDL += _gerar_ddl_versionamento()
 
 
 def _migrar_colunas_controle_import_batch(conexao: sqlite3.Connection) -> None:

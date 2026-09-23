@@ -223,8 +223,46 @@ nenhum dado.
 
 **Limite conhecido:** o projeto não tem usuário autenticado. `usuario` é o *responsável*
 digitado na tela (o mesmo de `alerta.responsavel`), ou "não informado" — "Marcar em análise" não
-exige responsável. Importação, reversão de lote, criação/remoção de vínculo e exportação
-(também listadas na seção 16 do briefing) **não** são auditadas ainda.
+exige responsável. A reversão de lote também é auditada (`lote_revertido`, seção 8.2).
+Importação, reprocessamento, criação/remoção de vínculo e exportação (também listadas na seção
+16 do briefing) **não** são auditadas ainda.
+
+### 8.2 Reversão de lote e histórico de versões (`src/teds_reversao.py`)
+
+As importações gravam por *upsert* (a extração mais nova vence). Para poder desfazer uma
+importação sem perder o valor antigo, um gatilho copia a **versão anterior** de cada linha para
+`historico_linha` sempre que um lote *diferente* a sobrescreve (7 tabelas: `ted`,
+`execucao_anual`, `vinculo_ne`, `documento_nc_linha`, `documento_nc`, `documento_pf`,
+`execucao_tg` — `TABELAS_VERSIONADAS` em `src/teds_schema.py`, conferida por teste contra o
+esquema real). Reverter o lote B, para cada linha que hoje pertence a B:
+
+- havia versão anterior de um lote que **não** foi revertido → a linha volta a ela, com o
+  `import_batch_id` original;
+- B criou a linha → ela sai da tabela de trabalho.
+
+Em ambos os casos a versão de B vai para `linha_revertida` (JSON da linha inteira): **nada é
+descartado**, só deixa de contar nos totais. O lote fica `status = 'revertido'` com `revertido_em`,
+`revertido_por` e `motivo_reversao` (responsável e motivo obrigatórios), a ação entra na trilha
+de auditoria (`lote_revertido`) e tudo ocorre **numa única transação**. `historico_linha` e
+`linha_revertida` são append-only (gatilhos bloqueiam `UPDATE`/`DELETE`). Reverter fora de ordem
+é permitido: o valor restaurado é o da versão anterior mais recente pertencente a um lote ainda
+válido. O mesmo arquivo pode ser reimportado depois (vira um lote novo). Na página
+**Importações**, seção "Reverter lote", com confirmação explícita. Medido: reverter um lote de
+29 mil linhas leva menos de 1 s.
+
+**Limites deliberados:**
+
+- Só lotes gravados **depois** do histórico existir (`import_batch.versionado = 1`). Um lote
+  anterior pode ter sobrescrito linhas sem guardar o valor antigo; revertê-lo apagaria dado que
+  já existia, então é recusado com mensagem. No banco atual, **todos os lotes existentes são
+  desse tipo** — só as importações feitas daqui em diante podem ser revertidas.
+- `vinculo_ne.status_validacao` (decisão humana sobre NE em mais de um TED) não é revertido
+  junto com o valor: ao restaurar um vínculo o status atual é mantido, e a sincronização de
+  alertas de vínculo múltiplo roda ao final.
+- Alertas já criados a partir do lote revertido **não são fechados** automaticamente (só uma
+  pessoa resolve); os alertas dos dados que sobraram são recalculados.
+- Não é um "desfazer" do que foi feito *depois* pelas pessoas (decisões, justificativas): essas
+  ações têm a própria trilha e não são desfeitas pela reversão.
 
 ## 9. Páginas (barra lateral, grupo "TEDs")
 
@@ -253,7 +291,7 @@ exige responsável. Importação, reversão de lote, criação/remoção de vín
 - Edição do mapeamento de colunas na tela de Importações.
 - Campo de observação manual por TED.
 - Persistência dos parâmetros de Configurações além da sessão do navegador.
-- Auditoria de importação, reprocessamento, reversão de lote, exportação e criação/remoção de
-  vínculo; identificação de usuário autenticado.
+- Auditoria de importação, reprocessamento, exportação e criação/remoção de vínculo;
+  identificação de usuário autenticado. Reversão de lotes anteriores ao histórico de versões.
 
 Qualquer um desses itens exige aprovação explícita antes de implementação, conforme AGENTS.md.
