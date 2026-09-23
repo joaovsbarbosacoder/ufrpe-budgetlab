@@ -13,14 +13,26 @@ de aceitação do briefing diretamente ligados à Fase 1:
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 import unittest
 from decimal import Decimal
+from pathlib import Path
 
 import pandas as pd
 
 from src.teds_alertas import TIPO_EMPENHO_MULTIPLOS_TEDS
 from src.teds_importacao_simec import AVISO_UG_EMITENTE_NC_AUSENTE, STATUS_RELACIONAMENTO_PARCIAL
-from src.teds_lotes import importar_doc_nc, importar_doc_ne, importar_execucao_anual
+from src.importacao_execucao_mensal import importar as importar_execucao_mensal
+from src.teds_lotes import (
+    ExecucaoMensalNaoImportada,
+    importar_doc_nc,
+    importar_doc_ne,
+    importar_execucao_anual,
+    sincronizar_execucao_tg,
+    sincronizar_execucao_tg_atual,
+    status_sincronizacao_execucao_tg,
+)
 from src.teds_normalizacao import chave_empenho, chave_ted, texto_para_valor
 from src.teds_schema import conectar
 
@@ -375,6 +387,136 @@ class TotalDeControleTests(unittest.TestCase):
         self.assertIsNone(positiva)
         self.assertIsNone(negativa)
         self.assertIsNone(liquida)
+
+
+class SincronizarExecucaoTgTests(unittest.TestCase):
+    """`execucao_tg` espelha a Execução Mensal (decisão de 22/09/2026): sem upload, idempotente
+    pelo sha256 da extração, upsert pela chave (NE, ano, mês)."""
+
+    def setUp(self):
+        from tests.test_teds_importacao_tesouro_gerencial import _execucao_mensal_sintetica
+
+        self.conn = conectar(":memory:")
+        self.base = _execucao_mensal_sintetica()
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _linhas(self):
+        return self.conn.execute(
+            "SELECT numero_completo_ne, ano_lancamento, mes_lancamento, empenhado, liquidado, pago, "
+            "import_batch_id FROM execucao_tg ORDER BY 1, 2, 3"
+        ).fetchall()
+
+    def test_grava_uma_linha_por_ne_e_mes_com_valores_em_texto_decimal(self):
+        resultado = sincronizar_execucao_tg(self.conn, self.base, "sha-1", "extracao.xlsx")
+
+        self.assertFalse(resultado.ja_importado)
+        self.assertEqual(resultado.inseridos, 3)
+        self.assertEqual(
+            [linha[:6] for linha in self._linhas()],
+            [
+                ("2026NE000422", 2026, 8, "388300.00", "100000.10", "90000.00"),
+                ("2026NE000422", 2026, 9, "0.00", "50000.20", "40000.00"),
+                ("2026NE000427", 2026, 9, "154496.00", "0.00", "0.00"),
+            ],
+        )
+
+    def test_mesma_extracao_e_no_op(self):
+        sincronizar_execucao_tg(self.conn, self.base, "sha-1", "extracao.xlsx")
+        segunda = sincronizar_execucao_tg(self.conn, self.base, "sha-1", "extracao.xlsx")
+
+        self.assertTrue(segunda.ja_importado)
+        self.assertEqual(segunda.inseridos, 0)
+        self.assertEqual(len(self._linhas()), 3)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM import_batch").fetchone()[0], 1)
+
+    def test_extracao_nova_atualiza_sem_duplicar_e_preserva_historico_de_lotes(self):
+        primeira = sincronizar_execucao_tg(self.conn, self.base, "sha-1", "v1.xlsx")
+        corrigida = self.base.copy()
+        corrigida.loc[corrigida["tipo_linha"] == "item_execucao", "liquidada"] += 1.0
+
+        segunda = sincronizar_execucao_tg(self.conn, corrigida, "sha-2", "v2.xlsx")
+
+        self.assertFalse(segunda.ja_importado)
+        linhas = self._linhas()
+        self.assertEqual(len(linhas), 3)
+        self.assertEqual(linhas[0][4], "100001.10")
+        self.assertTrue(all(linha[6] == segunda.import_batch_id for linha in linhas))
+        self.assertNotEqual(primeira.import_batch_id, segunda.import_batch_id)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM import_batch").fetchone()[0], 2)
+
+    def test_linha_que_a_extracao_nova_deixa_de_trazer_nao_e_apagada(self):
+        sincronizar_execucao_tg(self.conn, self.base, "sha-1", "v1.xlsx")
+        so_a_ne_b = self.base[self.base["ne_ccor"].str.endswith("000427")]
+
+        sincronizar_execucao_tg(self.conn, so_a_ne_b, "sha-2", "v2.xlsx")
+
+        self.assertEqual(len(self._linhas()), 3)
+
+    def test_rejeitada_entra_no_total_de_controle_do_lote(self):
+        from tests.test_teds_importacao_tesouro_gerencial import _linha_empenho
+
+        base = self.base.copy()
+        base.loc[len(base)] = _linha_empenho("SEM-FORMATO", 202608, 10.0, "F", "D")
+
+        resultado = sincronizar_execucao_tg(self.conn, base, "sha-1", "extracao.xlsx")
+
+        self.assertEqual(len(resultado.rejeitadas), 1)
+        lidas, rejeitadas, aceitas = self.conn.execute(
+            "SELECT quantidade_linhas_lidas, quantidade_rejeitadas, quantidade_registros FROM import_batch"
+        ).fetchone()
+        self.assertEqual((lidas, rejeitadas, aceitas), (4, 1, 3))
+
+
+_FIXTURE_EXECUCAO_MENSAL = Path("tests/fixtures/execucao_mensal_2026-09-22.xlsx")
+
+
+@unittest.skipUnless(_FIXTURE_EXECUCAO_MENSAL.exists(), f"Fixture ausente em {_FIXTURE_EXECUCAO_MENSAL}")
+class SincronizarExecucaoTgAtualTests(unittest.TestCase):
+    """Ponta a ponta com o manifesto versionado da Execução Mensal (diretórios temporários —
+    nunca toca `data/manifestos/` nem `data/raw/`)."""
+
+    def setUp(self):
+        self.conn = conectar(":memory:")
+        self._tmp = tempfile.TemporaryDirectory()
+        self.manifestos = Path(self._tmp.name) / "manifestos"
+        self.raw = Path(self._tmp.name) / "raw"
+        self.raw.mkdir()
+
+    def tearDown(self):
+        self.conn.close()
+        self._tmp.cleanup()
+
+    def _importar_fixture(self):
+        shutil.copy(_FIXTURE_EXECUCAO_MENSAL, self.raw / _FIXTURE_EXECUCAO_MENSAL.name)
+        importar_execucao_mensal(_FIXTURE_EXECUCAO_MENSAL, diretorio_manifestos=self.manifestos)
+
+    def test_sem_extracao_importada_levanta_erro_explicito(self):
+        manifesto, lote = status_sincronizacao_execucao_tg(self.conn, self.manifestos)
+        self.assertEqual((manifesto, lote), (None, None))
+        with self.assertRaises(ExecucaoMensalNaoImportada):
+            sincronizar_execucao_tg_atual(self.conn, self.manifestos, self.raw)
+
+    def test_sincroniza_a_extracao_atual_e_a_segunda_vez_e_no_op(self):
+        self._importar_fixture()
+        manifesto, lote_antes = status_sincronizacao_execucao_tg(self.conn, self.manifestos)
+        self.assertIsNotNone(manifesto)
+        self.assertIsNone(lote_antes)
+
+        primeira = sincronizar_execucao_tg_atual(self.conn, self.manifestos, self.raw)
+
+        self.assertFalse(primeira.ja_importado)
+        self.assertGreater(primeira.inseridos, 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM execucao_tg").fetchone()[0], primeira.inseridos)
+        nome, hash_lote = self.conn.execute("SELECT nome_arquivo, hash_arquivo FROM import_batch").fetchone()
+        self.assertEqual((nome, hash_lote), (manifesto.arquivo, manifesto.sha256))
+        self.assertEqual(status_sincronizacao_execucao_tg(self.conn, self.manifestos)[1], primeira.import_batch_id)
+
+        segunda = sincronizar_execucao_tg_atual(self.conn, self.manifestos, self.raw)
+
+        self.assertTrue(segunda.ja_importado)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM import_batch").fetchone()[0], 1)
 
 
 if __name__ == "__main__":

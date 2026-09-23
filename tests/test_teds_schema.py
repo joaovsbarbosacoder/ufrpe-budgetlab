@@ -105,5 +105,96 @@ class SchemaTests(unittest.TestCase):
                 conn.close()
 
 
+_DDL_EXECUCAO_TG_ANTIGO = """
+CREATE TABLE execucao_tg (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    numero_completo_ne TEXT NOT NULL,
+    favorecido TEXT,
+    descricao TEXT,
+    empenhado TEXT,
+    liquidado TEXT,
+    pago TEXT,
+    documento_habil TEXT,
+    documento_contabil TEXT,
+    ano_competencia INTEGER,
+    mes_competencia INTEGER,
+    valor_competencia TEXT,
+    import_batch_id INTEGER NOT NULL,
+    linha_origem TEXT NOT NULL,
+    UNIQUE (numero_completo_ne, documento_habil, documento_contabil, ano_competencia, mes_competencia)
+)
+"""
+
+
+def _colunas(conn: sqlite3.Connection, tabela: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({tabela})").fetchall()}
+
+
+class MigracaoExecucaoTgTests(unittest.TestCase):
+    """`execucao_tg` do layout antigo (documento hábil/contábil/competência) -> layout atual (NE x
+    mês de lançamento). Nunca descarta dado financeiro em silêncio."""
+
+    def test_banco_novo_ja_nasce_no_layout_de_lancamento(self):
+        conn = conectar(":memory:")
+        try:
+            colunas = _colunas(conn, "execucao_tg")
+            self.assertTrue({"ano_lancamento", "mes_lancamento"}.issubset(colunas))
+            self.assertTrue({"documento_habil", "documento_contabil", "ano_competencia",
+                             "mes_competencia", "valor_competencia"}.isdisjoint(colunas))
+        finally:
+            conn.close()
+
+    def _banco_antigo(self, tmp: str, linhas: int) -> Path:
+        caminho = Path(tmp) / "teds_antigo.db"
+        antigo = sqlite3.connect(caminho)
+        antigo.execute(_DDL_EXECUCAO_TG_ANTIGO)
+        for i in range(linhas):
+            antigo.execute(
+                "INSERT INTO execucao_tg (numero_completo_ne, empenhado, documento_habil, "
+                "ano_competencia, mes_competencia, import_batch_id, linha_origem) "
+                "VALUES (?, '100.00', 'DH1', 2026, 8, 1, '{}')", (f"2026NE00000{i}",),
+            )
+        antigo.commit()
+        antigo.close()
+        return caminho
+
+    def test_tabela_antiga_vazia_e_recriada_no_layout_novo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = conectar(self._banco_antigo(tmp, linhas=0))
+            try:
+                self.assertIn("ano_lancamento", _colunas(conn, "execucao_tg"))
+                self.assertNotIn("documento_habil", _colunas(conn, "execucao_tg"))
+                nomes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                self.assertNotIn("execucao_tg_legado", nomes)
+            finally:
+                conn.close()
+
+    def test_tabela_antiga_com_linhas_e_preservada_como_legado(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = conectar(self._banco_antigo(tmp, linhas=2))
+            try:
+                self.assertIn("ano_lancamento", _colunas(conn, "execucao_tg"))
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM execucao_tg").fetchone()[0], 0)
+                legado = conn.execute(
+                    "SELECT numero_completo_ne, empenhado, documento_habil FROM execucao_tg_legado ORDER BY 1"
+                ).fetchall()
+                self.assertEqual(legado, [("2026NE000000", "100.00", "DH1"), ("2026NE000001", "100.00", "DH1")])
+            finally:
+                conn.close()
+
+    def test_migracao_e_idempotente_e_nao_repete_o_legado(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            caminho = self._banco_antigo(tmp, linhas=1)
+            conectar(caminho).close()
+            conn = conectar(caminho)
+            try:
+                nomes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                self.assertIn("execucao_tg_legado", nomes)
+                self.assertNotIn("execucao_tg_legado_2", nomes)
+                self.assertEqual(conn.execute("SELECT COUNT(*) FROM execucao_tg_legado").fetchone()[0], 1)
+            finally:
+                conn.close()
+
+
 if __name__ == "__main__":
     unittest.main()

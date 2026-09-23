@@ -8,6 +8,11 @@ nova, só uma prévia (dry-run: lê e valida sem gravar) antes da confirmação 
 campo esperado) — não é editável nesta versão: os leitores não expõem hoje uma forma de
 sobrescrever o mapeamento detectado, isso seria escopo novo.
 
+TESOURO GERENCIAL NÃO TEM UPLOAD AQUI (decisão de 22/09/2026, ver `docs/base_teds.md` seção 6): a
+base do Tesouro Gerencial É a Execução Mensal já importada em "Atualizar Planilhas" — a seção
+"Tesouro Gerencial — Execução Mensal" abaixo só a sincroniza para `execucao_tg` (botão
+explícito, lote auditável em `import_batch`, idempotente pelo sha256 da extração).
+
 "Rejeitados" no card de estatísticas do topo é sempre 0 fora do fluxo de importação corrente:
 o banco não guarda historicamente quantas linhas foram rejeitadas em cada lote (só
 `quantidade_registros`, as aceitas) — não é um dado fictício, é um dado que este schema não
@@ -32,7 +37,15 @@ from src.teds_importacao_simec import (
     ler_doc_pf_simec,
     ler_execucao_anual_simec,
 )
-from src.teds_lotes import importar_doc_ne, importar_doc_nc, importar_doc_pf, importar_execucao_anual
+from src.teds_lotes import (
+    ExecucaoMensalNaoImportada,
+    importar_doc_ne,
+    importar_doc_nc,
+    importar_doc_pf,
+    importar_execucao_anual,
+    sincronizar_execucao_tg_atual,
+    status_sincronizacao_execucao_tg,
+)
 from src.teds_normalizacao import ColunaObrigatoriaAusente, mapear_colunas
 from src.teds_ui import brl, conexao, formatar_historico_lotes, historico_importacoes, injetar_css, render_kpi_strip
 from src.ui_theme import render_page_header
@@ -60,6 +73,40 @@ render_kpi_strip([
     {"label": "Com avisos", "value": st.session_state.get("imp_ultimo_avisos", "—"), "icon": "!", "tone": design_tokens.WARNING},
     {"label": "Rejeitados", "value": st.session_state.get("imp_ultimo_rejeitados", 0), "icon": "×", "tone": design_tokens.NEGATIVE},
 ])
+
+st.markdown("#### Tesouro Gerencial — Execução Mensal")
+manifesto_tg, lote_tg = status_sincronizacao_execucao_tg(conn)
+if manifesto_tg is None:
+    st.info(
+        "Nenhuma extração da Execução Mensal importada ainda — importe em **Atualizar Planilhas** "
+        "para poder sincronizá-la aqui."
+    )
+else:
+    st.caption(
+        f"Extração atual: `{manifesto_tg.arquivo}` · data da extração: "
+        f"{pd.Timestamp(manifesto_tg.data_extracao).strftime('%d/%m/%Y')} · exercícios "
+        f"{', '.join(map(str, manifesto_tg.anos))}"
+    )
+    if lote_tg is not None:
+        st.success(f"Esta extração já está sincronizada (lote #{lote_tg}) — nada a fazer.")
+    else:
+        st.warning("Esta extração ainda não foi sincronizada com o módulo de TEDs.")
+    if st.button("Sincronizar com a Execução Mensal", type="primary", disabled=lote_tg is not None):
+        try:
+            with st.spinner("Lendo a Execução Mensal e gravando em execucao_tg…"):
+                resultado_tg = sincronizar_execucao_tg_atual(conn)
+        except ExecucaoMensalNaoImportada as erro:
+            st.error(str(erro))
+        except Exception as erro:
+            st.error(f"Falha ao sincronizar: {erro}")
+        else:
+            st.session_state["imp_ultimo_rejeitados"] = len(resultado_tg.rejeitadas)
+            st.success(
+                f"Sincronização concluída — {resultado_tg.inseridos} linha(s) NE × mês gravada(s), "
+                f"{len(resultado_tg.rejeitadas)} rejeitada(s)."
+            )
+            for rejeitada in resultado_tg.rejeitadas[:10]:
+                st.caption(f"Rejeitada: {rejeitada.motivo}")
 
 st.session_state.setdefault("imp_step", 1)
 

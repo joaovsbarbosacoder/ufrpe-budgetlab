@@ -198,13 +198,14 @@ linhas). Os demais alertas previstos no briefing original (crédito sem empenho,
 NC, vigência etc.) ficam para uma fase seguinte, fora do escopo já aprovado.
 
 A fonte do Tesouro Gerencial é a mesma extração de Execução Mensal já usada por outra página
-do projeto (`src/tesouro_execucao_mensal.py`) — não uma extração separada, como se presumia
-antes. A integração está planejada (mapeamento de campos em `docs/base_teds.md`) mas ainda não
-implementada, porque a Execução Mensal está em reestruturação ativa; até lá, os indicadores de
-Liquidado/Pago e a conciliação contra o Tesouro Gerencial mostram "Sem dado" em vez de um
-valor inventado.
+do projeto (`src/tesouro_execucao_mensal.py`) — não uma extração separada. Na página
+Importações, o botão "Sincronizar com a Execução Mensal" espelha essa extração em `execucao_tg`
+(uma linha por NE × mês de **lançamento**, não de competência; lote auditável, idempotente pelo
+sha256 da extração, nunca apaga linhas). Antes da primeira sincronização, os indicadores de
+Liquidado/Pago e a conciliação contra o Tesouro Gerencial mostram "Sem dado" em vez de um valor
+inventado. Competência real (Documento Hábil × mês de referência) fica para uma fase futura.
 
-O contrato completo (tabelas, chaves, decisões de projeto e a dúvida em aberto) está em
+O contrato completo (tabelas, chaves e decisões de projeto) está em
 `docs/base_teds.md`.
 
 ### Limitações atuais

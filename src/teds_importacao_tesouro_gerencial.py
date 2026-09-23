@@ -1,38 +1,46 @@
 """
-Leitor da execução por empenho do Tesouro Gerencial, para o módulo de TEDs.
+Execução do Tesouro Gerencial para o módulo de TEDs — derivada da Execução Mensal.
 
-RESOLVIDO em 22/09/2026 (confirmado pelo usuário, ver `docs/base_teds.md` seção 6): a base do
-Tesouro Gerencial usada aqui É a extração de Execução Mensal já implementada em
-`src/tesouro_execucao_mensal.py` — não uma extração separada. Este leitor ainda assume o
-formato antigo (uma linha por NE/documento hábil/documento contábil/competência, lido de
-arquivo próprio) porque a integração com `tesouro_execucao_mensal.py` está planejada mas AINDA
-NÃO IMPLEMENTADA: aquela base está em reestruturação ativa no momento desta decisão, e
-conectar TEDs a ela agora significa construir sobre um contrato que ainda está mudando. Ver
-`docs/base_teds.md` seção 6 para o mapeamento de campos planejado (inclui a remoção decidida
-de `documento_habil`/`documento_contabil` do schema `execucao_tg`, sem fonte na Execução
-Mensal) e o gatilho para implementar (usuário confirmar que a Execução Mensal estabilizou).
+Confirmado pelo usuário em 22/09/2026 (ver `docs/base_teds.md` seção 6): a base do Tesouro
+Gerencial usada pelo módulo É a extração de Execução Mensal já implementada em
+`src/tesouro_execucao_mensal.py` (versionada por `src/importacao_execucao_mensal.py`) — não há
+uma segunda extração nem leitor de arquivo próprio. Este módulo só REMONTA a saída dessa base
+no formato de `execucao_tg` (uma linha por NE × mês de lançamento); quem grava no SQLite é
+`src/teds_lotes.py::sincronizar_execucao_tg`.
 
-A chave de relacionamento com o SIMEC é o número completo da NE (`numero_completo_ne`), que
-deve bater com `src.teds_normalizacao.chave_empenho` depois de decompor UG/gestão/número —
-ver `src.teds_normalizacao.decompor_numero_ne`.
+Mapeamento (Execução Mensal → `execucao_tg`):
+
+  * `numero_completo_ne` ← `src.execucao_ne_utils.ne_curta(ne_ccor)` (ex. "2026NE000100") — a
+    mesma forma curta usada no resto do projeto e a que `src.teds_normalizacao.decompor_numero_ne`
+    espera. NE fora desse formato é REJEITADA (nunca gravada com chave inválida).
+  * `empenhado`/`liquidado`/`pago` ← `linha_do_tempo_por_ne` (Empenhado já deduplicado por
+    bloco). São movimentos do MÊS, não acumulados: somar por NE dá o total (é o que `teds_ui`
+    e a Conciliação já fazem). `linha_do_tempo_por_ne` preenche com 0 o mês em que a NE não tem
+    linha de Liquidada/Paga — convenção da própria função, coerente aqui: sem lançamento no
+    mês, o movimento do mês é zero.
+  * `ano_lancamento`/`mes_lancamento` ← `ano_mes` (`ano*100+mes`). É o mês em que o movimento
+    foi LANÇADO, não a competência (fato gerador) — as duas medem eixos de tempo diferentes
+    (ver `src/liquidacao_competencia.py`), por isso os nomes não são "competência".
+  * `favorecido` ← `ne_favorecido`; `descricao` ← `ne_descricao` (só das linhas de tipo
+    "empenho" — as de item de execução trazem sentinela, ver `agregar_por_ne`).
+
+`documento_habil`/`documento_contabil`/`valor_competencia` saíram do schema: a Execução Mensal
+não os tem. Competência real (Documento Hábil × mês de referência) existe na base de Liquidação
+por Competência, mas integrá-la ao TEDs é decisão futura, fora deste escopo.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 import pandas as pd
 
+from src.execucao_ne_utils import ne_curta
 from src.teds_importacao_simec import LinhaRejeitada
-from src.teds_normalizacao import (
-    linha_origem as _linha_origem,
-    mapear_colunas as _mapear_colunas,
-    normalizar_codigo,
-    normalizar_nome_coluna,
-    parse_valor_brl,
-    texto_coluna as _texto,
-)
+from src.teds_normalizacao import decompor_numero_ne, parse_valor_brl
+from src.tesouro_execucao_mensal import linha_do_tempo_por_ne
 
 
 @dataclass
@@ -41,77 +49,68 @@ class ResultadoLeituraTG:
     rejeitadas: list[LinhaRejeitada] = field(default_factory=list)
 
 
-_MAPA_EXECUCAO_TG = {
-    "numero_completo_ne": (
-        normalizar_nome_coluna("Número Completo NE"),
-        normalizar_nome_coluna("Número da NE"),
-        normalizar_nome_coluna("NE"),
-    ),
-    "favorecido": (normalizar_nome_coluna("Favorecido"),),
-    "descricao": (normalizar_nome_coluna("Descrição"),),
-    "empenhado": (normalizar_nome_coluna("Valor Empenhado"), normalizar_nome_coluna("Empenhado")),
-    "liquidado": (normalizar_nome_coluna("Valor Liquidado"), normalizar_nome_coluna("Liquidado")),
-    "pago": (normalizar_nome_coluna("Valor Pago"), normalizar_nome_coluna("Pago")),
-    "documento_habil": (normalizar_nome_coluna("Documento Hábil"),),
-    "documento_contabil": (normalizar_nome_coluna("Documento Contábil"),),
-    "ano_competencia": (normalizar_nome_coluna("Ano Competência"), normalizar_nome_coluna("Ano de Referência")),
-    "mes_competencia": (normalizar_nome_coluna("Mês Competência"), normalizar_nome_coluna("Mês de Referência")),
-    "valor_competencia": (normalizar_nome_coluna("Valor Competência"),),
-}
-
-_CAMPOS_VALOR_OPCIONAIS = ("empenhado", "liquidado", "pago", "valor_competencia")
-
-
-def _valor_opcional(linha: pd.Series, colunas: dict[str, str], campo: str):
-    coluna = colunas.get(campo)
-    if coluna is None or pd.isna(linha[coluna]):
+def _texto_ou_none(valor: object) -> str | None:
+    if valor is None or pd.isna(valor):
         return None
-    return parse_valor_brl(linha[coluna])
+    texto = str(valor).strip()
+    return texto or None
 
 
-def _inteiro_opcional(linha: pd.Series, colunas: dict[str, str], campo: str):
-    coluna = colunas.get(campo)
-    if coluna is None or pd.isna(linha[coluna]):
-        return None
-    return int(float(linha[coluna]))
+def _valor(numero: float) -> Decimal:
+    """`Decimal` exato em centavos a partir do float da Execução Mensal (via `parse_valor_brl`);
+    `+ 0` normaliza o "-0,00" (zero negativo de ponto flutuante) para "0,00" — zero é zero."""
+
+    return parse_valor_brl(float(numero)) + Decimal("0")
 
 
-def ler_execucao_tg(df: pd.DataFrame) -> ResultadoLeituraTG:
-    colunas = _mapear_colunas(df.columns, _MAPA_EXECUCAO_TG)
+def montar_execucao_tg(execucao_mensal: pd.DataFrame) -> ResultadoLeituraTG:
+    """Uma linha de `execucao_tg` por (NE × mês de lançamento) da Execução Mensal — ver
+    docstring do módulo para o mapeamento. `execucao_mensal` é o DataFrame já normalizado de
+    `src.tesouro_execucao_mensal.ler_execucao_mensal`/
+    `src.importacao_execucao_mensal.carregar_atual` (não relê nenhum arquivo, não o altera).
+
+    `linha_origem` guarda a chave de reconciliação com a base de origem (`ne_ccor` completo e
+    `ano_mes`) e os três valores como vieram, para auditoria."""
+
     resultado = ResultadoLeituraTG()
+    if execucao_mensal.empty:
+        return resultado
 
-    if "numero_completo_ne" not in colunas:
-        raise ValueError(
-            "Coluna do número completo da NE não encontrada — layout do Tesouro Gerencial "
-            "não confirmado; ajuste _MAPA_EXECUCAO_TG com o cabeçalho real da extração."
-        )
+    tempo = linha_do_tempo_por_ne(execucao_mensal)
 
-    for indice, linha in df.iterrows():
-        origem = _linha_origem(linha)
-        numero_completo_ne = _texto(linha, colunas, "numero_completo_ne")
-        if not numero_completo_ne:
+    dimensoes = execucao_mensal.groupby("ne_ccor")["ne_favorecido"].first()
+    descricoes = execucao_mensal.loc[execucao_mensal["tipo_linha"] == "empenho"].groupby("ne_ccor")["ne_descricao"].first()
+
+    for indice, linha in tempo.iterrows():
+        ne_ccor = str(linha["ne_ccor"])
+        origem = {
+            "ne_ccor": ne_ccor,
+            "ano_mes": int(linha["ano_mes"]),
+            "empenhada": float(linha["empenhada"]),
+            "liquidada": float(linha["liquidada"]),
+            "paga": float(linha["paga"]),
+        }
+
+        numero = ne_curta(ne_ccor)
+        if decompor_numero_ne(numero) is None:
             resultado.rejeitadas.append(
-                LinhaRejeitada(indice, "sem número completo de NE (possível rodapé)", origem)
+                LinhaRejeitada(indice, f"NE fora do formato AAAANEnnnnnn: {ne_ccor!r}", origem)
             )
             continue
 
-        try:
-            valores = {campo: _valor_opcional(linha, colunas, campo) for campo in _CAMPOS_VALOR_OPCIONAIS}
-        except (ValueError, TypeError) as exc:
-            resultado.rejeitadas.append(LinhaRejeitada(indice, str(exc), origem))
-            continue
-
-        registro = {
-            "numero_completo_ne": normalizar_codigo(numero_completo_ne),
-            "favorecido": _texto(linha, colunas, "favorecido") or None,
-            "descricao": _texto(linha, colunas, "descricao") or None,
-            "documento_habil": _texto(linha, colunas, "documento_habil") or None,
-            "documento_contabil": _texto(linha, colunas, "documento_contabil") or None,
-            "ano_competencia": _inteiro_opcional(linha, colunas, "ano_competencia"),
-            "mes_competencia": _inteiro_opcional(linha, colunas, "mes_competencia"),
-            "linha_origem": origem,
-            **valores,
-        }
-        resultado.registros.append(registro)
+        ano_mes = int(linha["ano_mes"])
+        resultado.registros.append(
+            {
+                "numero_completo_ne": numero,
+                "favorecido": _texto_ou_none(dimensoes.get(ne_ccor)),
+                "descricao": _texto_ou_none(descricoes.get(ne_ccor)),
+                "empenhado": _valor(linha["empenhada"]),
+                "liquidado": _valor(linha["liquidada"]),
+                "pago": _valor(linha["paga"]),
+                "ano_lancamento": ano_mes // 100,
+                "mes_lancamento": ano_mes % 100,
+                "linha_origem": origem,
+            }
+        )
 
     return resultado

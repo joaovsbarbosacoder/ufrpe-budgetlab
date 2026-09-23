@@ -2,9 +2,9 @@
 
 Compara, por TED, o valor/quantidade de NEs registrados no SIMEC (`vinculo_ne`, real) contra o
 Tesouro Gerencial (`execucao_tg`, cruzado por `numero_completo_ne` — ver docstring de
-`src/teds_importacao_tesouro_gerencial.py`). A comparação em si é real; o que normalmente
-aparece é "Fonte ausente", porque o leitor do Tesouro Gerencial ainda não foi confirmado
-contra uma extração real (não é fictício — é a extração que ainda não existe).
+`src/teds_importacao_tesouro_gerencial.py`). A comparação em si é real; "Fonte ausente"
+aparece enquanto a Execução Mensal não foi sincronizada (botão "Sincronizar" na página
+Importações) ou quando a NE não consta nela — não é fictício, é ausência de dado.
 
 A situação "Conferência necessária" tanto pode vir de uma divergência de valor acima da
 tolerância quanto do alerta já existente de NE-em-múltiplos-TEDs (`src/teds_alertas.py`) — as

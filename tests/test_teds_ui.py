@@ -62,8 +62,9 @@ class TotaisComVinculoPendenteTests(unittest.TestCase):
             self.conn.execute(
                 """
                 INSERT INTO execucao_tg
-                    (numero_completo_ne, liquidado, pago, import_batch_id, linha_origem)
-                VALUES (?, ?, ?, 1, '{}')
+                    (numero_completo_ne, liquidado, pago, ano_lancamento, mes_lancamento,
+                     import_batch_id, linha_origem)
+                VALUES (?, ?, ?, 2026, 8, 1, '{}')
                 """,
                 (numero_ne, valor_para_texto(liquidado), valor_para_texto(pago)),
             )
@@ -260,8 +261,8 @@ class CoberturaRelacionamentosTests(unittest.TestCase):
             (TED_17352, NE_422, valor_para_texto(Decimal("388300.00"))),
         )
         self.conn.execute(
-            "INSERT INTO execucao_tg (numero_completo_ne, import_batch_id, linha_origem) "
-            "VALUES ('2026NE000422', 1, '{}')"
+            "INSERT INTO execucao_tg (numero_completo_ne, ano_lancamento, mes_lancamento, "
+            "import_batch_id, linha_origem) VALUES ('2026NE000422', 2026, 8, 1, '{}')"
         )
         self.conn.commit()
 

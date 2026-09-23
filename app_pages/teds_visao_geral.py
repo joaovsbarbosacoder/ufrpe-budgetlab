@@ -4,11 +4,11 @@ lateral, ver `app.py`), layout adaptado de um handoff de design (mesmo espírito
 de `data/teds/teds.db` — não há placeholder fictício nesta tela específica, porque tudo que
 ela mostra (TEDs, execução anual, empenhado, alertas) já existe no schema.
 
-"Liquidado"/"Pago" (painel "Execução financeira") dependem do Tesouro Gerencial
-(`src/teds_importacao_tesouro_gerencial.py`), cujo layout real ainda não foi confirmado (ver
-docstring daquele módulo) — a consulta é real (cruza `vinculo_ne.numero_ne` com
-`execucao_tg.numero_completo_ne`), só que hoje não há arquivo importado, então aparece "Sem
-dado (Tesouro Gerencial)" em vez de um valor inventado.
+"Liquidado"/"Pago" (painel "Execução financeira") vêm do Tesouro Gerencial, que é a Execução
+Mensal sincronizada em `execucao_tg` (`src/teds_importacao_tesouro_gerencial.py`, botão
+"Sincronizar" na página Importações) — a consulta cruza `vinculo_ne.numero_ne` com
+`execucao_tg.numero_completo_ne`. Enquanto a sincronização não for feita, aparece "Sem dado
+(Tesouro Gerencial)" em vez de um valor inventado.
 """
 
 from __future__ import annotations
@@ -207,12 +207,11 @@ def _fmt_pct(fracao: float | None) -> str:
 
 
 cobertura = calcular_cobertura_relacionamentos(conn)
-col_cob1, col_cob2, col_cob3, col_cob4, col_cob5 = st.columns(5)
+col_cob1, col_cob2, col_cob3, col_cob4 = st.columns(4)
 col_cob1.metric("NCs com TED identificado", _fmt_pct(cobertura.pct_nc_relacionadas))
 col_cob2.metric("PFs com TED identificado", _fmt_pct(cobertura.pct_pf_relacionadas))
 col_cob3.metric("NEs com TED único e certo", _fmt_pct(cobertura.pct_ne_relacionadas))
 col_cob4.metric("NEs também no Tesouro Gerencial", _fmt_pct(cobertura.pct_ne_no_tesouro_gerencial))
-col_cob5.metric("Liquidações com competência", _fmt_pct(cobertura.pct_liquidacoes_com_competencia))
 
 if cobertura.qtd_documentos_nao_relacionados or cobertura.qtd_documentos_parciais:
     st.warning(

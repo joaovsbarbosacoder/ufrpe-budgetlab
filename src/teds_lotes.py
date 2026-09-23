@@ -1,6 +1,7 @@
 """
 Orquestração de importação do módulo de TEDs: liga os leitores
-(`src/teds_importacao_simec.py`, `src/teds_importacao_tesouro_gerencial.py`) ao schema
+(`src/teds_importacao_simec.py`; e, para o Tesouro Gerencial,
+`src/teds_importacao_tesouro_gerencial.py`, que deriva da Execução Mensal em vez de ler arquivo) ao schema
 SQLite (`src/teds_schema.py`), registrando cada lote em `import_batch` e gravando as linhas
 de forma idempotente (regra 10 do briefing).
 
@@ -28,6 +29,12 @@ from typing import Any
 
 import pandas as pd
 
+from src.importacao_execucao_mensal import (
+    DIRETORIO_DADOS_BRUTOS_PADRAO,
+    DIRETORIO_MANIFESTOS_PADRAO,
+    Manifesto as ManifestoExecucaoMensal,
+    carregar_atual as carregar_execucao_mensal_atual,
+)
 from src.teds_alertas import sincronizar_alertas_multiplos_teds, sincronizar_alertas_nc_parcial
 from src.teds_importacao_simec import (
     LinhaRejeitada,
@@ -36,7 +43,7 @@ from src.teds_importacao_simec import (
     ler_doc_pf_simec,
     ler_execucao_anual_simec,
 )
-from src.teds_importacao_tesouro_gerencial import ler_execucao_tg
+from src.teds_importacao_tesouro_gerencial import montar_execucao_tg
 from src.teds_normalizacao import valor_para_texto
 
 TIPO_EXECUCAO_ANUAL = "simec_execucao_anual"
@@ -78,7 +85,7 @@ class ResumoControle:
 
     As somas ficam `None` para Execução Anual e Execução do Tesouro Gerencial: essas duas
     bases trazem várias colunas de valor por linha (ex.: os 6 totais por TED da Execução
-    Anual) sem uma leitura única de "valor da linha" — forçar uma soma ali exigiria escolher
+    Anual, ou empenhado/liquidado/pago por NE × mês) sem uma leitura única de "valor da linha" — forçar uma soma ali exigiria escolher
     arbitrariamente qual coluna vale como "o" valor da linha, o que não está no briefing nem
     foi confirmado contra as extrações reais revisadas.
 
@@ -451,64 +458,110 @@ def importar_doc_pf(
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
 
 
-def importar_execucao_tg(
-    conn: sqlite3.Connection, df: pd.DataFrame, nome_arquivo: str, conteudo_bytes: bytes
+def sincronizar_execucao_tg(
+    conn: sqlite3.Connection, execucao_mensal: pd.DataFrame, sha256_manifesto: str, nome_arquivo: str
 ) -> ResultadoImportacaoLote:
-    hash_arquivo = _hash_bytes(conteudo_bytes)
-    existente = _lote_ja_importado(conn, TIPO_EXECUCAO_TG, hash_arquivo)
+    """Espelha a Execução Mensal em `execucao_tg` (uma linha por NE × mês de lançamento — ver
+    `src/teds_importacao_tesouro_gerencial.py`). Diferente dos demais relatórios, NÃO há arquivo
+    enviado por upload: a origem é a extração já importada e versionada da Execução Mensal, e o
+    `sha256_manifesto` dela faz o papel de hash do arquivo na idempotência de arquivo idêntico
+    (mesma extração já sincronizada -> no-op). Extração nova traz linhas conhecidas -> upsert
+    pela chave natural (NE, ano, mês), atualizando valores e a rastreabilidade para o lote
+    novo; linha que uma extração posterior deixe de trazer permanece como estava (esta função
+    nunca apaga)."""
+
+    existente = _lote_ja_importado(conn, TIPO_EXECUCAO_TG, sha256_manifesto)
     if existente is not None:
         return ResultadoImportacaoLote(existente, ja_importado=True, inseridos=0)
 
-    leitura = ler_execucao_tg(df)
+    leitura = montar_execucao_tg(execucao_mensal)
     resumo = _resumo_controle(
-        quantidade_linhas_lidas=len(df), registros=leitura.registros, rejeitadas=leitura.rejeitadas,
-        campo_valor=None,
+        quantidade_linhas_lidas=len(leitura.registros) + len(leitura.rejeitadas),
+        registros=leitura.registros, rejeitadas=leitura.rejeitadas, campo_valor=None,
     )
     batch_id = _registrar_lote(
-        conn, TIPO_EXECUCAO_TG, nome_arquivo, hash_arquivo, len(leitura.registros), resumo
+        conn, TIPO_EXECUCAO_TG, nome_arquivo, sha256_manifesto, len(leitura.registros), resumo
     )
 
-    for r in leitura.registros:
-        conn.execute(
-            """
-            INSERT INTO execucao_tg
-                (numero_completo_ne, favorecido, descricao, empenhado, liquidado, pago,
-                 documento_habil, documento_contabil, ano_competencia, mes_competencia,
-                 valor_competencia, import_batch_id, linha_origem)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(numero_completo_ne, documento_habil, documento_contabil, ano_competencia, mes_competencia)
-            DO UPDATE SET
-                favorecido = excluded.favorecido,
-                descricao = excluded.descricao,
-                empenhado = excluded.empenhado,
-                liquidado = excluded.liquidado,
-                pago = excluded.pago,
-                valor_competencia = excluded.valor_competencia,
-                import_batch_id = excluded.import_batch_id,
-                linha_origem = excluded.linha_origem
-            """,
+    conn.executemany(
+        """
+        INSERT INTO execucao_tg
+            (numero_completo_ne, favorecido, descricao, empenhado, liquidado, pago,
+             ano_lancamento, mes_lancamento, import_batch_id, linha_origem)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(numero_completo_ne, ano_lancamento, mes_lancamento)
+        DO UPDATE SET
+            favorecido = excluded.favorecido,
+            descricao = excluded.descricao,
+            empenhado = excluded.empenhado,
+            liquidado = excluded.liquidado,
+            pago = excluded.pago,
+            import_batch_id = excluded.import_batch_id,
+            linha_origem = excluded.linha_origem
+        """,
+        [
             (
                 r["numero_completo_ne"],
                 r["favorecido"],
                 r["descricao"],
-                valor_para_texto(r["empenhado"]) if r["empenhado"] is not None else None,
-                valor_para_texto(r["liquidado"]) if r["liquidado"] is not None else None,
-                valor_para_texto(r["pago"]) if r["pago"] is not None else None,
-                r["documento_habil"],
-                r["documento_contabil"],
-                r["ano_competencia"],
-                r["mes_competencia"],
-                valor_para_texto(r["valor_competencia"]) if r["valor_competencia"] is not None else None,
+                valor_para_texto(r["empenhado"]),
+                valor_para_texto(r["liquidado"]),
+                valor_para_texto(r["pago"]),
+                r["ano_lancamento"],
+                r["mes_lancamento"],
                 batch_id,
                 _json_linha_origem(r["linha_origem"]),
-            ),
-        )
+            )
+            for r in leitura.registros
+        ],
+    )
     conn.commit()
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
 
 
+class ExecucaoMensalNaoImportada(RuntimeError):
+    """Não há extração da Execução Mensal importada (`data/manifestos/execucao_mensal_atual.json`
+    ausente) — nada a sincronizar; a importação é feita em "Atualizar Planilhas"."""
+
+
+def status_sincronizacao_execucao_tg(
+    conn: sqlite3.Connection, diretorio_manifestos: str | Path = DIRETORIO_MANIFESTOS_PADRAO
+) -> tuple[ManifestoExecucaoMensal | None, int | None]:
+    """(manifesto atual da Execução Mensal, id do lote que já a sincronizou ou `None`) —
+    consulta barata (não lê a planilha), para a página mostrar o estado antes de qualquer ação."""
+
+    manifesto = ManifestoExecucaoMensal.atual(Path(diretorio_manifestos))
+    if manifesto is None:
+        return None, None
+    return manifesto, _lote_ja_importado(conn, TIPO_EXECUCAO_TG, manifesto.sha256)
+
+
+def sincronizar_execucao_tg_atual(
+    conn: sqlite3.Connection,
+    diretorio_manifestos: str | Path = DIRETORIO_MANIFESTOS_PADRAO,
+    diretorio_dados_brutos: str | Path = DIRETORIO_DADOS_BRUTOS_PADRAO,
+) -> ResultadoImportacaoLote:
+    """Sincroniza `execucao_tg` com a extração ATUAL da Execução Mensal (a composta por ano de
+    `carregar_atual`, nunca lê um arquivo fora do manifesto). Confere a idempotência ANTES de
+    ler a planilha grande: extração já sincronizada devolve o lote antigo sem tocar no arquivo.
+    Levanta `ExecucaoMensalNaoImportada` se não há extração importada."""
+
+    manifesto, lote_existente = status_sincronizacao_execucao_tg(conn, diretorio_manifestos)
+    if manifesto is None:
+        raise ExecucaoMensalNaoImportada("Nenhuma extração da Execução Mensal importada ainda.")
+    if lote_existente is not None:
+        return ResultadoImportacaoLote(lote_existente, ja_importado=True, inseridos=0)
+
+    execucao_mensal = carregar_execucao_mensal_atual(diretorio_dados_brutos, diretorio_manifestos)
+    if execucao_mensal is None:
+        raise ExecucaoMensalNaoImportada("Manifesto da Execução Mensal sem dados carregáveis.")
+    return sincronizar_execucao_tg(conn, execucao_mensal, manifesto.sha256, manifesto.arquivo)
+
+
 # --------------------------------------------------------------------------------------
-# Conveniência: importar direto de um arquivo em disco (nunca o modifica — só lê).
+# Conveniência: importar direto de um arquivo em disco (nunca o modifica — só lê). Só os
+# relatórios do SIMEC: a execução do Tesouro Gerencial não vem de arquivo próprio, ver
+# `sincronizar_execucao_tg`.
 # --------------------------------------------------------------------------------------
 
 _IMPORTADORES_POR_TIPO = {
@@ -516,7 +569,6 @@ _IMPORTADORES_POR_TIPO = {
     TIPO_DOC_NE: importar_doc_ne,
     TIPO_DOC_NC: importar_doc_nc,
     TIPO_DOC_PF: importar_doc_pf,
-    TIPO_EXECUCAO_TG: importar_execucao_tg,
 }
 
 

@@ -397,8 +397,7 @@ def soma_tg_por_teds(conn: sqlite3.Connection, chaves_ted: set[str]) -> tuple[De
 @dataclass(frozen=True)
 class CoberturaRelacionamentos:
     """Painel de qualidade do §13 do briefing — percentuais/contagens sobre o quanto dos
-    documentos importados já está de fato ligado a um TED (ou ao Tesouro Gerencial/
-    competência), para o valor financeiro sem relacionamento nunca ficar escondido atrás de
+    documentos importados já está de fato ligado a um TED (ou ao Tesouro Gerencial), para o valor financeiro sem relacionamento nunca ficar escondido atrás de
     "só uma quantidade de linhas".
 
     Interpretação adotada onde o briefing não é literal quanto à direção da métrica (registrado
@@ -413,13 +412,17 @@ class CoberturaRelacionamentos:
       * "percentual de NEs relacionadas ao Tesouro Gerencial" cruza as NEs com
         `status_validacao='ok'` (as mesmas contabilizáveis nos totais financeiros, ver
         `soma_tg_por_teds`) contra `execucao_tg.numero_completo_ne`.
+
+    "Liquidações com competência" (5º indicador de antes) saiu: `execucao_tg` agora espelha a
+    Execução Mensal, cujo mês é o de LANÇAMENTO, não o de competência — todo registro teria
+    "competência" por construção, indicador sem informação. Competência real depende de integrar
+    a Liquidação por Competência (ver docs/base_teds.md seção 6), fora do escopo atual.
     """
 
     pct_nc_relacionadas: float | None
     pct_pf_relacionadas: float | None
     pct_ne_relacionadas: float | None
     pct_ne_no_tesouro_gerencial: float | None
-    pct_liquidacoes_com_competencia: float | None
     qtd_documentos_parciais: int
     qtd_documentos_nao_relacionados: int
     valor_nao_relacionado: Decimal
@@ -470,16 +473,11 @@ def calcular_cobertura_relacionamentos(conn: sqlite3.Connection) -> CoberturaRel
         """
     ).fetchone()[0]
 
-    total_tg, tg_com_competencia = conn.execute(
-        "SELECT COUNT(*), SUM(ano_competencia IS NOT NULL AND mes_competencia IS NOT NULL) FROM execucao_tg"
-    ).fetchone()
-
     return CoberturaRelacionamentos(
         pct_nc_relacionadas=_percentual(relacionadas_nc or 0, total_nc or 0),
         pct_pf_relacionadas=_percentual(relacionadas_pf or 0, total_pf or 0),
         pct_ne_relacionadas=_percentual(ne_ok or 0, total_ne or 0),
         pct_ne_no_tesouro_gerencial=_percentual(ne_no_tg or 0, ne_ok or 0),
-        pct_liquidacoes_com_competencia=_percentual(tg_com_competencia or 0, total_tg or 0),
         qtd_documentos_parciais=parciais_nc or 0,
         qtd_documentos_nao_relacionados=(nao_relacionadas_nc or 0) + (nao_relacionadas_pf or 0),
         valor_nao_relacionado=valor_nao_relacionado,

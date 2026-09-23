@@ -24,10 +24,10 @@ Schema completo em `src/teds_schema.py`.
 | SIMEC — Documentos: DOC NE | `ler_doc_ne_simec` | Sim |
 | SIMEC — Documentos: DOC NC | `ler_doc_nc_simec` | Sim |
 | SIMEC — Documentos: DOC PF | `ler_doc_pf_simec` | Sim |
-| Tesouro Gerencial — execução por empenho | `ler_execucao_tg` (`src/teds_importacao_tesouro_gerencial.py`) | **Não** — ver seção 6 |
+| Tesouro Gerencial — execução por empenho | `montar_execucao_tg` (`src/teds_importacao_tesouro_gerencial.py`) — deriva da Execução Mensal, sem arquivo próprio | Sim — extração real da Execução Mensal, ver seção 6 |
 
 A leitura do arquivo bruto (abertura do Excel, cálculo do hash SHA-256) é responsabilidade de
-`src/teds_lotes.py`; os leitores acima recebem o `DataFrame` já carregado e devolvem
+`src/teds_lotes.py`; os leitores do SIMEC recebem o `DataFrame` já carregado e devolvem
 registros normalizados + linhas rejeitadas com motivo — nunca lançam exceção por uma linha
 ruim isolada.
 
@@ -80,47 +80,57 @@ em boa parte das linhas reais (ver seção 5).
   total confirmado coluna a coluna. Capturar isso exigiria presumir um formato ainda não
   visto — não implementado nesta rodada (ver AGENTS.md).
 
-## 6. Fonte do Tesouro Gerencial: resolvida — é a Execução Mensal (plano de integração, ainda não implementado)
+## 6. Fonte do Tesouro Gerencial: é a Execução Mensal (implementado em 23/09/2026)
 
 O briefing original descrevia **duas** bases do Tesouro Gerencial ("execução da despesa por
-empenho" e "liquidação por competência"), mas o schema (`execucao_tg`) modelava as duas
-misturadas numa única tabela, por falta de uma extração real para confirmar. Sem essa
-extração, `ler_execucao_tg` (`src/teds_importacao_tesouro_gerencial.py`) assumia o cenário mais
-permissivo — uma linha por `(NE, documento hábil, documento contábil, competência)`.
+empenho" e "liquidação por competência"). **Confirmado pelo usuário em 22/09/2026: a extração
+do Tesouro Gerencial usada aqui É a extração de Execução Mensal** já implementada em
+`src/tesouro_execucao_mensal.py` (ver `docs/base_execucao_mensal.md`) — não existe uma segunda
+extração a importar. O leitor de arquivo próprio (`ler_execucao_tg`, nunca confirmado contra
+uma extração real) foi removido.
 
-**Confirmado pelo usuário em 22/09/2026: a extração do Tesouro Gerencial É a extração de
-Execução Mensal já implementada em `src/tesouro_execucao_mensal.py`** (BI CPOC / Tesouro
-Gerencial — ver `docs/base_execucao_mensal.md`). Não existe uma segunda base separada a
-importar; TEDs deve consumir a mesma extração que já alimenta a Execução Mensal, em vez de ter
-seu próprio leitor de arquivo.
+**Como funciona hoje:** `execucao_tg` é um *espelho* da Execução Mensal, com uma linha por
+**NE × mês de lançamento**. Na página Importações, o botão **"Sincronizar com a Execução
+Mensal"** chama `src/teds_lotes.py::sincronizar_execucao_tg_atual`, que:
 
-Isso substitui a leitura de arquivo dedicada por consumir a saída já pronta de
-`src/tesouro_execucao_mensal.py`:
+- lê a extração ATUAL do manifesto versionado (`carregar_atual`, composta por ano) — nunca um
+  arquivo avulso, nunca altera `data/raw/`;
+- registra um lote em `import_batch` cujo hash é o **sha256 do manifesto**: a mesma extração
+  já sincronizada é um no-op (a planilha nem é lida); extração nova faz *upsert* pela chave
+  `(numero_completo_ne, ano_lancamento, mes_lancamento)`, mantendo o histórico de lotes;
+- **nunca apaga**: linha que uma extração posterior deixe de trazer permanece como estava.
 
-| Campo de `execucao_tg` | Fonte na Execução Mensal | Situação |
-|---|---|---|
-| `numero_completo_ne` | `ne_ccor` (formato "CCOR"; `ne_ano`/`ne_numero` já são derivados dele via slice — ver `tesouro_execucao_mensal.py:285-286`) | precisa confirmar conversão para o formato `AAAANEnnnnnn` que `decompor_numero_ne` espera |
-| `favorecido` | `ne_favorecido` (`_DIMENSOES_CONSTANTES_POR_NE`) | mapeamento direto |
-| `empenhado` | `linha_do_tempo_por_ne(df)["empenhada"]` | já deduplicado corretamente por bloco (ver docstring da função) |
-| `liquidado` | `linha_do_tempo_por_ne(df)["liquidada"]` | mapeamento direto |
-| `pago` | `linha_do_tempo_por_ne(df)["paga"]` | mapeamento direto |
-| `ano_competencia`/`mes_competencia` | decompor `ano_mes` (inteiro `ano*100+mes`) | mapeamento direto |
-| `valor_competencia` | sem equivalente óbvio — Execução Mensal não separa "competência" de "mês" | precisa decisão: campo pode ficar redundante com `mes_competencia` |
-| `descricao` | sem equivalente ao nível de NE nesta base | provavelmente fica sem fonte |
-| `documento_habil` / `documento_contabil` | sem equivalente nesta base | **decisão registrada: remover do schema** `execucao_tg` (não há fonte prevista) |
+| Campo de `execucao_tg` | Fonte na Execução Mensal |
+|---|---|
+| `numero_completo_ne` | `execucao_ne_utils.ne_curta(ne_ccor)` → `2026NE000100` (NE fora do formato `AAAANEnnnnnn` é **rejeitada**, nunca gravada) |
+| `favorecido` / `descricao` | `ne_favorecido` / `ne_descricao` (só das linhas de empenho) |
+| `empenhado` / `liquidado` / `pago` | `linha_do_tempo_por_ne` — **movimentos do mês**, não acumulados; somar por NE dá o total (é o que `teds_ui` e a Conciliação fazem). Mês sem linha de liquidação/pagamento = movimento zero (convenção da própria função). Estornos entram com sinal. |
+| `ano_lancamento` / `mes_lancamento` | `ano_mes` (`ano*100+mes`) |
 
-**Status: plano registrado, implementação NÃO iniciada.** `src/tesouro_execucao_mensal.py`
-está em reestruturação ativa pelo usuário no momento desta decisão (nova coluna `Fonte
-Recursos Detalhada` adicionada em 22/09/2026, por exemplo) — conectar TEDs a essa base agora
-significa construir sobre um contrato que ainda está mudando. A implementação (reescrever
-`src/teds_importacao_tesouro_gerencial.py` para consumir `linha_do_tempo_por_ne` em vez de ler
-um arquivo próprio, remover `documento_habil`/`documento_contabil` de `src/teds_schema.py`,
-resolver os mapeamentos em aberto acima) fica para quando o usuário confirmar que a Execução
-Mensal estabilizou.
+**Decisões registradas (23/09/2026):**
 
-Enquanto o plano não for implementado, o comportamento atual se mantém: os indicadores de
-Liquidado/Pago e a conciliação SIMEC × Tesouro Gerencial (páginas Visão geral e Conciliação)
-mostram "Sem dado (Tesouro Gerencial)" em vez de um valor inventado.
+- **Lançamento ≠ competência.** O mês da Execução Mensal é o de *lançamento*; competência (fato
+  gerador) é outro eixo de tempo, medido pela base de **Liquidação por Competência**
+  (`src/liquidacao_competencia.py`, que traz Documento Hábil, Doc. Contábil e mês de
+  referência). Por isso as colunas se chamam `ano_lancamento`/`mes_lancamento` (antes
+  `ano_competencia`/`mes_competencia`) e o indicador "Liquidações com competência" da Visão
+  geral saiu (seria 100% por construção). Integrar a competência real ao TEDs é decisão
+  **futura**, fora deste escopo.
+- **Saíram do schema** `documento_habil`, `documento_contabil` e `valor_competencia` (a
+  Execução Mensal não os tem).
+- **Migração do banco existente** (`src/teds_schema.py::_migrar_execucao_tg_para_lancamento`,
+  roda em `conectar()`): tabela antiga vazia é recriada; com linhas, é **preservada** como
+  `execucao_tg_legado` (nunca convertida nem descartada). Em `data/teds/teds.db` a tabela
+  estava vazia (só as 4 fontes do SIMEC tinham sido importadas).
+
+**Validação com a extração real** (`BI CPOC - EXEC. DESPESAS - Por Ano (8).xlsx`, 22/09/2026):
+29.124 linhas NE × mês, 2.568 NEs, **0 rejeitadas**; as somas de empenhado/liquidado/pago
+batem ao centavo com os totais do manifesto (R$ 2.496.385.910,24 / 2.226.639.772,51 /
+2.044.402.004,58). Coberto por `tests/test_teds_importacao_tesouro_gerencial.py` e
+`tests/test_teds_lotes.py`.
+
+Antes de clicar em "Sincronizar", os indicadores de Liquidado/Pago e a conciliação SIMEC ×
+Tesouro Gerencial mostram "Sem dado (Tesouro Gerencial)" em vez de um valor inventado.
 
 ## 7. Idempotência da importação
 
@@ -158,14 +168,15 @@ ficam para uma fase seguinte, fora do escopo aprovado até aqui.
 ## 9. Páginas (barra lateral, grupo "TEDs")
 
 1. **Visão geral** — dado real, consultado direto do banco; Liquidado/Pago mostram "Sem dado"
-   enquanto a seção 6 não for resolvida.
+   até a Execução Mensal ser sincronizada (seção 6).
 2. **Lista e detalhe** — uma página só (drill-down via
    `st.session_state["teds_chave_selecionada"]`, não uma entrada própria na barra lateral).
    "Registrar observação" fica desabilitado: não existe campo de observação manual no schema.
 3. **Central de Alertas** — mestre-detalhe real sobre `src/teds_alertas.py`; workflow de
    análise (marcar "em análise", resolver com justificativa/responsável) também é real.
 4. **Importações** — assistente de 4 passos (Arquivo → Mapeamento → Validação → Confirmação)
-   sobre os leitores já testados; "Mapeamento" não é editável nesta versão.
+   sobre os leitores do SIMEC já testados ("Mapeamento" não é editável nesta versão), mais a
+   seção "Tesouro Gerencial — Execução Mensal" com o botão de sincronização (seção 6).
 5. **Conciliação** — SIMEC × Tesouro Gerencial, tolerância configurável via
    `st.session_state["teds_tolerancia_monetaria"]` (padrão R$ 0,01), não persistida em disco.
 6. **Configurações** — só tolerância monetária, integridade do banco (`PRAGMA
@@ -175,8 +186,8 @@ ficam para uma fase seguinte, fora do escopo aprovado até aqui.
 
 ## 10. O que NÃO foi aprovado ainda
 
-- Implementação do plano de integração com a Execução Mensal (seção 6) — planejado e aprovado
-  em decisão, mas aguardando a Execução Mensal estabilizar antes de codificar.
+- Competência real no TEDs (Documento Hábil × mês de referência, via Liquidação por
+  Competência) — ver seção 6.
 - Alertas além dos dois da seção 8.
 - Edição do mapeamento de colunas na tela de Importações.
 - Campo de observação manual por TED.

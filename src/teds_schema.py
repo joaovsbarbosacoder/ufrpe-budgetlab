@@ -164,9 +164,11 @@ CREATE TABLE IF NOT EXISTS vinculo_ne (
     PRIMARY KEY (chave_ted, chave_empenho)
 );
 
--- Layout do Tesouro Gerencial ainda não confirmado com extração real (ver docstring de
--- src/teds_importacao_tesouro_gerencial.py); a chave de dedup é a mais ampla que a
--- especificação sustenta, não uma garantia de unicidade real.
+-- Espelho da Execução Mensal (Tesouro Gerencial), sincronizado por
+-- `src/teds_lotes.py::sincronizar_execucao_tg` — uma linha por NE × mês de LANÇAMENTO (não
+-- competência: ver docs/base_teds.md seção 6). Empenhado/liquidado/pago são movimentos do
+-- mês, não acumulados — somar por NE dá o total. Nomes `ano_lancamento`/`mes_lancamento`
+-- (antes `ano_competencia`/`mes_competencia`) evitam rotular lançamento como competência.
 CREATE TABLE IF NOT EXISTS execucao_tg (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     numero_completo_ne TEXT NOT NULL,
@@ -175,17 +177,11 @@ CREATE TABLE IF NOT EXISTS execucao_tg (
     empenhado TEXT,
     liquidado TEXT,
     pago TEXT,
-    documento_habil TEXT,
-    documento_contabil TEXT,
-    ano_competencia INTEGER,
-    mes_competencia INTEGER,
-    valor_competencia TEXT,
+    ano_lancamento INTEGER NOT NULL,
+    mes_lancamento INTEGER NOT NULL,
     import_batch_id INTEGER NOT NULL,
     linha_origem TEXT NOT NULL,
-    UNIQUE (
-        numero_completo_ne, documento_habil, documento_contabil,
-        ano_competencia, mes_competencia
-    )
+    UNIQUE (numero_completo_ne, ano_lancamento, mes_lancamento)
 );
 
 CREATE TABLE IF NOT EXISTS alerta (
@@ -236,6 +232,34 @@ def _migrar_colunas_controle_import_batch(conexao: sqlite3.Connection) -> None:
             conexao.execute(f"ALTER TABLE import_batch ADD COLUMN {coluna} {tipo_sql}")
 
 
+def _migrar_execucao_tg_para_lancamento(conexao: sqlite3.Connection) -> None:
+    """Troca o `execucao_tg` do layout antigo (uma linha por NE/documento hábil/documento
+    contábil/competência, lido de arquivo próprio — nunca confirmado contra uma extração real)
+    pelo layout atual (NE × mês de lançamento, sincronizado da Execução Mensal). Roda ANTES do
+    `_DDL`, que só cria a tabela nova se ela não existir.
+
+    Nunca descarta dado financeiro em silêncio: tabela antiga vazia é simplesmente removida;
+    com linhas, é PRESERVADA renomeada para `execucao_tg_legado` (sufixo numérico se esse nome
+    já existir) — o novo layout não tem para onde mapear documento hábil/contábil nem
+    competência, então essas linhas não são convertidas, só guardadas."""
+
+    colunas = {linha[1] for linha in conexao.execute("PRAGMA table_info(execucao_tg)").fetchall()}
+    if not colunas or "documento_habil" not in colunas:
+        return
+
+    (linhas,) = conexao.execute("SELECT COUNT(*) FROM execucao_tg").fetchone()
+    if linhas == 0:
+        conexao.execute("DROP TABLE execucao_tg")
+        return
+
+    existentes = {linha[0] for linha in conexao.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    destino, sufixo = "execucao_tg_legado", 1
+    while destino in existentes:
+        sufixo += 1
+        destino = f"execucao_tg_legado_{sufixo}"
+    conexao.execute(f"ALTER TABLE execucao_tg RENAME TO {destino}")
+
+
 def conectar(caminho: str | Path = CAMINHO_BANCO_PADRAO) -> sqlite3.Connection:
     """Abre (criando se necessário) o banco de TEDs, com o schema já aplicado.
 
@@ -248,6 +272,7 @@ def conectar(caminho: str | Path = CAMINHO_BANCO_PADRAO) -> sqlite3.Connection:
 
     conexao = sqlite3.connect(caminho)
     conexao.execute("PRAGMA foreign_keys = ON")
+    _migrar_execucao_tg_para_lancamento(conexao)
     conexao.executescript(_DDL)
     _migrar_colunas_controle_import_batch(conexao)
     conexao.commit()
