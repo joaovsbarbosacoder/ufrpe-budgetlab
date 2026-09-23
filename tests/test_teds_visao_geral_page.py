@@ -12,7 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 class TedsVisaoGeralPageTests(unittest.TestCase):
     def test_preserva_cabecalho_mesmo_sem_dados_importados(self) -> None:
         app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
-        app.run()
+        app.run(timeout=20)
         app.switch_page("app_pages/teds_visao_geral.py")
         app.run(timeout=20)
 

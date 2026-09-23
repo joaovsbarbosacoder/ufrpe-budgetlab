@@ -42,6 +42,13 @@ def rotulo_ano_mes(ano_mes: int) -> str:
     return f"{MESES_ABREV.get(mes, mes)}/{ano}"
 
 
+def totais_linha_do_tempo(tempo: pd.DataFrame) -> dict[str, float]:
+    """Soma de todos os meses exibidos para Empenhado, Liquidado e Pago (`empenhada`,
+    `liquidada`, `paga`), para a linha "Total" ao final da grade."""
+
+    return {coluna: float(tempo[coluna].sum()) for coluna in ("empenhada", "liquidada", "paga")}
+
+
 def renderizar_linha_do_tempo(legenda: str, tempo: pd.DataFrame) -> None:
     """Mesmo conteúdo de `abrir_linha_do_tempo` (gráfico + grade), sem o `@st.dialog` — para
     quem precisa encaixar isso dentro de um pop-up que JÁ está aberto (Streamlit proíbe dialog
@@ -63,13 +70,16 @@ def renderizar_linha_do_tempo(legenda: str, tempo: pd.DataFrame) -> None:
     tempo = tempo.sort_values("ano_mes")
     rotulos = [rotulo_ano_mes(am) for am in tempo["ano_mes"]]
 
+    totais = totais_linha_do_tempo(tempo)
     figure = go.Figure()
     for coluna, nome, cor in (
         ("empenhada", "Empenhado", d.ACCENT), ("liquidada", "Liquidado", d.ACCENT_STRONG), ("paga", "Pago", d.POSITIVE),
     ):
         valores = [float(v) for v in tempo[coluna]]
+        # O total vai no nome da série (legenda), não numa barra "Total": uma barra somada
+        # dominaria o eixo Y e achataria as barras mensais.
         figure.add_bar(
-            name=nome, x=rotulos, y=valores, marker=dict(color=cor),
+            name=f"{nome} — total {format_brl_full(totais[coluna])}", x=rotulos, y=valores, marker=dict(color=cor),
             hovertext=[f"{nome} {rotulo}: {format_brl_full(v)}" for rotulo, v in zip(rotulos, valores)],
             hovertemplate="%{hovertext}<extra></extra>",
         )
@@ -103,7 +113,23 @@ def renderizar_linha_do_tempo(legenda: str, tempo: pd.DataFrame) -> None:
         f'<span style="text-align:{alinhamento}">{texto}</span>'
         for texto, alinhamento in (("Mês", "left"), ("Empenhado", "right"), ("Liquidado", "right"), ("Pago", "right"))
     )
-    st.markdown(f'<div class="ce-tempo-head">{cabecalho_html}</div>{linhas_html}', unsafe_allow_html=True)
+    # Linha de totais ao final: estilo inline (não uma classe nova) para não exigir que as três
+    # páginas que injetam o CSS `.ce-tempo-*` sejam alteradas.
+    estilo_total = (
+        f"border-top:2px solid {d.BORDER};border-bottom:none;font-weight:700;"
+    )
+    total_html = (
+        f'<div class="ce-tempo-row" style="{estilo_total}">'
+        '<span class="ce-tempo-mes" style="font-weight:700">Total</span>'
+        f'<span class="ce-tempo-val" style="font-weight:700">{format_brl_full(totais["empenhada"])}</span>'
+        f'<span class="ce-tempo-val" style="font-weight:700">{format_brl_full(totais["liquidada"])}</span>'
+        f'<span class="ce-tempo-val-strong">{format_brl_full(totais["paga"])}</span>'
+        "</div>"
+    )
+    st.markdown(
+        f'<div class="ce-tempo-head">{cabecalho_html}</div>{linhas_html}{total_html}',
+        unsafe_allow_html=True,
+    )
     st.caption(
         "Empenhado já deduplicado entre Naturezas Detalhadas/Subitens diferentes da mesma NE "
         "(ver docs/base_execucao_mensal.md) — não é a soma direta das linhas de item."
