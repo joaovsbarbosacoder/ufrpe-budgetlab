@@ -17,6 +17,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from decimal import Decimal
+import json
 from html import escape
 
 import pandas as pd
@@ -26,7 +27,21 @@ from src import design_tokens
 from src.teds_alertas import (
     STATUS_OK,
     TIPO_EMPENHO_MULTIPLOS_TEDS,
+    TIPO_NC_DIVERGE_CONSOLIDADO,
     TIPO_NC_UG_EMITENTE_AUSENTE,
+    TIPO_PF_DIVERGE_CONSOLIDADO,
+    TIPO_PF_MAIOR_QUE_NC,
+    TIPO_DOCUMENTO_FORA_DA_VIGENCIA,
+    TIPO_SIAFI_EM_MULTIPLOS_TEDS,
+    TIPO_TED_SEM_UG_DESCENTRALIZADORA,
+    TIPO_TED_VENCIDO_EM_EXECUCAO,
+    TIPO_TED_VIGENCIA_INVERTIDA,
+)
+from src.teds_auditoria import (
+    ACAO_ALERTA_STATUS_ALTERADO,
+    ACAO_VINCULO_NE_DECIDIDO,
+    ENTIDADE_ALERTA,
+    registrar_auditoria,
 )
 from src.teds_normalizacao import texto_para_valor
 from src.teds_schema import conectar
@@ -44,7 +59,29 @@ _ROTULO_STATUS_ALERTA = {
 _ROTULO_TIPO_ALERTA = {
     TIPO_EMPENHO_MULTIPLOS_TEDS: "NE vinculada a mais de um TED",
     TIPO_NC_UG_EMITENTE_AUSENTE: "UG emitente da NC ausente",
+    TIPO_NC_DIVERGE_CONSOLIDADO: "NC líquida difere do consolidado",
+    TIPO_PF_DIVERGE_CONSOLIDADO: "PF líquido difere do consolidado",
+    TIPO_PF_MAIOR_QUE_NC: "PF líquido maior que a NC líquida",
+    TIPO_TED_VIGENCIA_INVERTIDA: "Vigência do TED invertida",
+    TIPO_TED_SEM_UG_DESCENTRALIZADORA: "TED sem UG descentralizadora",
+    TIPO_SIAFI_EM_MULTIPLOS_TEDS: "SIAFI associado a mais de um TED",
+    TIPO_DOCUMENTO_FORA_DA_VIGENCIA: "Documento fora da vigência",
+    TIPO_TED_VENCIDO_EM_EXECUCAO: "TED vencido ainda em execução",
 }
+
+#: Todos os tipos de alerta que as telas listam por padrão.
+TIPOS_ALERTA = (
+    TIPO_EMPENHO_MULTIPLOS_TEDS,
+    TIPO_NC_UG_EMITENTE_AUSENTE,
+    TIPO_NC_DIVERGE_CONSOLIDADO,
+    TIPO_PF_DIVERGE_CONSOLIDADO,
+    TIPO_PF_MAIOR_QUE_NC,
+    TIPO_DOCUMENTO_FORA_DA_VIGENCIA,
+    TIPO_SIAFI_EM_MULTIPLOS_TEDS,
+    TIPO_TED_SEM_UG_DESCENTRALIZADORA,
+    TIPO_TED_VENCIDO_EM_EXECUCAO,
+    TIPO_TED_VIGENCIA_INVERTIDA,
+)
 
 
 def conexao() -> sqlite3.Connection:
@@ -225,6 +262,28 @@ def cor_status_alerta(status: str) -> str:
 
 def rotulo_status_alerta(status: str) -> str:
     return _ROTULO_STATUS_ALERTA.get(status, status)
+
+
+_ROTULO_ACAO_AUDITORIA = {
+    ACAO_ALERTA_STATUS_ALTERADO: "Situação do alerta alterada",
+    ACAO_VINCULO_NE_DECIDIDO: "Vínculo de NE decidido",
+}
+
+
+def rotulo_acao_auditoria(acao: str) -> str:
+    return _ROTULO_ACAO_AUDITORIA.get(acao, acao)
+
+
+def formatar_valor_auditoria(valor: dict | None) -> str:
+    """Texto curto de um `valor_anterior`/`valor_novo` da trilha — `None` (registro que cria) e
+    campo vazio aparecem como "—", nunca como a palavra "None"."""
+
+    if not valor:
+        return "—"
+    return "; ".join(
+        f"{campo}: {json.dumps(conteudo, ensure_ascii=False) if isinstance(conteudo, dict) else dash(conteudo)}"
+        for campo, conteudo in valor.items()
+    )
 
 
 def rotulo_tipo_alerta(tipo: str) -> str:
@@ -502,7 +561,7 @@ class AlertaLinha:
 def carregar_alertas(
     conn: sqlite3.Connection,
     *,
-    tipos: tuple[str, ...] = (TIPO_EMPENHO_MULTIPLOS_TEDS, TIPO_NC_UG_EMITENTE_AUSENTE),
+    tipos: tuple[str, ...] = TIPOS_ALERTA,
     status: str | None = None,
     chave_ted: str | None = None,
 ) -> list[AlertaLinha]:
@@ -552,6 +611,7 @@ def atualizar_status_alerta(
     *,
     responsavel: str | None = None,
     justificativa: str | None = None,
+    origem: str = "interface",
 ) -> None:
     from datetime import datetime, timezone
 
@@ -562,22 +622,43 @@ def atualizar_status_alerta(
                 "Alertas de vínculo múltiplo devem ser resolvidos pela decisão explícita do TED."
             )
 
+    def _estado() -> tuple:
+        return conn.execute(
+            "SELECT status, responsavel, justificativa FROM alerta WHERE id = ?", (alerta_id,)
+        ).fetchone()
+
+    anterior = _estado()
     data_resolucao = datetime.now(timezone.utc).isoformat() if novo_status == STATUS_RESOLVIDO else None
-    conn.execute(
-        """
-        UPDATE alerta SET status = ?, responsavel = COALESCE(?, responsavel),
-               justificativa = COALESCE(?, justificativa), data_resolucao = COALESCE(?, data_resolucao)
-        WHERE id = ?
-        """,
-        (novo_status, responsavel, justificativa, data_resolucao, alerta_id),
-    )
-    conn.commit()
+    try:
+        conn.execute(
+            """
+            UPDATE alerta SET status = ?, responsavel = COALESCE(?, responsavel),
+                   justificativa = COALESCE(?, justificativa), data_resolucao = COALESCE(?, data_resolucao)
+            WHERE id = ?
+            """,
+            (novo_status, responsavel, justificativa, data_resolucao, alerta_id),
+        )
+        novo = _estado()
+        if anterior is not None and novo is not None:
+            # Na MESMA transação do UPDATE: ou o status e a trilha persistem juntos, ou nenhum.
+            registrar_auditoria(
+                conn, acao=ACAO_ALERTA_STATUS_ALTERADO, entidade=ENTIDADE_ALERTA, entidade_id=alerta_id,
+                valor_anterior=dict(zip(("status", "responsavel", "justificativa"), anterior)),
+                valor_novo=dict(zip(("status", "responsavel", "justificativa"), novo)),
+                usuario=novo[1], motivo=justificativa, origem=origem,
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def contar_alertas_por_status(conn: sqlite3.Connection) -> dict[str, int]:
     linhas = conn.execute(
-        "SELECT status, COUNT(*) FROM alerta WHERE tipo IN (?, ?) GROUP BY status",
-        (TIPO_EMPENHO_MULTIPLOS_TEDS, TIPO_NC_UG_EMITENTE_AUSENTE),
+        "SELECT status, COUNT(*) FROM alerta WHERE tipo IN ({}) GROUP BY status".format(
+            ",".join("?" * len(TIPOS_ALERTA))
+        ),
+        TIPOS_ALERTA,
     ).fetchall()
     return dict(linhas)
 

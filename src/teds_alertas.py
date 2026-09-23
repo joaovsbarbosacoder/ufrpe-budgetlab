@@ -1,5 +1,6 @@
 """
-Alertas do módulo de TEDs. Dois tipos implementados:
+Alertas do módulo de TEDs. Cinco tipos implementados (os três últimos, de conciliação SIMEC, estão
+na seção própria mais abaixo):
 
   * "empenho associado a mais de um TED" (ver briefing, seção "Alertas do MVP") — o caso
     concreto documentado (NE 2026NE000422 nos TEDs 17352 e 17454);
@@ -9,7 +10,7 @@ Alertas do módulo de TEDs. Dois tipos implementados:
     limita a conciliação externa daquele documento (aprovado explicitamente para gerar alerta,
     ver conversa de alinhamento).
 
-Os demais alertas do MVP (crédito sem empenho, PF maior que NC, vigência, etc.) ficam para uma
+Os demais alertas do MVP (crédito sem empenho, vigência, etc.) ficam para uma
 fase seguinte, fora do escopo aprovado agora.
 
 Cada tipo tem duas camadas: funções puras (testáveis sem banco) e uma `sincronizar_alertas_*`
@@ -22,10 +23,18 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import unicodedata
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
+from src.teds_auditoria import (
+    ACAO_ALERTA_STATUS_ALTERADO,
+    ACAO_VINCULO_NE_DECIDIDO,
+    ENTIDADE_ALERTA,
+    ENTIDADE_VINCULO_NE,
+    registrar_auditoria,
+)
 from src.teds_normalizacao import texto_para_valor, valor_para_texto
 
 TIPO_EMPENHO_MULTIPLOS_TEDS = "empenho_multiplos_teds"
@@ -222,6 +231,351 @@ def sincronizar_alertas_nc_parcial(conn: sqlite3.Connection) -> list[Alerta]:
 
 
 # --------------------------------------------------------------------------------------
+# Conciliação SIMEC: documentos analíticos (NC/PF) × totais consolidados (execucao_anual)
+# --------------------------------------------------------------------------------------
+
+TIPO_NC_DIVERGE_CONSOLIDADO = "nc_liquida_diverge_consolidado"
+TIPO_PF_DIVERGE_CONSOLIDADO = "pf_liquida_diverge_consolidado"
+TIPO_PF_MAIOR_QUE_NC = "pf_liquida_maior_que_nc"
+
+#: Diferença máxima tolerada entre duas somas (briefing, seções 8.1/9.1: "maior que R$ 0,01").
+TOLERANCIA_CONCILIACAO = Decimal("0.01")
+
+
+@dataclass(frozen=True)
+class ResumoConciliacaoSimec:
+    """Uma linha por TED. `*_analitica` = soma dos documentos importados (`valor_assinado`,
+    ou seja, já com o sinal da operação); `*_consolidada` = soma de `execucao_anual` sobre
+    todos os exercícios importados (Total Descentralizado / Total Repassado).
+
+    `nc_analitica`/`pf_analitica` ficam `None` quando a base analítica correspondente ainda não
+    foi importada (nunca zero: "sem base" não pode virar "divergência de tudo")."""
+
+    chave_ted: str
+    nc_consolidada: Decimal
+    pf_consolidada: Decimal
+    nc_analitica: Decimal | None
+    pf_analitica: Decimal | None
+
+
+def _moeda(valor: Decimal) -> str:
+    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def gerar_alertas_conciliacao_simec(
+    resumos: list[ResumoConciliacaoSimec], tolerancia: Decimal = TOLERANCIA_CONCILIACAO
+) -> list[Alerta]:
+    """Três verificações, todas descritivas: só apontam a diferença e as causas possíveis, sem
+    decidir qual fonte está certa e sem alterar nenhum dado.
+
+      1. NC líquida analítica ≠ Total Descentralizado consolidado;
+      2. PF líquido analítico ≠ Total Repassado consolidado;
+      3. PF líquido consolidado > NC líquida consolidada (repasse sem crédito que o cubra).
+    """
+
+    alertas: list[Alerta] = []
+    for r in sorted(resumos, key=lambda x: x.chave_ted):
+        if r.nc_analitica is not None and abs(r.nc_analitica - r.nc_consolidada) > tolerancia:
+            alertas.append(
+                Alerta(
+                    tipo=TIPO_NC_DIVERGE_CONSOLIDADO,
+                    gravidade="alta",
+                    documento=r.chave_ted,
+                    chave_ted=r.chave_ted,
+                    descricao=(
+                        f"NC líquida dos documentos importados ({_moeda(r.nc_analitica)}) difere do "
+                        f"Total Descentralizado consolidado ({_moeda(r.nc_consolidada)}) em "
+                        f"{_moeda(r.nc_analitica - r.nc_consolidada)}. Possíveis causas: extração de "
+                        "documentos incompleta ou de outro período, documento sem data/TED, ou "
+                        "divergência real na origem — não decidido automaticamente."
+                    ),
+                )
+            )
+        if r.pf_analitica is not None and abs(r.pf_analitica - r.pf_consolidada) > tolerancia:
+            alertas.append(
+                Alerta(
+                    tipo=TIPO_PF_DIVERGE_CONSOLIDADO,
+                    gravidade="alta",
+                    documento=r.chave_ted,
+                    chave_ted=r.chave_ted,
+                    descricao=(
+                        f"PF líquido dos documentos importados ({_moeda(r.pf_analitica)}) difere do "
+                        f"Total Repassado consolidado ({_moeda(r.pf_consolidada)}) em "
+                        f"{_moeda(r.pf_analitica - r.pf_consolidada)}. Possíveis causas: extração de "
+                        "documentos incompleta ou de outro período, ou divergência real na origem "
+                        "— não decidido automaticamente."
+                    ),
+                )
+            )
+        if r.pf_consolidada - r.nc_consolidada > tolerancia:
+            alertas.append(
+                Alerta(
+                    tipo=TIPO_PF_MAIOR_QUE_NC,
+                    gravidade="alta",
+                    documento=r.chave_ted,
+                    chave_ted=r.chave_ted,
+                    descricao=(
+                        f"Repasse líquido consolidado ({_moeda(r.pf_consolidada)}) é maior que a NC "
+                        f"líquida consolidada ({_moeda(r.nc_consolidada)}): excesso de "
+                        f"{_moeda(r.pf_consolidada - r.nc_consolidada)}. Pode indicar crédito "
+                        "descentralizado em exercício anterior ao período importado — conferir "
+                        "antes de considerar o TED conciliado."
+                    ),
+                )
+            )
+    return alertas
+
+
+def _carregar_resumos_conciliacao(conn: sqlite3.Connection) -> list[ResumoConciliacaoSimec]:
+    consolidado: dict[str, list[Decimal]] = {}
+    for chave_ted, total_descentralizado, total_repassado in conn.execute(
+        "SELECT chave_ted, total_descentralizado, total_repassado FROM execucao_anual"
+    ).fetchall():
+        acumulado = consolidado.setdefault(chave_ted, [Decimal("0"), Decimal("0")])
+        acumulado[0] += texto_para_valor(total_descentralizado)
+        acumulado[1] += texto_para_valor(total_repassado)
+
+    def _somar(sql: str) -> dict[str, Decimal] | None:
+        linhas = conn.execute(sql).fetchall()
+        if not linhas:
+            return None
+        somas: dict[str, Decimal] = {}
+        for chave_ted, valor in linhas:
+            if chave_ted:
+                somas[chave_ted] = somas.get(chave_ted, Decimal("0")) + texto_para_valor(valor)
+        return somas
+
+    nc = _somar("SELECT chave_ted, valor_assinado_total FROM documento_nc")
+    pf = _somar("SELECT chave_ted, valor_assinado FROM documento_pf")
+    return [
+        ResumoConciliacaoSimec(
+            chave_ted=chave_ted,
+            nc_consolidada=nc_cons,
+            pf_consolidada=pf_cons,
+            nc_analitica=None if nc is None else nc.get(chave_ted, Decimal("0")),
+            pf_analitica=None if pf is None else pf.get(chave_ted, Decimal("0")),
+        )
+        for chave_ted, (nc_cons, pf_cons) in consolidado.items()
+    ]
+
+
+def _gravar_alertas_novos(conn: sqlite3.Connection, candidatos: list[Alerta]) -> list[Alerta]:
+    """Grava os candidatos que ainda não têm alerta não resolvido para o mesmo (tipo, documento)
+    e devolve só os recém-criados. Nunca fecha nem altera um alerta existente."""
+
+    tipos = sorted({a.tipo for a in candidatos})
+    ja_sinalizados: set[tuple[str, str]] = set()
+    if tipos:
+        ja_sinalizados = {
+            (tipo, documento)
+            for tipo, documento in conn.execute(
+                "SELECT tipo, documento FROM alerta WHERE status != 'resolvido' AND tipo IN ({})".format(
+                    ",".join("?" * len(tipos))
+                ),
+                tipos,
+            ).fetchall()
+        }
+    novos: list[Alerta] = []
+    for alerta in candidatos:
+        if (alerta.tipo, alerta.documento) not in ja_sinalizados:
+            novos.append(alerta)
+            ja_sinalizados.add((alerta.tipo, alerta.documento))
+
+    agora = datetime.now(timezone.utc).isoformat()
+    for alerta in novos:
+        conn.execute(
+            """
+            INSERT INTO alerta (tipo, gravidade, chave_ted, documento, descricao, status, data_identificacao)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (alerta.tipo, alerta.gravidade, alerta.chave_ted, alerta.documento,
+             alerta.descricao, alerta.status, agora),
+        )
+    conn.commit()
+    return novos
+
+
+def sincronizar_alertas_conciliacao_simec(conn: sqlite3.Connection) -> list[Alerta]:
+    """Grava os alertas de conciliação que ainda não estão abertos para o mesmo TED. Devolve só
+    os recém-criados. Nunca fecha um alerta — se a diferença deixar de existir numa
+    importação futura, o alerta continua até tratamento humano (mesma regra dos demais)."""
+
+    return _gravar_alertas_novos(
+        conn, gerar_alertas_conciliacao_simec(_carregar_resumos_conciliacao(conn))
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Validações cadastrais e de vigência do TED (briefing, seção 7)
+# --------------------------------------------------------------------------------------
+
+TIPO_TED_VIGENCIA_INVERTIDA = "ted_vigencia_invertida"
+TIPO_TED_SEM_UG_DESCENTRALIZADORA = "ted_sem_ug_descentralizadora"
+TIPO_SIAFI_EM_MULTIPLOS_TEDS = "siafi_em_multiplos_teds"
+TIPO_DOCUMENTO_FORA_DA_VIGENCIA = "documento_fora_da_vigencia"
+TIPO_TED_VENCIDO_EM_EXECUCAO = "ted_vencido_em_execucao"
+
+#: Único estado tratado como "em execução" (texto exato da extração real do SIMEC, comparado sem
+#: acento e sem diferença de caixa). Os demais estados (prestação de contas, diligência,
+#: comprovado etc.) NÃO são tratados como execução — regra confirmada apenas pelos valores vistos
+#: na extração; um estado novo do SIMEC não gera alerta até ser classificado.
+ESTADO_EM_EXECUCAO = "termo em execucao"
+
+
+def _sem_acento_minusculo(texto: str | None) -> str:
+    if not texto:
+        return ""
+    decomposto = unicodedata.normalize("NFKD", texto)
+    return "".join(c for c in decomposto if not unicodedata.combining(c)).strip().lower()
+
+
+def estado_em_execucao(estado_atual: str | None) -> bool:
+    return _sem_acento_minusculo(estado_atual) == ESTADO_EM_EXECUCAO
+
+
+@dataclass(frozen=True)
+class TedCadastro:
+    chave_ted: str
+    ted: str
+    codigo_siafi: str
+    estado_atual: str | None
+    inicio_vigencia: date | None
+    fim_vigencia: date | None
+    ug_descentralizadora: str | None
+
+
+@dataclass(frozen=True)
+class DocumentoDatado:
+    """NC ou PF já reduzido ao que a validação de vigência precisa."""
+
+    tipo_documento: str  # "NC" | "PF"
+    chave_documento: str
+    numero: str
+    chave_ted: str
+    data_emissao: date | None
+
+
+def _data_br(valor: date) -> str:
+    return valor.strftime("%d/%m/%Y")
+
+
+def gerar_alertas_cadastrais(
+    teds: list[TedCadastro], documentos: list[DocumentoDatado], hoje: date
+) -> list[Alerta]:
+    """Todas as verificações são descritivas: apontam a inconsistência sem alterar, excluir ou
+    deixar de importar nada. Documento fora da vigência pode ser legítimo (briefing, seção 7),
+    por isso gera alerta com justificativa possível, nunca exclusão."""
+
+    alertas: list[Alerta] = []
+    por_chave = {t.chave_ted: t for t in teds}
+
+    for t in sorted(teds, key=lambda x: x.chave_ted):
+        rotulo = f"TED {t.ted} (SIAFI {t.codigo_siafi})"
+        if t.inicio_vigencia and t.fim_vigencia and t.inicio_vigencia > t.fim_vigencia:
+            alertas.append(Alerta(
+                tipo=TIPO_TED_VIGENCIA_INVERTIDA, gravidade="alta", documento=t.chave_ted,
+                chave_ted=t.chave_ted,
+                descricao=(
+                    f"{rotulo}: início da vigência ({_data_br(t.inicio_vigencia)}) é posterior ao "
+                    f"fim ({_data_br(t.fim_vigencia)}). Cadastro inconsistente na origem."
+                ),
+            ))
+        if not (t.ug_descentralizadora or "").strip():
+            alertas.append(Alerta(
+                tipo=TIPO_TED_SEM_UG_DESCENTRALIZADORA, gravidade="media", documento=t.chave_ted,
+                chave_ted=t.chave_ted,
+                descricao=f"{rotulo}: UG descentralizadora ausente no cadastro.",
+            ))
+        if (
+            estado_em_execucao(t.estado_atual)
+            and t.fim_vigencia is not None
+            and hoje > t.fim_vigencia
+        ):
+            alertas.append(Alerta(
+                tipo=TIPO_TED_VENCIDO_EM_EXECUCAO, gravidade="media", documento=t.chave_ted,
+                chave_ted=t.chave_ted,
+                descricao=(
+                    f"{rotulo}: vigência encerrada em {_data_br(t.fim_vigencia)}, mas o estado "
+                    f"atual ainda é \"{t.estado_atual}\". Conferir prorrogação ou encerramento."
+                ),
+            ))
+
+    teds_por_siafi: dict[str, set[str]] = {}
+    for t in teds:
+        teds_por_siafi.setdefault(t.codigo_siafi, set()).add(t.ted)
+    for siafi, numeros in sorted(teds_por_siafi.items()):
+        if len(numeros) > 1:
+            alertas.append(Alerta(
+                tipo=TIPO_SIAFI_EM_MULTIPLOS_TEDS, gravidade="alta", documento=siafi,
+                descricao=(
+                    f"Código SIAFI {siafi} associado a {len(numeros)} TEDs diferentes: "
+                    f"{', '.join(sorted(numeros))}. Sem justificativa registrada."
+                ),
+            ))
+
+    for d in sorted(documentos, key=lambda x: (x.tipo_documento, x.chave_documento)):
+        t = por_chave.get(d.chave_ted)
+        if t is None or d.data_emissao is None:
+            continue
+        if t.inicio_vigencia and d.data_emissao < t.inicio_vigencia:
+            posicao, limite = "antes do início", t.inicio_vigencia
+        elif t.fim_vigencia and d.data_emissao > t.fim_vigencia:
+            posicao, limite = "depois do fim", t.fim_vigencia
+        else:
+            continue
+        alertas.append(Alerta(
+            tipo=TIPO_DOCUMENTO_FORA_DA_VIGENCIA, gravidade="media",
+            documento=f"{d.tipo_documento}|{d.chave_documento}", chave_ted=d.chave_ted,
+            descricao=(
+                f"{d.tipo_documento} {d.numero} do TED {t.ted} emitida em {_data_br(d.data_emissao)}, "
+                f"{posicao} da vigência ({_data_br(limite)}). Pode ser legítimo em casos "
+                "específicos — registrar justificativa se for o caso."
+            ),
+        ))
+    return alertas
+
+
+def _data_ou_none(texto: str | None) -> date | None:
+    if not texto:
+        return None
+    try:
+        return date.fromisoformat(texto)
+    except ValueError:
+        return None
+
+
+def _carregar_cadastro(conn: sqlite3.Connection) -> tuple[list[TedCadastro], list[DocumentoDatado]]:
+    teds = [
+        TedCadastro(chave_ted, ted, siafi, estado, _data_ou_none(ini), _data_ou_none(fim), ug)
+        for chave_ted, ted, siafi, estado, ini, fim, ug in conn.execute(
+            "SELECT chave_ted, ted, codigo_siafi, estado_atual, inicio_vigencia, fim_vigencia, "
+            "ug_descentralizadora FROM ted"
+        ).fetchall()
+    ]
+    documentos = [
+        DocumentoDatado("NC", chave, numero, chave_ted, _data_ou_none(data))
+        for chave, numero, chave_ted, data in conn.execute(
+            "SELECT chave_nc_documento, numero_nc, chave_ted, data_emissao FROM documento_nc "
+            "WHERE chave_ted IS NOT NULL"
+        ).fetchall()
+    ] + [
+        DocumentoDatado("PF", f"{chave_ted}|{ug}|{numero}", numero, chave_ted, _data_ou_none(data))
+        for chave_ted, ug, numero, data in conn.execute(
+            "SELECT chave_ted, ug_emitente, numero_pf, data_emissao FROM documento_pf"
+        ).fetchall()
+    ]
+    return teds, documentos
+
+
+def sincronizar_alertas_cadastrais(conn: sqlite3.Connection, hoje: date | None = None) -> list[Alerta]:
+    """Grava as validações cadastrais/de vigência ainda não sinalizadas. `hoje` só é usado para
+    "TED vencido em execução" (injetável para teste). Nunca fecha alerta existente."""
+
+    teds, documentos = _carregar_cadastro(conn)
+    return _gravar_alertas_novos(conn, gerar_alertas_cadastrais(teds, documentos, hoje or date.today()))
+
+
+# --------------------------------------------------------------------------------------
 # Integração com o banco
 # --------------------------------------------------------------------------------------
 
@@ -289,6 +643,7 @@ def registrar_decisao_vinculo_ne(
     chave_ted_escolhida: str,
     responsavel: str,
     justificativa: str,
+    origem: str = "interface",
 ) -> DecisaoVinculoNE:
     """Resolve explicitamente um vínculo múltiplo sem apagar qualquer linha importada."""
 
@@ -318,6 +673,15 @@ def registrar_decisao_vinculo_ne(
 
     agora = datetime.now(timezone.utc).isoformat()
     try:
+        status_vinculos_anteriores = dict(
+            conn.execute(
+                "SELECT chave_ted, status_validacao FROM vinculo_ne WHERE chave_empenho = ?",
+                (chave_empenho,),
+            ).fetchall()
+        )
+        alerta_anterior = conn.execute(
+            "SELECT status, responsavel, justificativa FROM alerta WHERE id = ?", (alerta_id,)
+        ).fetchone()
         conn.execute(
             "UPDATE vinculo_ne SET status_validacao = ? WHERE chave_empenho = ?",
             (STATUS_DESCARTADO, chave_empenho),
@@ -353,6 +717,25 @@ def registrar_decisao_vinculo_ne(
             WHERE id = ?
             """,
             (responsavel, justificativa, agora, alerta_id),
+        )
+        # Auditoria na MESMA transação da decisão: ou as duas persistem, ou nenhuma.
+        status_vinculos_novos = {
+            ted: (STATUS_OK if ted == chave_ted_escolhida else STATUS_DESCARTADO) for ted in teds
+        }
+        registrar_auditoria(
+            conn, acao=ACAO_VINCULO_NE_DECIDIDO, entidade=ENTIDADE_VINCULO_NE, entidade_id=chave_empenho,
+            valor_anterior={"status_validacao_por_ted": status_vinculos_anteriores},
+            valor_novo={"status_validacao_por_ted": status_vinculos_novos, "ted_escolhido": chave_ted_escolhida},
+            usuario=responsavel, motivo=justificativa, origem=origem,
+        )
+        registrar_auditoria(
+            conn, acao=ACAO_ALERTA_STATUS_ALTERADO, entidade=ENTIDADE_ALERTA, entidade_id=alerta_id,
+            valor_anterior={
+                "status": alerta_anterior[0], "responsavel": alerta_anterior[1],
+                "justificativa": alerta_anterior[2],
+            },
+            valor_novo={"status": "resolvido", "responsavel": responsavel, "justificativa": justificativa},
+            usuario=responsavel, motivo=justificativa, origem=origem,
         )
         conn.commit()
     except Exception:

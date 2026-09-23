@@ -150,7 +150,7 @@ lote que gravou/atualizou aquele registro pela última vez, e o histórico de lo
 
 ## 8. Alertas implementados
 
-Dois tipos (`src/teds_alertas.py`), cada um com funções puras testáveis sem banco e uma
+Dez tipos (`src/teds_alertas.py`), cada um com funções puras testáveis sem banco e uma
 `sincronizar_alertas_*` que lê do SQLite e grava alertas novos sem duplicar um alerta já
 aberto para o mesmo documento — e sem nunca fechar um alerta sozinha (resolução é sempre ação
 humana, registrada na Central de Alertas):
@@ -162,8 +162,69 @@ humana, registrada na Central de Alertas):
 - **NC sem UG emitente** (`status_relacionamento='PARCIAL'`) — achado da extração real do
   SIMEC (seção 5), não do briefing original; aprovado explicitamente para gerar alerta.
 
-Os demais alertas previstos no briefing (crédito sem empenho, PF maior que NC, vigência etc.)
-ficam para uma fase seguinte, fora do escopo aprovado até aqui.
+- **Conciliação SIMEC analítica × consolidada** (`sincronizar_alertas_conciliacao_simec`,
+  chamada ao fim das importações de Execução Anual, DOC NC e DOC PF). Três tipos, todos de
+  gravidade "alta" (exibida como "Crítico"), tolerância R$ 0,01:
+  - `nc_liquida_diverge_consolidado` — soma de `documento_nc.valor_assinado_total` do TED ≠
+    Total Descentralizado consolidado;
+  - `pf_liquida_diverge_consolidado` — soma de `documento_pf.valor_assinado` do TED ≠ Total
+    Repassado consolidado (o valor é o **assinado por operação**, nunca uma soma absoluta);
+  - `pf_liquida_maior_que_nc` — Total Repassado consolidado > Total Descentralizado consolidado.
+
+  O consolidado é a soma de `execucao_anual` sobre **todos** os exercícios importados (o total
+  descentralizado/repassado já é líquido de devoluções). Base analítica ainda não importada
+  (`documento_nc`/`documento_pf` vazias) é "sem base", nunca zero: não gera divergência.
+  Documentos sem TED conhecido ficam fora (aparecem na cobertura de relacionamentos). Os alertas
+  só descrevem a diferença e as causas possíveis; nunca fecham sozinhos. Limite conhecido: as
+  extrações analíticas cobrem um recorte de datas diferente do consolidado (ex.: PF de
+  2019–2022 sem contrapartida no consolidado, que começa em 2023), então parte das divergências
+  reflete cobertura da extração, não erro — decisão humana caso a caso. Com o banco atual
+  (44 TEDs): 0 divergências de NC, 12 de PF e 7 de PF maior que NC.
+
+- **Validações cadastrais e de vigência** (`sincronizar_alertas_cadastrais`, também ao fim de
+  cada importação; briefing, seção 7). Todas descritivas — nada é excluído nem deixa de ser
+  importado, e o alerta nunca fecha sozinho:
+  - `ted_vigencia_invertida` (alta) — início da vigência posterior ao fim;
+  - `siafi_em_multiplos_teds` (alta) — mesmo código SIAFI em mais de um número de TED;
+  - `ted_sem_ug_descentralizadora` (média);
+  - `documento_fora_da_vigencia` (média) — NC ou PF emitida antes do início ou depois do fim
+    da vigência do seu TED; pode ser legítimo, então pede justificativa, não exclusão;
+  - `ted_vencido_em_execucao` (média) — hoje é posterior ao fim da vigência e o estado é
+    "Termo em Execução". **Só esse estado conta como "em execução"** (comparado sem acento nem
+    caixa); os demais (prestação de contas, diligência, comprovado, finalizado) não. Um estado
+    novo do SIMEC não gera alerta até ser classificado.
+
+  Não implementados por falta de definição: "TED em execução sem movimentação" (o que conta
+  como movimentação?) e "estado incompatível com os documentos". Sem número de TED, sem SIAFI e
+  mesma chave TED–SIAFI com descrições conflitantes não podem ocorrer hoje (a chave exige os
+  dois e a descrição fica numa linha por TED). Com o banco atual: 3 TEDs vencidos em execução e
+  3 documentos (PF) fora da vigência.
+
+Os demais alertas previstos no briefing (crédito sem empenho etc.) ficam para uma fase
+seguinte, fora do escopo aprovado até aqui.
+
+### 8.1 Trilha de auditoria (`src/teds_auditoria.py`)
+
+Toda ação humana sobre alertas e vínculos grava um registro na tabela `auditoria`: `data_hora`
+(UTC), `usuario`, `acao`, `entidade`/`entidade_id`, `valor_anterior` e `valor_novo` (JSON dos
+campos que mudaram), `motivo` e `origem`. Hoje são duas ações:
+
+- `alerta_status_alterado` — qualquer mudança de status pela Central de Alertas (em análise,
+  resolvido), com responsável e justificativa como estavam antes e como ficaram;
+- `vinculo_ne_decidido` — decisão sobre NE em mais de um TED, com o status de cada vínculo
+  antes e depois e o TED escolhido (a decisão também gera o registro `alerta_status_alterado`).
+
+**Garantias:** a tabela é *append-only* — gatilhos do SQLite abortam qualquer `UPDATE` e
+`DELETE`, então corrigir é inserir um novo registro, nunca reescrever; a auditoria é gravada na
+**mesma transação** da alteração que descreve (se uma falha, nenhuma persiste, coberto por
+teste); uma justificativa encerra o alerta mas o alerta continua no banco. O banco existente
+ganha a tabela e os gatilhos por `CREATE ... IF NOT EXISTS` em `conectar()`, sem tocar em
+nenhum dado.
+
+**Limite conhecido:** o projeto não tem usuário autenticado. `usuario` é o *responsável*
+digitado na tela (o mesmo de `alerta.responsavel`), ou "não informado" — "Marcar em análise" não
+exige responsável. Importação, reversão de lote, criação/remoção de vínculo e exportação
+(também listadas na seção 16 do briefing) **não** são auditadas ainda.
 
 ## 9. Páginas (barra lateral, grupo "TEDs")
 
@@ -188,9 +249,11 @@ ficam para uma fase seguinte, fora do escopo aprovado até aqui.
 
 - Competência real no TEDs (Documento Hábil × mês de referência, via Liquidação por
   Competência) — ver seção 6.
-- Alertas além dos dois da seção 8.
+- Alertas além dos dez da seção 8.
 - Edição do mapeamento de colunas na tela de Importações.
 - Campo de observação manual por TED.
 - Persistência dos parâmetros de Configurações além da sessão do navegador.
+- Auditoria de importação, reprocessamento, reversão de lote, exportação e criação/remoção de
+  vínculo; identificação de usuário autenticado.
 
 Qualquer um desses itens exige aprovação explícita antes de implementação, conforme AGENTS.md.

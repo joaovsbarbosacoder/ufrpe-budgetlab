@@ -19,6 +19,7 @@ from src.teds_alertas import (
     registrar_decisao_vinculo_ne,
     teds_vinculados_ao_empenho,
 )
+from src.teds_auditoria import ENTIDADE_ALERTA, ENTIDADE_VINCULO_NE, historico_auditoria
 from src.teds_ui import (
     STATUS_ABERTO,
     STATUS_EM_ANALISE,
@@ -30,8 +31,10 @@ from src.teds_ui import (
     conexao,
     cor_gravidade,
     cor_status_alerta,
+    formatar_valor_auditoria,
     injetar_css,
     render_kpi_strip,
+    rotulo_acao_auditoria,
     rotulo_gravidade,
     rotulo_status_alerta,
     rotulo_tipo_alerta,
@@ -147,6 +150,21 @@ with col_detalhe:
                 "permitir a conciliação externa por UG — quando ausente em todas as linhas do documento, a "
                 "conciliação fica parcial até a UG ser identificada manualmente "
                 "(ver src/teds_alertas.py::detectar_documentos_nc_parciais).",
+                "nc_liquida_diverge_consolidado": "A NC líquida somada dos documentos importados deve coincidir "
+                "com o Total Descentralizado do relatório consolidado (tolerância R$ 0,01). A diferença pode vir "
+                "de extração incompleta ou de outro período — o sistema não decide qual fonte está certa.",
+                "pf_liquida_diverge_consolidado": "O PF líquido somado dos documentos importados (com o sinal da "
+                "operação) deve coincidir com o Total Repassado do relatório consolidado (tolerância R$ 0,01).",
+                "pf_liquida_maior_que_nc": "O repasse financeiro líquido não deve superar o crédito líquido "
+                "descentralizado do TED — conferir crédito de exercício anterior ao período importado.",
+                "ted_vigencia_invertida": "O início da vigência do TED não pode ser posterior ao fim.",
+                "siafi_em_multiplos_teds": "Um código SIAFI identifica um único TED; associado a mais de um "
+                "número, exige justificativa.",
+                "ted_sem_ug_descentralizadora": "Todo TED deve informar a UG descentralizadora no cadastro.",
+                "documento_fora_da_vigencia": "NC e PF devem ser emitidas dentro da vigência do TED; pode haver "
+                "casos legítimos, que pedem justificativa — o documento nunca é excluído.",
+                "ted_vencido_em_execucao": "TED com vigência encerrada não deveria continuar no estado "
+                "\"Termo em Execução\" — conferir prorrogação ou encerramento.",
             }.get(alvo.tipo, "—")
             st.caption(regra)
 
@@ -161,6 +179,25 @@ with col_detalhe:
                 st.caption("🟡 Em análise")
             if alvo.status == STATUS_RESOLVIDO:
                 st.caption(f"🟢 Resolvido — {alvo.data_resolucao}")
+
+            st.markdown("**Trilha de auditoria**")
+            registros = historico_auditoria(conn, ENTIDADE_ALERTA, alvo.id)
+            if alvo.tipo == TIPO_EMPENHO_MULTIPLOS_TEDS:
+                registros += historico_auditoria(conn, ENTIDADE_VINCULO_NE, alvo.documento)
+            if not registros:
+                st.caption("Nenhuma ação humana registrada para este alerta.")
+            for registro in sorted(registros, key=lambda r: r.data_hora):
+                with st.container(border=True):
+                    st.caption(
+                        f"{registro.data_hora[:19].replace('T', ' ')} UTC — {registro.usuario} — "
+                        f"{rotulo_acao_auditoria(registro.acao)}"
+                    )
+                    st.caption(
+                        f"De: {formatar_valor_auditoria(registro.valor_anterior)}  \n"
+                        f"Para: {formatar_valor_auditoria(registro.valor_novo)}"
+                    )
+                    if registro.motivo:
+                        st.write(registro.motivo)
 
             if alvo.tipo == TIPO_EMPENHO_MULTIPLOS_TEDS:
                 decisoes = carregar_decisoes_vinculo_ne(conn, alvo.documento)

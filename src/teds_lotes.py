@@ -35,7 +35,12 @@ from src.importacao_execucao_mensal import (
     Manifesto as ManifestoExecucaoMensal,
     carregar_atual as carregar_execucao_mensal_atual,
 )
-from src.teds_alertas import sincronizar_alertas_multiplos_teds, sincronizar_alertas_nc_parcial
+from src.teds_alertas import (
+    sincronizar_alertas_cadastrais,
+    sincronizar_alertas_conciliacao_simec,
+    sincronizar_alertas_multiplos_teds,
+    sincronizar_alertas_nc_parcial,
+)
 from src.teds_importacao_simec import (
     LinhaRejeitada,
     ler_doc_ne_simec,
@@ -253,6 +258,8 @@ def importar_execucao_anual(
             ),
         )
     conn.commit()
+    sincronizar_alertas_conciliacao_simec(conn)
+    sincronizar_alertas_cadastrais(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
 
 
@@ -408,6 +415,8 @@ def importar_doc_nc(
         )
     conn.commit()
     sincronizar_alertas_nc_parcial(conn)
+    sincronizar_alertas_conciliacao_simec(conn)
+    sincronizar_alertas_cadastrais(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
 
 
@@ -455,6 +464,8 @@ def importar_doc_pf(
             ),
         )
     conn.commit()
+    sincronizar_alertas_conciliacao_simec(conn)
+    sincronizar_alertas_cadastrais(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
 
 

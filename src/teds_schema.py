@@ -213,6 +213,36 @@ CREATE TABLE IF NOT EXISTS decisao_vinculo_ne (
     alerta_id INTEGER NOT NULL
 );
 
+-- Trilha de auditoria (`src/teds_auditoria.py`): append-only. Os gatilhos abaixo abortam
+-- UPDATE e DELETE, então nem uma correção posterior reescreve a história — corrigir é inserir
+-- um novo registro. `valor_anterior`/`valor_novo` são JSON dos campos que mudaram.
+CREATE TABLE IF NOT EXISTS auditoria (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    data_hora TEXT NOT NULL,
+    usuario TEXT NOT NULL,
+    acao TEXT NOT NULL,
+    entidade TEXT NOT NULL,
+    entidade_id TEXT NOT NULL,
+    valor_anterior TEXT,
+    valor_novo TEXT,
+    motivo TEXT,
+    origem TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_auditoria_entidade ON auditoria (entidade, entidade_id, id);
+
+CREATE TRIGGER IF NOT EXISTS trg_auditoria_sem_update
+BEFORE UPDATE ON auditoria
+BEGIN
+    SELECT RAISE(ABORT, 'auditoria é append-only: não pode ser alterada');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_auditoria_sem_delete
+BEFORE DELETE ON auditoria
+BEGIN
+    SELECT RAISE(ABORT, 'auditoria é append-only: não pode ser apagada');
+END;
+
 CREATE INDEX IF NOT EXISTS ix_alerta_status ON alerta (status);
 CREATE INDEX IF NOT EXISTS ix_vinculo_ne_chave_empenho ON vinculo_ne (chave_empenho);
 CREATE INDEX IF NOT EXISTS ix_decisao_vinculo_ne_empenho
