@@ -36,6 +36,7 @@ from src.importacao_execucao_mensal import (
     carregar_atual as carregar_execucao_mensal_atual,
 )
 from src.teds_alertas import (
+    registrar_alertas_ted_sem_siafi,
     sincronizar_alertas_rodape,
     sincronizar_alertas_execucao_tg,
     sincronizar_alertas_cadastrais,
@@ -334,6 +335,7 @@ def importar_execucao_anual(
             ),
         )
     conn.commit()
+    registrar_alertas_ted_sem_siafi(conn, [(r.ted, r.motivo) for r in leitura.rejeitadas if r.ted])
     sincronizar_alertas_rodape(conn)
     sincronizar_alertas_conciliacao_simec(conn)
     sincronizar_alertas_cadastrais(conn)

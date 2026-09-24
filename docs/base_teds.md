@@ -148,10 +148,14 @@ um por lote e sem duplicar; **o lote continua importado** — o alerta só sinal
 pessoa. A página Importações mostra o resultado já na etapa de validação, antes de gravar. Lotes
 anteriores a esta regra ficam com NULL. Validação com os 4 arquivos reais: diferença R$ 0,00 em todos.
 
-**Achado colateral:** a Execução Anual real traz o TED 16811, "Termo em cadastramento", **sem SIAFI**
-e com todos os valores zerados. Ele é rejeitado na leitura com o motivo "sem TED/SIAFI (possível linha
-de rodapé)" — mensagem enganosa, porque é um TED real. Nenhum valor financeiro se perde (todos zero),
-mas o briefing (seção 7) pede alerta para "TED sem SIAFI"; hoje isso não existe.
+**TED sem SIAFI:** a Execução Anual real traz o TED 16811, "Termo em cadastramento", sem SIAFI e
+com todos os valores zerados. O SIAFI compõe a chave do TED (`chave_ted`), então a linha não pode ser
+gravada — mas não é rodapé: antes era rejeitada com o motivo enganoso "possível linha de rodapé"; agora
+tem motivo próprio ("TED 16811 sem código SIAFI (estado: …)") e gera o alerta `ted_sem_siafi`
+(gravidade "media", um por TED, sem duplicar e sem fechar sozinho). Se a linha trouxer valor não nulo,
+ele é citado no motivo, para nada sumir em silêncio. O TED fica **fora de todos os totais** até uma
+extração trazer o SIAFI; não há marcador na lista (decisão pelo escopo mínimo). Vale só para a Execução
+Anual — nos outros três relatórios a extração real não tem linha com TED e sem SIAFI.
 
 ## 7. Idempotência da importação
 
@@ -171,7 +175,7 @@ lote que gravou/atualizou aquele registro pela última vez, e o histórico de lo
 
 ## 8. Alertas implementados
 
-Quinze tipos (`src/teds_alertas.py`), cada um com funções puras testáveis sem banco e uma
+Dezesseis tipos (`src/teds_alertas.py`), cada um com funções puras testáveis sem banco e uma
 `sincronizar_alertas_*` que lê do SQLite e grava alertas novos sem duplicar um alerta já
 aberto para o mesmo documento — e sem nunca fechar um alerta sozinha (resolução é sempre ação
 humana, registrada na Central de Alertas):
@@ -334,7 +338,7 @@ válido. O mesmo arquivo pode ser reimportado depois (vira um lote novo). Na pá
 
 - Competência real no TEDs (Documento Hábil × mês de referência, via Liquidação por
   Competência) — ver seção 6.
-- Alertas além dos quinze da seção 8.
+- Alertas além dos dezesseis da seção 8.
 - Edição do mapeamento de colunas na tela de Importações.
 - Campo de observação manual por TED.
 - Persistência dos parâmetros de Configurações além da sessão do navegador.

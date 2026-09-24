@@ -168,6 +168,8 @@ with col_detalhe:
                 "ted_sem_movimentacao": "TED em execução deveria ter NC ou PF emitida dentro do prazo (padrão 180 "
                 "dias); o prazo é uma escolha inicial, não uma regra do briefing, e a NE não conta por não ter "
                 "data no banco.",
+                "ted_sem_siafi": "Todo TED deve ter código SIAFI: ele compõe a chave do TED. Sem ele a linha da "
+                "Execução Anual não é importada e o TED fica fora dos totais até o código existir.",
                 "importacao_rodape_divergente": "O total impresso no rodapé do relatório do SIMEC deve coincidir "
                 "com a soma das linhas importadas (tolerância R$ 0,01). No DOC NC e no DOC PF o rodapé é a soma "
                 "ABSOLUTA (positivas + negativas), por isso a comparação usa a soma bruta e não a líquida.",

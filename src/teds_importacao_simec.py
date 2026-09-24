@@ -77,6 +77,9 @@ class LinhaRejeitada:
     indice: int
     motivo: str
     linha_origem: dict[str, Any]
+    #: preenchido só quando a linha é um TED REAL sem código SIAFI (Execução Anual): não é rodapé
+    #: nem lixo, e gera alerta em vez de sumir só com um motivo de rejeição
+    ted: str | None = None
 
 
 @dataclass
@@ -168,6 +171,23 @@ def ler_execucao_anual_simec(df: pd.DataFrame) -> ResultadoLeitura:
         origem = _linha_origem(linha)
         ted = _codigo(linha, colunas, "ted")
         siafi = _codigo(linha, colunas, "codigo_siafi")
+        if ted and not siafi:
+            # TED real ainda sem SIAFI (ex.: "Termo em cadastramento" na extração de 17/09/2026). O
+            # SIAFI compõe a chave do TED, então a linha não pode ser gravada — mas não é rodapé:
+            # vira alerta, e valores não nulos da linha são citados para não sumirem em silêncio.
+            estado = _texto(linha, colunas, "estado_atual")
+            nao_nulos = []
+            for campo in _CAMPOS_VALOR_EXECUCAO_ANUAL:
+                try:
+                    valor = parse_valor_brl(linha[colunas[campo]])
+                except (KeyError, ValueError, TypeError):
+                    continue
+                if valor != 0:
+                    nao_nulos.append(f"{campo} = {valor}")
+            motivo = f"TED {ted} sem código SIAFI" + (f" (estado: {estado})" if estado else "")
+            motivo += f"; valores não nulos na linha: {', '.join(nao_nulos)}" if nao_nulos else "; todos os valores da linha são zero"
+            resultado.rejeitadas.append(LinhaRejeitada(indice, motivo, origem, ted=ted))
+            continue
         if not ted or not siafi:
             resultado.rejeitadas.append(
                 LinhaRejeitada(indice, "sem TED/SIAFI (possível linha de rodapé)", origem)

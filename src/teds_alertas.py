@@ -412,6 +412,7 @@ TIPO_SIAFI_EM_MULTIPLOS_TEDS = "siafi_em_multiplos_teds"
 TIPO_DOCUMENTO_FORA_DA_VIGENCIA = "documento_fora_da_vigencia"
 TIPO_TED_VENCIDO_EM_EXECUCAO = "ted_vencido_em_execucao"
 TIPO_TED_SEM_MOVIMENTACAO = "ted_sem_movimentacao"
+TIPO_TED_SEM_SIAFI = "ted_sem_siafi"
 
 #: Prazo padrão de "TED em execução sem movimentação" (briefing, seção 7, não define o prazo — este
 #: valor é uma escolha inicial, ajustável por parâmetro). Movimentação = NC ou PF emitida; a NE não
@@ -569,6 +570,30 @@ def gerar_alertas_cadastrais(
             ),
         ))
     return alertas
+
+
+def gerar_alertas_ted_sem_siafi(linhas: list[tuple[str, str]]) -> list[Alerta]:
+    """`linhas` = (número do TED, motivo da rejeição) das linhas de TED SEM código SIAFI lidas da
+    Execução Anual. O SIAFI compõe a chave do TED (`chave_ted`), então a linha não é gravada e o
+    TED fica fora de todos os totais até uma extração trazer o SIAFI — o alerta torna isso visível
+    em vez de deixar só uma linha rejeitada num resultado de importação."""
+
+    return [
+        Alerta(
+            tipo=TIPO_TED_SEM_SIAFI, gravidade="media", documento=f"ted:{ted}", chave_ted=None,
+            descricao=(
+                f"{motivo}. A linha NÃO foi importada: o SIAFI faz parte da chave do TED, então ele fica "
+                "fora de todos os totais até uma extração trazer o código."
+            ),
+        )
+        for ted, motivo in sorted(set(linhas))
+    ]
+
+
+def registrar_alertas_ted_sem_siafi(conn: sqlite3.Connection, linhas: list[tuple[str, str]]) -> list[Alerta]:
+    """Grava os alertas de TED sem SIAFI ainda não sinalizados. Nunca fecha alerta existente."""
+
+    return _gravar_alertas_novos(conn, gerar_alertas_ted_sem_siafi(linhas))
 
 
 def _data_ou_none(texto: str | None) -> date | None:
