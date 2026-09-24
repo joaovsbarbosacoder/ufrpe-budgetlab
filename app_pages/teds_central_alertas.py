@@ -168,6 +168,9 @@ with col_detalhe:
                 "ted_sem_movimentacao": "TED em execução deveria ter NC ou PF emitida dentro do prazo (padrão 90 "
                 "dias); o prazo é uma escolha inicial, não uma regra do briefing, e a NE não conta por não ter "
                 "data no banco.",
+                "ne_celula_diverge_nc": "A célula orçamentária da NE (PTRES, fonte detalhada, natureza de 6 dígitos e "
+                "Plano Interno) deve constar entre as células das NCs do mesmo TED e exercício. Alerta para "
+                "conferência: pode ser erro no detalhamento previsto; não é conclusão de uso indevido.",
                 "ted_credito_sem_empenho": "TED com crédito líquido descentralizado deve ter NE vinculada. Sem nenhuma NE, "
                 "passado o prazo (padrão 90 dias desde a última NC), pode ser NE não lançada no SIMEC.",
                 "ted_pf_sem_execucao_financeira": "TED em execução com repasse (PF) deve ter pagamento no Tesouro "

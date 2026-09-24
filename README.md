@@ -189,9 +189,10 @@ importado) é um no-op; linha a linha, reimportar um arquivo que traga uma linha
 atualiza aquela linha em vez de duplicá-la. `linha_origem` preserva a linha original da
 planilha para auditoria, e o histórico de lotes de importação nunca é sobrescrito.
 
-O grupo "TEDs" na barra lateral tem 6 páginas: Visão geral, Lista (com detalhe em
-drill-down), Central de Alertas, Importações (assistente de 4 passos: Arquivo → Mapeamento →
-Validação → Confirmação), Conciliação (SIMEC × Tesouro Gerencial) e Configurações. Dezoito
+O grupo "TEDs" na barra lateral tem 7 páginas: Visão geral, Lista (com detalhe em
+drill-down), Conciliação (SIMEC × Tesouro Gerencial), Células NC × NE, Central de Alertas,
+Importações (assistente de 4 passos: Arquivo → Mapeamento → Validação → Confirmação) e
+Configurações. Dezenove
 alertas estão implementados: empenho associado a mais de um TED; NC sem UG emitente (achado
 real da extração do SIMEC, não do briefing original — a coluna vem vazia em cerca de 41% das
 linhas); e três de conciliação SIMEC (NC líquida e PF líquido dos documentos importados contra os
@@ -203,7 +204,9 @@ valor da NE no SIMEC diferente do empenhado do Tesouro, sempre pelo acumulado da
 (o total do rodapé do relatório do SIMEC deve bater com a soma das linhas importadas; no DOC NC e no DOC PF
 o rodapé é absoluto, então compara-se a soma bruta) e um de TED sem
 código SIAFI na Execução Anual (a linha não é importada e o TED fica fora dos totais até o código existir), e dois de execução do TED (crédito sem NE vinculada e repasse sem pago no Tesouro, ambos com prazo
-de 90 dias). Os demais alertas previstos no
+de 90 dias) e um de célula orçamentária (a célula da NE — PTRES, fonte detalhada, natureza e Plano Interno — não consta
+entre as células das NCs do mesmo TED e exercício, lidas dos relatórios de NC do Tesouro Gerencial; é alerta para
+conferência, nunca conclusão de uso indevido). Os demais alertas previstos no
 briefing original (crédito sem empenho etc.) ficam para uma fase seguinte, fora do
 escopo já aprovado.
 

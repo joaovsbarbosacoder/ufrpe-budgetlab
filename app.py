@@ -116,6 +116,11 @@ page = st.navigation(
                 icon="🔁",
             ),
             st.Page(
+                "app_pages/teds_celulas.py",
+                title="Células NC × NE",
+                icon="🧩",
+            ),
+            st.Page(
                 "app_pages/teds_central_alertas.py",
                 title="Alertas",
                 icon="🔔",

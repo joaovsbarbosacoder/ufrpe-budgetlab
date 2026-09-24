@@ -25,6 +25,9 @@ Schema completo em `src/teds_schema.py`.
 | SIMEC — Documentos: DOC NC | `ler_doc_nc_simec` | Sim |
 | SIMEC — Documentos: DOC PF | `ler_doc_pf_simec` | Sim |
 | Tesouro Gerencial — execução por empenho | `montar_execucao_tg` (`src/teds_importacao_tesouro_gerencial.py`) — deriva da Execução Mensal, sem arquivo próprio | Sim — extração real da Execução Mensal, ver seção 6 |
+| Tesouro Gerencial — NC até 2025 ("Destaques Recebidos") | `ler_nc_tg_historica` (`src/teds_celula_orcamentaria.py`) | Sim — extração real de 24/09/2026, ver seção 11 |
+| Tesouro Gerencial — NC 2026 | `ler_nc_tg_2026` | Sim — extração real de 24/09/2026, ver seção 11 |
+| Tesouro Gerencial — células das NEs (PTRES, fonte, natureza, PI) | `montar_ne_celulas` — deriva da Execução Mensal, no mesmo lote da sincronização | Sim, ver seção 11 |
 
 A leitura do arquivo bruto (abertura do Excel, cálculo do hash SHA-256) é responsabilidade de
 `src/teds_lotes.py`; os leitores do SIMEC recebem o `DataFrame` já carregado e devolvem
@@ -175,7 +178,7 @@ lote que gravou/atualizou aquele registro pela última vez, e o histórico de lo
 
 ## 8. Alertas implementados
 
-Dezoito tipos (`src/teds_alertas.py`), cada um com funções puras testáveis sem banco e uma
+Dezenove tipos (`src/teds_alertas.py`, mais o de célula orçamentária em `src/teds_celula_orcamentaria.py`), cada um com funções puras testáveis sem banco e uma
 `sincronizar_alertas_*` que lê do SQLite e grava alertas novos sem duplicar um alerta já
 aberto para o mesmo documento — e sem nunca fechar um alerta sozinha (resolução é sempre ação
 humana, registrada na Central de Alertas):
@@ -355,14 +358,63 @@ válido. O mesmo arquivo pode ser reimportado depois (vira um lote novo). Na pá
    seção "Tesouro Gerencial — Execução Mensal" com o botão de sincronização (seção 6).
 5. **Conciliação** — SIMEC × Tesouro Gerencial, tolerância configurável via
    `st.session_state["teds_tolerancia_monetaria"]` (padrão R$ 0,01), não persistida em disco.
-6. **Configurações** — só tolerância monetária, integridade do banco (`PRAGMA
+6. **Células NC × NE** — conciliação da célula orçamentária (seção 11), com indicadores por situação, filtros
+   (exercício, TED, transferência, NC, NE, situação) e a tabela rastreável.
+7. **Configurações** — só tolerância monetária, integridade do banco (`PRAGMA
    integrity_check`) e exportação do `.db` são reais; os demais campos (UG padrão, exercício
    padrão, formato de moeda etc.) são placeholders visíveis mas claramente marcados como
    ainda não aplicados.
 
+## 11. Célula orçamentária NC × NE (`src/teds_celula_orcamentaria.py`, implementado em 24/09/2026)
+
+**Objetivo:** para cada NE vinculada a um TED, comparar PTRES, fonte de recursos detalhada, natureza da
+despesa (6 dígitos) e Plano Interno com as células das NCs do mesmo TED e exercício. Uma diferença é
+**alerta para conferência** (`ne_celula_diverge_nc`, gravidade alta, um por TED × NE), **nunca** conclusão
+de uso irregular do crédito.
+
+**Fontes e persistência.** Duas bases de NC do Tesouro Gerencial, importadas na página Importações
+("Destaques Recebidos", NCs até 2025, e "NC 2026") como novos tipos de relatório, com lote, hash, reversão
+e histórico de versões como os demais. Gravam em `nc_celula` (uma linha por NC, transferência, tipo de
+célula, PTRES, fonte, natureza e PI; linhas de classificação iguais são agregadas, com as `linhas_origem` da
+planilha). As células das NEs vêm da Execução Mensal e são gravadas em `ne_celula` **no mesmo lote** da
+sincronização (`sincronizar_execucao_tg`). São duas tabelas novas no banco de TEDs (que já tem persistência
+própria, seção 1). Valores das NCs (`Saldo - Moeda Origem` / `NC Célula - Valor`) ficam guardados como
+informação, **sem conciliação**: em algumas NCs a soma direta não bate com o total do extrato.
+
+**Chaves.** A NC do extrato do SIMEC (`2025NC000408`) liga-se à do Tesouro (`154003152792025NC000408`, UG +
+gestão + sufixo) pelo SUFIXO `AAAANCNNNNNN`, que sozinho **não** é chave única: desambigua-se pela
+**transferência SIAFI** (`1AAMVG`) e, quando o SIMEC informa, pela UG emitente. NC do SIMEC com número
+abreviado (`700014`, sem ano) não pode ser ligada e fica "ainda não identificada" — nunca ausente.
+**Coincidência de célula nunca cria o vínculo** de uma NE com um TED: só o extrato TED → NE (`vinculo_ne`).
+
+**Regras.** NC de 2026 tem células ORIGEM e DESTINO para a mesma movimentação: só DESTINO (o crédito
+recebido) entra na comparação; as duas ficam guardadas e nada é somado entre elas. Códigos são texto (zeros
+à esquerda preservados; apóstrofo inicial de exportação, como `'-8`, removido). NC só conta se é do
+**mesmo exercício** da NE. Vínculos `descartado` ficam de fora; `pendente` entra com o status visível.
+A comparação é do **conjunto**: a NE corresponde se ao menos uma célula das NCs tem os quatro campos iguais.
+
+**Situações** (sempre visíveis na tabela): **Correspondente**; **Divergência para conferência** (há NCs
+comparáveis e nenhuma tem a combinação da NE; mostra os campos divergentes e os valores que as NCs trazem
+para eles); **NC não identificada ou base incompleta** (faltam NCs comparáveis ou a NE não tem célula na
+base) — esta NÃO é divergência e **não gera alerta**: ausência de dado nunca aparece como conformidade nem
+como irregularidade. Divergência com NC abreviada no TED avisa que a comparação pode estar incompleta.
+
+**Validação com as extrações reais (24/09/2026).** 157 das 179 linhas de NC do SIMEC ligadas ao Tesouro
+(22 abreviadas, sem ano); as 126 NEs do extrato localizadas na base de despesas; resultado: **116
+correspondentes, 7 sem NC comparável e 3 divergentes** — 2024NE000423 e 2024NE000819 (TED 13103, com NC
+abreviada ainda não identificada: comparação possivelmente incompleta) e o caso de referência
+**2025NE000706** (R$ 4.997,80, TED 12112, transferência 1AAMVG; PTRES 230551, fonte 1000A00238, PI
+MCC62G22EDN): natureza 339032 não consta nas NCs, que trazem 339014, 339030, 339033, 339036, 339039 e 339040.
+A hipótese de erro no elemento previsto na programação orçamentária e financeira deve ser confirmada no
+processo e no SIAFI.
+
+**Não implementado:** o estado "vínculo com TED não confirmado" do briefing — como coincidência de célula
+nunca cria vínculo, uma NE só é comparada quando o extrato TED → NE a liga ao TED; conciliação do **valor**
+crédito × empenho por célula; e a análise de PF (acompanhamento financeiro separado da comparação NC × NE).
+
 ## 10. O que NÃO foi aprovado ainda
 
-- Alertas além dos dezoito da seção 8.
+- Alertas além dos dezenove da seção 8.
 - Edição do mapeamento de colunas na tela de Importações.
 - Campo de observação manual por TED.
 - Persistência dos parâmetros de Configurações além da sessão do navegador.

@@ -38,6 +38,14 @@ from src.teds_importacao_simec import (
     ler_execucao_anual_simec,
 )
 from src.teds_alertas import TOLERANCIA_CONCILIACAO
+from src.teds_celula_orcamentaria import (
+    _MAPA_NC_TG_2026,
+    _MAPA_NC_TG_HISTORICA,
+    TIPO_NC_TG_2026,
+    TIPO_NC_TG_HISTORICA,
+    ler_nc_tg_2026,
+    ler_nc_tg_historica,
+)
 from src.teds_lotes import (
     ExecucaoMensalNaoImportada,
     comparar_rodape,
@@ -45,6 +53,8 @@ from src.teds_lotes import (
     importar_doc_nc,
     importar_doc_pf,
     importar_execucao_anual,
+    importar_nc_tg_2026,
+    importar_nc_tg_historica,
     sincronizar_execucao_tg_atual,
     status_sincronizacao_execucao_tg,
 )
@@ -62,6 +72,7 @@ _ROTULO_LOTE = {
     "simec_execucao_anual": "SIMEC — Execução", "simec_doc_nc": "SIMEC — DOC NC",
     "simec_doc_ne": "SIMEC — DOC NE", "simec_doc_pf": "SIMEC — DOC PF",
     "tesouro_gerencial_execucao": "Tesouro Gerencial — Execução",
+    TIPO_NC_TG_HISTORICA: "Tesouro Gerencial — NC (Destaques)", TIPO_NC_TG_2026: "Tesouro Gerencial — NC 2026",
 }
 
 _TIPOS = {
@@ -69,6 +80,10 @@ _TIPOS = {
     "SIMEC — DOC NC": ("simec_doc_nc", _MAPA_DOC_NC, ler_doc_nc_simec, importar_doc_nc),
     "SIMEC — DOC NE": ("simec_doc_ne", _MAPA_DOC_NE, ler_doc_ne_simec, importar_doc_ne),
     "SIMEC — DOC PF": ("simec_doc_pf", _MAPA_DOC_PF, ler_doc_pf_simec, importar_doc_pf),
+    "Tesouro Gerencial — NC até 2025 (Destaques Recebidos)": (
+        TIPO_NC_TG_HISTORICA, _MAPA_NC_TG_HISTORICA, ler_nc_tg_historica, importar_nc_tg_historica
+    ),
+    "Tesouro Gerencial — NC 2026": (TIPO_NC_TG_2026, _MAPA_NC_TG_2026, ler_nc_tg_2026, importar_nc_tg_2026),
 }
 
 historico = historico_importacoes(conn)

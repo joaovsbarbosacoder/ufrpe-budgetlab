@@ -225,6 +225,49 @@ CREATE TABLE IF NOT EXISTS decisao_vinculo_ne (
     alerta_id INTEGER NOT NULL
 );
 
+-- Células orçamentárias das NCs, lidas dos relatórios de NC do Tesouro Gerencial ("Destaques Recebidos",
+-- até 2025, e "NC 2026") — `src/teds_celula_orcamentaria.py`. Uma linha por (NC, transferência, tipo de
+-- célula, PTRES, fonte detalhada, natureza, PI): as várias linhas de classificação iguais são agregadas, e
+-- `linhas_origem` (JSON) guarda as linhas da planilha para rastreabilidade. `valor` é a soma direta da métrica
+-- do relatório (`metrica_valor`), SEM conciliação: não é o valor da NC. `tipo_celula` é ORIGEM/DESTINO em
+-- 2026 e vazio no histórico; só DESTINO entra na comparação.
+CREATE TABLE IF NOT EXISTS nc_celula (
+    nc_completa TEXT NOT NULL,
+    transferencia TEXT NOT NULL,
+    tipo_celula TEXT NOT NULL,
+    ptres TEXT NOT NULL,
+    fonte_detalhada TEXT NOT NULL,
+    natureza TEXT NOT NULL,
+    pi TEXT NOT NULL,
+    sufixo_nc TEXT NOT NULL,
+    ug_emitente TEXT NOT NULL,
+    ano_emissao INTEGER NOT NULL,
+    origem_relatorio TEXT NOT NULL,
+    valor TEXT,
+    metrica_valor TEXT,
+    quantidade_linhas INTEGER NOT NULL,
+    linhas_origem TEXT NOT NULL,
+    import_batch_id INTEGER NOT NULL,
+    PRIMARY KEY (nc_completa, transferencia, tipo_celula, ptres, fonte_detalhada, natureza, pi)
+);
+
+CREATE INDEX IF NOT EXISTS ix_nc_celula_sufixo ON nc_celula (sufixo_nc, transferencia);
+
+-- Células orçamentárias das NEs (natureza de 6 dígitos), espelhadas da Execução Mensal por
+-- `sincronizar_execucao_tg` — uma linha por (NE, PTRES, fonte detalhada, natureza, PI).
+CREATE TABLE IF NOT EXISTS ne_celula (
+    numero_ne TEXT NOT NULL,
+    ptres TEXT NOT NULL,
+    fonte_detalhada TEXT NOT NULL,
+    natureza TEXT NOT NULL,
+    pi TEXT NOT NULL,
+    ug_emitente TEXT NOT NULL,
+    quantidade_linhas INTEGER NOT NULL,
+    linhas_origem TEXT NOT NULL,
+    import_batch_id INTEGER NOT NULL,
+    PRIMARY KEY (numero_ne, ptres, fonte_detalhada, natureza, pi)
+);
+
 -- Trilha de auditoria (`src/teds_auditoria.py`): append-only. Os gatilhos abaixo abortam
 -- UPDATE e DELETE, então nem uma correção posterior reescreve a história — corrigir é inserir
 -- um novo registro. `valor_anterior`/`valor_novo` são JSON dos campos que mudaram.
@@ -305,6 +348,17 @@ TABELAS_VERSIONADAS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ("ug_emitente", "numero_pf"),
         ("chave_ted", "ug_emitente", "numero_pf", "data_emissao", "operacao", "valor_original",
          "valor_assinado", "import_batch_id", "linha_origem"),
+    ),
+    "nc_celula": (
+        ("nc_completa", "transferencia", "tipo_celula", "ptres", "fonte_detalhada", "natureza", "pi"),
+        ("nc_completa", "transferencia", "tipo_celula", "ptres", "fonte_detalhada", "natureza", "pi",
+         "sufixo_nc", "ug_emitente", "ano_emissao", "origem_relatorio", "valor", "metrica_valor",
+         "quantidade_linhas", "linhas_origem", "import_batch_id"),
+    ),
+    "ne_celula": (
+        ("numero_ne", "ptres", "fonte_detalhada", "natureza", "pi"),
+        ("numero_ne", "ptres", "fonte_detalhada", "natureza", "pi", "ug_emitente", "quantidade_linhas",
+         "linhas_origem", "import_batch_id"),
     ),
     "execucao_tg": (
         ("numero_completo_ne", "ano_lancamento", "mes_lancamento"),

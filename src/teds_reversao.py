@@ -48,6 +48,7 @@ from src.teds_alertas import (
     sincronizar_alertas_multiplos_teds,
     sincronizar_alertas_nc_parcial,
 )
+from src.teds_celula_orcamentaria import sincronizar_alertas_celula_orcamentaria
 from src.teds_auditoria import ACAO_LOTE_REVERTIDO, ENTIDADE_IMPORT_BATCH, registrar_auditoria
 from src.teds_schema import TABELAS_VERSIONADAS
 
@@ -262,4 +263,5 @@ def reverter_lote(
     sincronizar_alertas_cadastrais(conn)
     sincronizar_alertas_execucao_tg(conn)
     sincronizar_alertas_execucao_do_ted(conn)
+    sincronizar_alertas_celula_orcamentaria(conn)
     return ResultadoReversao(import_batch_id, removidas, restauradas)

@@ -45,6 +45,7 @@ from src.teds_alertas import (
     TIPO_TED_VENCIDO_EM_EXECUCAO,
     TIPO_TED_VIGENCIA_INVERTIDA,
 )
+from src.teds_celula_orcamentaria import TIPO_NC_TG_2026, TIPO_NC_TG_HISTORICA, TIPO_NE_CELULA_DIVERGE_NC
 from src.teds_auditoria import (
     ACAO_ALERTA_STATUS_ALTERADO,
     ACAO_VINCULO_NE_DECIDIDO,
@@ -80,6 +81,7 @@ _ROTULO_TIPO_ALERTA = {
     TIPO_NE_PAGO_MAIOR_QUE_LIQUIDADO: "NE com pago maior que liquidado",
     TIPO_NE_SIMEC_DIFERE_TESOURO: "Valor da NE no SIMEC difere do Tesouro",
     TIPO_RODAPE_DIVERGENTE: "Rodapé do relatório difere da soma importada",
+    TIPO_NE_CELULA_DIVERGE_NC: "Célula da NE não consta nas NCs do TED",
     TIPO_TED_SEM_SIAFI: "TED sem código SIAFI",
     TIPO_TED_CREDITO_SEM_EMPENHO: "Crédito descentralizado sem empenho",
     TIPO_TED_PF_SEM_EXECUCAO_FINANCEIRA: "Repasse sem execução financeira",
@@ -105,6 +107,7 @@ TIPOS_ALERTA = (
     TIPO_TED_SEM_SIAFI,
     TIPO_TED_CREDITO_SEM_EMPENHO,
     TIPO_TED_PF_SEM_EXECUCAO_FINANCEIRA,
+    TIPO_NE_CELULA_DIVERGE_NC,
 )
 
 
@@ -718,6 +721,8 @@ _ROTULO_TIPO_RELATORIO = {
     "simec_doc_ne": "SIMEC — DOC NE",
     "simec_doc_pf": "SIMEC — DOC PF",
     "tesouro_gerencial_execucao": "Tesouro Gerencial — Execução",
+    TIPO_NC_TG_HISTORICA: "Tesouro Gerencial — NC (Destaques Recebidos)",
+    TIPO_NC_TG_2026: "Tesouro Gerencial — NC 2026",
 }
 
 _ROTULOS_COLUNA_LOTE = {

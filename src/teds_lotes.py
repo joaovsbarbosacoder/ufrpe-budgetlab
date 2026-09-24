@@ -45,6 +45,16 @@ from src.teds_alertas import (
     sincronizar_alertas_multiplos_teds,
     sincronizar_alertas_nc_parcial,
 )
+from src.teds_celula_orcamentaria import (
+    TIPO_NC_TG_2026,
+    TIPO_NC_TG_HISTORICA,
+    gravar_celulas_nc,
+    gravar_celulas_ne,
+    ler_nc_tg_2026,
+    ler_nc_tg_historica,
+    montar_ne_celulas,
+    sincronizar_alertas_celula_orcamentaria,
+)
 from src.teds_importacao_simec import (
     LinhaRejeitada,
     ler_doc_ne_simec,
@@ -341,6 +351,7 @@ def importar_execucao_anual(
     sincronizar_alertas_conciliacao_simec(conn)
     sincronizar_alertas_cadastrais(conn)
     sincronizar_alertas_execucao_do_ted(conn)
+    sincronizar_alertas_celula_orcamentaria(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
 
 
@@ -391,6 +402,7 @@ def importar_doc_ne(
     sincronizar_alertas_multiplos_teds(conn)
     sincronizar_alertas_execucao_tg(conn)
     sincronizar_alertas_execucao_do_ted(conn)
+    sincronizar_alertas_celula_orcamentaria(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
 
 
@@ -505,6 +517,7 @@ def importar_doc_nc(
     sincronizar_alertas_conciliacao_simec(conn)
     sincronizar_alertas_cadastrais(conn)
     sincronizar_alertas_execucao_do_ted(conn)
+    sincronizar_alertas_celula_orcamentaria(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
 
 
@@ -557,7 +570,44 @@ def importar_doc_pf(
     sincronizar_alertas_conciliacao_simec(conn)
     sincronizar_alertas_cadastrais(conn)
     sincronizar_alertas_execucao_do_ted(conn)
+    sincronizar_alertas_celula_orcamentaria(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
+
+
+def _importar_nc_tg(
+    conn: sqlite3.Connection, df: pd.DataFrame, nome_arquivo: str, conteudo_bytes: bytes,
+    tipo_relatorio: str, leitor: Any,
+) -> ResultadoImportacaoLote:
+    """Relatórios de NC do Tesouro Gerencial (células orçamentárias). Sem linha de rodapé (a última linha é
+    dado), então não há total de rodapé a conferir; o total de controle do lote guarda só as contagens."""
+
+    hash_arquivo = _hash_bytes(conteudo_bytes)
+    existente = _lote_ja_importado(conn, tipo_relatorio, hash_arquivo)
+    if existente is not None:
+        return ResultadoImportacaoLote(existente, ja_importado=True, inseridos=0)
+
+    leitura = leitor(df)
+    resumo = ResumoControle(
+        quantidade_linhas_lidas=leitura.linhas_lidas, quantidade_rejeitadas=len(leitura.rejeitadas),
+        quantidade_com_aviso=0,
+    )
+    batch_id = _registrar_lote(conn, tipo_relatorio, nome_arquivo, hash_arquivo, len(leitura.registros), resumo)
+    gravar_celulas_nc(conn, leitura.registros, batch_id)
+    conn.commit()
+    sincronizar_alertas_celula_orcamentaria(conn)
+    return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
+
+
+def importar_nc_tg_historica(
+    conn: sqlite3.Connection, df: pd.DataFrame, nome_arquivo: str, conteudo_bytes: bytes
+) -> ResultadoImportacaoLote:
+    return _importar_nc_tg(conn, df, nome_arquivo, conteudo_bytes, TIPO_NC_TG_HISTORICA, ler_nc_tg_historica)
+
+
+def importar_nc_tg_2026(
+    conn: sqlite3.Connection, df: pd.DataFrame, nome_arquivo: str, conteudo_bytes: bytes
+) -> ResultadoImportacaoLote:
+    return _importar_nc_tg(conn, df, nome_arquivo, conteudo_bytes, TIPO_NC_TG_2026, ler_nc_tg_2026)
 
 
 def sincronizar_execucao_tg(
@@ -617,9 +667,12 @@ def sincronizar_execucao_tg(
             for r in leitura.registros
         ],
     )
+    # Células orçamentárias das NEs (PTRES, fonte detalhada, natureza, PI), do MESMO lote e da mesma extração
+    gravar_celulas_ne(conn, montar_ne_celulas(execucao_mensal).registros, batch_id)
     conn.commit()
     sincronizar_alertas_execucao_tg(conn)
     sincronizar_alertas_execucao_do_ted(conn)
+    sincronizar_alertas_celula_orcamentaria(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
 
 
@@ -673,6 +726,8 @@ _IMPORTADORES_POR_TIPO = {
     TIPO_DOC_NE: importar_doc_ne,
     TIPO_DOC_NC: importar_doc_nc,
     TIPO_DOC_PF: importar_doc_pf,
+    TIPO_NC_TG_HISTORICA: importar_nc_tg_historica,
+    TIPO_NC_TG_2026: importar_nc_tg_2026,
 }
 
 
