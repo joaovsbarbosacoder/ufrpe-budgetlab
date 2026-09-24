@@ -117,6 +117,33 @@ declare os conceitos equivalentes.
   Emendas, enquanto Empenhado, Liquidado e Pago vêm da Execução Anual para
   PTRES vinculados.
 
+## 6.1 Dotação Anual por PTRES
+
+Para exercícios dinâmicos (2026 em diante), `vincular_execucao_emendas(..., dotacao=...)` liga a
+Dotação Anual por `(ano, RP, PTRES)` **ao lado** — nunca no lugar — da Dotação Atualizada do
+relatório ou do cadastro manual (`agregar_dotacao_por_ptres`). Regras:
+
+1. **Colunas separadas.** `dotacao_atualizada` (relatório/cadastro) permanece intacta;
+   `dotacao_anual_ptres` é a da Dotação Anual. Não há regra definida de qual prevalece.
+2. **Divergência só sinalizada.** `diferenca_dotacao` e `dotacao_divergente` (diferença
+   arredondada em centavos > R$ 0,01) só existem quando os DOIS valores existem. Informativo:
+   não bloqueia nem corrige nada.
+3. **PTRES compartilhado.** A Dotação Anual é por PTRES, não por emenda; o mesmo
+   `(ano, RP, PTRES)` em duas emendas continua barrado (`ErroVinculoEmenda`) — o valor nunca é
+   dividido nem atribuído.
+4. **Sem correspondência = nulo**, nunca zero (`ptres_com_dotacao_anual` conta os PTRES que
+   têm valor). Só o indicador `dotacao_atualizada` é somado (`min_count=1`); os quatro
+   indicadores da Dotação nunca se somam entre si.
+5. **Exercícios anteriores a 2026** ficam só com o valor do relatório (fotografia estática).
+
+A página lista os PTRES divergentes (`divergencias_dotacao`) num quadro com os dois valores e a
+diferença, respeitando os filtros. É informativo: não indica qual valor está correto e não gera
+alerta no painel geral (`alertas_gerenciais`).
+
+⚠️ A soma é sobre o PTRES inteiro (todas as fontes e planos orçamentários), não sobre a emenda:
+o valor é rotulado "Dotação Anual (por PTRES)" e não deve ser lido como valor da emenda. Linha da
+Dotação sem ano, RP ou PTRES interrompe o vínculo com erro explícito, como na Execução.
+
 ## 7. Reconciliação com a Execução Anual
 
 `agregar_execucao_por_ptres` soma Empenhado, Liquidado e Pago em todas as

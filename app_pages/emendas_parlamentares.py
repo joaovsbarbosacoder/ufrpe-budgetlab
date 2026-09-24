@@ -42,6 +42,7 @@ from src.emendas_parlamentares import (
     RPS_EMENDA,
     carregar_emendas_cadastradas,
     compor_relatorio_com_cadastros,
+    divergencias_dotacao,
     normalizar_ptres_texto,
     nova_emenda_acompanhamento,
     salvar,
@@ -59,6 +60,12 @@ from src.importacao_execucao import (
     Manifesto as ManifestoExecucao,
     carregar_atual as carregar_execucao_atual,
 )
+from src.importacao_dotacao import (
+    DIRETORIO_MANIFESTOS_PADRAO as DIR_MANIFESTOS_DOTACAO,
+    NOME_PONTEIRO as PONTEIRO_DOTACAO,
+    Manifesto as ManifestoDotacao,
+    carregar_atual as carregar_dotacao_atual,
+)
 from src.ui_theme import format_brl_full, render_page_header
 from src.vinculos_emendas import carregar_eventos_vinculo, compor_relatorio_com_vinculos
 
@@ -71,6 +78,11 @@ def _cached_emendas(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFram
 @st.cache_data(show_spinner="Lendo a Execução Anual...", max_entries=4)
 def _cached_execucao(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
     return carregar_execucao_atual()
+
+
+@st.cache_data(show_spinner="Lendo a Dotação Anual...", max_entries=4)
+def _cached_dotacao(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame | None:
+    return carregar_dotacao_atual()
 
 
 def _valor_brl(valor: object) -> str:
@@ -282,6 +294,26 @@ def _html_linha_ptres(r) -> str:
     )
 
 
+def _html_dotacao_anual(linha) -> str:
+    """Linha informativa com a Dotação Anual por PTRES — só existe para exercícios dinâmicos
+    quando a Dotação Anual foi carregada. Nunca substitui a dotação do relatório/cadastro."""
+    if not hasattr(linha, "dotacao_anual_ptres") or int(linha.ano) < ANO_INICIO_ATUALIZACAO:
+        return ""
+    if int(linha.ptres_com_dotacao_anual) == 0:
+        texto = "Dotação Anual (por PTRES): sem dotação correspondente"
+    else:
+        texto = (
+            f"Dotação Anual (por PTRES): {_valor_brl(linha.dotacao_anual_ptres)} · "
+            f"{int(linha.ptres_com_dotacao_anual)} de {int(linha.ptres_total)} PTRES com dotação"
+        )
+    aviso = (
+        _badge("Difere do informado", WARNING, "rgba(245,165,36,0.14)")
+        if bool(linha.dotacao_divergente)
+        else ""
+    )
+    return f'<div class="em-tags" style="margin-bottom:8px"><span class="em-tag">{_esc(texto)}</span>{aviso}</div>'
+
+
 def _render_card_emenda(linha, vinculos_da_emenda: pd.DataFrame) -> None:
     parlamentar = (
         "(não informado)" if pd.isna(linha.parlamentar) else _esc(linha.parlamentar)
@@ -328,6 +360,7 @@ def _render_card_emenda(linha, vinculos_da_emenda: pd.DataFrame) -> None:
               <div class="em-stat-value">{int(linha.ptres_com_execucao)} de {ptres_total}</div>
             </div>
           </div>
+          {_html_dotacao_anual(linha)}
           <div class="em-scroll">
             <div class="em-head">
               <span>PTRES</span><span>GND</span><span>Status</span>
@@ -441,6 +474,13 @@ execucao = _cached_execucao(
     caminho_ponteiro_execucao.stat().st_mtime,
 )
 
+caminho_ponteiro_dotacao = DIR_MANIFESTOS_DOTACAO / PONTEIRO_DOTACAO
+dotacao_anual = (
+    _cached_dotacao(str(caminho_ponteiro_dotacao), caminho_ponteiro_dotacao.stat().st_mtime)
+    if caminho_ponteiro_dotacao.exists()
+    else None
+)
+
 try:
     cadastros_manuais = carregar_emendas_cadastradas()
     eventos_vinculo = carregar_eventos_vinculo()
@@ -453,7 +493,9 @@ try:
         cadastros_manuais,
         eventos_vinculo,
     )
-    resultado = vincular_execucao_emendas(composicao_vinculos.relatorio, execucao)
+    resultado = vincular_execucao_emendas(
+        composicao_vinculos.relatorio, execucao, dotacao=dotacao_anual
+    )
 except (ErroPoliticaImportacao, ErroVinculoEmenda) as error:
     st.error(f"Não foi possível consolidar as Emendas: {error}")
     st.stop()
@@ -527,6 +569,45 @@ with st.container(horizontal=True):
     st.metric("Liquidado", _valor_brl(_total(filtradas["liquidada"])), border=True)
     st.metric("Pago", _valor_brl(_total(filtradas["paga"])), border=True)
 
+
+def _render_divergencias_dotacao(filtradas: pd.DataFrame, vinculos: pd.DataFrame) -> None:
+    """Lista os PTRES cuja Dotação informada difere da Dotação Anual — só das emendas filtradas.
+    Informativo: os dois valores aparecem lado a lado, sem dizer qual está correto."""
+    divergencias = divergencias_dotacao(vinculos)
+    if divergencias.empty or filtradas.empty:
+        return
+    chaves = filtradas[["ano", "resultado_primario_cod", "emenda_numero"]].drop_duplicates()
+    divergencias = divergencias.merge(chaves, on=["ano", "resultado_primario_cod", "emenda_numero"])
+    if divergencias.empty:
+        return
+    with st.container(border=True):
+        st.markdown(f"**Dotação informada ≠ Dotação Anual por PTRES** — {len(divergencias)} PTRES")
+        st.caption(
+            "Os dois valores são exibidos sem indicar qual está correto: não há regra definida "
+            "de prevalência. Confira na origem antes de decidir."
+        )
+        tabela = divergencias.assign(
+            resultado_primario_cod=divergencias["resultado_primario_cod"].map("RP{}".format),
+            dotacao_atualizada=divergencias["dotacao_atualizada"].map(_valor_brl),
+            dotacao_anual_ptres=divergencias["dotacao_anual_ptres"].map(_valor_brl),
+            diferenca_dotacao=divergencias["diferenca_dotacao"].map(_valor_brl),
+        ).rename(
+            columns={
+                "ano": "Exercício",
+                "resultado_primario_cod": "RP",
+                "emenda_numero": "Emenda",
+                "parlamentar": "Parlamentar",
+                "ptres": "PTRES",
+                "dotacao_atualizada": "Dotação informada",
+                "dotacao_anual_ptres": "Dotação Anual (por PTRES)",
+                "diferenca_dotacao": "Diferença",
+            }
+        )
+        st.dataframe(tabela, hide_index=True, width="stretch")
+
+
+_render_divergencias_dotacao(filtradas, resultado.vinculos)
+
 if filtradas.empty:
     st.info("Nenhuma emenda corresponde aos filtros selecionados.")
 else:
@@ -544,6 +625,12 @@ else:
 st.caption(
     f"Base de Emendas: {manifesto_emendas.rotulo} · hash "
     f"{manifesto_emendas.sha256[:8]} · Execução Anual: hash "
-    f"{manifesto_execucao.sha256[:8]}. Valores anteriores a 2026 permanecem "
+    f"{manifesto_execucao.sha256[:8]}"
+    + (
+        ""
+        if dotacao_anual is None
+        else f" · Dotação Anual: hash {ManifestoDotacao.atual().sha256[:8]}"
+    )
+    + ". Valores anteriores a 2026 permanecem "
     "estáticos; valores executados de 2026+ são conciliados por RP e PTRES."
 )

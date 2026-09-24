@@ -49,6 +49,10 @@ RPS_EMENDA = {
 SITUACOES = ("Não iniciada", "Empenho parcial", "Em execução", "Concluída")
 ESTAGIOS = ("SIOP", "TED", "Empenho", "Licitação", "Execução")
 
+#: Diferença mínima (R$) entre a Dotação do cadastro/relatório e a da Dotação Anual por PTRES
+#: para sinalizar divergência — mesma tolerância do delta entre extrações.
+TOLERANCIA_DOTACAO = 0.01
+
 _CHAVE_PTRES = ["ano", "resultado_primario_cod", "ptres"]
 _MEDIDAS_EXECUCAO = ["empenhada", "liquidada", "paga"]
 _MEDIDAS_RELATORIO = [
@@ -306,6 +310,63 @@ def agregar_execucao_por_ptres(execucao: pd.DataFrame) -> pd.DataFrame:
     return agregado
 
 
+def agregar_dotacao_por_ptres(dotacao: pd.DataFrame) -> pd.DataFrame:
+    """Uma linha por ``(ano, RP, PTRES)`` com a Dotação ATUALIZADA da Dotação Anual.
+
+    Soma só o indicador ``dotacao_atualizada`` (os quatro indicadores nunca são somados entre
+    si — ver ``docs/base_dotacao_anual.md``), com ``min_count=1``: combinação sem nenhum valor
+    fica nula, não zero. A soma é sobre o PTRES inteiro (todas as fontes e planos
+    orçamentários), não sobre a emenda — por isso a coluna é rotulada "da Dotação Anual por
+    PTRES" e nunca como valor da emenda.
+    """
+
+    obrigatorias = [
+        "ano_lancamento",
+        "resultado_primario_codigo",
+        "ptres_codigo",
+        "item_informacao_codigo",
+        "valor_movimento_liquido",
+    ]
+    _exigir_colunas(dotacao, obrigatorias, "Dotação Anual")
+    df = dotacao.loc[
+        dotacao["item_informacao_codigo"].eq("dotacao_atualizada"), obrigatorias
+    ].copy()
+    df = df.rename(
+        columns={
+            "ano_lancamento": "ano",
+            "resultado_primario_codigo": "resultado_primario_cod",
+            "ptres_codigo": "ptres",
+        }
+    )
+
+    df["ano"] = _serie_ano_estrita(df["ano"], "Dotação Anual")
+    for coluna in ["resultado_primario_cod", "ptres"]:
+        df[coluna] = df[coluna].map(_codigo_ou_na).astype("string")
+    df["valor_movimento_liquido"] = _serie_numerica_estrita(
+        df["valor_movimento_liquido"], "valor_movimento_liquido"
+    )
+
+    sem_chave = df[_CHAVE_PTRES].isna().any(axis=1)
+    if sem_chave.any():
+        linhas = df.index[sem_chave].tolist()
+        raise ErroVinculoEmenda(
+            "A Dotação Anual possui linhas sem ano, RP ou PTRES; não é seguro "
+            f"descartá-las no vínculo. Índices: {linhas[:20]}."
+        )
+
+    df = df[df["resultado_primario_cod"].isin(RPS_EMENDA)]
+    agregado = (
+        df.groupby(_CHAVE_PTRES, dropna=False, sort=True)["valor_movimento_liquido"]
+        .sum(min_count=1)
+        .reset_index()
+        .rename(columns={"valor_movimento_liquido": "dotacao_anual_ptres"})
+    )
+    agregado["dotacao_anual_ptres"] = pd.array(
+        agregado["dotacao_anual_ptres"], dtype="Float64"
+    )
+    return agregado
+
+
 def construir_vinculos_relatorio(relatorio: pd.DataFrame) -> pd.DataFrame:
     """Consolida GNDs, preservando uma linha por emenda × PTRES."""
 
@@ -445,8 +506,15 @@ def vincular_execucao_emendas(
     relatorio: pd.DataFrame,
     execucao: pd.DataFrame,
     ano_inicio_atualizacao: int = ANO_INICIO_ATUALIZACAO,
+    dotacao: pd.DataFrame | None = None,
 ) -> ResultadoVinculoEmendas:
-    """Aplica a política estática/dinâmica e devolve as lacunas do vínculo."""
+    """Aplica a política estática/dinâmica e devolve as lacunas do vínculo.
+
+    ``dotacao`` (Dotação Anual normalizada, opcional) acrescenta, só para exercícios dinâmicos
+    (>= ``ano_inicio_atualizacao``), ``dotacao_anual_ptres`` ao lado — nunca no lugar — da
+    ``dotacao_atualizada`` do relatório/cadastro, mais ``diferenca_dotacao`` e
+    ``dotacao_divergente``. Sem ``dotacao``, nenhuma coluna nova é criada.
+    """
 
     vinculos = construir_vinculos_relatorio(relatorio)
     execucao_ptres = agregar_execucao_por_ptres(execucao)
@@ -469,6 +537,9 @@ def vincular_execucao_emendas(
     cruzado.loc[dinamico & ~cruzado["tem_execucao"], "origem_valores"] = (
         "sem_execucao"
     )
+
+    if dotacao is not None:
+        cruzado = _acrescentar_dotacao_anual(cruzado, dotacao, dinamico)
 
     for medida in _MEDIDAS_EXECUCAO:
         relatorio_col = f"{medida}_relatorio"
@@ -513,6 +584,50 @@ def vincular_execucao_emendas(
     )
 
 
+def divergencias_dotacao(vinculos: pd.DataFrame) -> pd.DataFrame:
+    """Um vínculo (emenda × PTRES) por linha em que a Dotação do relatório/cadastro difere da
+    Dotação Anual por PTRES. Somente leitura: não diz qual dos dois valores está certo — não há
+    regra de negócio que defina isso. Vazio se a Dotação Anual não foi ligada."""
+
+    colunas = [
+        "ano", "resultado_primario_cod", "emenda_numero", "parlamentar", "ptres",
+        "dotacao_atualizada", "dotacao_anual_ptres", "diferenca_dotacao",
+    ]
+    if "dotacao_divergente" not in vinculos.columns:
+        return pd.DataFrame(columns=colunas)
+    return (
+        vinculos.loc[vinculos["dotacao_divergente"], colunas]
+        .sort_values(["ano", "emenda_numero", "ptres"])
+        .reset_index(drop=True)
+    )
+
+
+def _acrescentar_dotacao_anual(
+    cruzado: pd.DataFrame, dotacao: pd.DataFrame, dinamico: pd.Series
+) -> pd.DataFrame:
+    """Liga a Dotação Anual por ``(ano, RP, PTRES)`` sem alterar nenhuma coluna existente.
+
+    Histórico (< 2026) fica nulo: permanece só com o valor do relatório. A divergência só é
+    avaliada quando os DOIS valores existem — nulo nunca é tratado como zero.
+    """
+
+    dotacao_ptres = agregar_dotacao_por_ptres(dotacao)
+    cruzado = cruzado.merge(dotacao_ptres, on=_CHAVE_PTRES, how="left", validate="many_to_one")
+    cruzado.loc[~dinamico, "dotacao_anual_ptres"] = pd.NA
+    cruzado["dotacao_anual_ptres"] = pd.array(
+        cruzado["dotacao_anual_ptres"], dtype="Float64"
+    )
+    tem_ambos = cruzado["dotacao_atualizada"].notna() & cruzado["dotacao_anual_ptres"].notna()
+    cruzado["diferenca_dotacao"] = pd.array(
+        (cruzado["dotacao_anual_ptres"] - cruzado["dotacao_atualizada"]).where(tem_ambos),
+        dtype="Float64",
+    )
+    cruzado["dotacao_divergente"] = (
+        cruzado["diferenca_dotacao"].abs().round(2).gt(TOLERANCIA_DOTACAO).fillna(False).astype(bool)
+    )
+    return cruzado
+
+
 def _resumir_emendas_vinculadas(vinculos: pd.DataFrame) -> pd.DataFrame:
     chave = [
         "ano",
@@ -541,9 +656,20 @@ def _resumir_emendas_vinculadas(vinculos: pd.DataFrame) -> pd.DataFrame:
             liquidada=("liquidada", _soma_min_count),
             paga=("paga", _soma_min_count),
             origem_valores=("origem_valores", "first"),
+            **(
+                {
+                    "dotacao_anual_ptres": ("dotacao_anual_ptres", _soma_min_count),
+                    "ptres_com_dotacao_anual": ("dotacao_anual_ptres", "count"),
+                    "dotacao_divergente": ("dotacao_divergente", "any"),
+                }
+                if "dotacao_anual_ptres" in vinculos.columns
+                else {}
+            ),
         )
         .reset_index()
     )
+    if "dotacao_anual_ptres" in resumo.columns:
+        resumo["dotacao_anual_ptres"] = pd.array(resumo["dotacao_anual_ptres"], dtype="Float64")
     historico = resumo["origem_valores"].eq("relatorio_estatico")
     parcial = (
         ~historico
