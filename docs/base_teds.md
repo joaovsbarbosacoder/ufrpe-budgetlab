@@ -150,7 +150,7 @@ lote que gravou/atualizou aquele registro pela última vez, e o histórico de lo
 
 ## 8. Alertas implementados
 
-Onze tipos (`src/teds_alertas.py`), cada um com funções puras testáveis sem banco e uma
+Catorze tipos (`src/teds_alertas.py`), cada um com funções puras testáveis sem banco e uma
 `sincronizar_alertas_*` que lê do SQLite e grava alertas novos sem duplicar um alerta já
 aberto para o mesmo documento — e sem nunca fechar um alerta sozinha (resolução é sempre ação
 humana, registrada na Central de Alertas):
@@ -205,6 +205,26 @@ humana, registrada na Central de Alertas):
   mesma chave TED–SIAFI com descrições conflitantes não podem ocorrer hoje (a chave exige os
   dois e a descrição fica numa linha por TED). Com o banco atual: 3 TEDs vencidos em execução, 3
   documentos (PF) fora da vigência e 9 TEDs em execução sem movimentação.
+
+- **Execução por NE no Tesouro Gerencial** (`sincronizar_alertas_execucao_tg`, ao fim da
+  sincronização da Execução Mensal, da importação de DOC NE e da reversão de lote; briefing,
+  seções 8.2 e 10). Todos de gravidade "alta", tolerância R$ 0,01:
+  - `ne_liquidado_maior_que_empenhado` e `ne_pago_maior_que_liquidado` — por NE;
+  - `ne_simec_difere_tesouro` — por vínculo TED × NE: `valor_ne` do SIMEC ≠ empenhado do Tesouro.
+
+  **Decisões (23/09/2026):** a comparação usa o **acumulado** da NE (soma de todos os meses de
+  `execucao_tg`, estornos com sinal), nunca mês a mês — assim a liquidação ou o pagamento lançado
+  num mês diferente do empenho não gera alerta falso. NE sem linha em `execucao_tg` (ex.: exercício
+  anterior à Execução Mensal) é "sem base", nunca zero. Vínculos `descartado` (decisão de NE em
+  mais de um TED) ficam de fora. Simulação com a extração real (cópia temporária do banco, sem
+  gravar): de 134 NEs vinculadas, 126 têm dado no Tesouro; 24 têm valor do SIMEC diferente do
+  empenhado do Tesouro (várias por serem NEs só em parte vinculadas ao TED — por isso o alerta pede
+  conferência, não correção); nenhuma com liquidado > empenhado ou pago > liquidado.
+
+  **Não implementados:** "pago maior que o PF líquido" (por TED) — o pago da NE inteira seria
+  atribuído ao TED mesmo quando a NE só está em parte vinculada a ele (os 24 casos acima), gerando
+  alerta falso; "pagamento sem NE" — não se aplica, toda linha de `execucao_tg` já é por NE;
+  separação de reforço e anulação — a Execução Mensal só traz o movimento líquido do mês.
 
 Os demais alertas previstos no briefing (crédito sem empenho etc.) ficam para uma fase
 seguinte, fora do escopo aprovado até aqui.
@@ -293,7 +313,7 @@ válido. O mesmo arquivo pode ser reimportado depois (vira um lote novo). Na pá
 
 - Competência real no TEDs (Documento Hábil × mês de referência, via Liquidação por
   Competência) — ver seção 6.
-- Alertas além dos onze da seção 8.
+- Alertas além dos catorze da seção 8.
 - Edição do mapeamento de colunas na tela de Importações.
 - Campo de observação manual por TED.
 - Persistência dos parâmetros de Configurações além da sessão do navegador.

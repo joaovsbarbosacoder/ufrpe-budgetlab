@@ -36,6 +36,7 @@ from src.importacao_execucao_mensal import (
     carregar_atual as carregar_execucao_mensal_atual,
 )
 from src.teds_alertas import (
+    sincronizar_alertas_execucao_tg,
     sincronizar_alertas_cadastrais,
     sincronizar_alertas_conciliacao_simec,
     sincronizar_alertas_multiplos_teds,
@@ -306,6 +307,7 @@ def importar_doc_ne(
         )
     conn.commit()
     sincronizar_alertas_multiplos_teds(conn)
+    sincronizar_alertas_execucao_tg(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
 
 
@@ -527,6 +529,7 @@ def sincronizar_execucao_tg(
         ],
     )
     conn.commit()
+    sincronizar_alertas_execucao_tg(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
 
 

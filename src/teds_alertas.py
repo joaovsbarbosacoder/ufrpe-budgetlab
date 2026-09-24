@@ -1,17 +1,14 @@
 """
-Alertas do módulo de TEDs. Cinco tipos implementados (os três últimos, de conciliação SIMEC, estão
-na seção própria mais abaixo):
+Alertas do módulo de TEDs, um bloco por seção deste arquivo (lista completa e regras em
+`docs/base_teds.md`, seção 8):
 
-  * "empenho associado a mais de um TED" (ver briefing, seção "Alertas do MVP") — o caso
-    concreto documentado (NE 2026NE000422 nos TEDs 17352 e 17454);
+  * "empenho associado a mais de um TED" — o caso concreto documentado no briefing (NE
+    2026NE000422 nos TEDs 17352 e 17454);
   * "NC sem UG emitente" (`status_relacionamento='PARCIAL'` — ver docstring de
-    `ler_doc_nc_simec` em `src/teds_importacao_simec.py`): achado da extração real do SIMEC,
-    não do briefing original — ~41% das linhas reais de DOC NC não trazem essa coluna, o que
-    limita a conciliação externa daquele documento (aprovado explicitamente para gerar alerta,
-    ver conversa de alinhamento).
-
-Os demais alertas do MVP (crédito sem empenho, vigência, etc.) ficam para uma
-fase seguinte, fora do escopo aprovado agora.
+    `ler_doc_nc_simec` em `src/teds_importacao_simec.py`): achado da extração real do SIMEC;
+  * conciliação SIMEC analítica × consolidada;
+  * validações cadastrais e de vigência;
+  * execução por NE no Tesouro Gerencial.
 
 Cada tipo tem duas camadas: funções puras (testáveis sem banco) e uma `sincronizar_alertas_*`
 que lê do SQLite e grava alertas novos em `alerta` — sem duplicar um alerta já aberto para o
@@ -619,6 +616,120 @@ def sincronizar_alertas_cadastrais(
         conn,
         gerar_alertas_cadastrais(teds, documentos, hoje or date.today(), prazo_sem_movimentacao_dias),
     )
+
+
+# --------------------------------------------------------------------------------------
+# Execução no Tesouro Gerencial por NE (briefing, seções 8.2 e 10)
+# --------------------------------------------------------------------------------------
+
+TIPO_NE_LIQUIDADO_MAIOR_QUE_EMPENHADO = "ne_liquidado_maior_que_empenhado"
+TIPO_NE_PAGO_MAIOR_QUE_LIQUIDADO = "ne_pago_maior_que_liquidado"
+TIPO_NE_SIMEC_DIFERE_TESOURO = "ne_simec_difere_tesouro"
+
+
+@dataclass(frozen=True)
+class TotalTesouroNE:
+    """Soma de TODOS os meses sincronizados de uma NE em `execucao_tg` (movimentos mensais,
+    estornos com sinal). Comparar o acumulado — e não mês a mês — evita alerta falso quando a
+    liquidação ou o pagamento é lançado num mês diferente do empenho."""
+
+    numero_ne: str
+    empenhado: Decimal
+    liquidado: Decimal
+    pago: Decimal
+
+
+@dataclass(frozen=True)
+class VinculoSimec:
+    chave_ted: str
+    chave_empenho: str
+    numero_ne: str
+    valor_ne: Decimal
+
+
+def gerar_alertas_execucao_tg(
+    vinculos: list[VinculoSimec],
+    totais: dict[str, TotalTesouroNE],
+    tolerancia: Decimal = TOLERANCIA_CONCILIACAO,
+) -> list[Alerta]:
+    """Só NEs vinculadas a algum TED e com dado no Tesouro Gerencial; NE sem linha em
+    `execucao_tg` (ex.: exercício anterior à Execução Mensal) é "sem base", nunca zero."""
+
+    alertas: list[Alerta] = []
+    teds_por_ne: dict[str, set[str]] = {}
+    for v in vinculos:
+        teds_por_ne.setdefault(v.numero_ne, set()).add(v.chave_ted)
+
+    for numero_ne in sorted(teds_por_ne):
+        total = totais.get(numero_ne)
+        if total is None:
+            continue
+        teds = teds_por_ne[numero_ne]
+        chave_ted = next(iter(teds)) if len(teds) == 1 else None
+        if total.liquidado - total.empenhado > tolerancia:
+            alertas.append(Alerta(
+                tipo=TIPO_NE_LIQUIDADO_MAIOR_QUE_EMPENHADO, gravidade="alta", documento=numero_ne,
+                chave_ted=chave_ted,
+                descricao=(
+                    f"NE {numero_ne}: liquidado acumulado ({_moeda(total.liquidado)}) maior que o empenhado "
+                    f"acumulado ({_moeda(total.empenhado)}) no Tesouro Gerencial, excesso de "
+                    f"{_moeda(total.liquidado - total.empenhado)}."
+                ),
+            ))
+        if total.pago - total.liquidado > tolerancia:
+            alertas.append(Alerta(
+                tipo=TIPO_NE_PAGO_MAIOR_QUE_LIQUIDADO, gravidade="alta", documento=numero_ne,
+                chave_ted=chave_ted,
+                descricao=(
+                    f"NE {numero_ne}: pago acumulado ({_moeda(total.pago)}) maior que o liquidado "
+                    f"acumulado ({_moeda(total.liquidado)}) no Tesouro Gerencial, excesso de "
+                    f"{_moeda(total.pago - total.liquidado)}."
+                ),
+            ))
+
+    for v in sorted(vinculos, key=lambda x: (x.numero_ne, x.chave_ted)):
+        total = totais.get(v.numero_ne)
+        if total is None or abs(v.valor_ne - total.empenhado) <= tolerancia:
+            continue
+        alertas.append(Alerta(
+            tipo=TIPO_NE_SIMEC_DIFERE_TESOURO, gravidade="alta",
+            documento=f"{v.chave_ted}|{v.chave_empenho}", chave_ted=v.chave_ted,
+            descricao=(
+                f"NE {v.numero_ne} no TED {v.chave_ted}: valor no SIMEC ({_moeda(v.valor_ne)}) difere do "
+                f"empenhado acumulado no Tesouro Gerencial ({_moeda(total.empenhado)}) em "
+                f"{_moeda(v.valor_ne - total.empenhado)}. Possíveis causas: NE só em parte vinculada a "
+                "este TED, reforço ou anulação não refletidos no SIMEC, ou extrações de datas "
+                "diferentes — não decidido automaticamente."
+            ),
+        ))
+    return alertas
+
+
+def _carregar_execucao_tg(conn: sqlite3.Connection) -> tuple[list[VinculoSimec], dict[str, TotalTesouroNE]]:
+    vinculos = [
+        VinculoSimec(chave_ted, chave_empenho, numero_ne, texto_para_valor(valor_ne))
+        for chave_ted, chave_empenho, numero_ne, valor_ne in conn.execute(
+            "SELECT chave_ted, chave_empenho, numero_ne, valor_ne FROM vinculo_ne WHERE status_validacao != ?",
+            (STATUS_DESCARTADO,),
+        ).fetchall()
+    ]
+    somas: dict[str, list[Decimal]] = {}
+    for numero_ne, empenhado, liquidado, pago in conn.execute(
+        "SELECT numero_completo_ne, empenhado, liquidado, pago FROM execucao_tg"
+    ).fetchall():
+        acumulado = somas.setdefault(numero_ne, [Decimal("0"), Decimal("0"), Decimal("0")])
+        for i, valor in enumerate((empenhado, liquidado, pago)):
+            if valor is not None:
+                acumulado[i] += texto_para_valor(valor)
+    totais = {ne: TotalTesouroNE(ne, *valores) for ne, valores in somas.items()}
+    return vinculos, totais
+
+
+def sincronizar_alertas_execucao_tg(conn: sqlite3.Connection) -> list[Alerta]:
+    """Grava os alertas de execução por NE ainda não sinalizados. Nunca fecha alerta existente."""
+
+    vinculos, totais = _carregar_execucao_tg(conn)
+    return _gravar_alertas_novos(conn, gerar_alertas_execucao_tg(vinculos, totais))
 
 
 # --------------------------------------------------------------------------------------

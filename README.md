@@ -191,13 +191,15 @@ planilha para auditoria, e o histórico de lotes de importação nunca é sobres
 
 O grupo "TEDs" na barra lateral tem 6 páginas: Visão geral, Lista (com detalhe em
 drill-down), Central de Alertas, Importações (assistente de 4 passos: Arquivo → Mapeamento →
-Validação → Confirmação), Conciliação (SIMEC × Tesouro Gerencial) e Configurações. Onze
+Validação → Confirmação), Conciliação (SIMEC × Tesouro Gerencial) e Configurações. Catorze
 alertas estão implementados: empenho associado a mais de um TED; NC sem UG emitente (achado
 real da extração do SIMEC, não do briefing original — a coluna vem vazia em cerca de 41% das
 linhas); e três de conciliação SIMEC (NC líquida e PF líquido dos documentos importados contra os
 totais consolidados, e PF líquido maior que a NC líquida) e seis de validação cadastral e de
 vigência (vigência invertida, SIAFI em mais de um TED, TED sem UG descentralizadora, documento
-fora da vigência, TED vencido ainda em execução e TED em execução sem movimentação). Os demais alertas previstos no
+fora da vigência, TED vencido ainda em execução e TED em execução sem movimentação) e três de
+execução por NE no Tesouro Gerencial (liquidado maior que empenhado, pago maior que liquidado e
+valor da NE no SIMEC diferente do empenhado do Tesouro, sempre pelo acumulado da NE). Os demais alertas previstos no
 briefing original (crédito sem empenho etc.) ficam para uma fase seguinte, fora do
 escopo já aprovado.
 

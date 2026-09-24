@@ -168,6 +168,14 @@ with col_detalhe:
                 "ted_sem_movimentacao": "TED em execução deveria ter NC ou PF emitida dentro do prazo (padrão 180 "
                 "dias); o prazo é uma escolha inicial, não uma regra do briefing, e a NE não conta por não ter "
                 "data no banco.",
+                "ne_liquidado_maior_que_empenhado": "O liquidado acumulado de uma NE não pode superar o "
+                "empenhado acumulado no Tesouro Gerencial (tolerância R$ 0,01; soma de todos os meses, "
+                "estornos com sinal).",
+                "ne_pago_maior_que_liquidado": "O pago acumulado de uma NE não pode superar o liquidado "
+                "acumulado no Tesouro Gerencial (tolerância R$ 0,01; soma de todos os meses, estornos com sinal).",
+                "ne_simec_difere_tesouro": "O valor da NE informado no SIMEC deveria coincidir com o empenhado "
+                "acumulado no Tesouro Gerencial (tolerância R$ 0,01). A diferença pode ser legítima — ex.: NE "
+                "só em parte vinculada ao TED — e pede conferência, não correção automática.",
             }.get(alvo.tipo, "—")
             st.caption(regra)
 

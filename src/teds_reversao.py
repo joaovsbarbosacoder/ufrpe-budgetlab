@@ -43,6 +43,7 @@ from typing import Any
 from src.teds_alertas import (
     sincronizar_alertas_cadastrais,
     sincronizar_alertas_conciliacao_simec,
+    sincronizar_alertas_execucao_tg,
     sincronizar_alertas_multiplos_teds,
     sincronizar_alertas_nc_parcial,
 )
@@ -258,4 +259,5 @@ def reverter_lote(
     sincronizar_alertas_nc_parcial(conn)
     sincronizar_alertas_conciliacao_simec(conn)
     sincronizar_alertas_cadastrais(conn)
+    sincronizar_alertas_execucao_tg(conn)
     return ResultadoReversao(import_batch_id, removidas, restauradas)
