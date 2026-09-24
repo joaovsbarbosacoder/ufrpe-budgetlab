@@ -245,7 +245,8 @@ humana, registrada na Central de Alertas):
   sincronização da Execução Mensal, da importação de DOC NE e da reversão de lote; briefing,
   seções 8.2 e 10). Todos de gravidade "alta", tolerância R$ 0,01:
   - `ne_liquidado_maior_que_empenhado` e `ne_pago_maior_que_liquidado` — por NE;
-  - `ne_simec_difere_tesouro` — por vínculo TED × NE: `valor_ne` do SIMEC ≠ empenhado do Tesouro.
+  - `ne_simec_difere_tesouro` — por vínculo TED × NE: o `valor_ne` do SIMEC **não bate nem com o valor
+    original nem com o líquido atual da NE no Tesouro** (ver abaixo).
 
   **Decisões (23/09/2026):** a comparação usa o **acumulado** da NE (soma de todos os meses de
   `execucao_tg`, estornos com sinal), nunca mês a mês — assim a liquidação ou o pagamento lançado
@@ -253,17 +254,25 @@ humana, registrada na Central de Alertas):
   anterior à Execução Mensal) é "sem base", nunca zero. Vínculos `descartado` (decisão de NE em
   mais de um TED) ficam de fora. Simulação com a extração real (cópia temporária do banco, sem
   gravar): de 134 NEs vinculadas, 126 têm dado no Tesouro; 24 têm valor do SIMEC diferente do
-  empenhado do Tesouro; nenhuma com liquidado > empenhado ou pago > liquidado. **Relatório NE a NE
-  (24/09/2026):** nenhuma das 24 está em mais de um TED, então "NE só em parte vinculada" não as
-  explica. 14 têm o Tesouro MAIOR que o SIMEC (+R$ 6,50 mi no total; ex.: 2025NE000385/386, dos TEDs
-  14974/14975, R$ 1,45 mi/1,37 mi no SIMEC contra R$ 3,78 mi/3,72 mi no Tesouro; em 2025NE000379 o
-  liquidado já passa do valor do SIMEC) — indício de reforço posterior não refletido no SIMEC; 10 têm o
-  Tesouro MENOR (R$ 96 mil no total, 8 com estorno de empenho no Tesouro; duas NEs, 2025NE000445/446,
-  estão anuladas em 100% no Tesouro e ainda constam no SIMEC) — indício de anulação não refletida.
-  Confirmar que o "Valor da NE" do SIMEC é o valor original, e não o líquido de reforços e anulações,
-  é o que decide a regra; por isso o alerta pede conferência, não correção.
+  empenhado do Tesouro; nenhuma com liquidado > empenhado ou pago > liquidado. **Valor da NE no SIMEC (decisão de 24/09/2026):** o "Valor da NE" do SIMEC é o valor ORIGINAL da NE
+(confirmado pelo usuário), e o Tesouro acumula original + reforços − anulações. Por isso o alerta NÃO
+compara só com o acumulado: o valor está *explicado* se bate com o **original** (primeiro movimento de
+empenho não nulo da NE em `execucao_tg`) **ou** com o **líquido atual** (na extração real há NEs cujo SIMEC
+já foi atualizado, ex.: 2024NE000818, original R$ 10.000, anulação de R$ 9.755,90, SIMEC R$ 244,10). O
+original só é observável para NEs do primeiro ano da Execução Mensal em diante (a NE mais antiga tem o
+empenho inicial fora da base, e o primeiro movimento visível seria um reforço) — NE anterior é "sem base".
+Limite: reforço lançado no MESMO mês da emissão se soma ao original no primeiro movimento; nesse caso o
+SIMEC só bate com o líquido, ou o alerta pede conferência.
 
-  **Não implementados:** "pago maior que o PF líquido" (por TED) — o pago da NE inteira seria
+**Relatório NE a NE (24/09/2026, extração real):** de 134 NEs vinculadas, 126 têm dado no Tesouro e 119
+têm o SIMEC igual ao original. Das 28 que divergem do acumulado ou do original: **21 explicadas** (SIMEC =
+original; reforços de até R$ 2,35 mi ou anulações no Tesouro, inclusive duas NEs anuladas em 100%), **4
+explicadas** (SIMEC já igual ao líquido atual) e **3 sem explicação**, que geram alerta: 2025NE000695
+(TED 14685; SIMEC R$ 20.000 × Tesouro R$ 10.000), 2025NE000735 (TED 16343; R$ 18.066,40 × R$ 14.781,60) e
+2026NE000500 (TED 17061; SIMEC R$ 1.048.987,04 × Tesouro R$ 1.148.987,04, diferença de R$ 100.000).
+Nenhuma das NEs divergentes está em mais de um TED.
+
+**Não implementados:** "pago maior que o PF líquido" (por TED) — o pago da NE inteira seria
   atribuído ao TED mesmo quando a NE só está em parte vinculada a ele (os 24 casos acima — divergência de valor, não de vínculo), gerando
   alerta falso; "pagamento sem NE" — não se aplica, toda linha de `execucao_tg` já é por NE;
   separação de reforço e anulação — a Execução Mensal só traz o movimento líquido do mês.

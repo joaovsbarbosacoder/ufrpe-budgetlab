@@ -662,6 +662,11 @@ class TotalTesouroNE:
     empenhado: Decimal
     liquidado: Decimal
     pago: Decimal
+    #: valor ORIGINAL da NE no Tesouro = primeiro movimento de empenho não nulo (os meses seguintes são
+    #: reforços e anulações). `None` quando não dá para observar: NE de exercício anterior ao início da
+    #: Execução Mensal, cujo primeiro movimento visível já seria um reforço (ver `_carregar_execucao_tg`).
+    original: Decimal | None = None
+    mes_original: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -678,7 +683,13 @@ def gerar_alertas_execucao_tg(
     tolerancia: Decimal = TOLERANCIA_CONCILIACAO,
 ) -> list[Alerta]:
     """Só NEs vinculadas a algum TED e com dado no Tesouro Gerencial; NE sem linha em
-    `execucao_tg` (ex.: exercício anterior à Execução Mensal) é "sem base", nunca zero."""
+    `execucao_tg` (ex.: exercício anterior à Execução Mensal) é "sem base", nunca zero.
+
+    O "Valor da NE" do SIMEC é o valor ORIGINAL da NE (confirmado pelo usuário em 24/09/2026), então não
+    deve ser comparado só com o empenhado ACUMULADO do Tesouro (original + reforços − anulações). O valor
+    do SIMEC está EXPLICADO se bate com o original OU com o líquido atual (na extração real há NEs cujo
+    SIMEC já foi atualizado). O alerta `ne_simec_difere_tesouro` só sai quando não bate com nenhum dos dois
+    — e só se o original é observável (`original is not None`)."""
 
     alertas: list[Alerta] = []
     teds_por_ne: dict[str, set[str]] = {}
@@ -714,17 +725,21 @@ def gerar_alertas_execucao_tg(
 
     for v in sorted(vinculos, key=lambda x: (x.numero_ne, x.chave_ted)):
         total = totais.get(v.numero_ne)
-        if total is None or abs(v.valor_ne - total.empenhado) <= tolerancia:
-            continue
+        if total is None or total.original is None:
+            continue  # sem base: o valor original não é observável
+        if abs(v.valor_ne - total.original) <= tolerancia or abs(v.valor_ne - total.empenhado) <= tolerancia:
+            continue  # explicado: bate com o original ou com o líquido atual
+        mes = f"{total.mes_original[1]:02d}/{total.mes_original[0]}" if total.mes_original else "—"
         alertas.append(Alerta(
             tipo=TIPO_NE_SIMEC_DIFERE_TESOURO, gravidade="alta",
             documento=f"{v.chave_ted}|{v.chave_empenho}", chave_ted=v.chave_ted,
             descricao=(
-                f"NE {v.numero_ne} no TED {v.chave_ted}: valor no SIMEC ({_moeda(v.valor_ne)}) difere do "
-                f"empenhado acumulado no Tesouro Gerencial ({_moeda(total.empenhado)}) em "
-                f"{_moeda(v.valor_ne - total.empenhado)}. Possíveis causas: NE só em parte vinculada a "
-                "este TED, reforço ou anulação não refletidos no SIMEC, ou extrações de datas "
-                "diferentes — não decidido automaticamente."
+                f"NE {v.numero_ne} no TED {v.chave_ted}: o valor no SIMEC ({_moeda(v.valor_ne)}) não bate nem "
+                f"com o valor original no Tesouro Gerencial ({_moeda(total.original)}, primeiro empenho em "
+                f"{mes}) nem com o líquido atual ({_moeda(total.empenhado)}, após reforços e anulações). "
+                f"Diferença para o original: {_moeda(v.valor_ne - total.original)}. Possíveis causas: valor "
+                "digitado errado no SIMEC, NE de outro processo ou extrações de datas diferentes — não "
+                "decidido automaticamente."
             ),
         ))
     return alertas
@@ -739,14 +754,36 @@ def _carregar_execucao_tg(conn: sqlite3.Connection) -> tuple[list[VinculoSimec],
         ).fetchall()
     ]
     somas: dict[str, list[Decimal]] = {}
-    for numero_ne, empenhado, liquidado, pago in conn.execute(
-        "SELECT numero_completo_ne, empenhado, liquidado, pago FROM execucao_tg"
+    primeiro: dict[str, tuple[int, int, Decimal]] = {}
+    ano_inicial_da_base: int | None = None
+    for numero_ne, empenhado, liquidado, pago, ano, mes in conn.execute(
+        "SELECT numero_completo_ne, empenhado, liquidado, pago, ano_lancamento, mes_lancamento "
+        "FROM execucao_tg ORDER BY ano_lancamento, mes_lancamento"
     ).fetchall():
+        ano_inicial_da_base = ano if ano_inicial_da_base is None else min(ano_inicial_da_base, ano)
         acumulado = somas.setdefault(numero_ne, [Decimal("0"), Decimal("0"), Decimal("0")])
         for i, valor in enumerate((empenhado, liquidado, pago)):
             if valor is not None:
                 acumulado[i] += texto_para_valor(valor)
-    totais = {ne: TotalTesouroNE(ne, *valores) for ne, valores in somas.items()}
+        if numero_ne not in primeiro and empenhado is not None and texto_para_valor(empenhado) != 0:
+            primeiro[numero_ne] = (ano, mes, texto_para_valor(empenhado))
+
+    totais: dict[str, TotalTesouroNE] = {}
+    for ne, valores in somas.items():
+        # O "original" só é observável se a NE é do primeiro ano da base em diante: NE mais antiga tem o
+        # empenho inicial fora da Execução Mensal, e o primeiro movimento visível seria um reforço.
+        try:
+            ano_da_ne = int(ne[:4])
+        except ValueError:
+            ano_da_ne = None
+        observavel = ano_da_ne is not None and ano_inicial_da_base is not None and ano_da_ne >= ano_inicial_da_base
+        if not observavel:
+            original, mes_original = None, None
+        elif ne in primeiro:
+            original, mes_original = primeiro[ne][2], primeiro[ne][:2]
+        else:
+            original, mes_original = Decimal("0"), None  # base cobre a NE e ela nunca teve empenho
+        totais[ne] = TotalTesouroNE(ne, *valores, original=original, mes_original=mes_original)
     return vinculos, totais
 
 

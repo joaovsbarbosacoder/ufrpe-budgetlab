@@ -41,8 +41,11 @@ def _vinculo(valor="1000.00", ted=TED_A, numero=NE):
     return VinculoSimec(ted, chave_empenho("153165", "15239", numero), numero, D(valor))
 
 
-def _total(emp="1000.00", liq="0", pago="0", numero=NE):
-    return TotalTesouroNE(numero, D(emp), D(liq), D(pago))
+def _total(emp="1000.00", liq="0", pago="0", numero=NE, original="=emp"):
+    """`original="=emp"`: o original observado é igual ao acumulado (NE sem reforço nem anulação)."""
+
+    valor_original = D(emp) if original == "=emp" else (None if original is None else D(original))
+    return TotalTesouroNE(numero, D(emp), D(liq), D(pago), original=valor_original, mes_original=(2026, 1))
 
 
 def _tipos(vinculos, totais):
@@ -69,11 +72,34 @@ class RegrasPurasTests(unittest.TestCase):
     def test_um_centavo_e_tolerado(self):
         self.assertEqual(_tipos([_vinculo()], [_total(liq="1000.01", pago="1000.02")]), [])
 
-    def test_valor_simec_diferente_do_empenhado_do_tesouro(self):
+    def test_simec_que_nao_bate_nem_com_o_original_nem_com_o_liquido_gera_alerta(self):
         alertas = gerar_alertas_execucao_tg([_vinculo("388300.00")], {NE: _total("154496.00")})
         self.assertEqual([a.tipo for a in alertas], [TIPO_NE_SIMEC_DIFERE_TESOURO])
         self.assertEqual(alertas[0].documento, f"{TED_A}|{CE}")
-        self.assertIn("só em parte vinculada", alertas[0].descricao)
+        self.assertIn("valor original", alertas[0].descricao)
+        self.assertIn("primeiro empenho em 01/2026", alertas[0].descricao)
+        self.assertIn("líquido atual", alertas[0].descricao)
+
+    def test_simec_igual_ao_original_com_reforco_posterior_no_tesouro_esta_explicado(self):
+        # Original 1.000, reforço de 500 depois: Tesouro líquido 1.500; o SIMEC guarda o original.
+        self.assertEqual(_tipos([_vinculo("1000.00")], [_total("1500.00", original="1000.00")]), [])
+
+    def test_simec_igual_ao_original_com_anulacao_posterior_no_tesouro_esta_explicado(self):
+        self.assertEqual(_tipos([_vinculo("1000.00")], [_total("244.10", original="1000.00")]), [])
+        self.assertEqual(_tipos([_vinculo("30000.00")], [_total("0.00", original="30000.00")]), [])  # anulada em 100%
+
+    def test_simec_ja_atualizado_igual_ao_liquido_atual_tambem_esta_explicado(self):
+        self.assertEqual(_tipos([_vinculo("244.10")], [_total("244.10", original="10000.00")]), [])
+
+    def test_um_centavo_de_diferenca_para_o_original_e_tolerado(self):
+        self.assertEqual(_tipos([_vinculo("1000.01")], [_total("1500.00", original="1000.00")]), [])
+        self.assertEqual(
+            _tipos([_vinculo("1000.02")], [_total("1500.00", original="1000.00")]), [TIPO_NE_SIMEC_DIFERE_TESOURO]
+        )
+
+    def test_original_nao_observavel_e_sem_base_e_nao_gera_alerta(self):
+        # NE anterior ao início da Execução Mensal: o primeiro movimento visível é um reforço.
+        self.assertEqual(_tipos([_vinculo("999.00")], [_total("1500.00", original=None)]), [])
 
     def test_ne_sem_dado_no_tesouro_e_sem_base_e_nao_gera_alerta(self):
         self.assertEqual(_tipos([_vinculo("999.00")], []), [])
@@ -90,7 +116,7 @@ class RegrasPurasTests(unittest.TestCase):
 
     def test_divergencia_simec_e_por_vinculo(self):
         vinculos = [_vinculo("500.00", ted=TED_A), _vinculo("1000.00", ted=TED_B)]
-        alertas = gerar_alertas_execucao_tg(vinculos, {NE: _total("1000.00")})
+        alertas = gerar_alertas_execucao_tg(vinculos, {NE: _total("1000.00", original="1000.00")})
         self.assertEqual([(a.tipo, a.chave_ted) for a in alertas], [(TIPO_NE_SIMEC_DIFERE_TESOURO, TED_A)])
 
 
@@ -149,6 +175,46 @@ class IntegracaoComBancoTests(unittest.TestCase):
         with mock.patch("src.teds_lotes.montar_execucao_tg", return_value=leitura):
             sincronizar_execucao_tg(self.conn, pd.DataFrame(), "sha-teste", "mensal.xlsx")
         self.assertEqual(self._abertos(), [TIPO_NE_PAGO_MAIOR_QUE_LIQUIDADO])  # 700 pagos > 600 liquidados
+
+    def _linhas_tg(self, numero_ne, movimentos):
+        self.conn.execute(
+            "INSERT OR IGNORE INTO import_batch (id, tipo_relatorio, nome_arquivo, hash_arquivo, data_importacao, status) "
+            "VALUES (99, 'teste', 'x', 'h', '2026-01-01', 'ok')"
+        )
+        for ano, mes, empenhado in movimentos:
+            self.conn.execute(
+                "INSERT INTO execucao_tg (numero_completo_ne, empenhado, liquidado, pago, ano_lancamento, "
+                "mes_lancamento, import_batch_id, linha_origem) VALUES (?, ?, '0', '0', ?, ?, 99, '{}')",
+                (numero_ne, empenhado, ano, mes),
+            )
+
+    def test_o_original_e_o_primeiro_movimento_e_o_reforco_posterior_nao_gera_alerta(self):
+        importar_doc_ne(self.conn, _df_ne("1.000,00"), "ne.xlsx", b"ne")  # SIMEC: original R$ 1.000
+        self._linhas_tg(NE, [(2026, 1, "1000.00"), (2026, 4, "500.00")])  # reforço em abril
+        self.conn.commit()
+        self.assertEqual(sincronizar_alertas_execucao_tg(self.conn), [])
+
+    def test_valor_do_simec_diferente_do_primeiro_movimento_e_do_liquido_gera_alerta(self):
+        importar_doc_ne(self.conn, _df_ne("2.000,00"), "ne.xlsx", b"ne")
+        self._linhas_tg(NE, [(2026, 1, "1000.00"), (2026, 4, "500.00")])
+        self.conn.commit()
+        (alerta,) = sincronizar_alertas_execucao_tg(self.conn)
+        self.assertEqual(alerta.tipo, TIPO_NE_SIMEC_DIFERE_TESOURO)
+        self.assertIn("primeiro empenho em 01/2026", alerta.descricao)
+
+    def test_movimentos_zerados_no_inicio_sao_ignorados_ao_achar_o_original(self):
+        importar_doc_ne(self.conn, _df_ne("1.000,00"), "ne.xlsx", b"ne")
+        self._linhas_tg(NE, [(2026, 1, "0.00"), (2026, 2, "1000.00"), (2026, 5, "-200.00")])
+        self.conn.commit()
+        self.assertEqual(sincronizar_alertas_execucao_tg(self.conn), [])
+
+    def test_ne_anterior_ao_inicio_da_base_nao_tem_original_observavel(self):
+        # A base começa em 2026 (há linhas de outra NE em 2026); esta NE é de 2025: sem base.
+        importar_doc_ne(self.conn, _df_ne("1.000,00").assign(**{"Número do Empenho": "2025NE000900"}), "ne.xlsx", b"ne")
+        self._linhas_tg("2025NE000900", [(2026, 3, "300.00")])  # só um reforço visível
+        self._linhas_tg("2026NE000001", [(2026, 1, "50.00")])
+        self.conn.commit()
+        self.assertEqual(sincronizar_alertas_execucao_tg(self.conn), [])
 
     def test_defasagem_de_lancamento_nao_gera_alerta(self):
         """Liquidado lançado num mês em que não há empenho: no acumulado, tudo bate."""

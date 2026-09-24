@@ -183,9 +183,9 @@ with col_detalhe:
                 "estornos com sinal).",
                 "ne_pago_maior_que_liquidado": "O pago acumulado de uma NE não pode superar o liquidado "
                 "acumulado no Tesouro Gerencial (tolerância R$ 0,01; soma de todos os meses, estornos com sinal).",
-                "ne_simec_difere_tesouro": "O valor da NE informado no SIMEC deveria coincidir com o empenhado "
-                "acumulado no Tesouro Gerencial (tolerância R$ 0,01). A diferença pode ser legítima — ex.: NE "
-                "só em parte vinculada ao TED — e pede conferência, não correção automática.",
+                "ne_simec_difere_tesouro": "O valor da NE no SIMEC é o valor ORIGINAL da NE. Ele deve coincidir com o "
+                "primeiro empenho da NE no Tesouro Gerencial (reforços e anulações posteriores são esperados) ou "
+                "com o líquido atual (tolerância R$ 0,01). Só alerta quando não bate com nenhum dos dois.",
             }.get(alvo.tipo, "—")
             st.caption(regra)
 
