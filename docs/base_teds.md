@@ -117,8 +117,8 @@ Mensal"** chama `src/teds_lotes.py::sincronizar_execucao_tg_atual`, que:
   (`src/liquidacao_competencia.py`, que traz Documento Hábil, Doc. Contábil e mês de
   referência). Por isso as colunas se chamam `ano_lancamento`/`mes_lancamento` (antes
   `ano_competencia`/`mes_competencia`) e o indicador "Liquidações com competência" da Visão
-  geral saiu (seria 100% por construção). Integrar a competência real ao TEDs é decisão
-  **futura**, fora deste escopo.
+  geral saiu (seria 100% por construção). Integrar a competência real ao TEDs **não é necessário**
+  (decisão do usuário em 24/09/2026): fica fora do escopo do módulo, e não é uma pendência.
 - **Saíram do schema** `documento_habil`, `documento_contabil` e `valor_competencia` (a
   Execução Mensal não os tem).
 - **Migração do banco existente** (`src/teds_schema.py::_migrar_execucao_tg_para_lancamento`,
@@ -362,8 +362,6 @@ válido. O mesmo arquivo pode ser reimportado depois (vira um lote novo). Na pá
 
 ## 10. O que NÃO foi aprovado ainda
 
-- Competência real no TEDs (Documento Hábil × mês de referência, via Liquidação por
-  Competência) — ver seção 6.
 - Alertas além dos dezoito da seção 8.
 - Edição do mapeamento de colunas na tela de Importações.
 - Campo de observação manual por TED.

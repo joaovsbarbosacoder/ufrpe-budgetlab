@@ -213,7 +213,8 @@ Importações, o botão "Sincronizar com a Execução Mensal" espelha essa extra
 (uma linha por NE × mês de **lançamento**, não de competência; lote auditável, idempotente pelo
 sha256 da extração, nunca apaga linhas). Antes da primeira sincronização, os indicadores de
 Liquidado/Pago e a conciliação contra o Tesouro Gerencial mostram "Sem dado" em vez de um valor
-inventado. Competência real (Documento Hábil × mês de referência) fica para uma fase futura.
+inventado. Competência real (Documento Hábil × mês de referência) não é necessária no módulo de TEDs
+(decisão de 24/09/2026).
 
 Um lote de importação pode ser revertido na página Importações: as linhas que ele criou saem dos
 totais e as que sobrescreveu voltam ao valor anterior (o gatilho de histórico de versões guarda a
