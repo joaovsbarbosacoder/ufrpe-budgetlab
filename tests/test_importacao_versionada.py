@@ -16,7 +16,9 @@ import unittest
 from pathlib import Path
 
 from src.importacao_execucao import Manifesto as ManifestoExecucao
+from src import importacao_dotacao, importacao_execucao, importacao_execucao_mensal
 from src.importacao_versionada import (
+    ArquivoHistoricoAusente,
     Manifesto,
     comparar,
     exige_confirmacao,
@@ -342,6 +344,71 @@ class ManifestosPorAnoTests(unittest.TestCase):
             resultado = manifestos_por_ano("teste_composicao", diretorio)
             self.assertEqual(resultado[2025].sha256, m2.sha256)
             self.assertEqual(resultado[2026].sha256, m1.sha256)
+
+
+class ArquivoHistoricoAusenteTests(unittest.TestCase):
+    """Ano histórico cujo arquivo de origem sumiu: erro explícito (nunca ano omitido em
+    silêncio) e `situacao_historico` somente leitura — nas três bases com composição por ano
+    (Execução Anual, Dotação Anual, Execução Mensal). Manifestos fictícios: nenhum xlsx real
+    é lido, porque a checagem de existência acontece antes de qualquer leitura."""
+
+    MODULOS = {
+        "execucao_anual": importacao_execucao,
+        "dotacao_anual": importacao_dotacao,
+        "execucao_mensal": importacao_execucao_mensal,
+    }
+
+    def _manifesto(self, base: str, sha: str, arquivo: str, anos: list[int]) -> Manifesto:
+        return Manifesto(
+            base=base, arquivo=arquivo, sha256=sha * 64,
+            data_extracao="2026-08-11T10:00:00", importado_em="2026-08-11T10:00:00",
+            anos=anos, totais={}, totais_por_ano={}, contagens={},
+        )
+
+    def test_carregar_atual_levanta_erro_nomeando_anos_e_arquivo(self) -> None:
+        for base, modulo in self.MODULOS.items():
+            with self.subTest(base=base), tempfile.TemporaryDirectory() as tmp:
+                raiz = Path(tmp)
+                raw, manifestos = raiz / "raw", raiz / "manifestos"
+                raw.mkdir()
+                self._manifesto(base, "a", "historico.xlsx", [2023, 2024]).salvar(manifestos)
+                (raw / "corrente.xlsx").write_bytes(b"nao e um xlsx")
+                m2 = self._manifesto(base, "b", "corrente.xlsx", [2026])
+                m2.importado_em = "2026-09-01T10:00:00"
+                m2.salvar(manifestos)
+
+                with self.assertRaises(ArquivoHistoricoAusente) as ctx:
+                    modulo.carregar_atual(raw, manifestos)
+                mensagem = str(ctx.exception)
+                self.assertIn("2023, 2024", mensagem)
+                self.assertIn("historico.xlsx", mensagem)
+                self.assertNotIn("corrente.xlsx", mensagem)
+                self.assertIsInstance(ctx.exception, FileNotFoundError)
+
+    def test_situacao_historico_marca_presenca_por_exercicio_e_nao_grava(self) -> None:
+        for base, modulo in self.MODULOS.items():
+            with self.subTest(base=base), tempfile.TemporaryDirectory() as tmp:
+                raiz = Path(tmp)
+                raw, manifestos = raiz / "raw", raiz / "manifestos"
+                raw.mkdir()
+                self._manifesto(base, "a", "historico.xlsx", [2024]).salvar(manifestos)
+                m2 = self._manifesto(base, "b", "corrente.xlsx", [2026])
+                m2.importado_em = "2026-09-01T10:00:00"
+                m2.salvar(manifestos)
+                (raw / "corrente.xlsx").write_bytes(b"x")
+                antes = sorted(p.name for p in manifestos.iterdir())
+
+                situacao = modulo.situacao_historico(raw, manifestos)
+
+                self.assertEqual(situacao["exercicio"].tolist(), [2024, 2026])
+                self.assertEqual(situacao["arquivo_presente"].tolist(), [False, True])
+                self.assertEqual(sorted(p.name for p in manifestos.iterdir()), antes)
+
+    def test_sem_manifesto_carregar_atual_devolve_none_e_situacao_vazia(self) -> None:
+        for base, modulo in self.MODULOS.items():
+            with self.subTest(base=base), tempfile.TemporaryDirectory() as tmp:
+                self.assertIsNone(modulo.carregar_atual(tmp, tmp))
+                self.assertTrue(modulo.situacao_historico(tmp, tmp).empty)
 
 
 if __name__ == "__main__":

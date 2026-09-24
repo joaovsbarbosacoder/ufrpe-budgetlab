@@ -162,6 +162,11 @@ Ainda em aberto:
 
 ## 8. Arquivos entregues
 
+Composição por exercício: `carregar_atual` lê, de `data/raw/`, o arquivo de cada manifesto que
+é dono de algum ano. Se um deles sumir (a pasta não é versionada no Git), levanta
+`ArquivoHistoricoAusente` nomeando ano(s) e arquivo; a página "Atualizar Planilhas" mostra a
+"Procedência por exercício" e destaca o arquivo ausente (`situacao_historico`, somente leitura).
+
 | Arquivo | Papel |
 |---|---|
 | `src/tesouro_execucao_mensal.py` | leitura + normalização (formato longo) + deduplicação + validação |

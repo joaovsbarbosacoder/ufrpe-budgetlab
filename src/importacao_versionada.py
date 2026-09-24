@@ -458,6 +458,67 @@ def manifestos_por_ano(
     return resultado
 
 
+class ArquivoHistoricoAusente(FileNotFoundError):
+    """O manifesto aponta para um arquivo de `data/raw/` que não existe mais."""
+
+
+def agrupar_anos_por_arquivo(
+    por_ano: dict[int, Manifesto],
+) -> tuple[dict[str, list[int]], dict[str, Manifesto]]:
+    """Agrupa os anos por `sha256` do manifesto dono — base de todo `carregar_atual`."""
+    anos_por_sha: dict[str, list[int]] = {}
+    manifesto_por_sha: dict[str, Manifesto] = {}
+    for ano, manifesto in por_ano.items():
+        anos_por_sha.setdefault(manifesto.sha256, []).append(ano)
+        manifesto_por_sha[manifesto.sha256] = manifesto
+    return anos_por_sha, manifesto_por_sha
+
+
+def exigir_arquivos_historico(
+    anos_por_sha: dict[str, list[int]],
+    manifesto_por_sha: dict[str, Manifesto],
+    diretorio_dados_brutos: str | Path,
+) -> None:
+    """Confere TODOS os arquivos antes de ler qualquer um: um ano histórico sem arquivo nunca
+    pode sumir em silêncio do painel — falha cedo, nomeando ano(s) e arquivo."""
+    diretorio_dados_brutos = Path(diretorio_dados_brutos)
+    ausentes = [
+        f"{', '.join(map(str, sorted(anos)))} → {manifesto_por_sha[sha].arquivo}"
+        for sha, anos in anos_por_sha.items()
+        if not (diretorio_dados_brutos / manifesto_por_sha[sha].arquivo).exists()
+    ]
+    if ausentes:
+        raise ArquivoHistoricoAusente(
+            f"Arquivo de origem ausente em {diretorio_dados_brutos} — exercício(s) sem dados: "
+            + "; ".join(ausentes)
+            + ". Restaure o arquivo (ele não é versionado no Git) ou reimporte esses exercícios."
+        )
+
+
+def situacao_historico(
+    base: str,
+    diretorio_dados_brutos: str | Path,
+    diretorio_manifestos: str | Path = DIRETORIO_MANIFESTOS_PADRAO,
+) -> pd.DataFrame:
+    """Uma linha por exercício: de qual extração vem (a mesma que `carregar_atual` usa) e se o
+    arquivo de origem existe. Somente leitura — não lê os xlsx nem grava nada."""
+    diretorio_dados_brutos = Path(diretorio_dados_brutos)
+    linhas = [
+        {
+            "exercicio": ano,
+            "data_extracao": manifesto.data_extracao,
+            "sha256_curto": manifesto.sha256[:8],
+            "arquivo": manifesto.arquivo,
+            "arquivo_presente": (diretorio_dados_brutos / manifesto.arquivo).exists(),
+        }
+        for ano, manifesto in sorted(manifestos_por_ano(base, diretorio_manifestos).items())
+    ]
+    return pd.DataFrame(
+        linhas,
+        columns=["exercicio", "data_extracao", "sha256_curto", "arquivo", "arquivo_presente"],
+    )
+
+
 def historico_como_tabela(
     base: str,
     medidas: Sequence[str],

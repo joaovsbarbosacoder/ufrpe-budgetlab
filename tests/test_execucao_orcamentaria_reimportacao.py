@@ -37,7 +37,7 @@ from pathlib import Path
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
-from src.importacao_execucao import Manifesto
+from src.importacao_execucao import Manifesto, situacao_historico
 from tests._reimportacao_isolamento import IsolamentoReimportacaoMixin
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -104,6 +104,27 @@ class ReimportacaoPageTests(IsolamentoReimportacaoMixin, unittest.TestCase):
         uploader = next(u for u in app.file_uploader if u.label == "Nova extração (.xlsx)")
         uploader.set_value((filename, content, XLSX_MIME))
         app.run(timeout=60)
+
+    def test_procedencia_por_exercicio_lista_anos_e_sinaliza_arquivo_presente(self) -> None:
+        app = self._open_page()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual([e.value for e in app.error if "Arquivo de origem ausente" in e.value], [])
+        self.assertIn("Procedência por exercício", [x.label for x in app.expander])
+
+    def test_procedencia_destaca_arquivo_ausente_sem_quebrar_a_pagina(self) -> None:
+        (self.tmp_raw / CAMINHO_FIXTURE.name).unlink()
+        app = self._open_page()
+        self.assertEqual(len(app.exception), 0)
+        avisos = [e.value for e in app.error if "Arquivo de origem ausente" in e.value]
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("2023, 2024, 2025, 2026", avisos[0])
+
+    def test_situacao_historico_e_somente_leitura(self) -> None:
+        antes = self.manifesto_atual_path.read_bytes()
+        situacao = situacao_historico(self.tmp_raw, self.tmp_manifestos)
+        self.assertEqual(situacao["exercicio"].tolist(), [2023, 2024, 2025, 2026])
+        self.assertTrue(situacao["arquivo_presente"].all())
+        self.assertEqual(self.manifesto_atual_path.read_bytes(), antes)
 
     def test_retroactive_change_shows_gate_and_blocks_commit_by_default(self) -> None:
         app = self._open_page()

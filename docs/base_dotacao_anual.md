@@ -86,8 +86,11 @@ Consequências obrigatórias:
 Mesma política da Execução Anual, sobre o núcleo genérico compartilhado
 (`src/importacao_versionada.py`):
 
-- **Substituição total** — a extração mais recente é a verdade completa. Não há merge de
-  exercícios entre arquivos.
+- **Composição por exercício** — cada extração é a verdade completa *para os exercícios que
+  traz*; um exercício ausente da extração nova mantém o último dado importado (`carregar_atual`).
+  Sem merge linha a linha dentro de um mesmo exercício. Se o xlsx de um exercício sumir de
+  `data/raw/` (pasta fora do Git), `carregar_atual` levanta `ArquivoHistoricoAusente` nomeando
+  ano(s) e arquivo, e "Atualizar Planilhas" mostra a "Procedência por exercício".
 - **Data de referência** — vem da data de modificação do arquivo (`mtime`) no momento em que ele
   é gravado em disco. Para uploads pela interface, isso é o momento do upload (o navegador não
   preserva o `mtime` do arquivo original) — mesma limitação já documentada para a Execução Anual.

@@ -17,6 +17,10 @@ import pandas as pd
 
 from src.execucao_anual import MEDIDAS, ler_execucao_anual, reconciliar, validar
 from src.importacao_versionada import (
+    ArquivoHistoricoAusente,
+    agrupar_anos_por_arquivo,
+    exigir_arquivos_historico,
+    situacao_historico as _situacao_historico_generico,
     DIRETORIO_MANIFESTOS_PADRAO,
     Delta,
     Manifesto as _ManifestoGenerico,
@@ -45,6 +49,7 @@ __all__ = [
     "DIRETORIO_MANIFESTOS_PADRAO",
     "NOME_PONTEIRO",
     "TOLERANCIA",
+    "ArquivoHistoricoAusente",
     "Manifesto",
     "Delta",
     "MotivosGate",
@@ -56,6 +61,7 @@ __all__ = [
     "carregar_atual",
     "historico",
     "historico_como_tabela",
+    "situacao_historico",
 ]
 
 
@@ -119,13 +125,11 @@ def carregar_atual(
     if not por_ano:
         return None
 
-    anos_por_sha: dict[str, list[int]] = {}
-    manifesto_por_sha: dict[str, Manifesto] = {}
-    for ano, manifesto in por_ano.items():
-        anos_por_sha.setdefault(manifesto.sha256, []).append(ano)
-        manifesto_por_sha[manifesto.sha256] = manifesto
+    anos_por_sha, manifesto_por_sha = agrupar_anos_por_arquivo(por_ano)
 
     diretorio_dados_brutos = Path(diretorio_dados_brutos)
+    exigir_arquivos_historico(anos_por_sha, manifesto_por_sha, diretorio_dados_brutos)
+
     partes = []
     for sha, anos in sorted(anos_por_sha.items(), key=lambda item: min(item[1])):
         manifesto = manifesto_por_sha[sha]
@@ -133,6 +137,14 @@ def carregar_atual(
         partes.append(df[df["ano"].isin(anos)])
 
     return partes[0] if len(partes) == 1 else pd.concat(partes, ignore_index=True)
+
+
+def situacao_historico(
+    diretorio_dados_brutos: str | Path = DIRETORIO_DADOS_BRUTOS_PADRAO,
+    diretorio_manifestos: str | Path = DIRETORIO_MANIFESTOS_PADRAO,
+) -> pd.DataFrame:
+    """Procedência por exercício (ver `importacao_versionada.situacao_historico`)."""
+    return _situacao_historico_generico(BASE, diretorio_dados_brutos, diretorio_manifestos)
 
 
 def historico(diretorio_manifestos: str | Path = DIRETORIO_MANIFESTOS_PADRAO) -> list[Manifesto]:

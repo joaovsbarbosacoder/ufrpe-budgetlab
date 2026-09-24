@@ -35,8 +35,11 @@ import streamlit as st
 
 from src.atualizar_planilhas import ESPECIFICACOES, EspecificacaoBase, substituir_planilha
 from src.importacao_dotacao import Manifesto as ManifestoDotacao
+from src.importacao_dotacao import situacao_historico as situacao_historico_dotacao
 from src.importacao_execucao import Manifesto as ManifestoExecucao
+from src.importacao_execucao import situacao_historico as situacao_historico_execucao
 from src.importacao_execucao_mensal import Manifesto as ManifestoExecucaoMensal
+from src.importacao_execucao_mensal import situacao_historico as situacao_historico_execucao_mensal
 from src.reimportacao_especificacoes import (
     ESPECIFICACAO_DOTACAO_ANUAL,
     ESPECIFICACAO_EXECUCAO_ANUAL,
@@ -65,16 +68,66 @@ def _info_manifesto_atual(manifesto) -> str:
     return f"extração atual: `{manifesto.arquivo}` · data da extração: {data}"
 
 
-def _render_card_versionado(nome: str, manifesto_atual, spec) -> None:
+def _render_card_versionado(nome: str, manifesto_atual, spec, procedencia=None) -> None:
     with st.container(border=True):
         st.subheader(nome)
         st.caption(_info_manifesto_atual(manifesto_atual))
+        if procedencia is not None:
+            procedencia(spec)
         render_reimportacao(spec)
 
 
-_render_card_versionado("Execução Orçamentária (Execução Anual)", ManifestoExecucao.atual(), ESPECIFICACAO_EXECUCAO_ANUAL)
-_render_card_versionado("Dotação Orçamentária (Dotação Anual)", ManifestoDotacao.atual(), ESPECIFICACAO_DOTACAO_ANUAL)
-_render_card_versionado("Execução Mensal", ManifestoExecucaoMensal.atual(), ESPECIFICACAO_EXECUCAO_MENSAL)
+def _render_procedencia(situacao_historico, nome_base: str, spec) -> None:
+    situacao = situacao_historico(spec.diretorio_dados_brutos, spec.diretorio_manifestos)
+    if situacao.empty:
+        return
+    ausentes = situacao[~situacao["arquivo_presente"]]
+    if not ausentes.empty:
+        st.error(
+            "Arquivo de origem ausente em data/raw/ — exercício(s) "
+            + ", ".join(map(str, ausentes["exercicio"]))
+            + f": as páginas que leem a {nome_base} vão falhar até o arquivo ser restaurado "
+            "ou esses exercícios serem reimportados."
+        )
+    with st.expander("Procedência por exercício"):
+        tabela = situacao.copy()
+        tabela["data_extracao"] = tabela["data_extracao"].map(
+            lambda valor: datetime.fromisoformat(valor).strftime("%d/%m/%Y")
+        )
+        tabela["arquivo_presente"] = tabela["arquivo_presente"].map({True: "sim", False: "AUSENTE"})
+        st.dataframe(
+            tabela.rename(
+                columns={
+                    "exercicio": "Exercício",
+                    "data_extracao": "Data da extração",
+                    "sha256_curto": "Hash",
+                    "arquivo": "Arquivo",
+                    "arquivo_presente": "Arquivo presente",
+                }
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+
+
+_render_card_versionado(
+    "Execução Orçamentária (Execução Anual)",
+    ManifestoExecucao.atual(),
+    ESPECIFICACAO_EXECUCAO_ANUAL,
+    procedencia=lambda spec: _render_procedencia(situacao_historico_execucao, "Execução Anual", spec),
+)
+_render_card_versionado(
+    "Dotação Orçamentária (Dotação Anual)",
+    ManifestoDotacao.atual(),
+    ESPECIFICACAO_DOTACAO_ANUAL,
+    procedencia=lambda spec: _render_procedencia(situacao_historico_dotacao, "Dotação Anual", spec),
+)
+_render_card_versionado(
+    "Execução Mensal",
+    ManifestoExecucaoMensal.atual(),
+    ESPECIFICACAO_EXECUCAO_MENSAL,
+    procedencia=lambda spec: _render_procedencia(situacao_historico_execucao_mensal, "Execução Mensal", spec),
+)
 
 st.subheader("Planilhas de trabalho")
 st.caption(

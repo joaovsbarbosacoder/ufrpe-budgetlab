@@ -33,6 +33,7 @@ from src.execucao_anual import (
 )
 from src.importacao_execucao import (
     Manifesto,
+    ArquivoHistoricoAusente,
     carregar_atual,
     comparar,
     gerar_manifesto,
@@ -378,6 +379,33 @@ class TestCarregarAtualComposicaoPorAno(unittest.TestCase):
             # primeira por inteiro, não somou.
             linhas_2024_originais = len(_dados_por_ano(CAMINHO_BASE, {2024}))
             self.assertEqual(int((composto["ano"] == 2024).sum()), linhas_2024_originais)
+
+
+@unittest.skipUnless(CAMINHO_BASE.exists(), f"Base ausente em {CAMINHO_BASE}")
+class TestCarregarAtualArquivoAusente(unittest.TestCase):
+    """Ano histórico cujo arquivo de origem sumiu de `data/raw/` gera erro explícito — nunca
+    um painel que omite o ano em silêncio."""
+
+    def test_arquivo_de_ano_historico_ausente_levanta_erro_nomeando_ano_e_arquivo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fechados = _variante_por_anos(CAMINHO_BASE, tmp_path / "ate_2025.xlsx", {2023, 2024, 2025})
+            importar(fechados, tmp_path)
+            importar(_variante_por_anos(CAMINHO_BASE, tmp_path / "2026.xlsx", {2026}), tmp_path)
+            fechados.unlink()
+
+            with self.assertRaises(ArquivoHistoricoAusente) as ctx:
+                carregar_atual(tmp_path, tmp_path)
+            mensagem = str(ctx.exception)
+            self.assertIn("2023, 2024, 2025", mensagem)
+            self.assertIn("ate_2025.xlsx", mensagem)
+            self.assertNotIn("2026.xlsx", mensagem)
+
+    def test_arquivos_integros_nao_levantam_erro(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            importar(_variante_por_anos(CAMINHO_BASE, tmp_path / "2025.xlsx", {2025}), tmp_path)
+            self.assertEqual(carregar_atual(tmp_path, tmp_path)["ano"].unique().tolist(), [2025])
 
 
 class TestDelta(unittest.TestCase):

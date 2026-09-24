@@ -105,8 +105,18 @@ Consequências obrigatórias:
 
 A base é substituída por reextrações periódicas. Política adotada:
 
-- **Substituição total** — a extração mais recente é a verdade completa. Não há merge de
-  exercícios entre arquivos; o DataFrame lido substitui integralmente o anterior.
+- **Composição por exercício** — cada extração é a verdade completa *para os exercícios que
+  traz*. Um exercício ausente da extração nova não some: continua com o último dado importado
+  para ele (`carregar_atual` / `manifestos_por_ano`). Basta extrair só o exercício corrente;
+  exercícios fechados ficam como histórico. Dentro de um mesmo exercício não há merge linha a
+  linha: se o ano vem na extração nova, ela substitui esse ano por inteiro.
+- **Dependência do arquivo de origem** — o manifesto guarda só nome, hash e totais; os dados
+  históricos continuam sendo lidos do xlsx em `data/raw/` (pasta ignorada pelo Git). Se o
+  arquivo de um ano sumir, `carregar_atual` levanta `ArquivoHistoricoAusente` nomeando o(s)
+  ano(s) e o arquivo. **Mantenha cópia de segurança** dos arquivos que sustentam anos fechados.
+  A página **Atualizar Planilhas** (card da Execução Anual) mostra a "Procedência por
+  exercício" (`situacao_historico`: extração, hash e se o arquivo está presente) e destaca em
+  vermelho qualquer arquivo ausente — somente leitura, nunca grava manifesto.
 - **Data de referência** — vem da data de modificação do arquivo (`mtime`), automaticamente.
 - **Identidade da extração** — hash SHA-256 do arquivo. Reimportar o mesmo arquivo é
   idempotente: nada é registrado de novo.
