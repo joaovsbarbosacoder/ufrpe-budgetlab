@@ -168,6 +168,9 @@ with col_detalhe:
                 "ted_sem_movimentacao": "TED em execução deveria ter NC ou PF emitida dentro do prazo (padrão 180 "
                 "dias); o prazo é uma escolha inicial, não uma regra do briefing, e a NE não conta por não ter "
                 "data no banco.",
+                "importacao_rodape_divergente": "O total impresso no rodapé do relatório do SIMEC deve coincidir "
+                "com a soma das linhas importadas (tolerância R$ 0,01). No DOC NC e no DOC PF o rodapé é a soma "
+                "ABSOLUTA (positivas + negativas), por isso a comparação usa a soma bruta e não a líquida.",
                 "ne_liquidado_maior_que_empenhado": "O liquidado acumulado de uma NE não pode superar o "
                 "empenhado acumulado no Tesouro Gerencial (tolerância R$ 0,01; soma de todos os meses, "
                 "estornos com sinal).",

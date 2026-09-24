@@ -29,10 +29,9 @@ CAMINHO_BANCO_PADRAO = Path("data/teds/teds.db")
 #: original de `import_batch` — migradas via `ALTER TABLE` em `conectar()` para não perder o
 #: histórico já gravado em `data/teds/teds.db` (lotes antigos ficam com essas colunas NULL,
 #: nunca com um total inventado). Somas ficam em TEXT/Decimal, nunca REAL (ver
-#: `src/teds_normalizacao.py`). "Total do rodapé" e a diferença contra ele NÃO entraram nesta
-#: rodada: as 4 extrações reais revisadas (ver docstring de `src/teds_importacao_simec.py`)
-#: não tiveram uma linha de rodapé com total confirmada coluna a coluna — capturar isso exigiria
-#: presumir um formato ainda não visto, o que o projeto evita fazer (ver AGENTS.md).
+#: `src/teds_normalizacao.py`). O total do rodapé e a diferença contra a soma calculada
+#: (`total_rodape`, `diferenca_rodape`, `detalhe_rodape`) entraram depois, quando as 4 extrações
+#: reais de 17/09/2026 confirmaram o formato do rodapé; lotes anteriores ficam com NULL.
 _COLUNAS_CONTROLE_IMPORT_BATCH: dict[str, str] = {
     "quantidade_linhas_lidas": "INTEGER",
     "quantidade_rejeitadas": "INTEGER",
@@ -41,6 +40,12 @@ _COLUNAS_CONTROLE_IMPORT_BATCH: dict[str, str] = {
     "soma_positiva": "TEXT",
     "soma_negativa": "TEXT",
     "soma_liquida": "TEXT",
+    # Rodapé do relatório (regra 6.2): `total_rodape` só nos relatórios de um único valor (NC, NE,
+    # PF); `diferenca_rodape` = maior diferença absoluta (rodapé − calculado); `detalhe_rodape` = JSON
+    # com rodapé, calculado e diferença de cada campo. NULL = o arquivo não trazia rodapé.
+    "total_rodape": "TEXT",
+    "diferenca_rodape": "TEXT",
+    "detalhe_rodape": "TEXT",
     # Reversão de lote (`src/teds_reversao.py`). `versionado` = 1 só nos lotes gravados quando
     # o histórico de versões já existia: um lote anterior a isso pode ter sobrescrito linhas sem
     # deixar o valor antigo guardado, então NÃO pode ser revertido com segurança.

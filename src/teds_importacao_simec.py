@@ -83,6 +83,43 @@ class LinhaRejeitada:
 class ResultadoLeitura:
     registros: list[dict[str, Any]] = field(default_factory=list)
     rejeitadas: list[LinhaRejeitada] = field(default_factory=list)
+    #: total(is) impresso(s) no rodapé do relatório, por campo de valor; `None` se não há rodapé
+    rodape: dict[str, Decimal] | None = None
+
+
+def _celula_vazia(valor: Any) -> bool:
+    return bool(pd.isna(valor)) or str(valor).strip() == ""
+
+
+def _capturar_rodape(
+    df: pd.DataFrame, colunas: dict[str, str], campos_valor: tuple[str, ...]
+) -> dict[str, Decimal] | None:
+    """Total impresso pelo SIMEC na ÚLTIMA linha da planilha.
+
+    Formato confirmado nas 4 extrações reais (17/09/2026): a última linha vem sem nenhum
+    identificador (TED, SIAFI, número do documento, datas...) e só com o(s) valor(es) somado(s).
+    Só a última linha é examinada, e só é rodapé se TODAS as colunas fora dos campos de valor
+    estiverem vazias — uma linha de dado nunca é tomada por rodapé. `None` se não há rodapé.
+
+    Atenção: no DOC NC e no DOC PF o total do rodapé é a soma ABSOLUTA (positivas + negativas),
+    não o líquido — quem compara deve usar a soma bruta."""
+
+    if df.empty:
+        return None
+    colunas_valor = {colunas[c] for c in campos_valor if c in colunas}
+    if not colunas_valor:
+        return None
+    ultima = df.iloc[-1]
+    if any(not _celula_vazia(ultima[c]) for c in df.columns if c not in colunas_valor):
+        return None
+    rodape: dict[str, Decimal] = {}
+    for campo in campos_valor:
+        if campo in colunas and not _celula_vazia(ultima[colunas[campo]]):
+            try:
+                rodape[campo] = parse_valor_brl(ultima[colunas[campo]])
+            except ValueError:
+                return None
+    return rodape or None
 
 
 # --------------------------------------------------------------------------------------
@@ -125,6 +162,7 @@ def ler_execucao_anual_simec(df: pd.DataFrame) -> ResultadoLeitura:
     colunas = _mapear_colunas(df.columns, _MAPA_EXECUCAO_ANUAL)
     _validar_colunas_obrigatorias(df.columns, colunas, _CAMPOS_OBRIGATORIOS_EXECUCAO_ANUAL)
     resultado = ResultadoLeitura()
+    resultado.rodape = _capturar_rodape(df, colunas, _CAMPOS_VALOR_EXECUCAO_ANUAL)
 
     for indice, linha in df.iterrows():
         origem = _linha_origem(linha)
@@ -197,6 +235,7 @@ def ler_doc_ne_simec(df: pd.DataFrame) -> ResultadoLeitura:
     colunas = _mapear_colunas(df.columns, _MAPA_DOC_NE)
     _validar_colunas_obrigatorias(df.columns, colunas, _CAMPOS_OBRIGATORIOS_DOC_NE)
     resultado = ResultadoLeitura()
+    resultado.rodape = _capturar_rodape(df, colunas, ("valor_ne",))
 
     for indice, linha in df.iterrows():
         origem = _linha_origem(linha)
@@ -285,6 +324,7 @@ class ResultadoLeituraNC:
     registros: list[dict[str, Any]] = field(default_factory=list)
     documentos: list[dict[str, Any]] = field(default_factory=list)
     rejeitadas: list[LinhaRejeitada] = field(default_factory=list)
+    rodape: dict[str, Decimal] | None = None
 
 
 def ler_doc_nc_simec(df: pd.DataFrame, identificador_lote: str = "") -> ResultadoLeituraNC:
@@ -303,6 +343,7 @@ def ler_doc_nc_simec(df: pd.DataFrame, identificador_lote: str = "") -> Resultad
     colunas = _mapear_colunas(df.columns, _MAPA_DOC_NC)
     _validar_colunas_obrigatorias(df.columns, colunas, _CAMPOS_OBRIGATORIOS_DOC_NC)
     resultado = ResultadoLeituraNC()
+    resultado.rodape = _capturar_rodape(df, colunas, ("valor_nc",))
     agregados: dict[str, dict[str, Any]] = {}
 
     for indice, linha in df.iterrows():
@@ -417,6 +458,7 @@ def ler_doc_pf_simec(df: pd.DataFrame) -> ResultadoLeitura:
     colunas = _mapear_colunas(df.columns, _MAPA_DOC_PF)
     _validar_colunas_obrigatorias(df.columns, colunas, _CAMPOS_OBRIGATORIOS_DOC_PF)
     resultado = ResultadoLeitura()
+    resultado.rodape = _capturar_rodape(df, colunas, ("valor_pf",))
 
     for indice, linha in df.iterrows():
         origem = _linha_origem(linha)

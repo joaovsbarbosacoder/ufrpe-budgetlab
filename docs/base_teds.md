@@ -76,9 +76,12 @@ em boa parte das linhas reais (ver seção 5).
 - **Sufixo monetário `(R$)`**: algumas colunas de valor da extração real trazem esse sufixo
   (ex.: "Total Descentralizado (R$)"); `normalizar_nome_coluna` remove o sufixo ao casar
   nomes de coluna, então a maioria dos campos de valor não precisou de alias explícito.
-- **"Total do rodapé"**: as 4 extrações reais revisadas não tiveram uma linha de rodapé com
-  total confirmado coluna a coluna. Capturar isso exigiria presumir um formato ainda não
-  visto — não implementado nesta rodada (ver AGENTS.md).
+- **Rodapé com total** (confirmado em 24/09/2026 com as 4 extrações reais de 17/09/2026): a
+  ÚLTIMA linha da planilha vem sem nenhum identificador (TED, SIAFI, número do documento, datas) e só
+  com o(s) total(is) na(s) coluna(s) de valor. Execução Anual: os 6 totais; DOC NC, DOC NE e DOC PF:
+  o valor. Nos quatro os totais batem ao centavo com a soma das linhas. **No DOC NC e no DOC PF o
+  rodapé é a soma ABSOLUTA (positivas + negativas), não o líquido** — na NC real: positivas
+  R$ 57.619.026,14 + negativas R$ 5.219.366,74 = R$ 62.838.392,88 = rodapé. Ver a seção 6.1.
 
 ## 6. Fonte do Tesouro Gerencial: é a Execução Mensal (implementado em 23/09/2026)
 
@@ -132,6 +135,24 @@ batem ao centavo com os totais do manifesto (R$ 2.496.385.910,24 / 2.226.639.772
 Antes de clicar em "Sincronizar", os indicadores de Liquidado/Pago e a conciliação SIMEC ×
 Tesouro Gerencial mostram "Sem dado (Tesouro Gerencial)" em vez de um valor inventado.
 
+### 6.1 Total do rodapé como total de controle
+
+`_capturar_rodape` (`src/teds_importacao_simec.py`) lê o rodapé só na última linha e só se todas as
+colunas fora dos campos de valor estiverem vazias: uma linha de dado nunca é tomada por rodapé.
+`comparar_rodape` (`src/teds_lotes.py`) compara cada total com a soma das linhas ACEITAS — no
+DOC NC e no DOC PF, a soma **bruta** (`valor_original`), nunca a líquida. O resultado vai para o
+lote (`import_batch.total_rodape` só nos relatórios de valor único, `diferenca_rodape` = maior
+diferença absoluta, `detalhe_rodape` = JSON por campo; NULL = arquivo sem rodapé). Diferença acima
+de R$ 0,01 gera o alerta `importacao_rodape_divergente` (gravidade "alta", exibida como "Crítico"),
+um por lote e sem duplicar; **o lote continua importado** — o alerta só sinaliza, quem decide é uma
+pessoa. A página Importações mostra o resultado já na etapa de validação, antes de gravar. Lotes
+anteriores a esta regra ficam com NULL. Validação com os 4 arquivos reais: diferença R$ 0,00 em todos.
+
+**Achado colateral:** a Execução Anual real traz o TED 16811, "Termo em cadastramento", **sem SIAFI**
+e com todos os valores zerados. Ele é rejeitado na leitura com o motivo "sem TED/SIAFI (possível linha
+de rodapé)" — mensagem enganosa, porque é um TED real. Nenhum valor financeiro se perde (todos zero),
+mas o briefing (seção 7) pede alerta para "TED sem SIAFI"; hoje isso não existe.
+
 ## 7. Idempotência da importação
 
 Duas camadas (`src/teds_lotes.py`):
@@ -150,7 +171,7 @@ lote que gravou/atualizou aquele registro pela última vez, e o histórico de lo
 
 ## 8. Alertas implementados
 
-Catorze tipos (`src/teds_alertas.py`), cada um com funções puras testáveis sem banco e uma
+Quinze tipos (`src/teds_alertas.py`), cada um com funções puras testáveis sem banco e uma
 `sincronizar_alertas_*` que lê do SQLite e grava alertas novos sem duplicar um alerta já
 aberto para o mesmo documento — e sem nunca fechar um alerta sozinha (resolução é sempre ação
 humana, registrada na Central de Alertas):
@@ -313,7 +334,7 @@ válido. O mesmo arquivo pode ser reimportado depois (vira um lote novo). Na pá
 
 - Competência real no TEDs (Documento Hábil × mês de referência, via Liquidação por
   Competência) — ver seção 6.
-- Alertas além dos catorze da seção 8.
+- Alertas além dos quinze da seção 8.
 - Edição do mapeamento de colunas na tela de Importações.
 - Campo de observação manual por TED.
 - Persistência dos parâmetros de Configurações além da sessão do navegador.

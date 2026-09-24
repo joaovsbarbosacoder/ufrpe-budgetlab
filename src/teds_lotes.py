@@ -36,6 +36,7 @@ from src.importacao_execucao_mensal import (
     carregar_atual as carregar_execucao_mensal_atual,
 )
 from src.teds_alertas import (
+    sincronizar_alertas_rodape,
     sincronizar_alertas_execucao_tg,
     sincronizar_alertas_cadastrais,
     sincronizar_alertas_conciliacao_simec,
@@ -95,8 +96,8 @@ class ResumoControle:
     arbitrariamente qual coluna vale como "o" valor da linha, o que não está no briefing nem
     foi confirmado contra as extrações reais revisadas.
 
-    "Total do rodapé" e a diferença contra ele (também parte da regra 6.2) não estão aqui —
-    ver comentário em `src/teds_schema.py::_COLUNAS_CONTROLE_IMPORT_BATCH`.
+    O total do rodapé e a diferença contra ele (também parte da regra 6.2) não ficam aqui: são
+    calculados por `comparar_rodape` e gravados por `_gravar_rodape` (colunas do lote).
     """
 
     quantidade_linhas_lidas: int
@@ -141,6 +142,79 @@ def _resumo_controle(
 
     return ResumoControle(
         quantidade_linhas_lidas, len(rejeitadas), quantidade_com_aviso, bruta, positiva, negativa, liquida
+    )
+
+
+@dataclass(frozen=True)
+class ComparacaoRodape:
+    """Um campo de valor: total impresso no rodapé × soma calculada das linhas aceitas."""
+
+    campo: str
+    rodape: Decimal
+    calculado: Decimal
+
+    @property
+    def diferenca(self) -> Decimal:
+        return self.rodape - self.calculado
+
+
+#: relatório -> {campo do rodapé: campo do registro somado}. DOC NC e DOC PF comparam a soma
+#: BRUTA (`valor_original`, sempre positivo), nunca a líquida: o rodapé do SIMEC é absoluto —
+#: confirmado nas extrações reais de 17/09/2026 (NC: positivas + negativas = rodapé).
+_CAMPOS_RODAPE_POR_RELATORIO: dict[str, dict[str, str]] = {
+    TIPO_EXECUCAO_ANUAL: {
+        "total_nc_descentralizacao": "total_nc_descentralizacao",
+        "total_nc_devolucao": "total_nc_devolucao",
+        "total_descentralizado": "total_descentralizado",
+        "total_pf_repasse": "total_pf_repasse",
+        "total_pf_devolucao": "total_pf_devolucao",
+        "total_repassado": "total_repassado",
+    },
+    TIPO_DOC_NE: {"valor_ne": "valor_ne"},
+    TIPO_DOC_NC: {"valor_nc": "valor_original"},
+    TIPO_DOC_PF: {"valor_pf": "valor_original"},
+}
+
+
+def comparar_rodape(tipo_relatorio: str, leitura: Any) -> list[ComparacaoRodape] | None:
+    """Compara o rodapé lido com a soma das linhas aceitas. `None` = o arquivo não trazia rodapé
+    (não é erro: só não há o que conferir). Pura — a página de Importações a usa na validação,
+    antes de gravar, e os importadores a usam ao registrar o lote."""
+
+    rodape = getattr(leitura, "rodape", None)
+    campos = _CAMPOS_RODAPE_POR_RELATORIO.get(tipo_relatorio)
+    if not rodape or campos is None:
+        return None
+    return [
+        ComparacaoRodape(
+            campo,
+            valor_rodape,
+            sum((r[campos[campo]] for r in leitura.registros), start=Decimal("0")),
+        )
+        for campo, valor_rodape in rodape.items()
+        if campo in campos
+    ] or None
+
+
+def _gravar_rodape(conn: sqlite3.Connection, batch_id: int, comparacoes: list[ComparacaoRodape] | None) -> None:
+    """Guarda no lote o total do rodapé e a diferença (regra 6.2). Sem rodapé, fica NULL."""
+
+    if not comparacoes:
+        return
+    maior = max((abs(c.diferenca) for c in comparacoes), default=Decimal("0"))
+    total = valor_para_texto(comparacoes[0].rodape) if len(comparacoes) == 1 else None
+    detalhe = [
+        {
+            "campo": c.campo,
+            "rodape": valor_para_texto(c.rodape),
+            "calculado": valor_para_texto(c.calculado),
+            "diferenca": valor_para_texto(c.diferenca),
+        }
+        for c in comparacoes
+    ]
+    conn.execute(
+        "UPDATE import_batch SET total_rodape = ?, diferenca_rodape = ?, detalhe_rodape = ? WHERE id = ?",
+        (total, valor_para_texto(maior), json.dumps(detalhe, ensure_ascii=False), batch_id),
     )
 
 
@@ -225,6 +299,7 @@ def importar_execucao_anual(
     batch_id = _registrar_lote(
         conn, TIPO_EXECUCAO_ANUAL, nome_arquivo, hash_arquivo, len(leitura.registros), resumo
     )
+    _gravar_rodape(conn, batch_id, comparar_rodape(TIPO_EXECUCAO_ANUAL, leitura))
 
     for r in leitura.registros:
         _upsert_ted(conn, r, batch_id)
@@ -259,6 +334,7 @@ def importar_execucao_anual(
             ),
         )
     conn.commit()
+    sincronizar_alertas_rodape(conn)
     sincronizar_alertas_conciliacao_simec(conn)
     sincronizar_alertas_cadastrais(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
@@ -278,6 +354,7 @@ def importar_doc_ne(
         campo_valor="valor_ne",
     )
     batch_id = _registrar_lote(conn, TIPO_DOC_NE, nome_arquivo, hash_arquivo, len(leitura.registros), resumo)
+    _gravar_rodape(conn, batch_id, comparar_rodape(TIPO_DOC_NE, leitura))
 
     for r in leitura.registros:
         _upsert_ted(conn, r, batch_id)
@@ -306,6 +383,7 @@ def importar_doc_ne(
             ),
         )
     conn.commit()
+    sincronizar_alertas_rodape(conn)
     sincronizar_alertas_multiplos_teds(conn)
     sincronizar_alertas_execucao_tg(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
@@ -333,6 +411,7 @@ def importar_doc_nc(
         campo_valor="valor_original", campo_operacao="operacao", campo_avisos="avisos",
     )
     batch_id = _registrar_lote(conn, TIPO_DOC_NC, nome_arquivo, hash_arquivo, len(leitura.registros), resumo)
+    _gravar_rodape(conn, batch_id, comparar_rodape(TIPO_DOC_NC, leitura))
 
     for r in leitura.registros:
         conn.execute(
@@ -416,6 +495,7 @@ def importar_doc_nc(
             ),
         )
     conn.commit()
+    sincronizar_alertas_rodape(conn)
     sincronizar_alertas_nc_parcial(conn)
     sincronizar_alertas_conciliacao_simec(conn)
     sincronizar_alertas_cadastrais(conn)
@@ -436,6 +516,7 @@ def importar_doc_pf(
         campo_valor="valor_original", campo_operacao="operacao",
     )
     batch_id = _registrar_lote(conn, TIPO_DOC_PF, nome_arquivo, hash_arquivo, len(leitura.registros), resumo)
+    _gravar_rodape(conn, batch_id, comparar_rodape(TIPO_DOC_PF, leitura))
 
     for r in leitura.registros:
         conn.execute(
@@ -466,6 +547,7 @@ def importar_doc_pf(
             ),
         )
     conn.commit()
+    sincronizar_alertas_rodape(conn)
     sincronizar_alertas_conciliacao_simec(conn)
     sincronizar_alertas_cadastrais(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)

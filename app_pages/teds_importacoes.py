@@ -37,8 +37,10 @@ from src.teds_importacao_simec import (
     ler_doc_pf_simec,
     ler_execucao_anual_simec,
 )
+from src.teds_alertas import TOLERANCIA_CONCILIACAO
 from src.teds_lotes import (
     ExecucaoMensalNaoImportada,
+    comparar_rodape,
     importar_doc_ne,
     importar_doc_nc,
     importar_doc_pf,
@@ -182,7 +184,7 @@ with col_wizard:
 
     elif st.session_state["imp_step"] == 3:
         tipo_rotulo = st.session_state["imp_tipo_rotulo_confirmado"]
-        _, _, leitor, _ = _TIPOS[tipo_rotulo]
+        chave_tipo, _, leitor, _ = _TIPOS[tipo_rotulo]
         df = st.session_state["imp_df"]
         try:
             leitura = leitor(df)
@@ -201,6 +203,21 @@ with col_wizard:
             c5.metric("Rodapé ignorado", str(sum(1 for x in leitura.rejeitadas if "rodapé" in x.motivo)))
             if avisos_total:
                 st.warning(f"{avisos_total} linha(s) com aviso — serão importadas com relacionamento parcial.")
+            # Regra 6.2 do briefing: o total impresso no rodapé do SIMEC deve bater com a soma das
+            # linhas. Só informa — quem decide importar é a pessoa; a divergência vira alerta crítico.
+            comparacoes = comparar_rodape(chave_tipo, leitura)
+            if comparacoes is None:
+                st.caption("O arquivo não traz linha de rodapé com total — não há o que conferir.")
+            else:
+                divergentes = [c for c in comparacoes if abs(c.diferenca) > TOLERANCIA_CONCILIACAO]
+                if divergentes:
+                    st.error(
+                        "O total do rodapé **não** confere com a soma das linhas lidas: "
+                        + "; ".join(f"{c.campo}: rodapé {brl(c.rodape)} × calculado {brl(c.calculado)}" for c in divergentes)
+                        + ". A importação ainda pode ser feita e gerará um alerta crítico."
+                    )
+                else:
+                    st.success(f"Total do rodapé confere com a soma das linhas ({len(comparacoes)} campo(s)).")
             st.session_state["imp_leitura_ok"] = True
             col_voltar, col_avancar = st.columns(2)
             if col_voltar.button("Voltar", key="v3"):
@@ -250,6 +267,17 @@ with col_wizard:
                         "Este relatório não sustenta uma soma bruta/positiva/negativa/líquida "
                         "única por linha (várias colunas de valor por registro)."
                     )
+
+            rodape_lote = conn.execute(
+                "SELECT total_rodape, diferenca_rodape FROM import_batch WHERE id = ?", (resultado.import_batch_id,)
+            ).fetchone()
+            if rodape_lote is not None and rodape_lote[1] is not None:
+                total_rodape, diferenca_rodape = rodape_lote
+                st.caption(
+                    "Rodapé do relatório: "
+                    + (f"total {brl(total_rodape)} · " if total_rodape is not None else "")
+                    + f"maior diferença contra a soma das linhas: {brl(diferenca_rodape)}."
+                )
 
             if st.button("Nova importação"):
                 for chave in ("imp_conteudo", "imp_nome_arquivo", "imp_tipo_rotulo_confirmado", "imp_df", "imp_leitura_ok"):

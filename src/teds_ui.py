@@ -34,6 +34,7 @@ from src.teds_alertas import (
     TIPO_NE_SIMEC_DIFERE_TESOURO,
     TIPO_PF_DIVERGE_CONSOLIDADO,
     TIPO_PF_MAIOR_QUE_NC,
+    TIPO_RODAPE_DIVERGENTE,
     TIPO_DOCUMENTO_FORA_DA_VIGENCIA,
     TIPO_SIAFI_EM_MULTIPLOS_TEDS,
     TIPO_TED_SEM_MOVIMENTACAO,
@@ -75,6 +76,7 @@ _ROTULO_TIPO_ALERTA = {
     TIPO_NE_LIQUIDADO_MAIOR_QUE_EMPENHADO: "NE com liquidado maior que empenhado",
     TIPO_NE_PAGO_MAIOR_QUE_LIQUIDADO: "NE com pago maior que liquidado",
     TIPO_NE_SIMEC_DIFERE_TESOURO: "Valor da NE no SIMEC difere do Tesouro",
+    TIPO_RODAPE_DIVERGENTE: "Rodapé do relatório difere da soma importada",
 }
 
 #: Todos os tipos de alerta que as telas listam por padrão.
@@ -93,6 +95,7 @@ TIPOS_ALERTA = (
     TIPO_NE_LIQUIDADO_MAIOR_QUE_EMPENHADO,
     TIPO_NE_PAGO_MAIOR_QUE_LIQUIDADO,
     TIPO_NE_SIMEC_DIFERE_TESOURO,
+    TIPO_RODAPE_DIVERGENTE,
 )
 
 

@@ -115,5 +115,63 @@ class ImportacoesPageTests(unittest.TestCase):
         self.assertEqual(self._status(self.lote2), "ok")
 
 
+def _df_nc(rodape: float) -> pd.DataFrame:
+    linha = {
+        "Data de Emissão da NC": "10/02/2026", "Número da NC": "1", "Operação": "( + )", "UG Emitente - NC": "154046",
+        "Descrição do Termo": "Termo", "Estado Atual": "Termo em Execução", "Fim da Vigência": "31/12/2027",
+        "Início da Vigência": "01/01/2026", "SIAFI": "1ABDKU", "TED": "17352", "UG Descentralizadora": "153165",
+        "Valor Total NC": 1000.0,
+    }
+    df = pd.DataFrame([linha])
+    df.loc[1] = {c: float("nan") for c in df.columns} | {"Valor Total NC": rodape}
+    return df
+
+
+class ValidacaoDoRodapeTests(unittest.TestCase):
+    """Etapa 3 do assistente: mostra se o total do rodapé confere, antes de gravar."""
+
+    def setUp(self):
+        self.pasta = tempfile.TemporaryDirectory()
+        self.caminho = Path(self.pasta.name) / "teds.db"
+        self.conexoes = []
+        conectar(self.caminho).close()
+
+    def tearDown(self):
+        for conexao in self.conexoes:
+            conexao.close()
+        self.pasta.cleanup()
+
+    def _abrir(self):
+        conexao = sqlite3.connect(self.caminho, check_same_thread=False)
+        self.conexoes.append(conexao)
+        return conexao
+
+    def _validar(self, df: pd.DataFrame) -> AppTest:
+        with mock.patch("src.teds_ui.conexao", self._abrir):
+            app = AppTest.from_file(str(PROJECT_ROOT / PAGINA), default_timeout=60)
+            app.session_state["imp_step"] = 3
+            app.session_state["imp_tipo_rotulo_confirmado"] = "SIMEC — DOC NC"
+            app.session_state["imp_df"] = df
+            app.run()
+        return app
+
+    def test_rodape_que_confere(self):
+        app = self._validar(_df_nc(1000.0))
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(any("confere com a soma" in e.value for e in app.success))
+        self.assertEqual(len(app.error), 0)
+
+    def test_rodape_divergente_avisa_mas_nao_bloqueia(self):
+        app = self._validar(_df_nc(1500.0))
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(any("não" in e.value and "confere" in e.value and "R$ 1.500,00" in e.value for e in app.error))
+        botao = next(b for b in app.button if b.label == "Confirmar importação")
+        self.assertFalse(botao.disabled)  # só informa: quem decide é a pessoa
+
+    def test_arquivo_sem_rodape(self):
+        app = self._validar(_df_nc(1000.0).iloc[:1])
+        self.assertTrue(any("não traz linha de rodapé" in c.value for c in app.caption))
+
+
 if __name__ == "__main__":
     unittest.main()

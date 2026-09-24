@@ -733,6 +733,46 @@ def sincronizar_alertas_execucao_tg(conn: sqlite3.Connection) -> list[Alerta]:
 
 
 # --------------------------------------------------------------------------------------
+# Rodapé do relatório × soma calculada (briefing, seção 6.2)
+# --------------------------------------------------------------------------------------
+
+TIPO_RODAPE_DIVERGENTE = "importacao_rodape_divergente"
+
+
+def sincronizar_alertas_rodape(conn: sqlite3.Connection) -> list[Alerta]:
+    """Um alerta crítico ("alta") por lote cujo total de rodapé difere da soma calculada em mais
+    de R$ 0,01. Só lotes ativos (`status = 'ok'`); lote revertido não gera alerta novo. O lote
+    continua importado — o alerta só sinaliza a divergência, quem decide é uma pessoa."""
+
+    candidatos: list[Alerta] = []
+    for id_lote, tipo_relatorio, nome_arquivo, diferenca, detalhe in conn.execute(
+        "SELECT id, tipo_relatorio, nome_arquivo, diferenca_rodape, detalhe_rodape FROM import_batch "
+        "WHERE status = 'ok' AND diferenca_rodape IS NOT NULL ORDER BY id"
+    ).fetchall():
+        if texto_para_valor(diferenca) <= TOLERANCIA_CONCILIACAO:
+            continue
+        divergentes = [
+            item for item in json.loads(detalhe or "[]")
+            if abs(texto_para_valor(item["diferenca"])) > TOLERANCIA_CONCILIACAO
+        ]
+        campos = "; ".join(
+            f"{i['campo']}: rodapé {_moeda(texto_para_valor(i['rodape']))} × calculado "
+            f"{_moeda(texto_para_valor(i['calculado']))} (diferença {_moeda(texto_para_valor(i['diferenca']))})"
+            for i in divergentes
+        )
+        candidatos.append(Alerta(
+            tipo=TIPO_RODAPE_DIVERGENTE, gravidade="alta", documento=f"lote:{id_lote}",
+            descricao=(
+                f"Lote #{id_lote} ({tipo_relatorio}, arquivo {nome_arquivo}): o total do rodapé difere da "
+                f"soma das linhas importadas em mais de R$ 0,01 — {campos}. Possíveis causas: linha "
+                "rejeitada na leitura, arquivo cortado ou rodapé de outra extração. O lote continua "
+                "importado; conferir antes de usar os totais."
+            ),
+        ))
+    return _gravar_alertas_novos(conn, candidatos)
+
+
+# --------------------------------------------------------------------------------------
 # Integração com o banco
 # --------------------------------------------------------------------------------------
 
