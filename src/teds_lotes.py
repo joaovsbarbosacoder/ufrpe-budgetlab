@@ -36,6 +36,7 @@ from src.importacao_execucao_mensal import (
     carregar_atual as carregar_execucao_mensal_atual,
 )
 from src.teds_alertas import (
+    sincronizar_alertas_execucao_do_ted,
     registrar_alertas_ted_sem_siafi,
     sincronizar_alertas_rodape,
     sincronizar_alertas_execucao_tg,
@@ -339,6 +340,7 @@ def importar_execucao_anual(
     sincronizar_alertas_rodape(conn)
     sincronizar_alertas_conciliacao_simec(conn)
     sincronizar_alertas_cadastrais(conn)
+    sincronizar_alertas_execucao_do_ted(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
 
 
@@ -388,6 +390,7 @@ def importar_doc_ne(
     sincronizar_alertas_rodape(conn)
     sincronizar_alertas_multiplos_teds(conn)
     sincronizar_alertas_execucao_tg(conn)
+    sincronizar_alertas_execucao_do_ted(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
 
 
@@ -501,6 +504,7 @@ def importar_doc_nc(
     sincronizar_alertas_nc_parcial(conn)
     sincronizar_alertas_conciliacao_simec(conn)
     sincronizar_alertas_cadastrais(conn)
+    sincronizar_alertas_execucao_do_ted(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
 
 
@@ -552,6 +556,7 @@ def importar_doc_pf(
     sincronizar_alertas_rodape(conn)
     sincronizar_alertas_conciliacao_simec(conn)
     sincronizar_alertas_cadastrais(conn)
+    sincronizar_alertas_execucao_do_ted(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
 
 
@@ -614,6 +619,7 @@ def sincronizar_execucao_tg(
     )
     conn.commit()
     sincronizar_alertas_execucao_tg(conn)
+    sincronizar_alertas_execucao_do_ted(conn)
     return ResultadoImportacaoLote(batch_id, False, len(leitura.registros), leitura.rejeitadas)
 
 

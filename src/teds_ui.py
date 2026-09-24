@@ -37,6 +37,8 @@ from src.teds_alertas import (
     TIPO_RODAPE_DIVERGENTE,
     TIPO_DOCUMENTO_FORA_DA_VIGENCIA,
     TIPO_SIAFI_EM_MULTIPLOS_TEDS,
+    TIPO_TED_CREDITO_SEM_EMPENHO,
+    TIPO_TED_PF_SEM_EXECUCAO_FINANCEIRA,
     TIPO_TED_SEM_MOVIMENTACAO,
     TIPO_TED_SEM_SIAFI,
     TIPO_TED_SEM_UG_DESCENTRALIZADORA,
@@ -79,6 +81,8 @@ _ROTULO_TIPO_ALERTA = {
     TIPO_NE_SIMEC_DIFERE_TESOURO: "Valor da NE no SIMEC difere do Tesouro",
     TIPO_RODAPE_DIVERGENTE: "Rodapé do relatório difere da soma importada",
     TIPO_TED_SEM_SIAFI: "TED sem código SIAFI",
+    TIPO_TED_CREDITO_SEM_EMPENHO: "Crédito descentralizado sem empenho",
+    TIPO_TED_PF_SEM_EXECUCAO_FINANCEIRA: "Repasse sem execução financeira",
 }
 
 #: Todos os tipos de alerta que as telas listam por padrão.
@@ -99,6 +103,8 @@ TIPOS_ALERTA = (
     TIPO_NE_SIMEC_DIFERE_TESOURO,
     TIPO_RODAPE_DIVERGENTE,
     TIPO_TED_SEM_SIAFI,
+    TIPO_TED_CREDITO_SEM_EMPENHO,
+    TIPO_TED_PF_SEM_EXECUCAO_FINANCEIRA,
 )
 
 

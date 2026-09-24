@@ -165,9 +165,14 @@ with col_detalhe:
                 "casos legítimos, que pedem justificativa — o documento nunca é excluído.",
                 "ted_vencido_em_execucao": "TED com vigência encerrada não deveria continuar no estado "
                 "\"Termo em Execução\" — conferir prorrogação ou encerramento.",
-                "ted_sem_movimentacao": "TED em execução deveria ter NC ou PF emitida dentro do prazo (padrão 180 "
+                "ted_sem_movimentacao": "TED em execução deveria ter NC ou PF emitida dentro do prazo (padrão 90 "
                 "dias); o prazo é uma escolha inicial, não uma regra do briefing, e a NE não conta por não ter "
                 "data no banco.",
+                "ted_credito_sem_empenho": "TED com crédito líquido descentralizado deve ter NE vinculada. Sem nenhuma NE, "
+                "passado o prazo (padrão 90 dias desde a última NC), pode ser NE não lançada no SIMEC.",
+                "ted_pf_sem_execucao_financeira": "TED em execução com repasse (PF) deve ter pagamento no Tesouro "
+                "Gerencial nas NEs vinculadas; sem pago, passado o prazo (padrão 90 dias desde o último PF), "
+                "o recurso repassado não está sendo executado financeiramente.",
                 "ted_sem_siafi": "Todo TED deve ter código SIAFI: ele compõe a chave do TED. Sem ele a linha da "
                 "Execução Anual não é importada e o TED fica fora dos totais até o código existir.",
                 "importacao_rodape_divergente": "O total impresso no rodapé do relatório do SIMEC deve coincidir "

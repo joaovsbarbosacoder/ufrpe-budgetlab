@@ -414,10 +414,10 @@ TIPO_TED_VENCIDO_EM_EXECUCAO = "ted_vencido_em_execucao"
 TIPO_TED_SEM_MOVIMENTACAO = "ted_sem_movimentacao"
 TIPO_TED_SEM_SIAFI = "ted_sem_siafi"
 
-#: Prazo padrão de "TED em execução sem movimentação" (briefing, seção 7, não define o prazo — este
-#: valor é uma escolha inicial, ajustável por parâmetro). Movimentação = NC ou PF emitida; a NE não
+#: Prazo padrão de "TED em execução sem movimentação" (briefing, seção 7, não define o prazo — 90 dias
+#: definidos com o usuário em 24/09/2026, ajustável por parâmetro; era 180 por escolha inicial). Movimentação = NC ou PF emitida; a NE não
 #: entra porque `vinculo_ne` não guarda data de emissão.
-PRAZO_SEM_MOVIMENTACAO_DIAS = 180
+PRAZO_SEM_MOVIMENTACAO_DIAS = 90
 
 #: Único estado tratado como "em execução" (texto exato da extração real do SIMEC, comparado sem
 #: acento e sem diferença de caixa). Os demais estados (prestação de contas, diligência,
@@ -755,6 +755,172 @@ def sincronizar_alertas_execucao_tg(conn: sqlite3.Connection) -> list[Alerta]:
 
     vinculos, totais = _carregar_execucao_tg(conn)
     return _gravar_alertas_novos(conn, gerar_alertas_execucao_tg(vinculos, totais))
+
+
+# --------------------------------------------------------------------------------------
+# Crédito sem empenho e repasse sem execução financeira (briefing, seções 8.2 e 9.3)
+# --------------------------------------------------------------------------------------
+
+TIPO_TED_CREDITO_SEM_EMPENHO = "ted_credito_sem_empenho"
+TIPO_TED_PF_SEM_EXECUCAO_FINANCEIRA = "ted_pf_sem_execucao_financeira"
+
+#: Prazo padrão das duas regras abaixo (o briefing manda "prazo configurável" e não o define; 90 dias
+#: definido com o usuário em 24/09/2026, ajustável por parâmetro).
+PRAZO_SEM_EXECUCAO_DIAS = 90
+
+
+@dataclass(frozen=True)
+class ExecucaoDoTed:
+    """Tudo que as duas regras precisam de um TED, já reduzido.
+
+    `nc_liquida`/`pf_liquida` vêm do consolidado (`execucao_anual`, todos os exercícios).
+    `qtd_nes_ativas` conta NEs vinculadas que NÃO foram descartadas por decisão humana.
+    `pago_tesouro` é o pago acumulado, no Tesouro Gerencial, das NEs ativas que têm dado lá;
+    `None` = nenhuma delas tem dado no Tesouro ("sem base", nunca zero)."""
+
+    chave_ted: str
+    ted: str
+    codigo_siafi: str
+    estado_atual: str | None
+    inicio_vigencia: date | None
+    nc_liquida: Decimal
+    pf_liquida: Decimal
+    ultima_nc_descentralizacao: date | None
+    ultimo_pf_repasse: date | None
+    qtd_nes_ativas: int
+    pago_tesouro: Decimal | None
+
+
+def _dias_desde(referencia: date | None, hoje: date) -> int | None:
+    return None if referencia is None else (hoje - referencia).days
+
+
+def gerar_alertas_execucao_do_ted(
+    teds: list[ExecucaoDoTed],
+    hoje: date,
+    prazo_dias: int = PRAZO_SEM_EXECUCAO_DIAS,
+    tolerancia: Decimal = TOLERANCIA_CONCILIACAO,
+) -> list[Alerta]:
+    """Duas verificações, ambas descritivas (não decidem nada, não excluem nada).
+
+    1. CRÉDITO SEM EMPENHO — NC líquida positiva e NENHUMA NE ativa vinculada ao TED, passado o prazo
+       desde a última NC de descentralização (sem NC datada, desde o início da vigência). Vale para
+       qualquer estado do TED: NE ausente pode ser erro de inserção no SIMEC (a NE não foi lançada).
+       A NE não tem data no banco, então o prazo conta a partir da NC.
+    2. REPASSE SEM EXECUÇÃO FINANCEIRA — TED EM EXECUÇÃO com PF líquido positivo, NEs ativas com dado no
+       Tesouro Gerencial e pago acumulado zero nelas, passado o prazo desde o último PF de repasse.
+       "Execução financeira" = pago no Tesouro (definido com o usuário)."""
+
+    alertas: list[Alerta] = []
+    for t in sorted(teds, key=lambda x: x.chave_ted):
+        rotulo = f"TED {t.ted} (SIAFI {t.codigo_siafi})"
+
+        if t.nc_liquida > tolerancia and t.qtd_nes_ativas == 0:
+            referencia = t.ultima_nc_descentralizacao or t.inicio_vigencia
+            dias = _dias_desde(referencia, hoje)
+            if dias is None or dias > prazo_dias:
+                origem = (
+                    f"última NC de descentralização em {_data_br(t.ultima_nc_descentralizacao)}"
+                    if t.ultima_nc_descentralizacao
+                    else (
+                        f"sem NC datada; início da vigência em {_data_br(t.inicio_vigencia)}"
+                        if t.inicio_vigencia else "sem NC datada e sem início da vigência"
+                    )
+                )
+                alertas.append(Alerta(
+                    tipo=TIPO_TED_CREDITO_SEM_EMPENHO, gravidade="alta", documento=t.chave_ted,
+                    chave_ted=t.chave_ted,
+                    descricao=(
+                        f"{rotulo}: NC líquida de {_moeda(t.nc_liquida)} e nenhuma NE vinculada há mais de "
+                        f"{prazo_dias} dias ({origem}). Pode ser NE não lançada no SIMEC — conferir na origem. "
+                        f"Estado atual: {t.estado_atual or '—'}."
+                    ),
+                ))
+
+        if (
+            estado_em_execucao(t.estado_atual)
+            and t.pf_liquida > tolerancia
+            and t.qtd_nes_ativas > 0
+            and t.pago_tesouro is not None
+            and t.pago_tesouro <= tolerancia
+        ):
+            referencia = t.ultimo_pf_repasse or t.inicio_vigencia
+            dias = _dias_desde(referencia, hoje)
+            if dias is None or dias > prazo_dias:
+                origem = (
+                    f"último PF de repasse em {_data_br(t.ultimo_pf_repasse)}"
+                    if t.ultimo_pf_repasse
+                    else (f"sem PF datado; início da vigência em {_data_br(t.inicio_vigencia)}"
+                          if t.inicio_vigencia else "sem PF datado e sem início da vigência")
+                )
+                alertas.append(Alerta(
+                    tipo=TIPO_TED_PF_SEM_EXECUCAO_FINANCEIRA, gravidade="media", documento=t.chave_ted,
+                    chave_ted=t.chave_ted,
+                    descricao=(
+                        f"{rotulo}: PF líquido de {_moeda(t.pf_liquida)} repassado e nenhum pagamento no "
+                        f"Tesouro Gerencial nas NEs vinculadas há mais de {prazo_dias} dias ({origem})."
+                    ),
+                ))
+    return alertas
+
+
+def _carregar_execucao_do_ted(conn: sqlite3.Connection) -> list[ExecucaoDoTed]:
+    def _datas(sql: str) -> dict[str, date | None]:
+        return {chave: _data_ou_none(dt) for chave, dt in conn.execute(sql).fetchall() if chave}
+
+    consolidado: dict[str, list[Decimal]] = {}
+    for chave, descentralizado, repassado in conn.execute(
+        "SELECT chave_ted, total_descentralizado, total_repassado FROM execucao_anual"
+    ).fetchall():
+        acumulado = consolidado.setdefault(chave, [Decimal("0"), Decimal("0")])
+        acumulado[0] += texto_para_valor(descentralizado)
+        acumulado[1] += texto_para_valor(repassado)
+
+    ultima_nc = _datas(
+        "SELECT chave_ted, MAX(data_emissao) FROM documento_nc WHERE operacao = '+' AND data_emissao IS NOT NULL GROUP BY chave_ted"
+    )
+    ultimo_pf = _datas(
+        "SELECT chave_ted, MAX(data_emissao) FROM documento_pf WHERE operacao = '+' AND data_emissao IS NOT NULL GROUP BY chave_ted"
+    )
+
+    nes_por_ted: dict[str, set[str]] = {}
+    for chave, numero_ne in conn.execute(
+        "SELECT chave_ted, numero_ne FROM vinculo_ne WHERE status_validacao != ?", (STATUS_DESCARTADO,)
+    ).fetchall():
+        nes_por_ted.setdefault(chave, set()).add(numero_ne)
+
+    pago_por_ne: dict[str, Decimal] = {}
+    for numero_ne, pago in conn.execute("SELECT numero_completo_ne, pago FROM execucao_tg").fetchall():
+        pago_por_ne[numero_ne] = pago_por_ne.get(numero_ne, Decimal("0")) + (
+            texto_para_valor(pago) if pago is not None else Decimal("0")
+        )
+
+    resultado = []
+    for chave, ted, siafi, estado, inicio in conn.execute(
+        "SELECT chave_ted, ted, codigo_siafi, estado_atual, inicio_vigencia FROM ted"
+    ).fetchall():
+        nes = nes_por_ted.get(chave, set())
+        com_dado = [ne for ne in nes if ne in pago_por_ne]
+        nc_liq, pf_liq = consolidado.get(chave, [Decimal("0"), Decimal("0")])
+        resultado.append(ExecucaoDoTed(
+            chave_ted=chave, ted=ted, codigo_siafi=siafi, estado_atual=estado,
+            inicio_vigencia=_data_ou_none(inicio), nc_liquida=nc_liq, pf_liquida=pf_liq,
+            ultima_nc_descentralizacao=ultima_nc.get(chave), ultimo_pf_repasse=ultimo_pf.get(chave),
+            qtd_nes_ativas=len(nes),
+            pago_tesouro=sum((pago_por_ne[ne] for ne in com_dado), start=Decimal("0")) if com_dado else None,
+        ))
+    return resultado
+
+
+def sincronizar_alertas_execucao_do_ted(
+    conn: sqlite3.Connection, hoje: date | None = None, prazo_dias: int = PRAZO_SEM_EXECUCAO_DIAS
+) -> list[Alerta]:
+    """Grava os alertas de crédito sem empenho e de repasse sem execução financeira ainda não
+    sinalizados. Nunca fecha alerta existente."""
+
+    return _gravar_alertas_novos(
+        conn, gerar_alertas_execucao_do_ted(_carregar_execucao_do_ted(conn), hoje or date.today(), prazo_dias)
+    )
 
 
 # --------------------------------------------------------------------------------------

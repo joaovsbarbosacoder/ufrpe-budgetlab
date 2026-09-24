@@ -175,7 +175,7 @@ lote que gravou/atualizou aquele registro pela última vez, e o histórico de lo
 
 ## 8. Alertas implementados
 
-Dezesseis tipos (`src/teds_alertas.py`), cada um com funções puras testáveis sem banco e uma
+Dezoito tipos (`src/teds_alertas.py`), cada um com funções puras testáveis sem banco e uma
 `sincronizar_alertas_*` que lê do SQLite e grava alertas novos sem duplicar um alerta já
 aberto para o mesmo documento — e sem nunca fechar um alerta sozinha (resolução é sempre ação
 humana, registrada na Central de Alertas):
@@ -219,12 +219,22 @@ humana, registrada na Central de Alertas):
     caixa); os demais (prestação de contas, diligência, comprovado, finalizado) não. Um estado
     novo do SIMEC não gera alerta até ser classificado.
 
-  - `ted_sem_movimentacao` (média) — TED em execução sem NC ou PF emitida há mais de **180
-    dias**. O briefing não define o prazo: 180 é uma escolha inicial (parâmetro
-    `PRAZO_SEM_MOVIMENTACAO_DIAS`), a ajustar por quem conhece o ritmo dos TEDs. Movimentação =
+  - `ted_sem_movimentacao` (média) — TED em execução sem NC ou PF emitida há mais de **90
+    dias** (definido com o usuário em 24/09/2026; era 180 por escolha inicial; parâmetro
+    `PRAZO_SEM_MOVIMENTACAO_DIAS`). O briefing não define o prazo. Movimentação =
     NC ou PF com data de emissão (documento sem data ou com data futura não conta); a **NE não
     entra** porque `vinculo_ne` não guarda data. Sem nenhum documento, a referência é o início da
     vigência (TED recém-iniciado ainda não é "sem movimentação").
+  - `ted_credito_sem_empenho` (**alta**) — TED com NC líquida positiva (consolidado) e **nenhuma NE
+    ativa** vinculada (vínculo `descartado` não conta; `pendente` conta), passados **90 dias** da última
+    NC de descentralização (`operacao = '+'`; NC de devolução não renova o prazo; sem NC datada, conta
+    desde o início da vigência). Vale para **qualquer estado** do TED: NE ausente pode ser erro de
+    inserção no SIMEC (a NE não foi lançada) — decisão do usuário em 24/09/2026. A NE não tem data no
+    banco, então o prazo conta a partir da NC. Com o banco atual: 8 TEDs (última NC entre 2023 e 2025).
+  - `ted_pf_sem_execucao_financeira` (média) — TED **em execução** com PF líquido positivo, NEs ativas
+    com dado no Tesouro e **pago acumulado zero** nelas (execução financeira = pago no Tesouro,
+    definido pelo usuário), passados 90 dias do último PF de repasse. Sem dado no Tesouro é "sem base",
+    nunca zero. Com o banco atual: 6 TEDs em execução.
 
   Não implementado por falta de definição: "estado incompatível com os documentos". Sem número de TED, sem SIAFI e
   mesma chave TED–SIAFI com descrições conflitantes não podem ocorrer hoje (a chave exige os
@@ -243,11 +253,18 @@ humana, registrada na Central de Alertas):
   anterior à Execução Mensal) é "sem base", nunca zero. Vínculos `descartado` (decisão de NE em
   mais de um TED) ficam de fora. Simulação com a extração real (cópia temporária do banco, sem
   gravar): de 134 NEs vinculadas, 126 têm dado no Tesouro; 24 têm valor do SIMEC diferente do
-  empenhado do Tesouro (várias por serem NEs só em parte vinculadas ao TED — por isso o alerta pede
-  conferência, não correção); nenhuma com liquidado > empenhado ou pago > liquidado.
+  empenhado do Tesouro; nenhuma com liquidado > empenhado ou pago > liquidado. **Relatório NE a NE
+  (24/09/2026):** nenhuma das 24 está em mais de um TED, então "NE só em parte vinculada" não as
+  explica. 14 têm o Tesouro MAIOR que o SIMEC (+R$ 6,50 mi no total; ex.: 2025NE000385/386, dos TEDs
+  14974/14975, R$ 1,45 mi/1,37 mi no SIMEC contra R$ 3,78 mi/3,72 mi no Tesouro; em 2025NE000379 o
+  liquidado já passa do valor do SIMEC) — indício de reforço posterior não refletido no SIMEC; 10 têm o
+  Tesouro MENOR (R$ 96 mil no total, 8 com estorno de empenho no Tesouro; duas NEs, 2025NE000445/446,
+  estão anuladas em 100% no Tesouro e ainda constam no SIMEC) — indício de anulação não refletida.
+  Confirmar que o "Valor da NE" do SIMEC é o valor original, e não o líquido de reforços e anulações,
+  é o que decide a regra; por isso o alerta pede conferência, não correção.
 
   **Não implementados:** "pago maior que o PF líquido" (por TED) — o pago da NE inteira seria
-  atribuído ao TED mesmo quando a NE só está em parte vinculada a ele (os 24 casos acima), gerando
+  atribuído ao TED mesmo quando a NE só está em parte vinculada a ele (os 24 casos acima — divergência de valor, não de vínculo), gerando
   alerta falso; "pagamento sem NE" — não se aplica, toda linha de `execucao_tg` já é por NE;
   separação de reforço e anulação — a Execução Mensal só traz o movimento líquido do mês.
 
@@ -338,7 +355,7 @@ válido. O mesmo arquivo pode ser reimportado depois (vira um lote novo). Na pá
 
 - Competência real no TEDs (Documento Hábil × mês de referência, via Liquidação por
   Competência) — ver seção 6.
-- Alertas além dos dezesseis da seção 8.
+- Alertas além dos dezoito da seção 8.
 - Edição do mapeamento de colunas na tela de Importações.
 - Campo de observação manual por TED.
 - Persistência dos parâmetros de Configurações além da sessão do navegador.

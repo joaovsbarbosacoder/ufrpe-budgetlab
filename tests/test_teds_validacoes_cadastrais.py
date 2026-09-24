@@ -185,26 +185,26 @@ class SincronizacaoComBancoTests(unittest.TestCase):
 
 
 class SemMovimentacaoTests(unittest.TestCase):
-    """TED em execução sem NC/PF emitida dentro do prazo (padrão 180 dias)."""
+    """TED em execução sem NC/PF emitida dentro do prazo (padrão 90 dias)."""
 
     def _alertas(self, teds, documentos=(), **kw):
         alertas = gerar_alertas_cadastrais(list(teds), list(documentos), HOJE, **kw)
         return [a for a in alertas if a.tipo == TIPO_TED_SEM_MOVIMENTACAO]
 
-    def test_prazo_padrao_e_180_dias(self):
-        self.assertEqual(PRAZO_SEM_MOVIMENTACAO_DIAS, 180)
+    def test_prazo_padrao_e_90_dias(self):
+        self.assertEqual(PRAZO_SEM_MOVIMENTACAO_DIAS, 90)
 
     def test_ultima_movimentacao_recente_nao_gera_alerta(self):
         self.assertEqual(self._alertas([_ted()], [_doc(date(2026, 8, 1))]), [])
 
     def test_exatamente_no_limite_ainda_nao_gera_e_um_dia_depois_gera(self):
-        limite = date(2026, 3, 27)  # 180 dias antes de 23/09/2026
-        self.assertEqual((HOJE - limite).days, 180)
+        limite = date(2026, 6, 25)  # 90 dias antes de 23/09/2026
+        self.assertEqual((HOJE - limite).days, 90)
         self.assertEqual(self._alertas([_ted()], [_doc(limite)]), [])
-        (alerta,) = self._alertas([_ted()], [_doc(date(2026, 3, 26))])
+        (alerta,) = self._alertas([_ted()], [_doc(date(2026, 6, 24))])
         self.assertEqual(alerta.gravidade, "media")
         self.assertEqual(alerta.documento, CH)
-        self.assertIn("26/03/2026", alerta.descricao)
+        self.assertIn("24/06/2026", alerta.descricao)
 
     def test_conta_a_movimentacao_mais_recente_entre_nc_e_pf(self):
         documentos = [_doc(date(2024, 1, 1), tipo="NC", chave="A"), _doc(date(2026, 9, 1), tipo="PF", chave="B")]
@@ -231,7 +231,7 @@ class SemMovimentacaoTests(unittest.TestCase):
     def test_prazo_e_parametrizavel(self):
         documentos = [_doc(date(2026, 8, 1))]
         self.assertEqual(len(self._alertas([_ted()], documentos, prazo_sem_movimentacao_dias=30)), 1)
-        self.assertEqual(self._alertas([_ted()], documentos, prazo_sem_movimentacao_dias=90), [])
+        self.assertEqual(self._alertas([_ted()], documentos, prazo_sem_movimentacao_dias=60), [])
 
     def test_sincronizacao_gera_um_alerta_unico_sem_fechar_sozinho(self):
         conn = conectar(":memory:")
