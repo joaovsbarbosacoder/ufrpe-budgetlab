@@ -5,7 +5,7 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
-from src.glossario import GLOSSARIO, TEMAS, buscar, termos_por_tema
+from src.glossario import GLOSSARIO, SIGLAS_DA_INTERFACE, TEMAS, buscar, termos_por_tema
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -51,6 +51,25 @@ class GlossarioDadosTests(unittest.TestCase):
         termos = {t.termo for t in buscar("PTRES")}
         self.assertIn("Programa de Trabalho Resumido", termos)
 
+    def test_siglas_exibidas_na_interface_estao_mapeadas(self) -> None:
+        for sigla in SIGLAS_DA_INTERFACE:
+            with self.subTest(sigla=sigla):
+                correspondencias = buscar(sigla)
+                self.assertTrue(correspondencias)
+                self.assertTrue(
+                    any(termo.sigla == sigla or sigla in termo.aliases for termo in correspondencias)
+                )
+
+    def test_busca_encontra_alias_operacional(self) -> None:
+        termos = {t.termo for t in buscar("BI CPOC")}
+        self.assertIn("Tesouro Gerencial", termos)
+
+    def test_resumo_e_detalhes_separam_a_leitura_em_camadas(self) -> None:
+        termo = next(t for t in GLOSSARIO if t.termo == "Empenho")
+        self.assertTrue(termo.resumo.endswith("."))
+        self.assertIsNotNone(termo.detalhes)
+        self.assertLess(len(termo.resumo), len(termo.definicao))
+
     def test_busca_sem_resultado(self) -> None:
         self.assertEqual(buscar("termo-que-nao-existe-no-glossario"), ())
 
@@ -63,22 +82,35 @@ class GlossarioPageTests(unittest.TestCase):
         app.run(timeout=30)
         return app
 
-    def test_renderiza_um_expander_por_tema_sem_busca(self) -> None:
+    def test_renderiza_primeira_pagina_de_cartoes_sem_busca(self) -> None:
         app = self._open_page()
 
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(app.title[0].value, "Glossário")
-        self.assertEqual(len(app.get("expander")), len(TEMAS))
+        # Expanders com ícone são expostos como ``status`` no AppTest 1.61.
+        self.assertEqual(len(app.get("status")), 10)
+        self.assertEqual(len(app.text_input), 1)
+        self.assertEqual(len(app.selectbox), 1)
+        self.assertEqual(len(app.segmented_control), 1)
 
-    def test_busca_filtra_e_nao_mostra_expanders(self) -> None:
+    def test_busca_filtra_os_cartoes(self) -> None:
         app = self._open_page()
 
         app.text_input[0].set_value("PTRES").run(timeout=30)
 
         self.assertEqual(len(app.exception), 0)
-        self.assertEqual(len(app.get("expander")), 0)
-        headings = [m.value for m in app.markdown if m.value.startswith("#####")]
+        self.assertGreaterEqual(len(app.get("status")), 1)
+        headings = [m.value for m in app.markdown if m.value.startswith("####")]
         self.assertTrue(any("Programa de Trabalho Resumido" in h for h in headings))
+
+    def test_busca_por_nova_sigla_operacional(self) -> None:
+        app = self._open_page()
+
+        app.text_input[0].set_value("PF").run(timeout=30)
+
+        self.assertEqual(len(app.exception), 0)
+        headings = [m.value for m in app.markdown if m.value.startswith("####")]
+        self.assertTrue(any("Programação Financeira" in h for h in headings))
 
     def test_busca_sem_resultado_mostra_aviso(self) -> None:
         app = self._open_page()
