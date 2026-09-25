@@ -79,6 +79,11 @@ page = st.navigation(
                 title="Gerenciamento de Prazos",
                 icon="⏰",
             ),
+            st.Page(
+                "app_pages/glossario.py",
+                title="Glossário",
+                icon="📖",
+            ),
         ],
         # Contratos Contínuos e Contratos Vigência agrupadas sob um cabeçalho "Contratos"
         # (pedido explícito). "Contratos — Pagamentos" foi tirada do menu por pedido explícito
