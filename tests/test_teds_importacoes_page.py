@@ -114,6 +114,25 @@ class ImportacoesPageTests(unittest.TestCase):
         self.assertTrue(any("responsável" in e.value for e in app.error))
         self.assertEqual(self._status(self.lote2), "ok")
 
+    def test_reavaliar_alertas_cria_o_que_falta_registra_auditoria_e_nao_mexe_nos_dados(self):
+        with mock.patch("src.teds_ui.conexao", self._abrir):
+            app = self._app()
+            app.run()
+            self.assertEqual(len(app.exception), 0)
+            valor_antes = self._valor()
+            next(b for b in app.button if b.label == "Reavaliar alertas").click().run()
+
+            self.assertEqual(len(app.exception), 0)
+            self.assertTrue(any("Reavaliação concluída" in e.value for e in app.success))
+
+        conn = sqlite3.connect(self.caminho)
+        try:
+            (auditorias,) = conn.execute("SELECT COUNT(*) FROM auditoria WHERE acao = 'alertas_reavaliados'").fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(auditorias, 1)
+        self.assertEqual(self._valor(), valor_antes)
+
 
 def _df_nc(rodape: float) -> pd.DataFrame:
     linha = {

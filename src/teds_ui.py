@@ -48,6 +48,7 @@ from src.teds_alertas import (
 from src.teds_celula_orcamentaria import TIPO_NC_TG_2026, TIPO_NC_TG_HISTORICA, TIPO_NE_CELULA_DIVERGE_NC
 from src.teds_auditoria import (
     ACAO_ALERTA_STATUS_ALTERADO,
+    ACAO_ALERTAS_REAVALIADOS,
     ACAO_VINCULO_NE_DECIDIDO,
     ENTIDADE_ALERTA,
     registrar_auditoria,
@@ -441,6 +442,7 @@ def rotulo_status_alerta(status: str) -> str:
 
 _ROTULO_ACAO_AUDITORIA = {
     ACAO_ALERTA_STATUS_ALTERADO: "Situação do alerta alterada",
+    ACAO_ALERTAS_REAVALIADOS: "Alertas reavaliados",
     ACAO_VINCULO_NE_DECIDIDO: "Vínculo de NE decidido",
 }
 

@@ -55,12 +55,13 @@ from src.teds_lotes import (
     importar_execucao_anual,
     importar_nc_tg_2026,
     importar_nc_tg_historica,
+    reavaliar_alertas,
     sincronizar_execucao_tg_atual,
     status_sincronizacao_execucao_tg,
 )
 from src.teds_normalizacao import ColunaObrigatoriaAusente, mapear_colunas
 from src.teds_reversao import ReversaoNaoPermitida, lotes_reversiveis, reverter_lote
-from src.teds_ui import brl, conexao, formatar_historico_lotes, historico_importacoes, injetar_css, render_kpi_strip
+from src.teds_ui import brl, conexao, formatar_historico_lotes, historico_importacoes, injetar_css, render_kpi_strip, rotulo_tipo_alerta
 from src.ui_theme import render_page_header
 
 injetar_css()
@@ -133,6 +134,26 @@ else:
             )
             for rejeitada in resultado_tg.rejeitadas[:10]:
                 st.caption(f"Rejeitada: {rejeitada.motivo}")
+
+st.markdown("#### Alertas")
+st.caption(
+    "Cada importação só gera os alertas que existiam quando ela rodou. Reavaliar aplica todas as verificações aos "
+    "dados já importados, sem reimportar nada: só cria alertas que faltam — não fecha nem altera os existentes "
+    "nem os dados importados."
+)
+if st.button("Reavaliar alertas", key="imp_reavaliar_alertas"):
+    try:
+        with st.spinner("Reavaliando alertas sobre os dados importados…"):
+            resultado_alertas = reavaliar_alertas(conn)
+    except Exception as erro:
+        st.error(f"Falha ao reavaliar alertas: {erro}")
+    else:
+        if resultado_alertas.total == 0:
+            st.success("Reavaliação concluída — nenhum alerta novo; os existentes continuam como estão.")
+        else:
+            st.success(f"Reavaliação concluída — {resultado_alertas.total} alerta(s) novo(s) criado(s).")
+            for tipo, quantidade in resultado_alertas.criados_por_tipo.items():
+                st.caption(f"{rotulo_tipo_alerta(tipo)}: {quantidade}")
 
 st.session_state.setdefault("imp_step", 1)
 

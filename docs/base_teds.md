@@ -412,6 +412,17 @@ processo e no SIAFI.
 nunca cria vínculo, uma NE só é comparada quando o extrato TED → NE a liga ao TED; conciliação do **valor**
 crédito × empenho por célula; e a análise de PF (acompanhamento financeiro separado da comparação NC × NE).
 
+### 9.1 Reavaliação de alertas (`reavaliar_alertas`, `src/teds_lotes.py`)
+
+Roda `sincronizar_alertas_rodape`, `_nc_parcial`, `_conciliacao_simec`, `_cadastrais`, `_execucao_tg`,
+`_execucao_do_ted` e `_celula_orcamentaria` sobre os dados já importados. Só cria alertas ausentes
+(deduplicação por tipo + documento entre os não resolvidos), é idempotente e grava um registro
+`alertas_reavaliados` na trilha de auditoria (inclusive com 0 criados). Fica de fora
+`sincronizar_alertas_multiplos_teds` (também recalcula `status_validacao`, dado derivado) e
+`registrar_alertas_ted_sem_siafi` (depende das linhas rejeitadas de uma leitura). Motivo: no banco
+real, as importações de 22/09 antecediam as regras de 23–24/09, e uma prévia em cópia do banco mostrou
+38 alertas que nunca tinham sido gerados (12 de PF que difere do consolidado).
+
 ## 10. O que NÃO foi aprovado ainda
 
 - Alertas além dos dezenove da seção 8.

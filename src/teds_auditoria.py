@@ -26,6 +26,7 @@ from typing import Any
 ACAO_ALERTA_STATUS_ALTERADO = "alerta_status_alterado"
 ACAO_VINCULO_NE_DECIDIDO = "vinculo_ne_decidido"
 ACAO_LOTE_REVERTIDO = "lote_revertido"
+ACAO_ALERTAS_REAVALIADOS = "alertas_reavaliados"
 
 ENTIDADE_ALERTA = "alerta"
 ENTIDADE_VINCULO_NE = "vinculo_ne"

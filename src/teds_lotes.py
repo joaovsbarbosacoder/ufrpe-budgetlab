@@ -35,6 +35,7 @@ from src.importacao_execucao_mensal import (
     Manifesto as ManifestoExecucaoMensal,
     carregar_atual as carregar_execucao_mensal_atual,
 )
+from src.teds_auditoria import ACAO_ALERTAS_REAVALIADOS, ENTIDADE_ALERTA, registrar_auditoria
 from src.teds_alertas import (
     sincronizar_alertas_execucao_do_ted,
     registrar_alertas_ted_sem_siafi,
@@ -679,6 +680,56 @@ def sincronizar_execucao_tg(
 class ExecucaoMensalNaoImportada(RuntimeError):
     """Não há extração da Execução Mensal importada (`data/manifestos/execucao_mensal_atual.json`
     ausente) — nada a sincronizar; a importação é feita em "Atualizar Planilhas"."""
+
+
+@dataclass(frozen=True)
+class ResultadoReavaliacaoAlertas:
+    """Alertas criados por `reavaliar_alertas`, contados por tipo (só os recém-criados)."""
+
+    criados_por_tipo: dict[str, int]
+
+    @property
+    def total(self) -> int:
+        return sum(self.criados_por_tipo.values())
+
+
+def reavaliar_alertas(conn: sqlite3.Connection, *, usuario: str | None = None) -> ResultadoReavaliacaoAlertas:
+    """Roda todas as verificações de alerta sobre os dados JÁ importados, sem reimportar nada.
+
+    Cada importação só dispara os alertas que existiam no código quando ela rodou; uma regra criada
+    depois nunca vê os dados antigos. Aqui as verificações rodam de novo. Só CRIA alertas ausentes
+    (mesma deduplicação por tipo + documento das importações): não fecha nem altera alerta existente
+    e não toca em nenhum dado importado.
+
+    Ficam de fora, de propósito: `sincronizar_alertas_multiplos_teds`, que também recalcula o
+    `status_validacao` dos vínculos (é dado derivado, não só alerta), e `registrar_alertas_ted_sem_siafi`,
+    que depende das linhas rejeitadas de uma leitura de arquivo e não existe fora dela. A execução fica
+    registrada na trilha de auditoria, inclusive quando nada novo é criado."""
+
+    verificacoes = (
+        sincronizar_alertas_rodape,
+        sincronizar_alertas_nc_parcial,
+        sincronizar_alertas_conciliacao_simec,
+        sincronizar_alertas_cadastrais,
+        sincronizar_alertas_execucao_tg,
+        sincronizar_alertas_execucao_do_ted,
+        sincronizar_alertas_celula_orcamentaria,
+    )
+    criados: dict[str, int] = {}
+    for verificar in verificacoes:
+        for alerta in verificar(conn):
+            criados[alerta.tipo] = criados.get(alerta.tipo, 0) + 1
+    registrar_auditoria(
+        conn,
+        acao=ACAO_ALERTAS_REAVALIADOS,
+        entidade=ENTIDADE_ALERTA,
+        entidade_id="reavaliacao",
+        valor_anterior=None,
+        valor_novo={"criados": sum(criados.values()), "por_tipo": dict(sorted(criados.items()))},
+        usuario=usuario,
+        commit=True,
+    )
+    return ResultadoReavaliacaoAlertas(criados_por_tipo=dict(sorted(criados.items())))
 
 
 def status_sincronizacao_execucao_tg(

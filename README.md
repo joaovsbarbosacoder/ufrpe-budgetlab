@@ -224,6 +224,13 @@ totais e as que sobrescreveu voltam ao valor anterior (o gatilho de histórico d
 versão antiga), nada é apagado, e a ação é auditada. Só lotes importados depois do histórico
 existir podem ser revertidos com segurança.
 
+Cada importação só dispara os alertas que existiam quando rodou; regras criadas depois não enxergam
+dados antigos. O botão "Reavaliar alertas" (Importações) roda todas as verificações sobre os dados já
+importados, sem reimportar: só cria alertas ausentes (mesma deduplicação por tipo + documento), não fecha
+nem altera os existentes nem os dados importados, e a execução fica na trilha de auditoria. Não reavalia
+NE em mais de um TED (recalcula `status_validacao`) nem TED sem SIAFI (depende das linhas rejeitadas de uma
+leitura).
+
 O contrato completo (tabelas, chaves e decisões de projeto) está em
 `docs/base_teds.md`.
 
