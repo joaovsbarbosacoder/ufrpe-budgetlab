@@ -1,86 +1,192 @@
-"""Glossário de termos orçamentários e contábeis do BudgetLab.
+"""Glossário navegável de conceitos e siglas usados no BudgetLab.
 
-Conteúdo estático (ver `src/glossario.py`), condensado a partir do MCASP
-(Manual de Contabilidade Aplicada ao Setor Público, STN, 11ª Edição) e do
-MTO (Manual Técnico de Orçamento 2026, SOF/MPO, 7ª Versão). Não lê nenhuma
-base do projeto — é só um guia de referência para quem usa o sistema.
+O conteúdo estático fica em ``src/glossario.py``. As definições baseadas no
+MCASP (11ª edição) e no MTO 2026 informam a página consultada; termos
+operacionais ou institucionais são identificados como contexto do sistema para
+não atribuir aos manuais conceitos que eles não apresentam.
 """
 
 from __future__ import annotations
 
-from html import escape
+import hashlib
+import math
+import re
+import unicodedata
 
 import streamlit as st
 
-from src.glossario import GLOSSARIO, TEMAS, TermoGlossario, buscar, termos_por_tema
+from src import design_tokens
+from src.glossario import GLOSSARIO, TEMAS, TermoGlossario, buscar
 from src.ui_theme import render_page_header
+
+
+def _slug(texto: str) -> str:
+    sem_acento = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", "_", sem_acento.casefold()).strip("_")
+
+
+def _baseada_em_manual(termo: TermoGlossario) -> bool:
+    return not (
+        termo.fonte.startswith("Contexto")
+        or termo.fonte.startswith("Portal UFRPE")
+        or termo.fonte.startswith("Conceito operacional")
+    )
+
+
+def _renderizar_cartao(termo: TermoGlossario) -> None:
+    with st.container(border=True, height="stretch", key=f"glossario_card_{_slug(termo.titulo)}"):
+        st.caption(termo.tema)
+        with st.container(horizontal=True, vertical_alignment="center", gap="small"):
+            st.markdown(f"#### {termo.termo}")
+            if termo.sigla:
+                st.badge(termo.sigla, color="blue")
+
+        st.markdown(termo.resumo)
+
+        if termo.uso_no_sistema:
+            st.caption(f":material/visibility: **No BudgetLab:** {termo.uso_no_sistema}")
+
+        with st.expander("Detalhes e referência", icon=":material/menu_book:"):
+            if termo.detalhes:
+                st.markdown(termo.detalhes)
+            else:
+                st.caption("A definição essencial está integralmente exibida no cartão.")
+
+            if termo.aliases:
+                st.caption("Também encontrado por: " + ", ".join(termo.aliases))
+            if termo.ver_tambem:
+                st.caption("Ver também: " + ", ".join(termo.ver_tambem))
+
+            st.markdown("**Referência**")
+            st.caption(termo.fonte)
+
+
+st.html(
+    f"""
+    <style>
+    .st-key-glossario_intro [data-testid="stVerticalBlockBorderWrapper"] {{
+        background: linear-gradient(135deg, {design_tokens.SURFACE} 0%, {design_tokens.SURFACE_ALT} 100%);
+        border-color: {design_tokens.BORDER};
+    }}
+    .st-key-glossario_controles [data-testid="stVerticalBlockBorderWrapper"] {{
+        background: {design_tokens.SURFACE};
+    }}
+    [class*="st-key-glossario_card_"] [data-testid="stVerticalBlockBorderWrapper"] {{
+        min-height: 250px;
+    }}
+    [class*="st-key-glossario_card_"] h4 {{
+        margin: 0;
+        line-height: 1.22;
+    }}
+    [class*="st-key-glossario_card_"] [data-testid="stCaptionContainer"] p {{
+        line-height: 1.4;
+    }}
+    </style>
+    """
+)
 
 render_page_header(
     "Glossário",
-    "Conceitos orçamentários e contábeis usados no sistema, com a definição "
-    "condensada do MCASP e do MTO 2026 e a página de origem de cada uma.",
+    "Encontre rapidamente os conceitos, siglas e sistemas que aparecem no BudgetLab. "
+    "Cada verbete separa a explicação essencial, o uso no sistema e a referência de origem.",
     "Referência",
 )
 
-st.info(
-    "As definições aqui são um resumo dos manuais oficiais, não uma transcrição "
-    "literal — para o texto integral, consulte a página indicada em cada verbete. "
-    "Alguns códigos do dia a dia do SIAFI (UG, UGR, PI) não têm definição formal "
-    "no MCASP nem no MTO; nesses casos o campo de fonte diz isso explicitamente.",
-    icon=":material/menu_book:",
-)
+quantidade_siglas = sum(termo.sigla is not None for termo in GLOSSARIO)
+quantidade_manuais = sum(_baseada_em_manual(termo) for termo in GLOSSARIO)
 
-consulta = st.text_input(
-    "Buscar termo",
-    placeholder="Ex.: PTRES, empenho, restos a pagar, RP6...",
-    label_visibility="collapsed",
-)
+with st.container(border=True, key="glossario_intro"):
+    st.markdown("#### Leitura rápida, com rastreabilidade")
+    st.write(
+        "A primeira frase de cada cartão responde **o que é**. Abra “Detalhes e referência” "
+        "para ver o complemento, os conceitos relacionados e a página do manual. Quando uma "
+        "sigla pertence ao uso operacional do sistema — e não ao MCASP ou ao MTO — isso fica "
+        "declarado na própria fonte."
+    )
+    metricas = st.columns(3)
+    metricas[0].metric("Verbetes", len(GLOSSARIO))
+    metricas[1].metric("Siglas explicadas", quantidade_siglas)
+    metricas[2].metric("Baseados nos manuais", quantidade_manuais)
 
-resultados = buscar(consulta)
-filtrando = bool(consulta.strip())
-
-if filtrando:
-    if resultados:
-        st.caption(
-            f"{len(resultados)} de {len(GLOSSARIO)} termo(s) encontrados para "
-            f"“{consulta.strip()}”."
+with st.container(border=True, key="glossario_controles"):
+    coluna_busca, coluna_tema = st.columns([1.7, 1])
+    with coluna_busca:
+        consulta = st.text_input(
+            "Buscar no glossário",
+            placeholder="Ex.: PTRES, PF, dotação, restos a pagar, SIAFI...",
+            icon=":material/search:",
+            key="glossario_busca",
         )
-    else:
-        st.warning(
-            f"Nenhum termo encontrado para “{consulta.strip()}”. Tente outra palavra "
-            "ou parte do nome (a busca ignora acentos e maiúsculas/minúsculas).",
-            icon=":material/search_off:",
+    with coluna_tema:
+        tema_selecionado = st.selectbox(
+            "Tema",
+            ("Todos os temas",) + TEMAS,
+            key="glossario_tema",
         )
 
-resultados_por_termo = {termo.termo: termo for termo in resultados}
+    origem = st.segmented_control(
+        "Origem da definição",
+        ("Todas", "MCASP/MTO", "Contexto do sistema"),
+        default="Todas",
+        key="glossario_origem",
+    )
 
+resultados = list(buscar(consulta))
+if tema_selecionado != "Todos os temas":
+    resultados = [termo for termo in resultados if termo.tema == tema_selecionado]
+if origem == "MCASP/MTO":
+    resultados = [termo for termo in resultados if _baseada_em_manual(termo)]
+elif origem == "Contexto do sistema":
+    resultados = [termo for termo in resultados if not _baseada_em_manual(termo)]
+resultados.sort(key=lambda termo: _slug(termo.termo))
 
-def _renderiza_termo(termo: TermoGlossario) -> None:
-    with st.container(border=True):
-        titulo = escape(termo.termo)
-        if termo.sigla:
-            titulo += f' <span style="color:#526584;font-weight:600;">({escape(termo.sigla)})</span>'
-        st.markdown(f"##### {titulo}", unsafe_allow_html=True)
-        st.markdown(termo.definicao)
-        if termo.ver_tambem:
-            st.caption("Ver também: " + ", ".join(termo.ver_tambem))
-        st.caption(f":material/book_4: Fonte: {termo.fonte}")
-
-
-if filtrando:
-    for termo in resultados:
-        _renderiza_termo(termo)
+if not resultados:
+    st.warning(
+        "Nenhum verbete corresponde à busca e aos filtros atuais. Tente uma sigla, uma "
+        "palavra parcial ou selecione outra origem.",
+        icon=":material/search_off:",
+    )
 else:
-    for tema in TEMAS:
-        termos_do_tema = termos_por_tema()[tema]
-        if not termos_do_tema:
-            continue
-        with st.expander(f"{tema} ({len(termos_do_tema)})", expanded=False):
-            for termo in termos_do_tema:
-                _renderiza_termo(termo)
+    filtro_ativo = bool(consulta.strip()) or tema_selecionado != "Todos os temas" or origem != "Todas"
+    contexto_resultado = " no recorte atual" if filtro_ativo else " no glossário"
+    st.markdown(f"### {len(resultados)} verbete(s){contexto_resultado}")
+    st.caption("Os resultados são apresentados em ordem alfabética.")
+
+    itens_por_pagina = 10
+    total_paginas = max(1, math.ceil(len(resultados) / itens_por_pagina))
+    area_cartoes = st.container()
+
+    if total_paginas > 1:
+        identidade_filtro = hashlib.sha1(
+            f"{consulta}|{tema_selecionado}|{origem}".encode("utf-8")
+        ).hexdigest()[:10]
+        with st.container(horizontal_alignment="right"):
+            pagina = st.pagination(
+                total_paginas,
+                key=f"glossario_pagina_{identidade_filtro}",
+                max_visible_pages=7,
+            )
+    else:
+        pagina = 1
+
+    inicio = (pagina - 1) * itens_por_pagina
+    pagina_atual = resultados[inicio : inicio + itens_por_pagina]
+
+    with area_cartoes:
+        for indice in range(0, len(pagina_atual), 2):
+            colunas = st.columns(2)
+            for coluna, termo in zip(colunas, pagina_atual[indice : indice + 2], strict=False):
+                with coluna:
+                    _renderizar_cartao(termo)
+
+    if total_paginas > 1:
+        st.caption(
+            f"Página {pagina} de {total_paginas} · exibindo {inicio + 1}–"
+            f"{min(inicio + itens_por_pagina, len(resultados))} de {len(resultados)} verbetes."
+        )
 
 st.caption(
-    f"{len(GLOSSARIO)} termos ao todo, organizados em {len(TEMAS)} temas. "
-    "Fontes: MCASP — Manual de Contabilidade Aplicada ao Setor Público (STN, "
-    "11ª Edição) e MTO — Manual Técnico de Orçamento 2026 (SOF/MPO, 7ª Versão)."
+    "Fontes principais: MCASP — Manual de Contabilidade Aplicada ao Setor Público "
+    "(STN, 11ª edição) e MTO — Manual Técnico de Orçamento 2026 (SOF/MPO, 7ª versão). "
+    "As definições são sínteses para consulta; o texto integral está nas páginas indicadas."
 )

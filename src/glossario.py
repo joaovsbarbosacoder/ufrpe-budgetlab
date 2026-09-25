@@ -12,11 +12,11 @@ condensada a partir de duas fontes oficiais:
 
 Cada verbete cita o manual e a página onde a definição original aparece
 (`fonte`); o texto de `definicao` é uma condensação, não uma transcrição
-literal — para o texto integral, consulte a página citada. Alguns códigos
-usados no dia a dia do SIAFI (UG, UGR, PI) não têm uma definição formal nos
-dois manuais — nesses casos, `fonte` sinaliza isso explicitamente em vez de
-citar uma página que não sustenta o verbete (ver AGENTS.md: não presumir
-regra não documentada).
+literal — para o texto integral, consulte a página citada. O glossário também
+explica siglas operacionais e institucionais que aparecem na interface. Quando
+um termo não é conceituado pelo MCASP nem pelo MTO, a fonte declara isso em vez
+de atribuir aos manuais uma definição que eles não apresentam (ver AGENTS.md:
+não presumir regra não documentada).
 
 Este módulo não lê nem depende de nenhuma base de dados do projeto — é
 conteúdo estático, mantido junto ao código para poder evoluir por revisão
@@ -38,13 +38,30 @@ class TermoGlossario:
     tema: str
     sigla: str | None = None
     ver_tambem: tuple[str, ...] = field(default_factory=tuple)
+    aliases: tuple[str, ...] = field(default_factory=tuple)
+    uso_no_sistema: str | None = None
 
     @property
     def titulo(self) -> str:
         return f"{self.termo} ({self.sigla})" if self.sigla else self.termo
 
+    @property
+    def resumo(self) -> str:
+        """Primeira frase, usada na leitura rápida dos cartões."""
+
+        primeira, separador, _ = self.definicao.partition(". ")
+        return primeira + "." if separador else self.definicao
+
+    @property
+    def detalhes(self) -> str | None:
+        """Complemento da definição, mostrado sob demanda na interface."""
+
+        _, separador, restante = self.definicao.partition(". ")
+        return restante if separador else None
+
 
 TEMAS: tuple[str, ...] = (
+    "Sistemas, fontes e siglas institucionais",
     "Receita e princípios orçamentários",
     "Classificações orçamentárias",
     "Créditos e alterações orçamentárias",
@@ -55,7 +72,174 @@ TEMAS: tuple[str, ...] = (
     "Emendas parlamentares",
 )
 
+# Siglas e abreviações realmente exibidas nas páginas do sistema. A lista não
+# pretende reproduzir toda abreviação encontrada em comentários ou nomes de
+# variáveis: é um contrato de cobertura para o vocabulário que chega ao usuário.
+SIGLAS_DA_INTERFACE: tuple[str, ...] = (
+    "BI CPOC",
+    "CNPJ",
+    "CPF",
+    "DEA",
+    "GND",
+    "IDUSO",
+    "IFES",
+    "NC",
+    "ND",
+    "NE",
+    "PDI",
+    "PF",
+    "PI",
+    "PLS",
+    "PO",
+    "PTRES",
+    "RP",
+    "SIAFI",
+    "SIMEC",
+    "SIOP",
+    "TED",
+    "TG",
+    "UG",
+    "UGR",
+)
+
 GLOSSARIO: tuple[TermoGlossario, ...] = (
+    # -- Sistemas, fontes e siglas institucionais ----------------------
+    TermoGlossario(
+        termo="Manual de Contabilidade Aplicada ao Setor Público",
+        definicao=(
+            "Referência nacional da Secretaria do Tesouro Nacional para os procedimentos "
+            "contábeis aplicados à União, aos estados, ao Distrito Federal e aos municípios. "
+            "No glossário, a 11ª edição fundamenta sobretudo os conceitos de classificação, "
+            "execução da despesa, créditos e restos a pagar."
+        ),
+        fonte="MCASP, 11ª edição (2025), capa e Parte I — Procedimentos Contábeis Orçamentários",
+        tema="Sistemas, fontes e siglas institucionais",
+        sigla="MCASP",
+        uso_no_sistema="É uma das duas fontes primárias das definições apresentadas nesta página.",
+    ),
+    TermoGlossario(
+        termo="Manual Técnico de Orçamento",
+        definicao=(
+            "Manual da Secretaria de Orçamento Federal que organiza conceitos, classificações "
+            "e procedimentos do processo orçamentário da União. A edição de 2026 sustenta, "
+            "entre outros temas, a estrutura programática, o limite de empenho e as emendas."
+        ),
+        fonte="MTO 2026, 7ª versão, capa e sumário",
+        tema="Sistemas, fontes e siglas institucionais",
+        sigla="MTO",
+        uso_no_sistema="É uma das duas fontes primárias das definições apresentadas nesta página.",
+    ),
+    TermoGlossario(
+        termo="Sistema Integrado de Administração Financeira do Governo Federal",
+        definicao=(
+            "Sistema estruturante em que são registrados e controlados atos da execução "
+            "orçamentária, financeira e contábil do Governo Federal. Siglas como UG, UGR, "
+            "PI, NE e NC pertencem ao contexto operacional desse sistema."
+        ),
+        fonte="MTO 2026, lista de siglas; MCASP, p. 619",
+        tema="Sistemas, fontes e siglas institucionais",
+        sigla="SIAFI",
+        uso_no_sistema="Aparece nos cadastros, prazos e páginas de TEDs para identificar códigos e transferências.",
+    ),
+    TermoGlossario(
+        termo="Sistema Integrado de Planejamento e Orçamento",
+        definicao=(
+            "Sistema estruturante do planejamento e orçamento federal usado para elaborar, "
+            "acompanhar e alterar a programação orçamentária. Integra-se ao SIAFI e participa "
+            "da formação de classificadores como PO e PTRES."
+        ),
+        fonte="MTO 2026, lista de siglas e p. 58-61",
+        tema="Sistemas, fontes e siglas institucionais",
+        sigla="SIOP",
+        ver_tambem=("Plano Orçamentário", "Programa de Trabalho Resumido"),
+    ),
+    TermoGlossario(
+        termo="Sistema Integrado de Monitoramento, Execução e Controle",
+        definicao=(
+            "Sistema do Ministério da Educação do qual vêm as planilhas de execução e os "
+            "documentos usados no acompanhamento dos Termos de Execução Descentralizada. "
+            "É uma fonte operacional do módulo, não um conceito definido pelo MCASP ou MTO."
+        ),
+        fonte="Contexto operacional do módulo de TEDs; sem definição própria no MCASP ou no MTO",
+        tema="Sistemas, fontes e siglas institucionais",
+        sigla="SIMEC",
+        uso_no_sistema="Origem das importações de execução e dos documentos NC, NE e PF do módulo de TEDs.",
+    ),
+    TermoGlossario(
+        termo="Tesouro Gerencial",
+        definicao=(
+            "Ambiente de consulta e extração de dados do Governo Federal usado como origem "
+            "das bases de dotação e execução do BudgetLab. No projeto, a abreviação TG e o "
+            "nome de arquivo BI CPOC identificam extrações desse ambiente, não classificadores "
+            "orçamentários."
+        ),
+        fonte="Contexto operacional das bases do projeto; sem definição própria no MCASP ou no MTO",
+        tema="Sistemas, fontes e siglas institucionais",
+        sigla="TG",
+        aliases=("BI", "BI CPOC", "CPOC"),
+        uso_no_sistema="Alimenta Dotação Anual, Execução Anual, Execução Mensal e as conciliações dos TEDs.",
+    ),
+    TermoGlossario(
+        termo="Cadastro de Pessoas Físicas",
+        definicao=(
+            "Registro nacional que identifica uma pessoa física perante a administração "
+            "tributária. No BudgetLab é apenas um identificador cadastral; não representa "
+            "uma classificação orçamentária."
+        ),
+        fonte="Contexto cadastral; fora do escopo conceitual do MCASP e do MTO",
+        tema="Sistemas, fontes e siglas institucionais",
+        sigla="CPF",
+        uso_no_sistema="Aparece nos cadastros de contratos e na explicação de granularidade de bolsas.",
+    ),
+    TermoGlossario(
+        termo="Cadastro Nacional da Pessoa Jurídica",
+        definicao=(
+            "Registro nacional que identifica uma pessoa jurídica e seus estabelecimentos "
+            "perante a administração tributária. No BudgetLab funciona como identificador "
+            "do contratado ou fornecedor."
+        ),
+        fonte="Contexto cadastral; fora do escopo conceitual do MCASP e do MTO",
+        tema="Sistemas, fontes e siglas institucionais",
+        sigla="CNPJ",
+        uso_no_sistema="Aparece na busca e nos formulários dos módulos de contratos.",
+    ),
+    TermoGlossario(
+        termo="Plano de Desenvolvimento Institucional",
+        definicao=(
+            "Instrumento estratégico que reúne diretrizes, objetivos e metas para orientar "
+            "o desenvolvimento da UFRPE nas áreas de ensino, pesquisa, extensão e gestão."
+        ),
+        fonte="Portal UFRPE — Planejamento institucional; fora do escopo do MCASP e do MTO",
+        tema="Sistemas, fontes e siglas institucionais",
+        sigla="PDI",
+        uso_no_sistema="As demandas orçamentárias podem ser vinculadas a metas do PDI.",
+    ),
+    TermoGlossario(
+        termo="Plano Diretor de Logística Sustentável",
+        definicao=(
+            "Instrumento de governança da UFRPE que orienta metas e ações de contratações e "
+            "logística interna sob as dimensões econômica, social e ambiental."
+        ),
+        fonte="Portal UFRPE — PLS 2025-2027; fora do escopo do MCASP e do MTO",
+        tema="Sistemas, fontes e siglas institucionais",
+        sigla="PLS",
+        aliases=("Plano de Logística Sustentável", "Plano de Gestão de Logística Sustentável"),
+        uso_no_sistema="As demandas orçamentárias podem ser vinculadas a metas do PLS.",
+    ),
+    TermoGlossario(
+        termo="Instituição Federal de Ensino Superior",
+        definicao=(
+            "Instituição pública federal que oferece educação superior. A sigla é usada como "
+            "categoria institucional; não corresponde a uma classificação orçamentária."
+        ),
+        fonte="Contexto institucional do ensino superior federal; fora do escopo do MCASP e do MTO",
+        tema="Sistemas, fontes e siglas institucionais",
+        sigla="IFES",
+        uso_no_sistema=(
+            "Aparece na identificação de ações de governo voltadas ao funcionamento das "
+            "instituições federais."
+        ),
+    ),
     # -- Receita e princípios orçamentários -----------------------------
     TermoGlossario(
         termo="Princípios Orçamentários",
@@ -228,6 +412,11 @@ GLOSSARIO: tuple[TermoGlossario, ...] = (
         ),
         fonte="MCASP, p. 76-84",
         tema="Classificações orçamentárias",
+        sigla="ND",
+        uso_no_sistema=(
+            "Aparece abreviada como ND nos cadastros de bolsas, contratos e relatórios "
+            "de reforço de empenho."
+        ),
         ver_tambem=("Grupo de Natureza da Despesa", "Modalidade de Aplicação", "Elemento de Despesa"),
     ),
     TermoGlossario(
@@ -639,6 +828,24 @@ GLOSSARIO: tuple[TermoGlossario, ...] = (
         ver_tambem=("Descentralização de Créditos Orçamentários",),
     ),
     TermoGlossario(
+        termo="Programação Financeira",
+        definicao=(
+            "Planejamento que compatibiliza o fluxo de receitas e de pagamentos ao longo "
+            "do exercício para apoiar o equilíbrio fiscal e o cumprimento das metas. No "
+            "módulo de TEDs, PF identifica os documentos de programação financeira do "
+            "SIMEC; o valor líquido corresponde aos repasses menos as devoluções."
+        ),
+        fonte=(
+            "MTO, p. 195; MCASP, p. 71-72 (descentralização financeira); o uso da sigla "
+            "PF como documento é operacional no SIMEC"
+        ),
+        tema="Descentralização, TED e convênios",
+        sigla="PF",
+        aliases=("DOC PF", "PF líquida"),
+        uso_no_sistema="Compõe os indicadores de repasse e a comparação NC − PF nas páginas de TEDs.",
+        ver_tambem=("Termo de Execução Descentralizada", "Nota de Crédito"),
+    ),
+    TermoGlossario(
         termo="Nota de Crédito",
         definicao=(
             "Documento do SIAFI que formaliza a descentralização de crédito "
@@ -744,7 +951,7 @@ def termos_por_tema() -> dict[str, tuple[TermoGlossario, ...]]:
 
 
 def buscar(consulta: str) -> tuple[TermoGlossario, ...]:
-    """Filtra verbetes cujo termo, sigla ou definição contenham `consulta`.
+    """Filtra verbetes por nome, sigla, alias, definição, uso, tema ou fonte.
 
     Busca case-insensitive e sem acentuação (evita frustrar o usuário que
     digitar "orcamento" em vez de "orçamento").
@@ -758,7 +965,11 @@ def buscar(consulta: str) -> tuple[TermoGlossario, ...]:
         for termo in GLOSSARIO
         if alvo in _normalizar(termo.termo)
         or (termo.sigla and alvo in _normalizar(termo.sigla))
+        or any(alvo in _normalizar(alias) for alias in termo.aliases)
         or alvo in _normalizar(termo.definicao)
+        or (termo.uso_no_sistema and alvo in _normalizar(termo.uso_no_sistema))
+        or alvo in _normalizar(termo.tema)
+        or alvo in _normalizar(termo.fonte)
     )
 
 
