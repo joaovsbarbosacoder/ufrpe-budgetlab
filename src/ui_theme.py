@@ -31,7 +31,7 @@ def _theme_css() -> str:
         background: transparent;
         position: static !important;
     }}
-    .block-container {{ max-width: 1680px; padding: 1rem 1.35rem 3.25rem; }}
+    .block-container {{ max-width: 1680px; padding: 1rem 1.35rem 5rem; }}
     [data-testid="stAppViewContainer"] h1 {{
         font-family: {d.FONT_HEADING};
         font-size: clamp(1.8rem, 2.2vw, 2.35rem);
