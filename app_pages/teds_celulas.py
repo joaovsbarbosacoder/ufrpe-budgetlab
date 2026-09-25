@@ -12,6 +12,8 @@ dado nunca aparece como conformidade nem como irregularidade.
 
 from __future__ import annotations
 
+from html import escape
+
 import streamlit as st
 
 from src import design_tokens
@@ -22,7 +24,7 @@ from src.teds_celula_orcamentaria import (
     carregar_conciliacao_celulas,
     resultados_para_tabela,
 )
-from src.teds_ui import conexao, injetar_css, render_kpi_strip
+from src.teds_ui import badge, conexao, html_linha, injetar_css, render_kpi_strip
 from src.ui_theme import render_page_header
 
 injetar_css()
@@ -108,7 +110,37 @@ if situacao != "Todas":
     filtrado = filtrado[filtrado["Situação"] == situacao]
 
 st.markdown(f"#### Comparações — {len(filtrado)} registro(s)")
-st.dataframe(filtrado, hide_index=True, width="stretch")
+_TOM_SITUACAO = {
+    ESTADO_CORRESPONDENTE: design_tokens.POSITIVE,
+    ESTADO_DIVERGENCIA: design_tokens.NEGATIVE,
+    ESTADO_BASE_INCOMPLETA: design_tokens.WARNING,
+}
+_LIMITE_CARTOES = 25
+for _, r in filtrado.head(_LIMITE_CARTOES).iterrows():
+    tom = _TOM_SITUACAO.get(r["Situação"], design_tokens.TEXT_MUTED)
+    metricas = [
+        ("Exercício", r["Exercício"]),
+        ("Transferência (SIAFI)", r["Transferência (SIAFI)"]),
+        ("Vínculo", r["Vínculo"]),
+        ("Célula da NE (PTRES | fonte | natureza | PI)", r["Célula da NE (PTRES | fonte | natureza | PI)"]),
+    ]
+    if r["Campos divergentes"]:
+        metricas.append(("Campos divergentes", r["Campos divergentes"]))
+    with st.container(border=True):
+        st.markdown(
+            html_linha(f"NE {r['NE']} · TED {r['TED']}", r["Motivo"], [badge(escape(r["Situação"]), tom)], metricas, tone=tom),
+            unsafe_allow_html=True,
+        )
+        with st.expander("Rastreabilidade"):
+            for rotulo in (
+                "Valores nas NCs para o campo divergente", "NCs consideradas", "Células das NCs",
+                "NCs do TED ainda não identificadas no TG", "Linhas de origem (NC)", "Linhas de origem (NE)",
+            ):
+                st.caption(f"**{rotulo}:** {r[rotulo] if r[rotulo] != '' else '—'}")
+if len(filtrado) > _LIMITE_CARTOES:
+    st.caption(f"Mostrando os {_LIMITE_CARTOES} primeiros de {len(filtrado)} registros; refine os filtros ou use a tabela completa abaixo.")
+with st.expander("Tabela completa (rastreável e ordenável)"):
+    st.dataframe(filtrado, hide_index=True, width="stretch")
 st.caption(
     "Cada linha é uma célula de NE de um vínculo TED × NE. A comparação é por códigos (texto, zeros à esquerda "
     "preservados), contra o conjunto de células das NCs do mesmo TED e exercício; em 2026 só as células DESTINO "

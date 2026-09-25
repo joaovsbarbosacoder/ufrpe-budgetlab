@@ -32,8 +32,10 @@ from src.teds_ui import (
     cor_gravidade,
     cor_status_alerta,
     formatar_valor_auditoria,
+    html_linha,
     injetar_css,
     render_kpi_strip,
+    render_timeline,
     rotulo_acao_auditoria,
     rotulo_gravidade,
     rotulo_status_alerta,
@@ -120,10 +122,14 @@ with col_lista:
         with st.container(border=True):
             cinfo, cbtn = st.columns([5, 1])
             cinfo.markdown(
-                f"{badge(rotulo_gravidade(a.gravidade), cor_gravidade(a.gravidade))} "
-                f"{badge(rotulo_status_alerta(a.status), cor_status_alerta(a.status))} &nbsp; "
-                f"**{rotulo_tipo_alerta(a.tipo)}**  \n"
-                f"<span class='teds-muted'>{a.documento} — {a.data_identificacao[:10]}</span>",
+                html_linha(
+                    rotulo_tipo_alerta(a.tipo),
+                    f"{a.documento} — {a.data_identificacao[:10]}",
+                    [badge(rotulo_gravidade(a.gravidade), cor_gravidade(a.gravidade)),
+                     badge(rotulo_status_alerta(a.status), cor_status_alerta(a.status))],
+                    [],
+                    tone=cor_gravidade(a.gravidade),
+                ),
                 unsafe_allow_html=True,
             )
             if cbtn.button("Ver" if not ativo else "●", key=f"ca_ver_{a.id}"):
@@ -198,11 +204,12 @@ with col_detalhe:
                 st.caption(f"TED: {alvo.chave_ted}")
 
             st.markdown("**Linha do tempo**")
-            st.caption(f"🔴 Alerta identificado — {alvo.data_identificacao}")
+            marcos_alerta = [(str(alvo.data_identificacao), "Alerta identificado", design_tokens.NEGATIVE)]
             if alvo.status in (STATUS_EM_ANALISE, STATUS_RESOLVIDO):
-                st.caption("🟡 Em análise")
+                marcos_alerta.append(("Em análise", "Situação atual ou anterior; a data não é registrada", design_tokens.WARNING))
             if alvo.status == STATUS_RESOLVIDO:
-                st.caption(f"🟢 Resolvido — {alvo.data_resolucao}")
+                marcos_alerta.append((str(alvo.data_resolucao), "Resolvido", design_tokens.POSITIVE))
+            render_timeline(marcos_alerta)
 
             st.markdown("**Trilha de auditoria**")
             registros = historico_auditoria(conn, ENTIDADE_ALERTA, alvo.id)

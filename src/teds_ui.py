@@ -204,6 +204,30 @@ def injetar_css() -> None:
         .teds-difference {{display:flex;justify-content:space-between;border-top:1px solid {d.BORDER};
             margin-top:16px;padding-top:14px}}
         .teds-difference strong {{color:{d.WARNING};font-size:20px}}
+        .teds-doc-list {{max-height:340px;overflow-y:auto;margin-right:-6px;padding-right:6px}}
+        .teds-doc-row {{display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+            padding:9px 0;border-bottom:1px solid {d.BORDER}}}
+        .teds-doc-row:last-child {{border-bottom:0}}
+        .teds-doc-main {{font-weight:700;color:{d.TEXT};font-size:13.5px}}
+        .teds-doc-meta {{color:{d.TEXT_MUTED};font-size:12px;margin-top:2px}}
+        .teds-doc-value {{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;
+            color:{d.TEXT};font-size:13.5px}}
+        .teds-doc-empty {{color:{d.TEXT_MUTED};font-size:13px;padding:6px 0}}
+        .teds-doc-total {{font-weight:800;color:var(--tone);font-size:16px;font-variant-numeric:tabular-nums}}
+        .teds-timeline {{position:relative;margin:4px 0 4px 6px;padding-left:20px;
+            border-left:2px solid {d.BORDER}}}
+        .teds-timeline-item {{position:relative;padding:0 0 14px}}
+        .teds-timeline-item:last-child {{padding-bottom:0}}
+        .teds-timeline-item::before {{content:"";position:absolute;left:-27px;top:3px;width:12px;height:12px;
+            border-radius:50%;background:var(--tone);border:2px solid {d.SURFACE}}}
+        .teds-timeline-date {{font-weight:700;font-size:13px;color:{d.TEXT};font-variant-numeric:tabular-nums}}
+        .teds-timeline-label {{color:{d.TEXT_MUTED};font-size:12.5px}}
+        .teds-linha {{border-left:4px solid var(--tone);padding-left:12px}}
+        .teds-linha-title {{font:700 15px {d.FONT_HEADING};color:{d.TEXT};margin-bottom:2px}}
+        .teds-note {{color:{d.TEXT_MUTED};font-size:12.5px;margin-top:10px;line-height:1.4}}
+        .teds-hero {{display:flex;flex-wrap:wrap;gap:8px 28px;align-items:center;margin:2px 0 10px}}
+        .teds-hero-item span {{display:block;color:{d.TEXT_MUTED};font-size:11.5px;font-weight:650}}
+        .teds-hero-item strong {{font-size:14px;color:{d.TEXT}}}
         @media (max-width:1100px) {{.teds-kpi-grid{{grid-template-columns:repeat(2,minmax(0,1fr))}}
             .teds-progress-row{{grid-template-columns:84px 1fr 48px}}.teds-progress-value{{grid-column:2/4;text-align:left}}}}
         @media (max-width:700px) {{.teds-kpi-grid{{grid-template-columns:1fr}}
@@ -273,6 +297,130 @@ def render_execution_panel(
         + "".join(body) + diff_html + "</div>",
         unsafe_allow_html=True,
     )
+
+
+def render_doc_list(
+    title: str,
+    rows: list[dict[str, str]],
+    *,
+    total: str | None = None,
+    tone: str | None = None,
+    empty: str = "Nenhum documento vinculado a este TED.",
+    note: str | None = None,
+) -> None:
+    """Cartão de documentos: título, quantidade, total e uma lista de linhas
+    `{"main", "meta", "value"}` (todos os textos já formatados; aqui só se escapa o HTML). Substitui a
+    grade única de documentos misturados — cada tipo de documento ganha o seu cartão."""
+
+    corpo = []
+    for row in rows:
+        corpo.append(
+            "<div class='teds-doc-row'><div>"
+            f"<div class='teds-doc-main'>{escape(str(row['main']))}</div>"
+            f"<div class='teds-doc-meta'>{escape(str(row.get('meta', '')))}</div></div>"
+            f"<div class='teds-doc-value'>{escape(str(row.get('value', '—')))}</div></div>"
+        )
+    lista = f"<div class='teds-doc-list'>{''.join(corpo)}</div>" if corpo else f"<div class='teds-doc-empty'>{escape(empty)}</div>"
+    total_html = f"<span class='teds-doc-total'>{escape(total)}</span>" if total is not None else ""
+    nota_html = f"<div class='teds-note'>{escape(note)}</div>" if note else ""
+    st.markdown(
+        f"<div class='teds-panel' style='--tone:{escape(tone or design_tokens.ACCENT)}'>"
+        "<div class='teds-panel-head'>"
+        f"<span class='teds-panel-title'>{escape(title)}"
+        f" <span class='teds-panel-meta'>· {len(rows)}</span></span>{total_html}</div>"
+        f"{lista}{nota_html}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def marcos_do_ted(
+    inicio_vigencia: str | None,
+    fim_vigencia: str | None,
+    datas_nc: list[str | None],
+    datas_pf: list[str | None],
+) -> list[tuple[str, str, str]]:
+    """Marcos datados do TED `(data ISO, rótulo, cor)`, em ordem cronológica: vigência, primeira e
+    última NC, primeira e última PF. Documento sem data não entra (não há como situá-lo no tempo) —
+    a quantidade omitida é responsabilidade de quem chama informar. Datas vêm como texto ISO e
+    ordenam lexicograficamente; nada é convertido nem inventado."""
+
+    marcos: list[tuple[str, str, str]] = []
+    if inicio_vigencia:
+        marcos.append((inicio_vigencia, "Início da vigência", design_tokens.TEXT_MUTED))
+    if fim_vigencia:
+        marcos.append((fim_vigencia, "Fim da vigência", design_tokens.TEXT_MUTED))
+    for datas, sigla, cor in ((datas_nc, "NC", design_tokens.POSITIVE), (datas_pf, "PF", design_tokens.ACCENT)):
+        validas = sorted(d for d in datas if d)
+        if not validas:
+            continue
+        if len(validas) == 1:
+            marcos.append((validas[0], f"{sigla} emitida", cor))
+        else:
+            marcos.append((validas[0], f"Primeira {sigla} (de {len(validas)})", cor))
+            marcos.append((validas[-1], f"Última {sigla}", cor))
+    return sorted(marcos, key=lambda m: m[0])
+
+
+def render_timeline(marcos: list[tuple[str, str, str]], *, vazio: str = "Sem datas para exibir.") -> None:
+    if not marcos:
+        st.markdown(f"<div class='teds-doc-empty'>{escape(vazio)}</div>", unsafe_allow_html=True)
+        return
+    itens = "".join(
+        f"<div class='teds-timeline-item' style='--tone:{escape(cor)}'>"
+        f"<div class='teds-timeline-date'>{escape(data)}</div>"
+        f"<div class='teds-timeline-label'>{escape(rotulo)}</div></div>"
+        for data, rotulo, cor in marcos
+    )
+    st.markdown(f"<div class='teds-timeline'>{itens}</div>", unsafe_allow_html=True)
+
+
+def html_linha(
+    titulo: str,
+    subtitulo: str | None,
+    selos: list[str],
+    metricas: list[tuple[str, str]],
+    *,
+    tone: str | None = None,
+) -> str:
+    """HTML de uma linha-cartão de listagem: título, selos (HTML já montado por `badge`), subtítulo
+    e faixa de métricas rotuladas. Substitui a grade de colunas `st.columns` com um `st.write` por
+    célula; o botão de ação continua sendo um widget do Streamlit posto pelo chamador ao lado."""
+
+    selos_html = " ".join(selos)
+    sub_html = f"<div class='teds-muted'>{escape(subtitulo)}</div>" if subtitulo else ""
+    itens = "".join(
+        f"<div class='teds-hero-item'><span>{escape(rotulo)}</span><strong>{escape(str(valor))}</strong></div>"
+        for rotulo, valor in metricas
+    )
+    metricas_html = f"<div class='teds-hero' style='margin:8px 0 0'>{itens}</div>" if itens else ""
+    return (
+        f"<div class='teds-linha' style='--tone:{escape(tone or design_tokens.BORDER)}'>"
+        f"<div class='teds-linha-title'>{escape(titulo)} {selos_html}</div>{sub_html}{metricas_html}</div>"
+    )
+
+
+def paginar(total: int, por_pagina: int, pagina: int) -> tuple[int, int, int, int]:
+    """`(página corrigida, total de páginas, início, fim)` — fatia `[início:fim]`. Página fora do
+    intervalo (filtro que reduziu o resultado) é corrigida em vez de mostrar uma lista vazia."""
+
+    total_paginas = max(1, -(-total // por_pagina))
+    pagina = max(1, min(pagina, total_paginas))
+    inicio = (pagina - 1) * por_pagina
+    return pagina, total_paginas, inicio, min(inicio + por_pagina, total)
+
+
+def somar_valores(valores: list[str | None]) -> tuple[Decimal, int]:
+    """`(soma, quantidade sem valor)`. Valor nulo não vira zero: é contado à parte para que o
+    chamador possa sinalizá-lo (regra permanente: nulo ≠ zero)."""
+
+    soma = Decimal("0")
+    sem_valor = 0
+    for valor in valores:
+        if valor is None:
+            sem_valor += 1
+        else:
+            soma += texto_para_valor(valor)
+    return soma, sem_valor
 
 
 def cor_gravidade(gravidade: str) -> str:
@@ -478,6 +626,51 @@ def soma_tg_por_teds(conn: sqlite3.Connection, chaves_ted: set[str]) -> tuple[De
     liquidado = sum((texto_para_valor(v) for v, _ in linhas if v is not None), start=Decimal("0"))
     pago = sum((texto_para_valor(v) for _, v in linhas if v is not None), start=Decimal("0"))
     return liquidado, pago, True
+
+
+def cobertura_tg(conn: sqlite3.Connection, chave_ted: str) -> tuple[list[str], list[str], list[str]]:
+    """`(anos das NEs em execucao_tg, NEs contabilizáveis do TED, dessas: as sem nenhuma linha no
+    Tesouro Gerencial)`. Serve para explicar POR QUE o pago/liquidado falta ou está incompleto —
+    o ano vem do prefixo do número da NE ("2023NE001062" -> "2023"), a mesma convenção do resto do
+    módulo. Só descreve cobertura; não altera nenhum total."""
+
+    anos = [a for (a,) in conn.execute(
+        "SELECT DISTINCT substr(numero_completo_ne, 1, 4) FROM execucao_tg ORDER BY 1"
+    ).fetchall() if a]
+    numeros = [n for (n,) in conn.execute(
+        "SELECT DISTINCT numero_ne FROM vinculo_ne WHERE chave_ted = ? AND status_validacao = ? ORDER BY numero_ne",
+        (chave_ted, STATUS_OK),
+    ).fetchall()]
+    if not numeros:
+        return anos, numeros, []
+    marcadores = ",".join("?" * len(numeros))
+    com_linha = {n for (n,) in conn.execute(
+        f"SELECT DISTINCT numero_completo_ne FROM execucao_tg WHERE numero_completo_ne IN ({marcadores})", numeros
+    ).fetchall()}
+    return anos, numeros, [n for n in numeros if n not in com_linha]
+
+
+def texto_cobertura_tg(anos: list[str], numeros: list[str], sem_linha: list[str]) -> str | None:
+    """Mensagem sobre a cobertura do Tesouro Gerencial para as NEs de um TED, ou `None` quando
+    todas as NEs contabilizáveis têm linha."""
+
+    if not anos:
+        return "Nenhuma extração do Tesouro Gerencial foi sincronizada ainda."
+    if not numeros:
+        return "Este TED não tem NE contabilizável (vínculo confirmado) para cruzar com o Tesouro Gerencial."
+    if not sem_linha:
+        return None
+    anos_sem = sorted({n[:4] for n in sem_linha})
+    cobertura = f"{anos[0]} a {anos[-1]}" if len(anos) > 1 else anos[0]
+    fora = [a for a in anos_sem if a not in anos]
+    if fora:
+        causa = f"A extração sincronizada cobre NEs de {cobertura}; sem cobertura para NE(s) de {', '.join(fora)}."
+    else:
+        causa = "Não há linha no Tesouro Gerencial para "
+        causa += ("a NE " if len(sem_linha) == 1 else "as NEs ") + ", ".join(sem_linha) + "."
+    if len(sem_linha) < len(numeros):
+        causa += f" Valores de liquidado e pago consideram só {len(numeros) - len(sem_linha)} de {len(numeros)} NE(s)."
+    return causa
 
 
 @dataclass(frozen=True)

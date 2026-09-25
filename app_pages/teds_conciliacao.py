@@ -18,13 +18,14 @@ mockup).
 from __future__ import annotations
 
 from decimal import Decimal
+from html import escape
 
 import pandas as pd
 import streamlit as st
 
 from src import design_tokens
 from src.teds_normalizacao import texto_para_valor
-from src.teds_ui import anos_disponiveis, badge, brl, carregar_teds, conexao, cor_situacao_conciliacao, filtrar_por_exercicio, injetar_css, render_kpi_strip, situacao_conciliacao
+from src.teds_ui import anos_disponiveis, badge, brl, carregar_teds, conexao, cor_situacao_conciliacao, filtrar_por_exercicio, html_linha, injetar_css, paginar, render_doc_list, render_kpi_strip, situacao_conciliacao
 from src.ui_theme import render_page_header
 
 injetar_css()
@@ -132,28 +133,49 @@ st.markdown("#### Comparação entre fontes")
 if comparacao.empty:
     st.caption("Nenhum registro para os filtros selecionados.")
 else:
-    cabecalho = st.columns([0.8, 1, 1.6, 1.4, 1, 1.4, 1.2, 1.6, 0.8])
-    for coluna, rotulo in zip(cabecalho, ["TED", "SIAFI", "Métrica", "SIMEC", "Documentos", "Tesouro Gerencial", "Diferença", "Situação", ""]):
-        coluna.markdown(f"**{rotulo}**" if rotulo else "")
-    for posicao, linha in comparacao.reset_index(drop=True).iterrows():
-        c = st.columns([0.8, 1, 1.6, 1.4, 1, 1.4, 1.2, 1.6, 0.8])
-        c[0].write(linha["ted"])
-        c[1].write(linha["siafi"])
-        c[2].write(linha["metrica"])
-        c[3].write(brl(linha["simec"]) if linha["metrica"] == "Valor das NEs" else str(int(linha["simec"])))
-        c[4].write(str(linha["documentos"]))
-        if pd.isna(linha["tg"]):
-            c[5].write("—")
-            c[6].write("—")
-        else:
-            c[5].write(brl(linha["tg"]) if linha["metrica"] == "Valor das NEs" else str(int(linha["tg"])))
-            c[6].write(brl(linha["diferenca"]) if linha["metrica"] == "Valor das NEs" else str(int(linha["diferenca"])))
-        c[7].markdown(badge(linha["situacao"], cor_situacao_conciliacao(linha["situacao"])), unsafe_allow_html=True)
-        if linha["situacao"] == "Conferência necessária":
-            if c[8].button("Analisar", key=f"cc_analisar_{posicao}"):
-                st.session_state["cc_evidencia"] = (linha["chave_ted"], linha["metrica"])
-        else:
-            c[8].write("")
+    _POR_PAGINA = 25
+    assinatura_filtros = (exercicio, ted_sel, tipo_sel, situacao_sel)
+    if st.session_state.get("cc_assinatura") != assinatura_filtros:
+        st.session_state["cc_assinatura"] = assinatura_filtros
+        st.session_state["cc_pagina"] = 1  # filtro novo volta para a primeira página
+    pagina, total_paginas, inicio, fim = paginar(len(comparacao), _POR_PAGINA, st.session_state.get("cc_pagina", 1))
+    st.session_state["cc_pagina"] = pagina
+    # `posicao` continua sendo o índice na lista completa: a chave do botão e a evidência não mudam com a página.
+    for posicao, linha in comparacao.reset_index(drop=True).iloc[inicio:fim].iterrows():
+        eh_valor = linha["metrica"] == "Valor das NEs"
+        tem_tg = not pd.isna(linha["tg"])
+        with st.container(border=True):
+            c_info, c_botao = st.columns([6, 1], vertical_alignment="center")
+            c_info.markdown(
+                html_linha(
+                    f"TED {linha['ted']} · SIAFI {linha['siafi']} · {linha['metrica']}",
+                    None,
+                    [badge(escape(linha["situacao"]), cor_situacao_conciliacao(linha["situacao"]))],
+                    [
+                        ("SIMEC", brl(linha["simec"]) if eh_valor else str(int(linha["simec"]))),
+                        ("Tesouro Gerencial", ("—" if not tem_tg else brl(linha["tg"]) if eh_valor else str(int(linha["tg"])))),
+                        ("Diferença", ("—" if not tem_tg else brl(linha["diferenca"]) if eh_valor else str(int(linha["diferenca"])))),
+                        ("NEs contabilizadas", str(linha["documentos"])),
+                    ],
+                    tone=cor_situacao_conciliacao(linha["situacao"]),
+                ),
+                unsafe_allow_html=True,
+            )
+            if linha["situacao"] == "Conferência necessária":
+                if c_botao.button("Analisar", key=f"cc_analisar_{posicao}", width="stretch"):
+                    st.session_state["cc_evidencia"] = (linha["chave_ted"], linha["metrica"])
+
+    col_ant, col_info, col_prox = st.columns([1, 3, 1])
+    with col_ant:
+        if st.button("‹ Anterior", key="cc_ant", disabled=pagina <= 1):
+            st.session_state["cc_pagina"] = pagina - 1
+            st.rerun()
+    with col_info:
+        st.caption(f"Página {pagina} de {total_paginas} — mostrando {fim - inicio} de {len(comparacao)} comparações")
+    with col_prox:
+        if st.button("Próxima ›", key="cc_prox", disabled=pagina >= total_paginas):
+            st.session_state["cc_pagina"] = pagina + 1
+            st.rerun()
 
 evidencia = st.session_state.get("cc_evidencia")
 if evidencia:
@@ -175,18 +197,13 @@ if evidencia:
 
             col_simec, col_tg = st.columns(2)
             with col_simec:
-                st.markdown("**SIMEC**")
-                st.dataframe(
-                    pd.DataFrame(ne_linhas, columns=["Número da NE", "Valor", "Status"]).assign(Valor=lambda d: d["Valor"].map(brl)),
-                    hide_index=True, width="stretch",
+                render_doc_list(
+                    "SIMEC", [{"main": n, "meta": f"status: {s}", "value": brl(v)} for n, v, s in ne_linhas],
+                    tone=design_tokens.ACCENT, empty="Nenhuma NE vinculada a este TED.",
                 )
             with col_tg:
-                st.markdown("**Tesouro Gerencial**")
                 tg_linhas = _tg_por_numeros({n for n, _, _ in ne_linhas})
-                if not tg_linhas:
-                    st.caption("Sem dado — nenhuma extração do Tesouro Gerencial importada para estas NEs.")
-                else:
-                    st.dataframe(
-                        pd.DataFrame(tg_linhas, columns=["Número completo da NE", "Empenhado"]).assign(Empenhado=lambda d: d["Empenhado"].map(brl)),
-                        hide_index=True, width="stretch",
-                    )
+                render_doc_list(
+                    "Tesouro Gerencial", [{"main": n, "meta": "lançamento no Tesouro", "value": brl(v)} for n, v in tg_linhas],
+                    tone=design_tokens.POSITIVE, empty="Sem dado — nenhuma extração do Tesouro Gerencial importada para estas NEs.",
+                )

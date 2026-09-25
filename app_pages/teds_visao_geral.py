@@ -34,6 +34,7 @@ from src.teds_ui import (
     filtrar_por_exercicio,
     injetar_css,
     pct,
+    html_linha,
     render_execution_panel,
     render_kpi_strip,
     rotulo_gravidade,
@@ -176,23 +177,26 @@ if atencao.empty:
     st.caption("Nenhum TED com alerta direto no recorte atual.")
 else:
     atencao = atencao.sort_values("fim_vigencia", na_position="last")
-    cabecalho = st.columns([0.8, 1, 3, 1.3, 1.3, 1.3, 0.7, 0.8])
-    for coluna, rotulo in zip(
-        cabecalho, ["TED", "SIAFI", "Descrição", "Fim vigência", "NC líquida", "PF líquida", "Alertas", ""]
-    ):
-        coluna.markdown(f"**{rotulo}**" if rotulo else "")
     for posicao, linha in atencao.reset_index(drop=True).iterrows():
-        c = st.columns([0.8, 1, 3, 1.3, 1.3, 1.3, 0.7, 0.8])
-        c[0].write(linha["ted"])
-        c[1].write(linha["codigo_siafi"])
-        c[2].write(dash(linha["descricao"]))
-        c[3].write(dash(linha["fim_vigencia"]))
-        c[4].write(brl(texto_para_valor(linha["total_nc_descentralizacao"] or "0") - texto_para_valor(linha["total_nc_devolucao"] or "0")))
-        c[5].write(brl(texto_para_valor(linha["total_pf_repasse"] or "0") - texto_para_valor(linha["total_pf_devolucao"] or "0")))
-        c[6].markdown(badge(str(contagem_alertas_por_ted.get(linha["chave_ted"], 0)), cor_estado_ted(None)), unsafe_allow_html=True)
-        if c[7].button("Ver", key=f"vg_ver_{posicao}"):
-            st.session_state["teds_chave_selecionada"] = linha["chave_ted"]
-            st.switch_page("app_pages/teds_lista.py")
+        with st.container(border=True):
+            c_info, c_botao = st.columns([6, 1], vertical_alignment="center")
+            c_info.markdown(
+                html_linha(
+                    f"TED {linha['ted']} · SIAFI {linha['codigo_siafi']}",
+                    dash(linha["descricao"]),
+                    [badge(f"{contagem_alertas_por_ted.get(linha['chave_ted'], 0)} alerta(s)", cor_gravidade("alta"))],
+                    [
+                        ("Fim da vigência", dash(linha["fim_vigencia"])),
+                        ("NC líquida", brl(texto_para_valor(linha["total_nc_descentralizacao"] or "0") - texto_para_valor(linha["total_nc_devolucao"] or "0"))),
+                        ("PF líquida", brl(texto_para_valor(linha["total_pf_repasse"] or "0") - texto_para_valor(linha["total_pf_devolucao"] or "0"))),
+                    ],
+                    tone=cor_gravidade("alta"),
+                ),
+                unsafe_allow_html=True,
+            )
+            if c_botao.button("Ver", key=f"vg_ver_{posicao}", width="stretch"):
+                st.session_state["teds_chave_selecionada"] = linha["chave_ted"]
+                st.switch_page("app_pages/teds_lista.py")
 
 # ---------------------------------------------------------------------- cobertura dos relacionamentos
 # §13 do briefing — painel de qualidade sobre a BASE INTEIRA (não aplica o filtro de
