@@ -70,6 +70,14 @@ SUBDIV_COLUMNS = (
 )
 SUBDIV_GAP = "6px"
 
+# Variante compacta para janelas até ~1400px CSS (zoom de 100% em notebook): mesmas 11
+# colunas, nenhuma escondida — só mínimos menores. Soma: 944px + 10 * 6px de gap.
+SUBDIV_COLUMNS_COMPACT = (
+    "minmax(120px, 1.4fr) minmax(90px, 1fr) "
+    "minmax(90px, 0.8fr) minmax(80px, 0.7fr) 40px 56px 92px 84px 92px 100px 100px"
+)
+TABLE_MIN_WIDTH_COMPACT = "1004px"
+
 
 def plotly_layout() -> dict:
     """Layout-base claro para gráficos Plotly."""

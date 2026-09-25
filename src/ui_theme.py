@@ -87,6 +87,12 @@ def _theme_css() -> str:
         width: 15.5rem !important;
         box-shadow: 3px 0 14px rgba(7, 19, 61, 0.10);
     }}
+    /* Em janelas até ~1400px CSS (zoom de 100% em notebook), 15.5rem de menu + margens
+       deixavam menos de 1100px para o conteúdo e cortavam as tabelas largas. */
+    @media (max-width: 1400px) {{
+        [data-testid="stSidebar"] {{ min-width: 13rem !important; width: 13rem !important; }}
+        .block-container {{ padding-left: 0.75rem; padding-right: 0.75rem; }}
+    }}
     [data-testid="stSidebarContent"] {{
         overflow-x: hidden;
         opacity: 1;
@@ -123,6 +129,13 @@ def _theme_css() -> str:
         color: {d.SIDEBAR_TEXT} !important;
     }}
     [data-testid="stSidebarNavLink"] * {{ color: {d.SIDEBAR_TEXT} !important; }}
+    /* Nomes longos ("Limite de Empenho", "Consulta de Empenhos") apareciam cortados com
+       reticências; quebram em duas linhas em vez de truncar. */
+    [data-testid="stSidebarNavLink"] {{ height: auto; padding-block: 0.3rem; }}
+    [data-testid="stSidebarNavLink"] * {{
+        white-space: normal !important; overflow: visible !important;
+        text-overflow: clip !important; overflow-wrap: anywhere;
+    }}
     [data-testid="stSidebarNavLink"]:hover {{ background: rgba(255,255,255,0.08); }}
     [data-testid="stSidebarNavLink"][aria-current="page"] {{
         background: {d.SIDEBAR_ACTIVE};
@@ -183,14 +196,14 @@ def _theme_css() -> str:
     [data-testid="stMultiSelectTagsContainer"] {{ flex-wrap: wrap; row-gap: 0.35rem; }}
 
     * {{ scrollbar-color: {d.ACCENT} transparent; scrollbar-width: auto; }}
-    ::-webkit-scrollbar {{ width: 40px; height: 40px; }}
+    ::-webkit-scrollbar {{ width: 16px; height: 16px; }}
     ::-webkit-scrollbar-track {{ background: transparent; }}
     ::-webkit-scrollbar-thumb {{
         background-color: {d.ACCENT};
         border-radius: 999px;
-        border: 10px solid {d.BG};
+        border: 3px solid {d.BG};
         background-clip: padding-box;
-        min-height: 96px;
+        min-height: 48px;
     }}
     ::-webkit-scrollbar-thumb:hover {{
         background-color: {d.ACCENT_STRONG};

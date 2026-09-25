@@ -38,9 +38,11 @@ from src.design_tokens import (
     SIZE,
     SPACE,
     SUBDIV_COLUMNS,
+    SUBDIV_COLUMNS_COMPACT,
     SUBDIV_GAP,
     SURFACE,
     TABLE_MIN_WIDTH,
+    TABLE_MIN_WIDTH_COMPACT,
     TEXT,
     TEXT_MUTED,
     TRACK,
@@ -267,6 +269,11 @@ def _inject_css() -> None:
         .po-row, .po-head, .po-foot {{
             display: grid; grid-template-columns: {SUBDIV_COLUMNS};
             gap: {SUBDIV_GAP}; min-width: {TABLE_MIN_WIDTH};
+        }}
+        @media (max-width: 1400px) {{
+            .po-row, .po-head, .po-foot {{
+                grid-template-columns: {SUBDIV_COLUMNS_COMPACT}; min-width: {TABLE_MIN_WIDTH_COMPACT};
+            }}
         }}
         .po-head {{
             padding-bottom: {SPACE['xs']}; border-bottom: 1px solid {BORDER};

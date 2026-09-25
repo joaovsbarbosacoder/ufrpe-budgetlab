@@ -30,6 +30,12 @@ class UiThemeTests(unittest.TestCase):
         self.assertIn(f"border-radius: {design_tokens.RADIUS}", css)
         self.assertIn(f"border-radius: {design_tokens.RADIUS_SM}", css)
 
+    def test_sidebar_nav_labels_wrap_instead_of_truncating(self) -> None:
+        css = _theme_css()
+        self.assertIn("text-overflow: clip !important", css)
+        self.assertIn("white-space: normal !important", css)
+        self.assertIn("max-width: 1400px", css)
+
     def test_rounded_shape_tokens_match_streamlit_theme(self) -> None:
         config = (Path(__file__).resolve().parents[1] / ".streamlit" / "config.toml").read_text(encoding="utf-8")
 
