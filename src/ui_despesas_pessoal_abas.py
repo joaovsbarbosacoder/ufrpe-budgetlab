@@ -38,6 +38,11 @@ def brl(valor) -> str:
     return ("−" if centavos < 0 else "") + "R$ " + texto
 
 
+def _md(texto: str) -> str:
+    """Escapa "$" para st.caption/st.warning: dois "R$" no mesmo texto viram fórmula LaTeX."""
+    return texto.replace("$", "\\$")
+
+
 def _mult(valor: float) -> str:
     return f"×{valor:.4f}".rstrip("0").rstrip(".").replace(".", ",")
 
@@ -95,11 +100,11 @@ def render_formulas() -> tuple[ParametrosProjecao, str | None]:
         "Total anual equivalente: **m × R**."
     )
     editada = st.data_editor(
-        tabela_multiplicadores(), key=PREFIXO + "tabela", hide_index=True, width="stretch",
+        tabela_multiplicadores(), key=PREFIXO + "tabela", hide_index=True, width="stretch", height="content",
         disabled=["Natureza", "Descrição"], num_rows="fixed",
         column_config={
             "Natureza": st.column_config.TextColumn(width="small"),
-            "Multiplicador": st.column_config.NumberColumn(min_value=12.0, step=0.0001, format="%.4f"),
+            "Multiplicador": st.column_config.NumberColumn(min_value=12.0, step=0.0001, format="localized"),
             "Extra só na parcela final": st.column_config.CheckboxColumn(),
         },
     )
@@ -223,7 +228,7 @@ def render_exercicios_anteriores(anual: pd.DataFrame, mensal: pd.DataFrame, dota
         "Empenhada": resumo["empenhada"].map(brl),
         "Liquidada": resumo["liquidada"].map(brl),
         "Paga": resumo["paga"].map(brl),
-    }), hide_index=True, width="stretch")
+    }), hide_index=True, width="stretch", height="content")
 
     st.markdown("##### Liquidada mês a mês (Execução Mensal)")
     mensal_ano = liquidada_mensal_por_grupo(mensal, ano)
@@ -232,18 +237,20 @@ def render_exercicios_anteriores(anual: pd.DataFrame, mensal: pd.DataFrame, dota
         cobertura = f"de {anos_mensal[0]} a {anos_mensal[-1]}" if anos_mensal else "nenhum exercício"
         st.info(f"A Execução Mensal importada cobre {cobertura}; para {ano} há apenas o total anual acima.")
     else:
-        tabela = pd.DataFrame({"Grupo": [NOMES_GRUPOS[g] for g in mensal_ano.index]})
-        for mes in range(1, 13):
-            tabela[MESES_NOMES[mes - 1]] = [brl(v) for v in mensal_ano[mes]]
+        # meses nas linhas, grupos nas colunas: 12 colunas de mês não cabem em 1366px.
         totais_grupo = mensal_ano.sum(axis=1, min_count=1)
-        tabela["Total"] = [brl(v) for v in totais_grupo]
-        st.dataframe(tabela, hide_index=True, width="stretch")
+        totais_mes = mensal_ano.sum(axis=0, min_count=1)
+        tabela = pd.DataFrame({"Mês": [*MESES_NOMES, "Total"]})
+        for grupo in mensal_ano.index:
+            tabela[NOMES_GRUPOS[grupo]] = [brl(v) for v in [*mensal_ano.loc[grupo], totais_grupo[grupo]]]
+        tabela["Total"] = [brl(v) for v in [*totais_mes, totais_grupo.sum(min_count=1)]]
+        st.dataframe(tabela, hide_index=True, width="stretch", height="content")
         soma_mensal = totais_grupo.sum(min_count=1)
         diferenca = None if pd.isna(soma_mensal) or pd.isna(total["liquidada"]) else float(total["liquidada"]) - float(soma_mensal)
-        st.caption(
+        st.caption(_md(
             f"Conciliação: Liquidada anual {brl(total['liquidada'])} − soma mensal {brl(soma_mensal)} = "
             f"{brl(diferenca)}. As duas bases têm extrações independentes."
-        )
+        ))
         render_projecao_com_executado(mensal, anual, ano, mensal_ano, parametros,
                                       mes_referencia_padrao, formulas_ajustadas)
 
@@ -256,7 +263,7 @@ def render_exercicios_anteriores(anual: pd.DataFrame, mensal: pd.DataFrame, dota
             "Empenhada": detalhe["empenhada"].map(brl),
             "Liquidada": detalhe["liquidada"].map(brl),
             "Paga": detalhe["paga"].map(brl),
-        }), hide_index=True, width="stretch")
+        }), hide_index=True, width="stretch", height="content")
     if procedencia:
         st.caption(procedencia)
 
@@ -302,7 +309,7 @@ def render_projecao_com_executado(mensal: pd.DataFrame, anual: pd.DataFrame, ano
         "Executado": resumo["executado"].map(brl),
         "Diferença": resumo["diferenca"].map(brl),
         "Diferença %": resumo["diferenca_pct"].map(_pct),
-    }), hide_index=True, width="stretch")
+    }), hide_index=True, width="stretch", height="content")
     with st.expander("Mês a mês por grupo"):
         st.dataframe(pd.DataFrame({
             "Grupo": comparacao["grupo"].map(NOMES_GRUPOS),
@@ -310,7 +317,7 @@ def render_projecao_com_executado(mensal: pd.DataFrame, anual: pd.DataFrame, ano
             "Projetado": comparacao["projetado"].map(brl),
             "Executado": comparacao["executado"].map(brl),
             "Diferença": comparacao["diferenca"].map(brl),
-        }), hide_index=True, width="stretch")
+        }), hide_index=True, width="stretch", height="content")
 
     with st.expander("Outros Benefícios por Plano Orçamentário"):
         render_beneficios_por_plano(mensal, anual, ano, int(mes_ref), parametros,
@@ -347,7 +354,7 @@ def render_desvio_por_mes_de_partida(mensal: pd.DataFrame, anual: pd.DataFrame, 
         "Sinal constante em várias linhas indica desvio sistemático da fórmula; um valor isolado "
         "muito alto costuma indicar um mês de partida atípico (a projeção repete aquele mês)."
     )
-    st.dataframe(tabela_desvio_por_mes_de_partida(desvio), hide_index=True, width="stretch")
+    st.dataframe(tabela_desvio_por_mes_de_partida(desvio), hide_index=True, width="stretch", height="content")
 
 
 def render_beneficios_por_plano(mensal: pd.DataFrame, anual: pd.DataFrame, ano: int, mes_ref: int,
@@ -376,9 +383,13 @@ def render_beneficios_por_plano(mensal: pd.DataFrame, anual: pd.DataFrame, ano: 
         "Executado": ordenado["executado"].map(brl),
         "Diferença": ordenado["diferenca"].map(brl),
         "Diferença %": ordenado["diferenca_pct"].map(_pct),
-    }), hide_index=True, width="stretch")
+    }), hide_index=True, width="stretch", height="content", column_config={
+        "Ação": st.column_config.TextColumn(width=60), "PO": st.column_config.TextColumn(width=50),
+        "Meses comparados": st.column_config.NumberColumn("Meses", width=60),
+        "Descrição": st.column_config.TextColumn(width="medium"),
+    })
     total_po = resumo.set_index("plano").loc["total", "projetado"]
     if not (pd.isna(total_po) and pd.isna(projetado_grupo)) and (
         pd.isna(total_po) or pd.isna(projetado_grupo) or round(float(total_po), 2) != round(float(projetado_grupo), 2)
     ):
-        st.warning(f"Soma dos Planos Orçamentários ({brl(total_po)}) difere da linha do grupo ({brl(projetado_grupo)}).")
+        st.warning(_md(f"Soma dos Planos Orçamentários ({brl(total_po)}) difere da linha do grupo ({brl(projetado_grupo)})."))

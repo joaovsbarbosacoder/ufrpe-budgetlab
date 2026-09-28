@@ -54,7 +54,7 @@ def _cached_dotacao_anual(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.Da
 # Escopo desta página: o componente tem o espaçamento de 32px do HTML original.
 st.html("""<style>
 .stMainBlockContainer:has(.st-key-dp_painel) {max-width:none; padding:0 0 3rem;}
-.stMainBlockContainer:has(.st-key-dp_painel) .stTabs [data-baseweb="tab-list"] {padding:0 32px;}
+.stMainBlockContainer:has(.st-key-dp_painel) [data-testid="stTabs"] [role="tablist"] {padding:0 32px;}
 .st-key-dp_aba_formulas, .st-key-dp_aba_historico, .st-key-dp_aba_aviso {padding:8px 32px 0;}
 </style>""")
 

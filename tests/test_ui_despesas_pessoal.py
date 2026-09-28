@@ -336,3 +336,8 @@ class TestAbasFormulasEHistorico(unittest.TestCase):
         self.assertEqual(linha["Diferença %"], "+10,0%")
         self.assertEqual(tabela.iloc[-1]["Ação"], "TOTAL")
         self.assertFalse(any("difere da linha do grupo" in w.value for w in at.warning))
+
+    def test_texto_com_varios_reais_nao_vira_formula(self):
+        # "R$ 1 - R$ 2" em st.caption vira LaTeX entre os dois "$" (achado na tela, 28/09/2026).
+        from src.ui_despesas_pessoal_abas import _md
+        self.assertEqual(_md("R$ 1,00 - R$ 2,00"), r"R\$ 1,00 - R\$ 2,00")
