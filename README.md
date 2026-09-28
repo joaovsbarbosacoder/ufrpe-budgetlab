@@ -39,6 +39,10 @@ A página pode se conectar ao calendário principal do Google (opcional, ver
 `docs/google_agenda.md`) e mostra os eventos dos próximos 30 dias — inclusive reuniões em
 que o usuário é convidado. Acesso à API isolado em `src/google_agenda.py`.
 
+Os prazos cadastrados também são sincronizados nos dois sentidos: excluir o evento de um
+prazo no Google marca o prazo como concluído (nunca o exclui). Conciliação em
+`src/prazos_sincronizacao.py`.
+
 ### Dotação Anual (BI CPOC - Por Ano)
 
 Uma única aba organiza os lançamentos por ano (não por mês), com blocos

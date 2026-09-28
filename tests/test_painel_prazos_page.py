@@ -29,6 +29,37 @@ class PainelPrazosGoogleAgendaTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertIn("Conectar ao Google Agenda", [b.label for b in app.button])
 
+    def test_conectado_sincroniza_ao_abrir_e_mostra_botao(self):
+        from src.prazos_sincronizacao import ResumoSincronizacao
+        resumo = ResumoSincronizacao(executado_em="2026-09-27T12:00:00+00:00")
+        with mock.patch("src.google_agenda.situacao_conexao", return_value="conectado"), \
+             mock.patch("src.google_agenda.cliente", return_value=mock.Mock(listar_eventos=mock.Mock(return_value=[]))), \
+             mock.patch("src.prazos_sincronizacao.sincronizar", return_value=resumo) as sync, \
+             mock.patch("src.prazos_sincronizacao.salvar_resumo"), \
+             mock.patch("src.prazos_sincronizacao.carregar_ultimo_resumo", return_value=None):
+            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+            app.run(timeout=60)
+            app.switch_page("app_pages/painel_prazos.py")
+            app.run(timeout=60)
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(sync.call_count, 1)
+        self.assertIn("Sincronizar agora", [b.label for b in app.button])
+
+    def test_falha_na_sincronizacao_nao_repete_a_cada_interacao(self):
+        from src.google_agenda import ErroGoogleAgenda
+        with mock.patch("src.google_agenda.situacao_conexao", return_value="conectado"), \
+             mock.patch("src.google_agenda.cliente", return_value=mock.Mock(listar_eventos=mock.Mock(return_value=[]))), \
+             mock.patch("src.prazos_sincronizacao.sincronizar", side_effect=ErroGoogleAgenda("sem rede")) as sync, \
+             mock.patch("src.prazos_sincronizacao.carregar_ultimo_resumo", return_value=None):
+            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+            app.run(timeout=60)
+            app.switch_page("app_pages/painel_prazos.py")
+            app.run(timeout=60)
+            app.run(timeout=60)  # nova interação dentro dos 5 minutos
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(sync.call_count, 1)
+        self.assertTrue(any("sem rede" in e.value for e in app.error))
+
 
 if __name__ == "__main__":
     unittest.main()

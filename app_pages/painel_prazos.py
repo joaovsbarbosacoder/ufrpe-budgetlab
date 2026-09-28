@@ -39,7 +39,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
 
-from src import google_agenda
+from src import google_agenda, prazos_sincronizacao
 from src.google_agenda import ErroGoogleAgenda
 from src.design_tokens import ACCENT, FONT_HEADING, NEGATIVE, POSITIVE, TEXT_MUTED, WARNING
 from src.prazos_orcamentarios import (
@@ -266,6 +266,47 @@ def _eventos_proximos(dias: int = 30) -> list[dict]:
     return google_agenda.cliente().listar_eventos(agora, agora + timedelta(days=dias))
 
 
+def _executar_sincronizacao() -> None:
+    """A tentativa é registrada ANTES de sincronizar: sem rede, uma falha não pode fazer cada
+    clique da página chamar a API de novo (limite de 5 min vale para tentativas). O erro fica
+    na sessão para o aviso continuar visível durante o intervalo."""
+
+    st.session_state["pp_google_ultima_sync"] = datetime.now(_FUSO)
+    try:
+        resumo = prazos_sincronizacao.sincronizar(google_agenda.cliente())
+    except ErroGoogleAgenda as erro:
+        st.session_state["pp_google_erro_sync"] = str(erro)
+        return
+    st.session_state.pop("pp_google_erro_sync", None)
+    prazos_sincronizacao.salvar_resumo(resumo)
+    _eventos_proximos.clear()
+
+
+def _render_resumo_sincronizacao() -> None:
+    resumo = prazos_sincronizacao.carregar_ultimo_resumo()
+    if resumo is None:
+        st.caption("Ainda não sincronizado.")
+        return
+    quando = datetime.fromisoformat(resumo["executado_em"]).astimezone(_FUSO).strftime("%d/%m/%Y %H:%M")
+    partes = [
+        f"{len(resumo['criados'])} criado(s)",
+        f"{len(resumo['atualizados_no_google'])} atualizado(s) no Google",
+        f"{len(resumo['atualizados_no_budgetlab'])} atualizado(s) aqui",
+        f"{len(resumo['concluidos_por_exclusao'])} concluído(s) por exclusão no Google",
+        f"{len(resumo['eventos_excluidos'])} evento(s) excluído(s)",
+    ]
+    st.caption(f"Última sincronização: {quando} — " + " · ".join(partes))
+    if resumo["conflitos"] or resumo["erros"]:
+        with st.expander(f"{len(resumo['conflitos'])} conflito(s) · {len(resumo['erros'])} erro(s)"):
+            for conflito in resumo["conflitos"]:
+                st.markdown(
+                    f"**{conflito['titulo']}** — venceu {conflito['vencedor']}. "
+                    f"BudgetLab: `{conflito['valor_budgetlab']}` · Google: `{conflito['valor_google']}`"
+                )
+            for erro in resumo["erros"]:
+                st.markdown(f"- {erro}")
+
+
 def _render_conexao() -> str:
     """Bloco "Google Agenda". Devolve a situação da conexão."""
 
@@ -287,11 +328,23 @@ def _render_conexao() -> str:
                     _eventos_proximos.clear()
                     st.rerun()
         else:
-            st.markdown("Conectado ao calendário principal.")
-            if st.button("Desconectar", icon=":material/link_off:"):
+            ultima = st.session_state.get("pp_google_ultima_sync")
+            if prazos_sincronizacao.sincronizacao_devida(ultima, datetime.now(_FUSO)):
+                _executar_sincronizacao()
+            c1, c2 = st.columns([1, 1])
+            if c1.button("Sincronizar agora", icon=":material/sync:", use_container_width=True):
+                _executar_sincronizacao()
+                st.rerun()
+            if c2.button("Desconectar", icon=":material/link_off:", use_container_width=True):
                 google_agenda.desconectar()
                 _eventos_proximos.clear()
                 st.rerun()
+            if "pp_google_erro_sync" in st.session_state:
+                render_alert(
+                    f"Sincronização com o Google Agenda não realizada: {st.session_state['pp_google_erro_sync']}",
+                    "error",
+                )
+            _render_resumo_sincronizacao()
     return situacao
 
 
