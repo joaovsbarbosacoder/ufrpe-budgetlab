@@ -274,7 +274,7 @@ def _executar_sincronizacao() -> None:
     st.session_state["pp_google_ultima_sync"] = datetime.now(_FUSO)
     try:
         resumo = prazos_sincronizacao.sincronizar(google_agenda.cliente())
-    except ErroGoogleAgenda as erro:
+    except (ErroGoogleAgenda, prazos_sincronizacao.ErroSincronizacao) as erro:
         st.session_state["pp_google_erro_sync"] = str(erro)
         return
     st.session_state.pop("pp_google_erro_sync", None)
@@ -305,6 +305,10 @@ def _render_resumo_sincronizacao() -> None:
                 )
             for erro in resumo["erros"]:
                 st.markdown(f"- {erro}")
+            st.caption(
+                "Histórico de todas as sincronizações com alteração, conflito ou erro em "
+                f"'{google_agenda.DIRETORIO_PADRAO / prazos_sincronizacao.ARQUIVO_HISTORICO}'."
+            )
 
 
 def _render_conexao() -> str:

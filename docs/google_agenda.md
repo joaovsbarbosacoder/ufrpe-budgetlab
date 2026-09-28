@@ -20,6 +20,10 @@ convidado, e (b) sincronizar os prazos cadastrados nos dois sentidos.
 O `credentials.json` e o `token.json` ficam só na sua máquina (`data/google_agenda/` está no
 `.gitignore`). Para desconectar, use o botão **Desconectar** — só o token é apagado.
 
+Cada sincronização que altera algo, tem conflito ou erro é registrada, sem apagar as
+anteriores, em `data/google_agenda/historico_sincronizacao.jsonl` — inclusive o valor
+descartado quando os dois lados foram alterados.
+
 ## Observações
 
 - **App em modo de teste:** enquanto a tela de permissão estiver em "Testing", o Google

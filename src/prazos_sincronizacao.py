@@ -32,13 +32,15 @@ from src.prazos_orcamentarios import (
     DIRETORIO_PADRAO,
     PRIORIDADE_PADRAO,
     TIPO_PADRAO,
-    ErroPrazoOrcamentario,
     atualizar,
+    carregar_prazo,
     carregar_prazos,
     gravar_estado_sincronizacao,
 )
 
 ARQUIVO_RESUMO = "ultima_sincronizacao.json"
+#: uma linha JSON por sincronização que alterou algo, teve conflito ou erro (só acrescenta).
+ARQUIVO_HISTORICO = "historico_sincronizacao.jsonl"
 
 #: limite da Calendar API para lembretes (40320 minutos = 4 semanas).
 DIAS_MAXIMOS_LEMBRETE = 28
@@ -53,24 +55,37 @@ class ErroSincronizacao(ValueError):
 
 def corpo_evento(prazo: dict) -> dict:
     data = date.fromisoformat(prazo["data_prazo"])
-    dias_antecedencia = int(prazo.get("dias_antecedencia", DIAS_ANTECEDENCIA_PADRAO))
+    # `or`: campo presente com null (cadastro legado/editado à mão) também usa o padrão
+    dias_antecedencia = prazo.get("dias_antecedencia")
+    dias_antecedencia = DIAS_ANTECEDENCIA_PADRAO if dias_antecedencia is None else int(dias_antecedencia)
     minutos = min(dias_antecedencia, DIAS_MAXIMOS_LEMBRETE) * 1440
     return {
         "summary": (PREFIXO_CONCLUIDO if prazo.get("concluido") else "") + prazo["titulo"],
-        "description": prazo.get("descricao", ""),
+        "description": prazo.get("descricao") or "",
         "start": {"date": data.isoformat()},
         "end": {"date": (data + timedelta(days=1)).isoformat()},
         "reminders": {"useDefault": False, "overrides": [{"method": "popup", "minutes": minutos}]},
         "extendedProperties": {"private": {
             MARCADOR_BUDGETLAB: "1",
             MARCADOR: str(prazo["id"]),
-            "tipo": str(prazo.get("tipo", TIPO_PADRAO)),
-            "categoria": str(prazo.get("categoria", "")),
-            "prioridade": str(prazo.get("prioridade", PRIORIDADE_PADRAO)),
-            "responsavel": str(prazo.get("responsavel", "")),
+            "tipo": str(prazo.get("tipo") or TIPO_PADRAO),
+            "categoria": str(prazo.get("categoria") or ""),
+            "prioridade": str(prazo.get("prioridade") or PRIORIDADE_PADRAO),
+            "responsavel": str(prazo.get("responsavel") or ""),
             "dias_antecedencia": str(dias_antecedencia),
         }},
     }
+
+
+def _corpo_atualizacao(prazo: dict) -> dict:
+    """Corpo do `patch`: a API MESCLA objetos, então um evento que o usuário transformou em
+    evento com horário manteria `dateTime` ao lado do `date` enviado (HTTP 400). Os nulos
+    explícitos apagam o horário e o fuso, voltando o evento a dia inteiro."""
+
+    corpo = corpo_evento(prazo)
+    for parte in ("start", "end"):
+        corpo[parte] = {**corpo[parte], "dateTime": None, "timeZone": None}
+    return corpo
 
 
 def campos_do_evento(evento: dict) -> dict:
@@ -129,9 +144,24 @@ def _valores(origem: dict) -> dict:
     return {"titulo": origem["titulo"], "data_prazo": origem["data_prazo"], "descricao": origem.get("descricao", "")}
 
 
+class _AlteradoDuranteSincronizacao(Exception):
+    """O prazo foi editado (ex.: em outra aba) enquanto esta sincronização rodava."""
+
+
+def _garantir_inalterado(prazo: dict, diretorio: Path) -> None:
+    """Relê o registro antes de gravar: se ele mudou desde a leitura do início da
+    sincronização, gravar o retrato antigo apagaria a edição sem registro. Nesse caso o
+    prazo fica para a próxima sincronização (que adota o evento já criado, sem duplicar)."""
+
+    atual = carregar_prazo(prazo["id"], diretorio)
+    if atual.get("atualizado_em", atual.get("criado_em")) != prazo["atualizado_em"]:
+        raise _AlteradoDuranteSincronizacao
+
+
 def _vincular(prazo: dict, evento: dict, diretorio: Path) -> None:
     """Grava o estado "sincronizado" do prazo com este evento, sem carimbar alteração local."""
 
+    _garantir_inalterado(prazo, diretorio)
     gravar_estado_sincronizacao({
         **prazo,
         "google_event_id": evento["id"],
@@ -143,8 +173,10 @@ def _vincular(prazo: dict, evento: dict, diretorio: Path) -> None:
 def _enviar(cliente, prazo: dict, evento: dict | None, diretorio: Path) -> None:
     """BudgetLab → Google: cria (sem evento) ou atualiza o evento e vincula."""
 
-    corpo = corpo_evento(prazo)
-    novo = cliente.criar_evento(corpo) if evento is None else cliente.atualizar_evento(evento["id"], corpo)
+    if evento is None:
+        novo = cliente.criar_evento(corpo_evento(prazo))
+    else:
+        novo = cliente.atualizar_evento(evento["id"], _corpo_atualizacao(prazo))
     _vincular(prazo, novo, diretorio)
 
 
@@ -161,6 +193,7 @@ def _receber(prazo: dict, evento: dict, diretorio: Path, agora: datetime) -> dic
         "google_event_id": evento["id"],
         "google_atualizado_em": evento["atualizado_em"],
     }
+    _garantir_inalterado(prazo, diretorio)
     gravar_estado_sincronizacao(atualizado, diretorio)
     return atualizado
 
@@ -168,9 +201,14 @@ def _receber(prazo: dict, evento: dict, diretorio: Path, agora: datetime) -> dic
 def sincronizar(cliente, diretorio: str | Path = DIRETORIO_PADRAO, agora: datetime | None = None) -> ResumoSincronizacao:
     """Concilia todos os prazos com os eventos marcados do calendário principal. Falha na
     listagem inicial propaga `ErroGoogleAgenda` sem alterar nada. Erro em um item vai para
-    `resumo.erros` e não interrompe os demais (será tentado de novo na próxima vez)."""
+    `resumo.erros` e não interrompe os demais (será tentado de novo na próxima vez).
+
+    Pasta de prazos ausente (renomeada, drive indisponível) cancela tudo com
+    `ErroSincronizacao`: sem ela, todos os eventos pareceriam de prazos excluídos."""
 
     diretorio = Path(diretorio)
+    if not diretorio.exists():
+        raise ErroSincronizacao(f"pasta de prazos '{diretorio}' não encontrada — sincronização cancelada.")
     agora = agora or datetime.now(timezone.utc)
     eventos = cliente.listar_eventos_de_prazos()  # pode lançar ErroGoogleAgenda: aborta aqui
     resumo = ResumoSincronizacao(executado_em=agora.isoformat())
@@ -182,7 +220,7 @@ def sincronizar(cliente, diretorio: str | Path = DIRETORIO_PADRAO, agora: dateti
 
     prazos = carregar_prazos(diretorio)
     for prazo in prazos:
-        titulo = prazo["titulo"]
+        titulo = prazo.get("titulo") or prazo["id"]
         prazo.setdefault("atualizado_em", prazo.get("criado_em"))
         candidatos = eventos_por_prazo.get(prazo["id"], [])
         ativos = [e for e in candidatos if not e["cancelado"]]
@@ -203,6 +241,7 @@ def sincronizar(cliente, diretorio: str | Path = DIRETORIO_PADRAO, agora: dateti
                 evento = next((e for e in ativos if e["id"] == event_id), None)
                 duplicados = [e for e in ativos if e["id"] != event_id]
                 if evento is None:
+                    _garantir_inalterado(prazo, diretorio)
                     atualizar({**prazo, "concluido": True, "removido_no_google": True,
                                "google_event_id": None}, diretorio)
                     resumo.concluidos_por_exclusao.append(titulo)
@@ -222,7 +261,11 @@ def sincronizar(cliente, diretorio: str | Path = DIRETORIO_PADRAO, agora: dateti
                             },
                         })
                         if google_vence:
-                            titulo = _receber(prazo, evento, diretorio, agora)["titulo"]
+                            # os 3 campos vêm do Google; o resto (concluído, antecedência,
+                            # tipo...) continua local e precisa chegar ao evento
+                            recebido = _receber(prazo, evento, diretorio, agora)
+                            _enviar(cliente, recebido, evento, diretorio)
+                            titulo = recebido["titulo"]
                             resumo.atualizados_no_budgetlab.append(titulo)
                         else:
                             _enviar(cliente, prazo, evento, diretorio)
@@ -235,29 +278,58 @@ def sincronizar(cliente, diretorio: str | Path = DIRETORIO_PADRAO, agora: dateti
                         resumo.atualizados_no_budgetlab.append(titulo)
             for duplicado in duplicados:
                 cliente.excluir_evento(duplicado["id"])
-        except (ErroGoogleAgenda, ErroSincronizacao, ErroPrazoOrcamentario, OSError) as erro:
+                resumo.eventos_excluidos.append(f"{titulo} (duplicado)")
+        except _AlteradoDuranteSincronizacao:
+            continue  # nada se perde: a próxima sincronização trata a versão nova
+        except (ErroGoogleAgenda, ValueError, TypeError, KeyError, OSError) as erro:
+            # ValueError cobre ErroSincronizacao/ErroPrazoOrcamentario e registro malformado
+            # (ex.: data fora do formato ISO) — um registro ruim não interrompe os demais
             resumo.erros.append(f"{titulo}: {erro}")
 
     ids_locais = {prazo["id"] for prazo in prazos}
-    for prazo_id, candidatos in eventos_por_prazo.items():
-        if prazo_id in ids_locais:
-            continue
-        for evento in candidatos:
-            if evento["cancelado"]:
-                continue
-            try:
-                cliente.excluir_evento(evento["id"])
-                resumo.eventos_excluidos.append(evento["titulo"].removeprefix(PREFIXO_CONCLUIDO))
-            except ErroGoogleAgenda as erro:
-                resumo.erros.append(f"{evento['titulo']}: {erro}")
+    orfaos = [
+        evento
+        for prazo_id, candidatos in eventos_por_prazo.items() if prazo_id not in ids_locais
+        for evento in candidatos if not evento["cancelado"]
+    ]
+    if not prazos and len(orfaos) > 1:
+        # pasta vazia com vários eventos marcados: mais provável ser pasta esvaziada/restaurada
+        # do que o usuário ter excluído tudo — excluir em massa não é feito automaticamente
+        resumo.erros.append(
+            f"Nenhum prazo local, mas {len(orfaos)} eventos de prazos no Google: nada foi excluído "
+            "por segurança. Se os prazos foram mesmo excluídos, apague os eventos no Google Agenda."
+        )
+        orfaos = []
+    for evento in orfaos:
+        try:
+            cliente.excluir_evento(evento["id"])
+            resumo.eventos_excluidos.append(evento["titulo"].removeprefix(PREFIXO_CONCLUIDO))
+        except ErroGoogleAgenda as erro:
+            resumo.erros.append(f"{evento['titulo']}: {erro}")
 
     return resumo
 
 
 def salvar_resumo(resumo: ResumoSincronizacao, diretorio: str | Path = DIRETORIO_AGENDA) -> Path:
-    caminho = Path(diretorio) / ARQUIVO_RESUMO
-    _gravar_atomico(caminho, json.dumps(asdict(resumo), ensure_ascii=False, indent=2))
+    """Grava a última sincronização (exibida na tela) e, se ela alterou algo, teve conflito
+    ou erro, ACRESCENTA uma linha ao histórico — o resumo é substituído a cada 5 min, e o
+    valor descartado num conflito não pode sumir com ele (rastreabilidade)."""
+
+    diretorio = Path(diretorio)
+    caminho = diretorio / ARQUIVO_RESUMO
+    dados = asdict(resumo)
+    _gravar_atomico(caminho, json.dumps(dados, ensure_ascii=False, indent=2))
+    if resumo.total_alteracoes() or resumo.conflitos or resumo.erros:
+        with (diretorio / ARQUIVO_HISTORICO).open("a", encoding="utf-8") as historico:
+            historico.write(json.dumps(dados, ensure_ascii=False) + "\n")
     return caminho
+
+
+def carregar_historico(diretorio: str | Path = DIRETORIO_AGENDA) -> list[dict]:
+    caminho = Path(diretorio) / ARQUIVO_HISTORICO
+    if not caminho.exists():
+        return []
+    return [json.loads(linha) for linha in caminho.read_text(encoding="utf-8").splitlines() if linha.strip()]
 
 
 def carregar_ultimo_resumo(diretorio: str | Path = DIRETORIO_AGENDA) -> dict | None:

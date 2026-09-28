@@ -132,6 +132,8 @@ class ClienteFalso:
         self.falhar_listagem = False
         self.falhar_em: set[tuple[str, str]] = set()  # (operação, prazo_id)
         self.excluidos: list[str] = []
+        self.corpos_atualizados: list[dict] = []
+        self.ao_criar = None  # simula algo acontecendo durante a chamada (ex.: edição em outra aba)
 
     def _carimbo(self) -> str:
         self._relogio += timedelta(seconds=1)
@@ -154,12 +156,15 @@ class ClienteFalso:
     def criar_evento(self, corpo):
         if ("criar", corpo["extendedProperties"]["private"][MARCADOR]) in self.falhar_em:
             raise ErroGoogleAgenda("falha simulada")
+        if self.ao_criar is not None:
+            self.ao_criar()
         self._seq += 1
         event_id = f"ev{self._seq}"
         self.eventos[event_id] = self._normalizar(event_id, corpo)
         return dict(self.eventos[event_id])
 
     def atualizar_evento(self, event_id, corpo):
+        self.corpos_atualizados.append(corpo)
         corpo_total = {**self.eventos[event_id]["_corpo"], **corpo}
         self.eventos[event_id] = self._normalizar(event_id, corpo_total)
         return dict(self.eventos[event_id])
@@ -366,9 +371,91 @@ class TestSincronizar(unittest.TestCase):
         self._sync()
         vinculado = self._recarregar(prazo)["google_event_id"]
         duplicado = self.cliente.criar_evento(corpo_evento(self._recarregar(prazo)))["id"]
-        self._sync()
+        resumo = self._sync()
         self.assertIn(vinculado, self.cliente.eventos)
         self.assertNotIn(duplicado, self.cliente.eventos)
+        self.assertEqual(resumo.eventos_excluidos, ["Prazo A (duplicado)"])
+
+    def test_edicao_local_durante_a_sincronizacao_nao_e_sobrescrita(self):
+        prazo = self._prazo()
+
+        def editar_em_outra_aba():
+            atualizar({**self._recarregar(prazo), "titulo": "Editado em outra aba"}, self.diretorio)
+
+        self.cliente.ao_criar = editar_em_outra_aba
+        self._sync()
+        self.cliente.ao_criar = None
+        self.assertEqual(self._recarregar(prazo)["titulo"], "Editado em outra aba")
+        self._sync()  # próxima sincronização adota o evento criado e envia a edição
+        self.assertEqual(len(self.cliente.eventos), 1)
+        self.assertEqual(next(iter(self.cliente.eventos.values()))["titulo"], "Editado em outra aba")
+        self.assertEqual(self._recarregar(prazo)["titulo"], "Editado em outra aba")
+
+    def test_pasta_de_prazos_ausente_cancela_sem_excluir_eventos(self):
+        self._prazo("Prazo A")
+        self._prazo("Prazo B")
+        self._sync()
+        with self.assertRaises(ErroSincronizacao):
+            sincronizar(self.cliente, self.diretorio / "nao_existe")
+        self.assertEqual(len(self.cliente.eventos), 2)
+        self.assertEqual(self.cliente.excluidos, [])
+
+    def test_pasta_vazia_nao_exclui_todos_os_eventos(self):
+        a = self._prazo("Prazo A")
+        b = self._prazo("Prazo B")
+        self._sync()
+        excluir(a["id"], self.diretorio)
+        excluir(b["id"], self.diretorio)
+        resumo = self._sync()
+        self.assertEqual(len(self.cliente.eventos), 2)
+        self.assertEqual(resumo.eventos_excluidos, [])
+        self.assertEqual(len(resumo.erros), 1)
+
+    def test_conflito_vencido_pelo_google_ainda_envia_campos_locais(self):
+        prazo = self._prazo()
+        self._sync()
+        gravado = self._recarregar(prazo)
+        gravado.update(concluido=True, dias_antecedencia=5, atualizado_em="1999-01-01T00:00:00+00:00")
+        gravar_estado_sincronizacao(gravado, self.diretorio)
+        self.cliente.editar_no_google(gravado["google_event_id"], titulo="Do Google")
+        self._sync()
+        evento = self.cliente.eventos[gravado["google_event_id"]]
+        self.assertEqual(evento["titulo"], "✓ Do Google")
+        self.assertEqual(evento["propriedades"]["dias_antecedencia"], "5")
+        local = self._recarregar(prazo)
+        self.assertTrue(local["concluido"])
+        self.assertEqual(local["titulo"], "Do Google")
+        self.assertEqual(self._sync().total_alteracoes(), 0)
+
+    def test_atualizacao_limpa_horario_do_evento(self):
+        # o patch mescla objetos: sem dateTime/timeZone nulos, um evento que o usuário
+        # transformou em evento com horário ficaria com date + dateTime (HTTP 400)
+        prazo = self._prazo()
+        self._sync()
+        atualizar({**self._recarregar(prazo), "titulo": "Prazo B"}, self.diretorio)
+        self._sync()
+        corpo = self.cliente.corpos_atualizados[-1]
+        for parte in ("start", "end"):
+            self.assertIn("date", corpo[parte])
+            self.assertIsNone(corpo[parte]["dateTime"])
+            self.assertIsNone(corpo[parte]["timeZone"])
+
+    def test_registro_malformado_nao_interrompe_os_demais(self):
+        import json as _json
+        ruim = {**novo_prazo("Ruim", date(2026, 12, 1)), "data_prazo": "31/12/2026"}
+        (self.diretorio / f"{ruim['id']}.json").write_text(_json.dumps(ruim), encoding="utf-8")
+        self._prazo("Bom")
+        resumo = self._sync()
+        self.assertEqual(resumo.criados, ["Bom"])
+        self.assertEqual(len(resumo.erros), 1)
+        self.assertIn("Ruim", resumo.erros[0])
+
+    def test_antecedencia_nula_usa_padrao(self):
+        self._prazo(dias_antecedencia=None)
+        resumo = self._sync()
+        self.assertEqual(resumo.erros, [])
+        corpo = next(iter(self.cliente.eventos.values()))["_corpo"]
+        self.assertEqual(corpo["reminders"]["overrides"][0]["minutes"], 28 * 1440)
 
     def test_prazo_legado_sem_campos_de_sincronizacao(self):
         prazo = novo_prazo("Legado", date(2026, 12, 1))
@@ -395,6 +482,21 @@ class TestResumoPersistido(unittest.TestCase):
             carregado = carregar_ultimo_resumo(diretorio)
             self.assertEqual(carregado["criados"], ["A"])
             self.assertEqual(carregado["executado_em"], resumo.executado_em)
+
+    def test_historico_guarda_conflitos_de_sincronizacoes_anteriores(self):
+        from src.prazos_sincronizacao import ResumoSincronizacao, carregar_historico
+        with tempfile.TemporaryDirectory() as tmp:
+            diretorio = Path(tmp)
+            com_conflito = ResumoSincronizacao(executado_em="2026-09-27T12:00:00+00:00", conflitos=[{
+                "titulo": "A", "vencedor": "Google",
+                "valor_budgetlab": {"titulo": "Descartado"}, "valor_google": {"titulo": "A"},
+            }])
+            salvar_resumo(com_conflito, diretorio)
+            salvar_resumo(ResumoSincronizacao(executado_em="2026-09-27T12:05:00+00:00"), diretorio)
+            self.assertEqual(carregar_ultimo_resumo(diretorio)["conflitos"], [])
+            historico = carregar_historico(diretorio)
+            self.assertEqual(len(historico), 1)  # sincronização sem nada a registrar não entra
+            self.assertEqual(historico[0]["conflitos"][0]["valor_budgetlab"]["titulo"], "Descartado")
 
 
 if __name__ == "__main__":
