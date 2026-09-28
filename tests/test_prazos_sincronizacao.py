@@ -3,16 +3,28 @@ cliente falso em memória (nunca acessa a rede). Diretórios temporários a cada
 
 from __future__ import annotations
 
+import tempfile
 import unittest
 from datetime import date, datetime, time, timedelta, timezone
+from pathlib import Path
 
-from src.google_agenda import MARCADOR
-from src.prazos_orcamentarios import novo_prazo
+from src.google_agenda import MARCADOR, ErroGoogleAgenda
+from src.prazos_orcamentarios import (
+    atualizar,
+    carregar_prazo,
+    excluir,
+    gravar_estado_sincronizacao,
+    novo_prazo,
+    salvar,
+)
 from src.prazos_sincronizacao import (
     ErroSincronizacao,
     campos_do_evento,
+    carregar_ultimo_resumo,
     corpo_evento,
+    salvar_resumo,
     sincronizacao_devida,
+    sincronizar,
 )
 
 
@@ -106,6 +118,283 @@ class TestSincronizacaoDevida(unittest.TestCase):
 
     def test_intervalo_vencido(self):
         self.assertTrue(sincronizacao_devida(self.agora - timedelta(minutes=5), self.agora))
+
+
+class ClienteFalso:
+    """Calendário em memória com a interface de ClienteGoogleAgenda. `updated` avança a cada
+    escrita; `falhar_em` faz uma operação específica lançar ErroGoogleAgenda."""
+
+    def __init__(self):
+        self.eventos: dict[str, dict] = {}
+        self._seq = 0
+        # relógio no passado: toda alteração local real (agora) é posterior a ele
+        self._relogio = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        self.falhar_listagem = False
+        self.falhar_em: set[tuple[str, str]] = set()  # (operação, prazo_id)
+        self.excluidos: list[str] = []
+
+    def _carimbo(self) -> str:
+        self._relogio += timedelta(seconds=1)
+        return self._relogio.isoformat().replace("+00:00", "Z")
+
+    def _normalizar(self, event_id: str, corpo: dict, cancelado=False) -> dict:
+        privadas = corpo["extendedProperties"]["private"]
+        return _evento(
+            id=event_id, titulo=corpo["summary"], descricao=corpo["description"],
+            data_inicio=date.fromisoformat(corpo["start"]["date"]),
+            cancelado=cancelado, atualizado_em=self._carimbo(),
+            prazo_id=privadas[MARCADOR], propriedades=dict(privadas),
+        ) | {"_corpo": corpo}
+
+    def listar_eventos_de_prazos(self):
+        if self.falhar_listagem:
+            raise ErroGoogleAgenda("falha simulada")
+        return [dict(e) for e in self.eventos.values()]
+
+    def criar_evento(self, corpo):
+        if ("criar", corpo["extendedProperties"]["private"][MARCADOR]) in self.falhar_em:
+            raise ErroGoogleAgenda("falha simulada")
+        self._seq += 1
+        event_id = f"ev{self._seq}"
+        self.eventos[event_id] = self._normalizar(event_id, corpo)
+        return dict(self.eventos[event_id])
+
+    def atualizar_evento(self, event_id, corpo):
+        corpo_total = {**self.eventos[event_id]["_corpo"], **corpo}
+        self.eventos[event_id] = self._normalizar(event_id, corpo_total)
+        return dict(self.eventos[event_id])
+
+    def excluir_evento(self, event_id):
+        self.excluidos.append(event_id)
+        self.eventos.pop(event_id, None)
+
+    # --- ações "do usuário no Google" ---
+    def editar_no_google(self, event_id, **campos):
+        evento = self.eventos[event_id]
+        evento.update(campos)
+        evento["atualizado_em"] = self._carimbo()
+
+    def cancelar_no_google(self, event_id):
+        self.eventos[event_id].update(cancelado=True, atualizado_em=self._carimbo())
+
+
+class TestSincronizar(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.diretorio = Path(self._tmp.name)
+        self.cliente = ClienteFalso()
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _prazo(self, titulo="Prazo A", **extras) -> dict:
+        prazo = {**novo_prazo(titulo, date(2026, 12, 1)), **extras}
+        salvar(prazo, self.diretorio)
+        return prazo
+
+    def _sync(self):
+        return sincronizar(self.cliente, self.diretorio)
+
+    def _recarregar(self, prazo) -> dict:
+        return carregar_prazo(prazo["id"], self.diretorio)
+
+    def test_prazo_novo_cria_evento_e_grava_estado(self):
+        prazo = self._prazo()
+        resumo = self._sync()
+        self.assertEqual(resumo.criados, ["Prazo A"])
+        gravado = self._recarregar(prazo)
+        evento = self.cliente.eventos[gravado["google_event_id"]]
+        self.assertEqual(evento["prazo_id"], prazo["id"])
+        self.assertEqual(gravado["sincronizado_em"], gravado["atualizado_em"])
+        self.assertEqual(gravado["google_atualizado_em"], evento["atualizado_em"])
+        self.assertEqual(gravado["atualizado_em"], prazo["atualizado_em"])  # não virou "alteração local"
+
+    def test_segunda_sincronizacao_sem_mudancas_nao_faz_nada(self):
+        self._prazo()
+        self._sync()
+        resumo = self._sync()
+        self.assertEqual(resumo.total_alteracoes(), 0)
+        self.assertEqual(len(self.cliente.eventos), 1)
+
+    def test_alteracao_local_atualiza_evento(self):
+        prazo = self._prazo()
+        self._sync()
+        atualizar({**self._recarregar(prazo), "titulo": "Prazo B"}, self.diretorio)
+        resumo = self._sync()
+        self.assertEqual(resumo.atualizados_no_google, ["Prazo B"])
+        evento = next(iter(self.cliente.eventos.values()))
+        self.assertEqual(evento["titulo"], "Prazo B")
+        self.assertEqual(self._sync().total_alteracoes(), 0)
+
+    def test_alteracao_no_google_atualiza_prazo(self):
+        prazo = self._prazo()
+        self._sync()
+        event_id = self._recarregar(prazo)["google_event_id"]
+        self.cliente.editar_no_google(event_id, titulo="Renomeado", descricao="Nova",
+                                      data_inicio=date(2026, 12, 10))
+        resumo = self._sync()
+        self.assertEqual(resumo.atualizados_no_budgetlab, ["Renomeado"])
+        gravado = self._recarregar(prazo)
+        self.assertEqual((gravado["titulo"], gravado["descricao"], gravado["data_prazo"]),
+                         ("Renomeado", "Nova", "2026-12-10"))
+        self.assertEqual(gravado["tipo"], prazo["tipo"])
+        self.assertEqual(self._sync().total_alteracoes(), 0)
+
+    def test_conflito_vence_o_mais_recente_e_fica_registrado(self):
+        prazo = self._prazo()
+        self._sync()
+        event_id = self._recarregar(prazo)["google_event_id"]
+        self.cliente.editar_no_google(event_id, titulo="Do Google")  # relógio falso: 01/01/2000
+        atualizar({**self._recarregar(prazo), "titulo": "Do BudgetLab"}, self.diretorio)  # agora real, posterior
+        resumo = self._sync()
+        self.assertEqual(len(resumo.conflitos), 1)
+        conflito = resumo.conflitos[0]
+        self.assertEqual(conflito["vencedor"], "BudgetLab")
+        self.assertEqual(conflito["valor_google"]["titulo"], "Do Google")
+        self.assertEqual(conflito["valor_budgetlab"]["titulo"], "Do BudgetLab")
+        self.assertEqual(self.cliente.eventos[event_id]["titulo"], "Do BudgetLab")
+
+    def test_conflito_vencido_pelo_google(self):
+        prazo = self._prazo()
+        self._sync()
+        gravado = self._recarregar(prazo)
+        # alteração local antiga (carimbo manual) x alteração no Google posterior
+        gravado.update(titulo="Do BudgetLab", atualizado_em="1999-01-01T00:00:00+00:00")
+        gravar_estado_sincronizacao(gravado, self.diretorio)
+        self.cliente.editar_no_google(gravado["google_event_id"], titulo="Do Google")
+        resumo = self._sync()
+        self.assertEqual(resumo.conflitos[0]["vencedor"], "Google")
+        self.assertEqual(self._recarregar(prazo)["titulo"], "Do Google")
+
+    def test_evento_excluido_no_google_conclui_o_prazo(self):
+        prazo = self._prazo()
+        self._sync()
+        self.cliente.cancelar_no_google(self._recarregar(prazo)["google_event_id"])
+        resumo = self._sync()
+        self.assertEqual(resumo.concluidos_por_exclusao, ["Prazo A"])
+        gravado = self._recarregar(prazo)
+        self.assertTrue(gravado["concluido"])
+        self.assertTrue(gravado["removido_no_google"])
+        self.assertIsNone(gravado["google_event_id"])
+        # não recria na próxima sincronização
+        self.assertEqual(self._sync().total_alteracoes(), 0)
+
+    def test_evento_ausente_da_listagem_conclui_o_prazo(self):
+        prazo = self._prazo()
+        self._sync()
+        self.cliente.eventos.clear()
+        self._sync()
+        self.assertTrue(self._recarregar(prazo)["concluido"])
+
+    def test_reabrir_prazo_removido_no_google_recria_evento(self):
+        prazo = self._prazo()
+        self._sync()
+        self.cliente.cancelar_no_google(self._recarregar(prazo)["google_event_id"])
+        self._sync()
+        atualizar({**self._recarregar(prazo), "concluido": False}, self.diretorio)
+        resumo = self._sync()
+        self.assertEqual(resumo.criados, ["Prazo A"])
+        self.assertIsNotNone(self._recarregar(prazo)["google_event_id"])
+
+    def test_concluir_localmente_prefixa_evento(self):
+        prazo = self._prazo()
+        self._sync()
+        atualizar({**self._recarregar(prazo), "concluido": True}, self.diretorio)
+        self._sync()
+        evento = self.cliente.eventos[self._recarregar(prazo)["google_event_id"]]
+        self.assertEqual(evento["titulo"], "✓ Prazo A")
+
+    def test_prefixo_editado_no_google_nao_altera_concluido(self):
+        prazo = self._prazo()
+        self._sync()
+        self.cliente.editar_no_google(self._recarregar(prazo)["google_event_id"], titulo="✓ Prazo A")
+        self._sync()
+        gravado = self._recarregar(prazo)
+        self.assertFalse(gravado["concluido"])
+        self.assertEqual(gravado["titulo"], "Prazo A")
+
+    def test_prazo_excluido_localmente_exclui_evento(self):
+        prazo = self._prazo()
+        self._sync()
+        event_id = self._recarregar(prazo)["google_event_id"]
+        excluir(prazo["id"], self.diretorio)
+        resumo = self._sync()
+        self.assertEqual(self.cliente.excluidos, [event_id])
+        self.assertEqual(resumo.eventos_excluidos, ["Prazo A"])
+
+    def test_falha_na_listagem_nao_altera_nada(self):
+        prazo = self._prazo()
+        self._sync()
+        antes = self._recarregar(prazo)
+        self.cliente.falhar_listagem = True
+        with self.assertRaises(ErroGoogleAgenda):
+            self._sync()
+        self.assertEqual(self._recarregar(prazo), antes)
+
+    def test_erro_em_um_item_nao_interrompe_os_demais(self):
+        a = self._prazo("Prazo A")
+        b = self._prazo("Prazo B")
+        self.cliente.falhar_em.add(("criar", a["id"]))
+        resumo = self._sync()
+        self.assertEqual(resumo.criados, ["Prazo B"])
+        self.assertEqual(len(resumo.erros), 1)
+        self.assertIn("Prazo A", resumo.erros[0])
+        self.assertIsNone(self._recarregar(a)["google_event_id"])
+        self.assertIsNotNone(self._recarregar(b)["google_event_id"])
+
+    def test_titulo_vazio_no_google_nao_e_aplicado(self):
+        prazo = self._prazo()
+        self._sync()
+        self.cliente.editar_no_google(self._recarregar(prazo)["google_event_id"], titulo="  ")
+        resumo = self._sync()
+        self.assertEqual(len(resumo.erros), 1)
+        self.assertEqual(self._recarregar(prazo)["titulo"], "Prazo A")
+
+    def test_adota_evento_existente_sem_duplicar(self):
+        prazo = self._prazo()
+        self._sync()
+        # simula queda depois de criar o evento e antes de gravar o estado
+        gravado = self._recarregar(prazo)
+        gravado.update(google_event_id=None, sincronizado_em=None, google_atualizado_em=None)
+        gravar_estado_sincronizacao(gravado, self.diretorio)
+        self._sync()
+        self.assertEqual(len(self.cliente.eventos), 1)
+        self.assertIsNotNone(self._recarregar(prazo)["google_event_id"])
+
+    def test_exclui_evento_duplicado_do_mesmo_prazo(self):
+        prazo = self._prazo()
+        self._sync()
+        vinculado = self._recarregar(prazo)["google_event_id"]
+        duplicado = self.cliente.criar_evento(corpo_evento(self._recarregar(prazo)))["id"]
+        self._sync()
+        self.assertIn(vinculado, self.cliente.eventos)
+        self.assertNotIn(duplicado, self.cliente.eventos)
+
+    def test_prazo_legado_sem_campos_de_sincronizacao(self):
+        prazo = novo_prazo("Legado", date(2026, 12, 1))
+        for campo in ("google_event_id", "sincronizado_em", "google_atualizado_em", "removido_no_google"):
+            prazo.pop(campo)
+        salvar(prazo, self.diretorio)
+        resumo = self._sync()
+        self.assertEqual(resumo.criados, ["Legado"])
+
+
+class TestResumoPersistido(unittest.TestCase):
+    def test_salvar_e_carregar_ultimo_resumo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            diretorio = Path(tmp)
+            self.assertIsNone(carregar_ultimo_resumo(diretorio))
+            dados = tempfile.TemporaryDirectory()
+            try:
+                prazos = Path(dados.name)
+                salvar(novo_prazo("A", date(2026, 12, 1)), prazos)
+                resumo = sincronizar(ClienteFalso(), prazos)
+            finally:
+                dados.cleanup()
+            salvar_resumo(resumo, diretorio)
+            carregado = carregar_ultimo_resumo(diretorio)
+            self.assertEqual(carregado["criados"], ["A"])
+            self.assertEqual(carregado["executado_em"], resumo.executado_em)
 
 
 if __name__ == "__main__":
