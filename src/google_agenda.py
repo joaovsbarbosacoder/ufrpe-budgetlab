@@ -24,6 +24,12 @@ from datetime import date, datetime, time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from google.auth.exceptions import RefreshError
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
 DIRETORIO_PADRAO = Path("data/google_agenda")
 ARQUIVO_CREDENCIAIS = "credentials.json"
 ARQUIVO_TOKEN = "token.json"
@@ -120,3 +126,107 @@ def _gravar_atomico(caminho: Path, texto: str) -> None:
     finally:
         if temporario.exists():
             temporario.unlink()
+
+
+def conectar(diretorio: str | Path = DIRETORIO_PADRAO) -> None:
+    """Abre o navegador para o usuário autorizar e grava o `token.json`. Bloqueia até a
+    autorização terminar — aceitável num app local de um único usuário."""
+
+    diretorio = Path(diretorio)
+    caminho_credenciais = diretorio / ARQUIVO_CREDENCIAIS
+    if not caminho_credenciais.exists():
+        raise ErroGoogleAgenda(f"Arquivo {caminho_credenciais} não encontrado — ver docs/google_agenda.md.")
+    fluxo = InstalledAppFlow.from_client_secrets_file(str(caminho_credenciais), ESCOPOS)
+    credenciais = fluxo.run_local_server(port=0)
+    _gravar_atomico(diretorio / ARQUIVO_TOKEN, credenciais.to_json())
+
+
+def desconectar(diretorio: str | Path = DIRETORIO_PADRAO) -> None:
+    """Apaga só o `token.json`; o `credentials.json` permanece para reconectar."""
+
+    (Path(diretorio) / ARQUIVO_TOKEN).unlink(missing_ok=True)
+
+
+def cliente(diretorio: str | Path = DIRETORIO_PADRAO) -> "ClienteGoogleAgenda":
+    """Cliente pronto para uso, renovando o token se expirado. Token revogado é apagado (a
+    situação volta a "desconectado") e vira `ErroGoogleAgenda` pedindo reconexão."""
+
+    diretorio = Path(diretorio)
+    credenciais = _carregar_credenciais(diretorio)
+    if credenciais is None:
+        raise ErroGoogleAgenda("Google Agenda não conectado.")
+    if not credenciais.valid:
+        if not credenciais.refresh_token:
+            raise ErroGoogleAgenda("Autorização do Google Agenda expirada — conecte novamente.")
+        try:
+            credenciais.refresh(Request())
+        except RefreshError as erro:
+            desconectar(diretorio)
+            raise ErroGoogleAgenda("Autorização do Google Agenda revogada ou expirada — conecte novamente.") from erro
+        _gravar_atomico(diretorio / ARQUIVO_TOKEN, credenciais.to_json())
+    servico = build("calendar", "v3", credentials=credenciais, cache_discovery=False)
+    return ClienteGoogleAgenda(servico)
+
+
+class ClienteGoogleAgenda:
+    """Chamadas à Calendar API sobre o calendário principal. Recebe o `servico` pronto
+    (injeção) para os testes usarem um falso. Todo retorno é evento normalizado."""
+
+    def __init__(self, servico) -> None:
+        self._eventos = servico.events()
+
+    @staticmethod
+    def _executar(requisicao):
+        try:
+            return requisicao.execute()
+        except HttpError as erro:
+            raise ErroGoogleAgenda(f"Erro na API do Google Agenda (HTTP {erro.resp.status}).") from erro
+        except OSError as erro:
+            raise ErroGoogleAgenda(f"Sem conexão com o Google Agenda: {erro}") from erro
+
+    def _listar_todas(self, **params) -> list[dict]:
+        """Percorre todas as páginas; só retorna se a listagem completou (uma listagem
+        parcial faria a sincronização concluir prazos por engano)."""
+
+        eventos: list[dict] = []
+        token = None
+        while True:
+            resposta = self._executar(self._eventos.list(
+                calendarId=CALENDARIO, maxResults=250, pageToken=token, **params,
+            ))
+            eventos.extend(normalizar_evento(bruto) for bruto in resposta.get("items", []))
+            token = resposta.get("nextPageToken")
+            if not token:
+                return eventos
+
+    def listar_eventos(self, inicio: datetime, fim: datetime) -> list[dict]:
+        if inicio.tzinfo is None or fim.tzinfo is None:
+            raise ValueError("inicio e fim precisam ter fuso horário.")
+        return self._listar_todas(
+            timeMin=inicio.isoformat(), timeMax=fim.isoformat(),
+            singleEvents=True, orderBy="startTime",
+        )
+
+    def listar_eventos_de_prazos(self) -> list[dict]:
+        return self._listar_todas(
+            privateExtendedProperty=f"{MARCADOR_BUDGETLAB}=1", showDeleted=True,
+        )
+
+    def criar_evento(self, corpo: dict) -> dict:
+        return normalizar_evento(self._executar(self._eventos.insert(calendarId=CALENDARIO, body=corpo)))
+
+    def atualizar_evento(self, event_id: str, corpo: dict) -> dict:
+        # patch (não update): preserva o que o usuário acrescentou no Google (cor, anexos...).
+        return normalizar_evento(self._executar(
+            self._eventos.patch(calendarId=CALENDARIO, eventId=event_id, body=corpo),
+        ))
+
+    def excluir_evento(self, event_id: str) -> None:
+        try:
+            self._eventos.delete(calendarId=CALENDARIO, eventId=event_id).execute()
+        except HttpError as erro:
+            if erro.resp.status in (404, 410):
+                return  # já não existe — o objetivo foi atingido
+            raise ErroGoogleAgenda(f"Erro ao excluir evento no Google Agenda (HTTP {erro.resp.status}).") from erro
+        except OSError as erro:
+            raise ErroGoogleAgenda(f"Sem conexão com o Google Agenda: {erro}") from erro
