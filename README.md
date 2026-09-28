@@ -176,6 +176,32 @@ Anual e Execução Mensal são lidas pelos seus manifestos (importação version
 `src/importacao_execucao_mensal.py`). As datas das extrações são independentes
 e ficam informadas no rodapé.
 
+A página tem três abas. **Acompanhamento** é o painel acima. **Fórmulas de
+projeção** descreve cada fórmula e deixa editáveis os seus números: multiplicador
+por natureza de despesa, multiplicadores por grupo de sentenças e indenizações,
+multiplicador de rubrica sem regra em 2004/212B, meses e fração do 13º, repetição
+de novembro em dezembro no Ativo e critério de mês fechado. Os campos começam nas
+regras confirmadas e valem só para a sessão. O painel recalcula na hora e avisa
+que as fórmulas foram ajustadas; a procedência lista cada ajuste. Um valor
+inválido (por exemplo, multiplicador abaixo de 12) aparece como erro, e o painel
+volta às fórmulas padrão. **Exercícios anteriores** mostra a execução de um
+exercício passado, sem projeção: Dotação Atualizada, Empenhada, Liquidada e Paga
+por grupo e por natureza, pela Execução Anual. Quando a Execução Mensal cobre o
+exercício, mostra também a Liquidada mês a mês e a conciliação com o total anual.
+Mostra ainda a **projeção reconstruída × executado**: as fórmulas em uso (padrão ou
+ajustadas na sessão) são aplicadas a partir de um mês de referência do exercício
+passado. O padrão é o mesmo mês da data-base do painel. O resultado é comparado,
+por grupo e mês a mês, com a Liquidada real. A diferença é executado − projetado.
+Os totais só somam os meses que têm os dois lados. Ajustes manuais de meses do
+painel não entram nessa comparação. A chave **Comparar todos os meses de partida**
+monta uma tabela com a Diferença % de cada mês de partida (janeiro a novembro),
+por grupo. Um sinal que se repete em várias linhas indica desvio sistemático; um
+valor isolado muito alto indica mês de partida atípico. O cálculo leva alguns
+segundos e só roda com a chave ligada. O quadro **Outros Benefícios por Plano
+Orçamentário** abre a mesma comparação por (Ação, PO), ordenada pela maior
+diferença absoluta. A soma dos PO fecha com a linha do grupo; se não fechar, a
+página avisa. A Diferença % aparece como “—” quando o projetado é zero ou negativo.
+
 Dotação por rubrica aparece como “—”, pois a base não oferece essa dimensão.
 Benefício Especial e Precatórios preservam os lugares previstos no layout, com
 mapeamento pendente e valores ausentes, sem inventar zeros ou reclassificar dados.

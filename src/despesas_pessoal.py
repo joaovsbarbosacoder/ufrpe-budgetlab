@@ -141,11 +141,25 @@ Contrato público:
     substituir_beneficios_por_plano_orcamentario(grade, mensal_df, anual_df) -> ResultadoGradeMensal
     dotacao_atualizada_por_acao_beneficios(dotacao_df, ano) -> pd.Series
     saldo_remanescente_beneficios_por_acao(grade, dotacao_por_acao) -> pd.DataFrame
+    ParametrosProjecao / PARAMETROS_PADRAO / diferencas_do_padrao(parametros) -> list[str]
+    execucao_exercicio_por_grupo(anual_df, ano) -> pd.DataFrame
+    execucao_exercicio_por_natureza(anual_df, ano) -> pd.DataFrame
+    liquidada_mensal_por_grupo(mensal_df, ano) -> pd.DataFrame
+
+PARÂMETROS EDITÁVEIS (27/09/2026, pedido do usuário: "faça com que [as fórmulas] fiquem
+editáveis em campos"): os números das decisões acima (multiplicadores, meses de
+pagamento do 13º, repetição de dezembro, critério de mês fechado) viraram campos de
+`ParametrosProjecao`. `PARAMETROS_PADRAO` reproduz EXATAMENTE as decisões confirmadas
+— toda função que aceita `parametros=None` usa o padrão, então o comportamento sem
+ajuste não muda. Ajuste feito na interface vale só para a sessão (sem persistência,
+AGENTS.md) e é declarado na procedência do painel (`diferencas_do_padrao`).
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import math
+from dataclasses import dataclass, field, replace
+from typing import Mapping
 
 import pandas as pd
 
@@ -346,12 +360,143 @@ for _cod, _desc in _NATUREZAS_OUTROS_BENEFICIOS_CONHECIDAS.items():
     TABELA_REGRAS[_cod] = _regra(_cod, _desc, REGRA_MULTIPLICADOR, MULTIPLICADOR_12, origem="Decisão 5 (rubrica fora do relatório SPO original).")
 
 
-def regra_para_natureza(natureza_despesa_cod: str, natureza_detalhada_cod: str | None = None) -> RegraRubrica | None:
+# --------------------------------------------------------------------------------------
+# 2b. Parâmetros editáveis das fórmulas (27/09/2026) — ver cabeçalho do módulo.
+# --------------------------------------------------------------------------------------
+
+#: junho = antecipação, novembro = parcela final — mesmo padrão real de pagamento do
+#: 13º salário do funcionalismo público federal (decisão 6, confirmada pelo usuário).
+#: Números de 1-12 (não 0-11), convertidos para índice de lista onde usados. São os
+#: valores PADRÃO de `ParametrosProjecao.mes_antecipacao_13`/`mes_parcela_13`.
+MES_ANTECIPACAO_DECIMO_TERCEIRO = 6
+MES_PARCELA_DECIMO_TERCEIRO = 11
+
+
+@dataclass(frozen=True)
+class ParametrosProjecao:
+    """Valores numéricos das fórmulas de projeção. Os padrões são as decisões
+    confirmadas (1-11) — nenhum valor aqui é presumido; mudar um campo é uma decisão
+    explícita de quem usa a interface, registrada por `diferencas_do_padrao`."""
+
+    #: multiplicador por Natureza de Despesa (6 dígitos), só para rubricas de
+    #: `REGRA_MULTIPLICADOR` da `TABELA_REGRAS`; natureza ausente usa o da tabela.
+    multiplicadores_natureza: Mapping[str, float] = field(default_factory=dict)
+    #: decisão 11 por natureza: True = extra (acima de 12×) inteiro na parcela final.
+    extra_concentrado_natureza: Mapping[str, bool] = field(default_factory=dict)
+    #: decisão 4 — Sentenças Judiciais (elemento 91) por grupo.
+    sentenca_ativo: float = MULTIPLICADOR_13_3333
+    sentenca_inativo: float = MULTIPLICADOR_13
+    sentenca_demais: float = MULTIPLICADOR_13
+    #: decisão 7 — Indenizações Trabalhistas (elemento 94) por grupo.
+    indenizacao_inativo: float = MULTIPLICADOR_13
+    indenizacao_demais: float = MULTIPLICADOR_12
+    #: decisão 5 — rubrica sem regra mapeada nas ações 2004/212B.
+    multiplicador_sem_regra_beneficios: float = MULTIPLICADOR_12
+    #: decisão 6 — meses de pagamento do 13º/extra e fração paga na antecipação.
+    mes_antecipacao_13: int = MES_ANTECIPACAO_DECIMO_TERCEIRO
+    mes_parcela_13: int = MES_PARCELA_DECIMO_TERCEIRO
+    fracao_antecipacao_13: float = 0.5
+    #: decisão 10 — dezembro projetado do Ativo repete novembro.
+    dezembro_ativo_repete_novembro: bool = True
+    #: decisão 9 — critério de "mês fechado" (data-base padrão).
+    janela_meses_fechamento: int = 3
+    fracao_minima_fechamento: float = 0.5
+
+    def __post_init__(self) -> None:
+        # Todos os multiplicadores alimentam `_distribuir_mes_futuro`, que distribui
+        # 1× o valor de referência em cada mês + (multiplicador − 12) nos meses de 13º:
+        # abaixo de 12 o "extra" ficaria negativo — uma regra que ninguém definiu.
+        multiplicadores = {
+            "Sentenças — Ativo": self.sentenca_ativo, "Sentenças — Inativo": self.sentenca_inativo,
+            "Sentenças — demais grupos": self.sentenca_demais,
+            "Indenizações — Inativo": self.indenizacao_inativo,
+            "Indenizações — demais grupos": self.indenizacao_demais,
+            "Sem regra (2004/212B)": self.multiplicador_sem_regra_beneficios,
+            **{f"Natureza {cod}": valor for cod, valor in self.multiplicadores_natureza.items()},
+        }
+        for nome, valor in multiplicadores.items():
+            if isinstance(valor, bool) or not isinstance(valor, (int, float)) or not math.isfinite(valor) or valor < 12:
+                raise ValueError(f"{nome}: multiplicador deve ser um número finito maior ou igual a 12 (recebido {valor!r}).")
+        for cod in {*self.multiplicadores_natureza, *self.extra_concentrado_natureza}:
+            regra = TABELA_REGRAS.get(cod)
+            if regra is None or regra.tipo != REGRA_MULTIPLICADOR:
+                raise ValueError(f"Natureza {cod}: não é uma rubrica de multiplicador direto da tabela de regras.")
+        for nome, mes in (("Mês da antecipação do 13º", self.mes_antecipacao_13), ("Mês da parcela final do 13º", self.mes_parcela_13)):
+            if type(mes) is not int or not 1 <= mes <= 12:
+                raise ValueError(f"{nome}: informe um mês entre 1 e 12 (recebido {mes!r}).")
+        if self.mes_antecipacao_13 == self.mes_parcela_13:
+            raise ValueError("Antecipação e parcela final do 13º precisam cair em meses diferentes.")
+        for nome, fracao in (("Fração paga na antecipação", self.fracao_antecipacao_13), ("Fração mínima de fechamento", self.fracao_minima_fechamento)):
+            if isinstance(fracao, bool) or not isinstance(fracao, (int, float)) or not 0 <= fracao <= 1:
+                raise ValueError(f"{nome}: informe um valor entre 0 e 1 (recebido {fracao!r}).")
+        if type(self.janela_meses_fechamento) is not int or not 1 <= self.janela_meses_fechamento <= 12:
+            raise ValueError(f"Janela de meses de fechamento: informe um inteiro entre 1 e 12 (recebido {self.janela_meses_fechamento!r}).")
+
+
+PARAMETROS_PADRAO = ParametrosProjecao()
+
+
+def _fmt_mult(valor: float) -> str:
+    return f"x{valor:.4f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
+def diferencas_do_padrao(parametros: ParametrosProjecao | None) -> list[str]:
+    """Descrição legível de cada campo de `parametros` diferente de `PARAMETROS_PADRAO`
+    — lista vazia quando as fórmulas são as confirmadas. Usada na procedência do painel
+    para nenhuma projeção ajustada ser confundida com a metodologia padrão."""
+
+    if parametros is None:
+        return []
+    padrao = PARAMETROS_PADRAO
+    diferencas: list[str] = []
+    for cod, valor in sorted(parametros.multiplicadores_natureza.items()):
+        original = TABELA_REGRAS[cod].multiplicador
+        if not math.isclose(valor, original):
+            diferencas.append(f"natureza {cod}: {_fmt_mult(original)} → {_fmt_mult(valor)}")
+    for cod, valor in sorted(parametros.extra_concentrado_natureza.items()):
+        if valor != TABELA_REGRAS[cod].extra_concentrado_em_novembro:
+            diferencas.append(f"natureza {cod}: extra {'só na parcela final' if valor else 'dividido entre os meses do 13º'}")
+    rotulos = {
+        "sentenca_ativo": "sentenças Ativo", "sentenca_inativo": "sentenças Inativo",
+        "sentenca_demais": "sentenças demais grupos", "indenizacao_inativo": "indenizações Inativo",
+        "indenizacao_demais": "indenizações demais grupos",
+        "multiplicador_sem_regra_beneficios": "sem regra (2004/212B)",
+    }
+    for campo, rotulo in rotulos.items():
+        valor, original = getattr(parametros, campo), getattr(padrao, campo)
+        if not math.isclose(valor, original):
+            diferencas.append(f"{rotulo}: {_fmt_mult(original)} → {_fmt_mult(valor)}")
+    if parametros.mes_antecipacao_13 != padrao.mes_antecipacao_13:
+        diferencas.append(f"antecipação do 13º em {MESES_NOMES[parametros.mes_antecipacao_13 - 1]}")
+    if parametros.mes_parcela_13 != padrao.mes_parcela_13:
+        diferencas.append(f"parcela final do 13º em {MESES_NOMES[parametros.mes_parcela_13 - 1]}")
+    if not math.isclose(parametros.fracao_antecipacao_13, padrao.fracao_antecipacao_13):
+        diferencas.append(f"fração na antecipação do 13º: {parametros.fracao_antecipacao_13:.0%}")
+    if parametros.dezembro_ativo_repete_novembro != padrao.dezembro_ativo_repete_novembro:
+        diferencas.append("dezembro do Ativo " + ("repete novembro" if parametros.dezembro_ativo_repete_novembro else "segue a regra da rubrica"))
+    if parametros.janela_meses_fechamento != padrao.janela_meses_fechamento:
+        diferencas.append(f"janela de fechamento: {parametros.janela_meses_fechamento} meses")
+    if not math.isclose(parametros.fracao_minima_fechamento, padrao.fracao_minima_fechamento):
+        diferencas.append(f"fração mínima de fechamento: {parametros.fracao_minima_fechamento:.0%}")
+    return diferencas
+
+
+def _regra_sem_mapeamento_beneficios(natureza_despesa_cod: object, natureza_despesa_desc: object, parametros: ParametrosProjecao) -> RegraRubrica:
+    """Regra aplicada, com alerta, a rubrica sem mapeamento nas ações 2004/212B (decisão 5)."""
+
+    return _regra(str(natureza_despesa_cod), str(natureza_despesa_desc), REGRA_MULTIPLICADOR, parametros.multiplicador_sem_regra_beneficios)
+
+
+def regra_para_natureza(
+    natureza_despesa_cod: str, natureza_detalhada_cod: str | None = None,
+    parametros: ParametrosProjecao | None = None,
+) -> RegraRubrica | None:
     """Resolve a regra de projeção de uma linha — checa primeiro as exceções por
     Natureza Detalhada (13º salário, proporção histórica — mais específicas), depois
     a tabela principal por Natureza de Despesa. `None` se não há regra mapeada (ver
     `filtrar_escopo`/`projetar` para o que cada camada faz com isso: erro nas ações
-    núcleo do relatório SPO, alerta+padrão x12 nas ações extras do usuário)."""
+    núcleo do relatório SPO, alerta+padrão x12 nas ações extras do usuário).
+    `parametros` (opcional) sobrepõe multiplicador/concentração do extra da tabela."""
 
     if natureza_detalhada_cod in NATUREZAS_DETALHADAS_DECIMO_TERCEIRO:
         return _regra(
@@ -363,32 +508,41 @@ def regra_para_natureza(natureza_despesa_cod: str, natureza_detalhada_cod: str |
             natureza_despesa_cod, NATUREZAS_DETALHADAS_PROPORCAO_HISTORICA[natureza_detalhada_cod],
             REGRA_PROPORCAO_HISTORICA, origem="Item 3 do briefing (proporção histórica).",
         )
-    return TABELA_REGRAS.get(str(natureza_despesa_cod))
+    regra = TABELA_REGRAS.get(str(natureza_despesa_cod))
+    if regra is None or parametros is None or regra.tipo != REGRA_MULTIPLICADOR:
+        return regra
+    cod = str(natureza_despesa_cod)
+    return replace(
+        regra,
+        multiplicador=parametros.multiplicadores_natureza.get(cod, regra.multiplicador),
+        extra_concentrado_em_novembro=parametros.extra_concentrado_natureza.get(cod, regra.extra_concentrado_em_novembro),
+    )
 
 
-def multiplicador_efetivo(regra: RegraRubrica, grupo: str | None) -> float:
+def multiplicador_efetivo(regra: RegraRubrica, grupo: str | None, parametros: ParametrosProjecao | None = None) -> float:
     """Resolve o multiplicador de fato para `REGRA_MULTIPLICADOR`/`REGRA_SENTENCA_POR_GRUPO`/
     `REGRA_INDENIZACAO_POR_GRUPO` — as únicas regras que usam um número direto (as
     outras três — 13º, proporção histórica, zero — não multiplicam o mês de referência
     por um fator fixo, ver `projetar`)."""
 
+    parametros = parametros or PARAMETROS_PADRAO
     if regra.tipo == REGRA_MULTIPLICADOR:
         assert regra.multiplicador is not None
         return regra.multiplicador
     if regra.tipo == REGRA_SENTENCA_POR_GRUPO:
         if grupo == GRUPO_ATIVO:
-            return MULTIPLICADOR_13_3333
+            return parametros.sentenca_ativo
         if grupo == GRUPO_INATIVO:
-            return MULTIPLICADOR_13
+            return parametros.sentenca_inativo
         # RPPS/outros_beneficios não têm sentença classificada no briefing — trata pela
         # regra mais conservadora (x13, sem o terço de férias) em vez de presumir x13,3333.
-        return MULTIPLICADOR_13
+        return parametros.sentenca_demais
     if regra.tipo == REGRA_INDENIZACAO_POR_GRUPO:
         if grupo == GRUPO_INATIVO:
-            return MULTIPLICADOR_13
+            return parametros.indenizacao_inativo
         # Ativo (decisão 3) e RPPS/outros_beneficios (sem indenização classificada no
         # briefing, tratado pelo mesmo padrão x12 da decisão 3/5) — decisão 7.
-        return MULTIPLICADOR_12
+        return parametros.indenizacao_demais
     raise ValueError(f"multiplicador_efetivo: regra {regra.tipo!r} não usa multiplicador direto.")
 
 
@@ -428,12 +582,12 @@ def valor_mes_referencia(mensal_df: pd.DataFrame, ano_mes: int) -> pd.DataFrame:
 
 #: janela de meses anteriores usada como referência de comparação (decisão 9) e fração
 #: mínima da média desses meses que cada grupo precisa atingir para o mês contar como
-#: "fechado" — ver `ultimo_mes_fechado`.
-_JANELA_MESES_FECHAMENTO = 3
-_FRACAO_MINIMA_FECHAMENTO = 0.5
+#: "fechado" — ver `ultimo_mes_fechado`. Padrões de `ParametrosProjecao`.
+_JANELA_MESES_FECHAMENTO = PARAMETROS_PADRAO.janela_meses_fechamento
+_FRACAO_MINIMA_FECHAMENTO = PARAMETROS_PADRAO.fracao_minima_fechamento
 
 
-def ultimo_mes_fechado(mensal_df: pd.DataFrame) -> int | None:
+def ultimo_mes_fechado(mensal_df: pd.DataFrame, parametros: ParametrosProjecao | None = None) -> int | None:
     """`ano_mes` do último mês de pessoal considerado "fechado" — heurística pedida pelo
     briefing como valor padrão do parâmetro de referência (o mês corrente costuma
     aparecer na extração já com algumas linhas, mas ainda incompleto: folha não fechada
@@ -445,8 +599,8 @@ def ultimo_mes_fechado(mensal_df: pd.DataFrame) -> int | None:
     quase zero, mas passava no teste porque a soma total ainda ficava > 0. O usuário
     pediu um critério comparativo, não estático ("deve ser mantida a projeção até que
     seja identificado execução"): um mês só conta como fechado se TODOS os 4 grupos
-    tiverem Liquidada de pelo menos `_FRACAO_MINIMA_FECHAMENTO` (50%) da média dos
-    `_JANELA_MESES_FECHAMENTO` (3) meses anteriores àquele grupo — não um limiar fixo em
+    tiverem Liquidada de pelo menos `fracao_minima_fechamento` (padrão 50%) da média dos
+    `janela_meses_fechamento` (padrão 3) meses anteriores àquele grupo — não um limiar fixo em
     R$, que ficaria desatualizado conforme a folha cresce/encolhe ao longo dos anos.
     Recalculado a cada chamada a partir da base atual (sem estado persistido) — uma
     reimportação que corrija um mês anterior muda tanto o candidato quanto a própria
@@ -456,6 +610,7 @@ def ultimo_mes_fechado(mensal_df: pd.DataFrame) -> int | None:
     esse grupo não bloqueia o mês (nada para comparar); se NENHUM grupo tiver histórico
     algum, cai na salvaguarda original (soma simples > 0)."""
 
+    parametros = parametros or PARAMETROS_PADRAO
     escopo = filtrar_escopo(mensal_df)
     do_tipo_item = escopo.loc[escopo["tipo_linha"] == "item_execucao"]
     por_mes_grupo = do_tipo_item.groupby(["ano_mes", "grupo"])["liquidada"].sum(min_count=1).unstack("grupo")
@@ -465,7 +620,7 @@ def ultimo_mes_fechado(mensal_df: pd.DataFrame) -> int | None:
     meses_ordenados = sorted(por_mes_grupo.index, reverse=True)
     for ano_mes in meses_ordenados:
         anteriores = sorted((m for m in por_mes_grupo.index if m < ano_mes), reverse=True)
-        anteriores = anteriores[:_JANELA_MESES_FECHAMENTO]
+        anteriores = anteriores[:parametros.janela_meses_fechamento]
         if not anteriores:
             if float(por_mes_grupo.loc[ano_mes].fillna(0.0).sum()) > 0:
                 return int(ano_mes)
@@ -479,7 +634,7 @@ def ultimo_mes_fechado(mensal_df: pd.DataFrame) -> int | None:
             if pd.isna(base_grupo) or base_grupo <= 0:
                 continue  # sem histórico válido para este grupo — não bloqueia o mês
             valor_grupo = atual.get(grupo)
-            if pd.isna(valor_grupo) or float(valor_grupo) < _FRACAO_MINIMA_FECHAMENTO * float(base_grupo):
+            if pd.isna(valor_grupo) or float(valor_grupo) < parametros.fracao_minima_fechamento * float(base_grupo):
                 fechado = False
                 break
         if fechado:
@@ -526,7 +681,10 @@ class ResultadoProjecao:
         return self.linhas.groupby("grupo")["projecao"].sum(min_count=1)
 
 
-def projetar(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano_mes_referencia: int, ano_projecao: int) -> ResultadoProjecao:
+def projetar(
+    mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano_mes_referencia: int, ano_projecao: int,
+    parametros: ParametrosProjecao | None = None,
+) -> ResultadoProjecao:
     """Monta a projeção completa: uma linha por (grupo, natureza de despesa, natureza
     detalhada) no escopo de pessoal, com o valor do mês de referência (Liquidada),
     execução do ano anterior (para a regra de proporção histórica) e a projeção final,
@@ -535,6 +693,7 @@ def projetar(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano_mes_referencia
     `ano_mes_referencia` no formato `AAAAMM` (ex. 202609); `ano_projecao` é o exercício
     sendo projetado (tipicamente o ano de `ano_mes_referencia // 100` + 1)."""
 
+    parametros = parametros or PARAMETROS_PADRAO
     ano_referencia = ano_mes_referencia // 100
     ano_anterior_ref = ano_referencia - 1
 
@@ -567,7 +726,7 @@ def projetar(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano_mes_referencia
     origem_regra: list[str] = []
 
     for linha in linhas.itertuples(index=False):
-        regra = regra_para_natureza(linha.natureza_despesa_cod, linha.natureza_detalhada_cod)
+        regra = regra_para_natureza(linha.natureza_despesa_cod, linha.natureza_detalhada_cod, parametros)
         if regra is None:
             mensagem = (
                 f"Sem regra de projeção para natureza {linha.natureza_despesa_cod} "
@@ -584,8 +743,8 @@ def projetar(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano_mes_referencia
                 origem_regra.append("")
                 continue
             # ações extras do usuário: cai no padrão x12 (decisão 5), com ALERTA (não erro).
-            alertas.append(mensagem + " Aplicado o padrão x12 da decisão 5.")
-            regra = _regra(str(linha.natureza_despesa_cod), str(linha.natureza_despesa_desc), REGRA_MULTIPLICADOR, MULTIPLICADOR_12)
+            alertas.append(mensagem + f" Aplicado o padrão {_fmt_mult(parametros.multiplicador_sem_regra_beneficios)} da decisão 5.")
+            regra = _regra_sem_mapeamento_beneficios(linha.natureza_despesa_cod, linha.natureza_despesa_desc, parametros)
 
         valor_ref = linha.valor_mes_referencia
         if regra.tipo == REGRA_ZERO:
@@ -612,14 +771,14 @@ def projetar(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano_mes_referencia
                 # Projeta a NOVA base de vencimentos (mês de referência x12, grupo
                 # correspondente), não a execução bruta do ano anterior — é isso que o
                 # item 3 do briefing pede ("aplicada à nova projeção de vencimentos").
-                vencimentos_projetados = _projecao_vencimentos_do_grupo(linhas, linha.grupo)
+                vencimentos_projetados = _projecao_vencimentos_do_grupo(linhas, linha.grupo, parametros)
                 proporcao = float(linha.execucao_ano_anterior) / float(base_ano_anterior)
                 projecoes.append(proporcao * vencimentos_projetados if vencimentos_projetados is not None else None)
         else:  # REGRA_MULTIPLICADOR / REGRA_SENTENCA_POR_GRUPO / REGRA_INDENIZACAO_POR_GRUPO
             if pd.isna(valor_ref):
                 projecoes.append(None)
             else:
-                projecoes.append(float(valor_ref) * multiplicador_efetivo(regra, linha.grupo))
+                projecoes.append(float(valor_ref) * multiplicador_efetivo(regra, linha.grupo, parametros))
         regras_aplicadas.append(regra.tipo)
         origem_regra.append(regra.origem)
 
@@ -652,7 +811,7 @@ def _valor_referencia_natureza_mae(linhas: pd.DataFrame, grupo: str, natureza_de
     return float(base["valor_mes_referencia"].sum(min_count=1))
 
 
-def _projecao_vencimentos_do_grupo(linhas: pd.DataFrame, grupo: str) -> float | None:
+def _projecao_vencimentos_do_grupo(linhas: pd.DataFrame, grupo: str, parametros: ParametrosProjecao | None = None) -> float | None:
     """Projeção anualizada (x12) de "Vencimentos e Vantagens Fixas" (319011) REGULARES
     do grupo — denominador vivo da regra de proporção histórica (item 3), calculado a
     partir do próprio mês de referência do grupo, não da execução bruta do ano
@@ -660,7 +819,9 @@ def _projecao_vencimentos_do_grupo(linhas: pd.DataFrame, grupo: str) -> float | 
     detalhadas com regra própria."""
 
     valor_um_mes = _valor_referencia_natureza_mae(linhas, grupo, "319011")
-    return None if valor_um_mes is None else valor_um_mes * MULTIPLICADOR_12
+    # multiplicador de 319011 (padrão x12), já com o eventual ajuste de `parametros`.
+    multiplicador = regra_para_natureza("319011", None, parametros).multiplicador
+    return None if valor_um_mes is None else valor_um_mes * multiplicador
 
 
 # --------------------------------------------------------------------------------------
@@ -771,11 +932,7 @@ def comparar_com_dotacao(resultado: ResultadoProjecao, dotacao_df: pd.DataFrame,
 # --------------------------------------------------------------------------------------
 
 MESES_NOMES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
-#: junho = antecipação, novembro = parcela final — mesmo padrão real de pagamento do
-#: 13º salário do funcionalismo público federal (decisão 6, confirmada pelo usuário).
-#: Números de 1-12 (não 0-11), convertidos para índice de lista onde usados.
-MES_ANTECIPACAO_DECIMO_TERCEIRO = 6
-MES_PARCELA_DECIMO_TERCEIRO = 11
+# MES_ANTECIPACAO_DECIMO_TERCEIRO / MES_PARCELA_DECIMO_TERCEIRO: ver seção 2b.
 
 
 @dataclass
@@ -808,6 +965,7 @@ class ResultadoGradeMensal:
 
 def _distribuir_mes_futuro(
     regra: RegraRubrica, grupo: str, valor_referencia: float | None, meses_a_projetar: list[int],
+    parametros: ParametrosProjecao | None = None,
 ) -> dict[int, float | None]:
     """Valor projetado (não real) de UMA rubrica para cada mês em `meses_a_projetar`
     (1-12) — a contrapartida mensal de `multiplicador_efetivo`/`projetar`, só que
@@ -816,6 +974,9 @@ def _distribuir_mes_futuro(
     exercício cujo mês de referência já passa de novembro não teria mês futuro
     nenhum para receber a parcela, e tudo bem: ela já teria sido paga (real)."""
 
+    parametros = parametros or PARAMETROS_PADRAO
+    mes_antecipacao, mes_parcela = parametros.mes_antecipacao_13, parametros.mes_parcela_13
+    fracao_antecipacao = parametros.fracao_antecipacao_13
     if regra.tipo == REGRA_ZERO:
         return {mes: 0.0 for mes in meses_a_projetar}
     if valor_referencia is None:
@@ -823,11 +984,10 @@ def _distribuir_mes_futuro(
     valor_referencia = float(valor_referencia)
 
     if regra.tipo == REGRA_DECIMO_TERCEIRO:
-        metade = valor_referencia / 2
-        return {
-            mes: (metade if mes in (MES_ANTECIPACAO_DECIMO_TERCEIRO, MES_PARCELA_DECIMO_TERCEIRO) else 0.0)
-            for mes in meses_a_projetar
-        }
+        # Decisão 6: fração `fracao_antecipacao_13` (padrão metade) na antecipação, o
+        # restante na parcela final.
+        parcelas = {mes_antecipacao: valor_referencia * fracao_antecipacao, mes_parcela: valor_referencia * (1 - fracao_antecipacao)}
+        return {mes: parcelas.get(mes, 0.0) for mes in meses_a_projetar}
     if regra.tipo == REGRA_PROPORCAO_HISTORICA:
         # sem padrão temporal confirmado pelo usuário (diferente do 13º, decisão 6 só
         # cobriu 13º/parcela extra dos multiplicadores) — distribuído em partes iguais
@@ -836,7 +996,7 @@ def _distribuir_mes_futuro(
         return {mes: valor_referencia for mes in meses_a_projetar}
     # REGRA_MULTIPLICADOR / REGRA_SENTENCA_POR_GRUPO / REGRA_INDENIZACAO_POR_GRUPO: valor cheio em todo mês futuro,
     # mais a fração "acima de 12" do multiplicador.
-    multiplicador = multiplicador_efetivo(regra, grupo)
+    multiplicador = multiplicador_efetivo(regra, grupo, parametros)
     extra_total = valor_referencia * (multiplicador - 12.0)
     if regra.extra_concentrado_em_novembro:
         # Decisão 11: Obrigações Patronais — a antecipação de junho não gera desconto
@@ -844,26 +1004,32 @@ def _distribuir_mes_futuro(
         # quando o 13º é de fato fechado.
         bonus_junho, bonus_novembro = 0.0, extra_total
     else:
-        # Decisão 6 (regra geral): metade em cada mês de 13º (junho/novembro).
-        bonus_junho = bonus_novembro = extra_total / 2
+        # Decisão 6 (regra geral): metade em cada mês de 13º (junho/novembro) — a
+        # fração da antecipação é `fracao_antecipacao_13`.
+        bonus_junho = extra_total * fracao_antecipacao
+        bonus_novembro = extra_total - bonus_junho
     resultado: dict[int, float | None] = {}
     for mes in meses_a_projetar:
         valor = valor_referencia
-        if mes == MES_ANTECIPACAO_DECIMO_TERCEIRO:
+        if mes == mes_antecipacao:
             valor += bonus_junho
-        elif mes == MES_PARCELA_DECIMO_TERCEIRO:
+        elif mes == mes_parcela:
             valor += bonus_novembro
         resultado[mes] = valor
     return resultado
 
 
-def grade_mensal(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano: int, ano_mes_referencia: int) -> ResultadoGradeMensal:
+def grade_mensal(
+    mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano: int, ano_mes_referencia: int,
+    parametros: ParametrosProjecao | None = None,
+) -> ResultadoGradeMensal:
     """Uma linha por (grupo, natureza de despesa, natureza detalhada) do escopo de
     pessoal, com uma lista de 12 valores (Jan-Dez de `ano`): mês já presente na base
     mensal usa o valor REAL (Liquidada); mês futuro usa a projeção da regra da rubrica
     (`_distribuir_mes_futuro`). `ano_mes_referencia` (formato AAAAMM) é o mês cujo valor
     alimenta a projeção dos meses futuros — mesmo parâmetro de `projetar`."""
 
+    parametros = parametros or PARAMETROS_PADRAO
     escopo_mensal = filtrar_escopo(mensal_df)
     do_ano = escopo_mensal.loc[
         (escopo_mensal["ano_mes"] // 100 == ano) & (escopo_mensal["tipo_linha"] == "item_execucao")
@@ -891,7 +1057,7 @@ def grade_mensal(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano: int, ano_
     alertas: list[str] = []
     linhas = []
     for chave in chaves.itertuples(index=False):
-        regra = regra_para_natureza(chave.natureza_despesa_cod, chave.natureza_detalhada_cod)
+        regra = regra_para_natureza(chave.natureza_despesa_cod, chave.natureza_detalhada_cod, parametros)
         if regra is None:
             mensagem = (
                 f"Sem regra de projeção para natureza {chave.natureza_despesa_cod} "
@@ -902,8 +1068,8 @@ def grade_mensal(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano: int, ano_
                 erros.append(mensagem)
                 regra = None
             else:
-                alertas.append(mensagem + " Aplicado o padrão x12 da decisão 5.")
-                regra = _regra(str(chave.natureza_despesa_cod), str(chave.natureza_despesa_desc), REGRA_MULTIPLICADOR, MULTIPLICADOR_12)
+                alertas.append(mensagem + f" Aplicado o padrão {_fmt_mult(parametros.multiplicador_sem_regra_beneficios)} da decisão 5.")
+                regra = _regra_sem_mapeamento_beneficios(chave.natureza_despesa_cod, chave.natureza_despesa_desc, parametros)
 
         if regra is not None and regra.tipo == REGRA_DECIMO_TERCEIRO:
             # Ver decisão 8 / `_valor_referencia_natureza_mae`: nunca o mês de referência
@@ -917,7 +1083,7 @@ def grade_mensal(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano: int, ano_
             ]
             valor_referencia = float(linha_ref.iloc[0]["valor_mes_referencia"]) if len(linha_ref) and pd.notna(linha_ref.iloc[0]["valor_mes_referencia"]) else None
 
-        projetados = _distribuir_mes_futuro(regra, chave.grupo, valor_referencia, meses_futuros) if regra is not None else {mes: None for mes in meses_futuros}
+        projetados = _distribuir_mes_futuro(regra, chave.grupo, valor_referencia, meses_futuros, parametros) if regra is not None else {mes: None for mes in meses_futuros}
 
         reais_desta_linha_df = reais_por_mes.loc[
             (reais_por_mes["grupo"] == chave.grupo)
@@ -934,7 +1100,7 @@ def grade_mensal(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano: int, ano_
             else:
                 meses_valores.append(projetados.get(mes))
 
-        if chave.grupo == GRUPO_ATIVO and 12 in meses_futuros:
+        if parametros.dezembro_ativo_repete_novembro and chave.grupo == GRUPO_ATIVO and 12 in meses_futuros:
             # Decisão 10 (22/09/2026): dezembro projetado do Ativo repete o valor de
             # novembro (real ou projetado, o que já estiver em meses_valores[10]) — ver
             # decisão 10 no cabeçalho do módulo para a evidência histórica.
@@ -1286,12 +1452,16 @@ def execucao_ano_anterior_beneficios(anual_df: pd.DataFrame, ano: int) -> pd.Dat
     })
 
 
-def grade_mensal_beneficios(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano: int, ano_mes_referencia: int) -> ResultadoGradeMensal:
+def grade_mensal_beneficios(
+    mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano: int, ano_mes_referencia: int,
+    parametros: ParametrosProjecao | None = None,
+) -> ResultadoGradeMensal:
     """Grade mensal de Outros Benefícios por PLANO ORÇAMENTÁRIO — ver docstring da seção
     11 acima para o raciocínio completo. Regra ausente aqui nunca é erro (mesma
     tolerância da decisão 5 — ações fora do relatório-modelo original), só alerta com o
     padrão ×12."""
 
+    parametros = parametros or PARAMETROS_PADRAO
     escopo_mensal = _escopo_beneficios(mensal_df)
     do_ano = escopo_mensal.loc[
         (escopo_mensal["ano_mes"] // 100 == ano) & (escopo_mensal["tipo_linha"] == "item_execucao")
@@ -1321,15 +1491,15 @@ def grade_mensal_beneficios(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano
     acumulado: dict[tuple[str, str], list[list[float | None]]] = {}
 
     for chave in chaves.itertuples(index=False):
-        regra = regra_para_natureza(chave.natureza_despesa_cod, chave.natureza_detalhada_cod)
+        regra = regra_para_natureza(chave.natureza_despesa_cod, chave.natureza_detalhada_cod, parametros)
         if regra is None:
             alertas.append(
                 f"Outros Benefícios (PO {chave.po_cod}): sem regra de projeção para natureza "
                 f"{chave.natureza_despesa_cod} ({chave.natureza_despesa_desc}), detalhada "
                 f"{chave.natureza_detalhada_cod} ({chave.natureza_detalhada_desc}). Aplicado o "
-                "padrão x12 da decisão 5."
+                f"padrão {_fmt_mult(parametros.multiplicador_sem_regra_beneficios)} da decisão 5."
             )
-            regra = _regra(str(chave.natureza_despesa_cod), str(chave.natureza_despesa_desc), REGRA_MULTIPLICADOR, MULTIPLICADOR_12)
+            regra = _regra_sem_mapeamento_beneficios(chave.natureza_despesa_cod, chave.natureza_despesa_desc, parametros)
 
         linha_ref = valor_ref.loc[
             (valor_ref["acao_cod"] == chave.acao_cod) & (valor_ref["po_cod"] == chave.po_cod)
@@ -1338,7 +1508,7 @@ def grade_mensal_beneficios(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano
         ]
         valor_referencia = float(linha_ref.iloc[0]["valor_mes_referencia"]) if len(linha_ref) and pd.notna(linha_ref.iloc[0]["valor_mes_referencia"]) else None
 
-        projetados = _distribuir_mes_futuro(regra, GRUPO_OUTROS_BENEFICIOS, valor_referencia, meses_futuros)
+        projetados = _distribuir_mes_futuro(regra, GRUPO_OUTROS_BENEFICIOS, valor_referencia, meses_futuros, parametros)
 
         reais_desta_linha_df = reais_por_mes.loc[
             (reais_por_mes["acao_cod"] == chave.acao_cod) & (reais_por_mes["po_cod"] == chave.po_cod)
@@ -1382,6 +1552,7 @@ def grade_mensal_beneficios(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano
 
 def substituir_beneficios_por_plano_orcamentario(
     grade: ResultadoGradeMensal, mensal_df: pd.DataFrame, anual_df: pd.DataFrame,
+    parametros: ParametrosProjecao | None = None,
 ) -> ResultadoGradeMensal:
     """Troca, dentro de `grade` (já passada por `consolidar_por_elemento`/
     `consolidar_relatorio_ativo`), as linhas do grupo Outros Benefícios — hoje por
@@ -1389,7 +1560,7 @@ def substituir_beneficios_por_plano_orcamentario(
     `grade_mensal_beneficios` (ver seção 11). Ativo/Inativo/RPPS não são tocados.
     Chamar como último passo antes de `aplicar_overrides()`."""
 
-    beneficios = grade_mensal_beneficios(mensal_df, anual_df, grade.ano, grade.ano_mes_referencia)
+    beneficios = grade_mensal_beneficios(mensal_df, anual_df, grade.ano, grade.ano_mes_referencia, parametros)
     linhas = pd.concat([
         grade.linhas.loc[grade.linhas["grupo"] != GRUPO_OUTROS_BENEFICIOS],
         beneficios.linhas,
@@ -1403,3 +1574,220 @@ def substituir_beneficios_por_plano_orcamentario(
         linhas=linhas, ano=grade.ano, ano_mes_referencia=grade.ano_mes_referencia,
         erros=grade.erros + beneficios.erros, alertas=alertas_sem_duplicar + beneficios.alertas,
     )
+
+
+# --------------------------------------------------------------------------------------
+# 12. Execução de exercícios anteriores (27/09/2026, pedido do usuário: "ver a execução
+#     de exercícios anteriores"). Só leitura das bases — nenhuma projeção nem regra das
+#     seções acima é aplicada aqui. Execução Anual: Empenhada vem das linhas "empenho" e
+#     Liquidada/Paga das linhas "item_execucao" (ver `src.execucao_anual`), por isso a
+#     soma por coluna sobre todas as linhas não duplica valor. Execução Mensal: só
+#     "item_execucao", mesmo recorte de `valor_mes_referencia`.
+# --------------------------------------------------------------------------------------
+
+#: ordem de exibição dos grupos (mesma do painel).
+ORDEM_GRUPOS = [GRUPO_ATIVO, GRUPO_INATIVO, GRUPO_RPPS, GRUPO_OUTROS_BENEFICIOS]
+_MEDIDAS_EXECUCAO = ["empenhada", "liquidada", "paga"]
+
+
+def _recorte_anual(anual_df: pd.DataFrame, ano: int) -> pd.DataFrame:
+    """Escopo de pessoal do exercício `ano`; medida ausente na base vira coluna nula
+    (nunca zero) para não inventar valor."""
+
+    escopo = filtrar_escopo(anual_df)
+    do_ano = escopo.loc[escopo["ano"] == ano].copy()
+    for medida in _MEDIDAS_EXECUCAO:
+        if medida not in do_ano.columns:
+            do_ano[medida] = float("nan")
+    return do_ano
+
+
+def execucao_exercicio_por_grupo(anual_df: pd.DataFrame, ano: int) -> pd.DataFrame:
+    """Empenhada/Liquidada/Paga do exercício `ano` por grupo (Execução Anual), nulo
+    preservado (`min_count=1`). Colunas: `grupo`, `empenhada`, `liquidada`, `paga`;
+    só grupos com alguma linha no exercício, na ordem de `ORDEM_GRUPOS`."""
+
+    do_ano = _recorte_anual(anual_df, ano)
+    agrupado = do_ano.groupby("grupo")[_MEDIDAS_EXECUCAO].sum(min_count=1)
+    agrupado = agrupado.reindex([g for g in ORDEM_GRUPOS if g in agrupado.index])
+    return agrupado.reset_index()
+
+
+def execucao_exercicio_por_natureza(anual_df: pd.DataFrame, ano: int) -> pd.DataFrame:
+    """Como `execucao_exercicio_por_grupo`, aberto por Natureza de Despesa (código
+    tratado como identificador; a descrição é a primeira não nula do código, para
+    uma variação de texto entre linhas não partir a mesma natureza em duas)."""
+
+    do_ano = _recorte_anual(anual_df, ano)
+    colunas = ["grupo", "natureza_despesa_cod", "natureza_despesa_desc", *_MEDIDAS_EXECUCAO]
+    if do_ano.empty:
+        return pd.DataFrame(columns=colunas)
+    valores = do_ano.groupby(["grupo", "natureza_despesa_cod"])[_MEDIDAS_EXECUCAO].sum(min_count=1).reset_index()
+    descricoes = do_ano.dropna(subset=["natureza_despesa_desc"]).groupby("natureza_despesa_cod")["natureza_despesa_desc"].first()
+    valores["natureza_despesa_desc"] = valores["natureza_despesa_cod"].map(descricoes)
+    valores["_ordem"] = valores["grupo"].map({g: i for i, g in enumerate(ORDEM_GRUPOS)})
+    return valores.sort_values(["_ordem", "natureza_despesa_cod"])[colunas].reset_index(drop=True)
+
+
+def liquidada_mensal_por_grupo(mensal_df: pd.DataFrame, ano: int) -> pd.DataFrame:
+    """Liquidada mês a mês do exercício `ano` por grupo (Execução Mensal). Uma linha
+    por grupo, colunas 1-12; mês sem linha na base fica nulo (não zero). DataFrame
+    vazio se a base mensal não cobre o exercício."""
+
+    escopo = filtrar_escopo(mensal_df)
+    do_ano = escopo.loc[(escopo["ano_mes"] // 100 == ano) & (escopo["tipo_linha"] == "item_execucao")]
+    if do_ano.empty:
+        return pd.DataFrame(columns=range(1, 13))
+    por_mes = do_ano.assign(mes=do_ano["ano_mes"] % 100).groupby(["grupo", "mes"])["liquidada"].sum(min_count=1).unstack("mes")
+    por_mes = por_mes.reindex(columns=range(1, 13))
+    return por_mes.reindex([g for g in ORDEM_GRUPOS if g in por_mes.index])
+
+
+# --------------------------------------------------------------------------------------
+# 13. Projeção reconstruída × executado (27/09/2026, aprovado pelo usuário): aplica as
+#     fórmulas (com os `parametros` em uso) a partir de um mês de referência de um
+#     exercício JÁ encerrado na base mensal e compara, mês a mês e por grupo, com a
+#     Liquidada que de fato ocorreu. Mesmo encadeamento do painel (`grade_mensal` +
+#     `substituir_beneficios_por_plano_orcamentario`) — as consolidações de exibição
+#     (`consolidar_por_elemento`/`consolidar_relatorio_ativo`) não mudam total por grupo.
+#     Ajustes manuais de meses do painel NÃO entram: aqui se testa só a fórmula.
+# --------------------------------------------------------------------------------------
+
+def comparar_projecao_com_executado(
+    mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano: int, mes_referencia: int,
+    parametros: ParametrosProjecao | None = None,
+) -> pd.DataFrame:
+    """Uma linha por (grupo, mês projetado) — meses depois de `mes_referencia` (1-11).
+    Colunas: `grupo`, `mes`, `projetado`, `executado` (Liquidada da Execução Mensal),
+    `diferenca` (executado − projetado; positivo = projeção ficou abaixo do real).
+    Nulo se qualquer um dos dois lados for nulo (mês sem dado não vira zero)."""
+
+    if not 1 <= mes_referencia <= 11:
+        raise ValueError("O mês de referência precisa deixar ao menos um mês a projetar (1 a 11).")
+    grade = grade_mensal(mensal_df, anual_df, ano, ano * 100 + mes_referencia, parametros)
+    colunas = ["grupo", "mes", "projetado", "executado", "diferenca"]
+    if grade.linhas.empty:
+        return pd.DataFrame(columns=colunas)
+    grade = substituir_beneficios_por_plano_orcamentario(grade, mensal_df, anual_df, parametros)
+    projetado = grade.total_por_grupo_por_mes()
+    executado = liquidada_mensal_por_grupo(mensal_df, ano)
+    linhas = []
+    for grupo in [g for g in ORDEM_GRUPOS if g in projetado.index or g in executado.index]:
+        for mes in range(mes_referencia + 1, 13):
+            p = projetado.loc[grupo, mes] if grupo in projetado.index else None
+            e = executado.loc[grupo, mes] if grupo in executado.index else None
+            p = None if p is None or pd.isna(p) else float(p)
+            e = None if e is None or pd.isna(e) else float(e)
+            linhas.append({"grupo": grupo, "mes": mes, "projetado": p, "executado": e,
+                           "diferenca": None if p is None or e is None else e - p})
+    return pd.DataFrame(linhas, columns=colunas)
+
+
+def resumo_projecao_com_executado(comparacao: pd.DataFrame, chave: str = "grupo") -> pd.DataFrame:
+    """Soma, por `chave` (padrão: grupo), dos meses de `comparar_projecao_com_executado`
+    (ou `comparar_beneficios_por_plano_orcamentario`, com `chave="plano"`) em que
+    projetado E executado existem (`meses` = quantos) — os três totais cobrem os mesmos
+    meses, senão a diferença não fecharia com projetado/executado. Mais uma linha
+    `total`. `diferenca_pct` = diferença ÷ projetado — nulo se projetado for nulo, zero
+    ou NEGATIVO (percentual sobre base negativa inverte o sinal e não tem leitura;
+    achado real: PO 2004/0001 projetado negativo a partir de Set/2025)."""
+
+    colunas = [chave, "meses", "projetado", "executado", "diferenca", "diferenca_pct"]
+    if comparacao.empty:
+        return pd.DataFrame(columns=colunas)
+    medidas = ["projetado", "executado", "diferenca"]
+    base = comparacao.assign(**{m: pd.to_numeric(comparacao[m]) for m in medidas})
+    base = base.dropna(subset=["projetado", "executado"])
+    chaves = list(dict.fromkeys(comparacao[chave]))
+    por_chave = base.groupby(chave)[medidas].sum(min_count=1).reindex(chaves)
+    por_chave.index.name = chave
+    por_chave.insert(0, "meses", base.groupby(chave).size().reindex(chaves).fillna(0).astype(int))
+    por_chave = por_chave.reset_index()
+    total = {chave: "total", "meses": int(base["mes"].nunique()), **{m: por_chave[m].sum(min_count=1) for m in medidas}}
+    resumo = pd.concat([por_chave, pd.DataFrame([total])], ignore_index=True)
+    resumo["diferenca_pct"] = [
+        None if pd.isna(d) or pd.isna(p) or p <= 0 else float(d) / float(p)
+        for d, p in zip(resumo["diferenca"], resumo["projetado"])
+    ]
+    return resumo[colunas]
+
+
+def desvio_por_mes_de_partida(
+    mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano: int,
+    parametros: ParametrosProjecao | None = None,
+) -> pd.DataFrame:
+    """`resumo_projecao_com_executado` para CADA mês de partida possível (1-11) do
+    exercício `ano` que tenha Liquidada na base mensal — mostra se um desvio é
+    sistemático ou de um único mês. Mês sem dado não entra (não vira linha zerada).
+    Colunas: `mes_referencia` + as de `resumo_projecao_com_executado`."""
+
+    colunas = ["mes_referencia", "grupo", "meses", "projetado", "executado", "diferenca", "diferenca_pct"]
+    executado = liquidada_mensal_por_grupo(mensal_df, ano)
+    if executado.empty:
+        return pd.DataFrame(columns=colunas)
+    partes = []
+    for mes in range(1, 12):
+        if not executado[mes].notna().any():
+            continue
+        resumo = resumo_projecao_com_executado(
+            comparar_projecao_com_executado(mensal_df, anual_df, ano, mes, parametros)
+        )
+        if not resumo.empty:
+            partes.append(resumo.assign(mes_referencia=mes))
+    if not partes:
+        return pd.DataFrame(columns=colunas)
+    return pd.concat(partes, ignore_index=True)[colunas]
+
+
+#: rótulo de linha executada sem Plano Orçamentário (não ocorre na base de 27/09/2026;
+#: existe para a linha aparecer explícita em vez de sumir no agrupamento).
+SEM_PLANO_ORCAMENTARIO = "(sem PO)"
+
+
+def comparar_beneficios_por_plano_orcamentario(
+    mensal_df: pd.DataFrame, anual_df: pd.DataFrame, ano: int, mes_referencia: int,
+    parametros: ParametrosProjecao | None = None,
+) -> pd.DataFrame:
+    """Como `comparar_projecao_com_executado`, só para Outros Benefícios e aberto por
+    Plano Orçamentário (27/09/2026, aprovado: investigar o desvio do grupo). Projetado
+    vem de `grade_mensal_beneficios` — as MESMAS linhas que o painel e a comparação por
+    grupo usam, então a soma dos PO fecha com a linha do grupo. Chave = (Ação, PO): o
+    código de PO se repete entre 2004 e 212B. Colunas: `plano` ("AÇÃO/PO", texto),
+    `acao_cod`, `po_cod`, `po_desc`, `mes`, `projetado`, `executado`, `diferenca`."""
+
+    if not 1 <= mes_referencia <= 11:
+        raise ValueError("O mês de referência precisa deixar ao menos um mês a projetar (1 a 11).")
+    colunas = ["plano", "acao_cod", "po_cod", "po_desc", "mes", "projetado", "executado", "diferenca"]
+    grade = grade_mensal_beneficios(mensal_df, anual_df, ano, ano * 100 + mes_referencia, parametros)
+    projetado: dict[tuple[str, str], list[float | None]] = {}
+    descricoes: dict[tuple[str, str], str] = {}
+    for linha in grade.linhas.itertuples(index=False):
+        po_cod = SEM_PLANO_ORCAMENTARIO if pd.isna(linha.natureza_detalhada_cod) else str(linha.natureza_detalhada_cod)
+        chave = (str(linha.natureza_despesa_cod), po_cod)
+        projetado[chave] = list(linha.meses)
+        descricoes[chave] = linha.natureza_detalhada_desc
+
+    escopo = _escopo_beneficios(mensal_df)
+    do_ano = escopo.loc[(escopo["ano_mes"] // 100 == ano) & (escopo["tipo_linha"] == "item_execucao")]
+    executado: dict[tuple[str, str], dict[int, float]] = {}
+    if not do_ano.empty:
+        po = do_ano["po_cod"].astype("string").fillna(SEM_PLANO_ORCAMENTARIO)
+        somas = (do_ano.assign(po_cod=po, mes=do_ano["ano_mes"] % 100)
+                 .groupby(["acao_cod", "po_cod", "mes"])["liquidada"].sum(min_count=1))
+        for (acao, po_cod, mes), valor in somas.items():
+            if pd.notna(valor):
+                executado.setdefault((str(acao), str(po_cod)), {})[int(mes)] = float(valor)
+    for chave, (acao_desc, po_desc) in _rotulos_po(mensal_df).items():
+        descricoes.setdefault((str(chave[0]), str(chave[1])), po_desc)
+
+    linhas = []
+    for chave in sorted(set(projetado) | set(executado)):
+        acao, po_cod = chave
+        for mes in range(mes_referencia + 1, 13):
+            p = projetado.get(chave, [None] * 12)[mes - 1]
+            p = None if p is None or pd.isna(p) else float(p)
+            e = executado.get(chave, {}).get(mes)
+            linhas.append({"plano": f"{acao}/{po_cod}", "acao_cod": acao, "po_cod": po_cod,
+                           "po_desc": descricoes.get(chave), "mes": mes, "projetado": p, "executado": e,
+                           "diferenca": None if p is None or e is None else e - p})
+    return pd.DataFrame(linhas, columns=colunas)

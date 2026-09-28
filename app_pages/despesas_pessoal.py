@@ -2,6 +2,9 @@
 
 Componente HTML único com tabelas semânticas, expansão inline e edição de meses
 futuros. Processamento financeiro permanece em src.despesas_pessoal.
+
+Abas (27/09/2026): "Acompanhamento" (o componente), "Fórmulas de projeção" (campos
+editáveis dos parâmetros, só na sessão) e "Exercícios anteriores" (execução realizada).
 """
 from datetime import datetime
 
@@ -9,7 +12,7 @@ import pandas as pd
 import streamlit as st
 
 from src.despesas_pessoal import (
-    aplicar_overrides, consolidar_por_elemento, consolidar_relatorio_ativo,
+    aplicar_overrides, diferencas_do_padrao, consolidar_por_elemento, consolidar_relatorio_ativo,
     dotacao_atualizada_por_acao_beneficios, dotacao_atualizada_por_grupo,
     dotacao_atualizada_por_plano_orcamentario,
     grade_mensal, substituir_beneficios_por_plano_orcamentario, ultimo_mes_fechado,
@@ -30,6 +33,7 @@ from src.importacao_execucao_mensal import (
     carregar_atual as carregar_execucao_mensal_atual,
 )
 from src.ui_despesas_pessoal import montar_painel, render_painel, validar_edicao
+from src.ui_despesas_pessoal_abas import render_exercicios_anteriores, render_formulas
 
 
 @st.cache_data(show_spinner="Lendo a base de Execução Anual...")
@@ -50,6 +54,8 @@ def _cached_dotacao_anual(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.Da
 # Escopo desta página: o componente tem o espaçamento de 32px do HTML original.
 st.html("""<style>
 .stMainBlockContainer:has(.st-key-dp_painel) {max-width:none; padding:0 0 3rem;}
+.stMainBlockContainer:has(.st-key-dp_painel) .stTabs [data-baseweb="tab-list"] {padding:0 32px;}
+.st-key-dp_aba_formulas, .st-key-dp_aba_historico, .st-key-dp_aba_aviso {padding:8px 32px 0;}
 </style>""")
 
 manifesto_execucao = ManifestoExecucao.atual()
@@ -89,7 +95,13 @@ if not meses_disponiveis:
     st.warning("A base mensal não tem nenhum mês com dado.")
     st.stop()
 
-mes_padrao = ultimo_mes_fechado(mensal) or meses_disponiveis[-1]
+aba_painel, aba_formulas, aba_historico = st.tabs(["Acompanhamento", "Fórmulas de projeção", "Exercícios anteriores"])
+# A aba de fórmulas é montada antes do painel: os parâmetros dela alimentam o cálculo.
+with aba_formulas, st.container(key="dp_aba_formulas"):
+    parametros, erro_parametros = render_formulas()
+ajustes_formulas = diferencas_do_padrao(parametros)
+
+mes_padrao = ultimo_mes_fechado(mensal, parametros) or meses_disponiveis[-1]
 anos_dotacao = sorted(int(v) for v in dotacao["ano_lancamento"].dropna().unique())
 if not anos_dotacao:
     st.warning("A base de Dotação não contém exercícios disponíveis.")
@@ -102,32 +114,10 @@ ano_dotacao = st.session_state.get("dp_ano_dotacao", ano if ano in anos_dotacao 
 if ano_dotacao not in anos_dotacao:
     ano_dotacao = anos_dotacao[-1]
 
-bruta = grade_mensal(mensal, anual, ano, ano_mes_referencia)
-if bruta.linhas.empty:
-    st.info("Não há despesas de pessoal nas ações acompanhadas para esta referência.")
-    st.stop()
-grade_base = substituir_beneficios_por_plano_orcamentario(
-    consolidar_relatorio_ativo(consolidar_por_elemento(bruta)), mensal, anual,
-)
-chave_edicoes = f"dp_edicoes_{ano_mes_referencia}"
-# Conserva ajustes da interface anterior, se a sessão ainda os possuir.
-if chave_edicoes not in st.session_state:
-    legados = {}
-    if not st.session_state.get("dp_legados_migrados", False):
-        for grupo in ("ativo", "inativo", "rpps", "outros_beneficios"):
-            legados.update(st.session_state.get(f"dp_overrides_{grupo}", {}))
-        st.session_state["dp_legados_migrados"] = True
-    st.session_state[chave_edicoes] = legados
-edicoes = st.session_state[chave_edicoes]
-grade = aplicar_overrides(grade_base, edicoes) if edicoes else grade_base
-dotacao_grupo = dotacao_atualizada_por_grupo(dotacao, ano_dotacao)
-dotacao_por_po = dotacao_atualizada_por_plano_orcamentario(dotacao, ano_dotacao)
-dotacao_por_acao_beneficios = dotacao_atualizada_por_acao_beneficios(dotacao, ano_dotacao)
-
 def data_extracao(manifesto):
     return datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y")
 
-procedencia = (
+procedencia_bases = (
     f"Procedência: Execução Anual, extração de {data_extracao(manifesto_execucao)}, "
     f"hash {manifesto_execucao.sha256[:8]}; Dotação Anual, extração de "
     f"{data_extracao(manifesto_dotacao)}, hash {manifesto_dotacao.sha256[:8]}; "
@@ -135,28 +125,69 @@ procedencia = (
     f"hash {manifesto_execucao_mensal.sha256[:8]}. "
     "As bases possuem datas de extração independentes."
 )
-dados = montar_painel(grade, mensal, anual, dotacao_grupo, ano_dotacao,
-                      meses_disponiveis=meses_disponiveis, anos_dotacao=anos_dotacao,
-                      procedencia=procedencia, editados=edicoes,
-                      dotacao_por_plano_orcamentario=dotacao_por_po,
-                      dotacao_por_acao_beneficios=dotacao_por_acao_beneficios)
-resultado = render_painel(dados)
-if resultado.edicao:
-    try:
-        chave, mes, valor = validar_edicao(resultado.edicao, grade_base)
-    except ValueError as erro:
-        st.error(str(erro))
-    else:
-        novo = {k: dict(v) for k, v in edicoes.items()}
-        novo.setdefault(chave, {})[mes] = valor
-        st.session_state[chave_edicoes] = novo
+
+with aba_historico, st.container(key="dp_aba_historico"):
+    ano_corrente = max([int(v) for v in anual["ano"].dropna().unique()] + [int(meses_disponiveis[-1]) // 100])
+    render_exercicios_anteriores(anual, mensal, dotacao, ano_corrente, procedencia_bases,
+                                 parametros=parametros, mes_referencia_padrao=ano_mes_referencia % 100,
+                                 formulas_ajustadas=bool(ajustes_formulas))
+
+with aba_painel:
+    if erro_parametros or ajustes_formulas:
+        with st.container(key="dp_aba_aviso"):
+            if erro_parametros:
+                st.error("Parâmetro inválido na aba Fórmulas de projeção — painel calculado com as fórmulas padrão.")
+            else:
+                st.warning("Projeção com fórmulas ajustadas nesta sessão: " + "; ".join(ajustes_formulas) + ".")
+
+    bruta = grade_mensal(mensal, anual, ano, ano_mes_referencia, parametros)
+    if bruta.linhas.empty:
+        st.info("Não há despesas de pessoal nas ações acompanhadas para esta referência.")
+        st.stop()
+    grade_base = substituir_beneficios_por_plano_orcamentario(
+        consolidar_relatorio_ativo(consolidar_por_elemento(bruta)), mensal, anual, parametros,
+    )
+    chave_edicoes = f"dp_edicoes_{ano_mes_referencia}"
+    # Conserva ajustes da interface anterior, se a sessão ainda os possuir.
+    if chave_edicoes not in st.session_state:
+        legados = {}
+        if not st.session_state.get("dp_legados_migrados", False):
+            for grupo in ("ativo", "inativo", "rpps", "outros_beneficios"):
+                legados.update(st.session_state.get(f"dp_overrides_{grupo}", {}))
+            st.session_state["dp_legados_migrados"] = True
+        st.session_state[chave_edicoes] = legados
+    edicoes = st.session_state[chave_edicoes]
+    grade = aplicar_overrides(grade_base, edicoes) if edicoes else grade_base
+    dotacao_grupo = dotacao_atualizada_por_grupo(dotacao, ano_dotacao)
+    dotacao_por_po = dotacao_atualizada_por_plano_orcamentario(dotacao, ano_dotacao)
+    dotacao_por_acao_beneficios = dotacao_atualizada_por_acao_beneficios(dotacao, ano_dotacao)
+
+    procedencia = procedencia_bases + (
+        " Fórmulas ajustadas nesta sessão: " + "; ".join(ajustes_formulas) + "."
+        if ajustes_formulas else " Fórmulas de projeção: padrão da metodologia."
+    )
+    dados = montar_painel(grade, mensal, anual, dotacao_grupo, ano_dotacao,
+                          meses_disponiveis=meses_disponiveis, anos_dotacao=anos_dotacao,
+                          procedencia=procedencia, editados=edicoes,
+                          dotacao_por_plano_orcamentario=dotacao_por_po,
+                          dotacao_por_acao_beneficios=dotacao_por_acao_beneficios)
+    resultado = render_painel(dados)
+    if resultado.edicao:
+        try:
+            chave, mes, valor = validar_edicao(resultado.edicao, grade_base)
+        except ValueError as erro:
+            st.error(str(erro))
+        else:
+            novo = {k: dict(v) for k, v in edicoes.items()}
+            novo.setdefault(chave, {})[mes] = valor
+            st.session_state[chave_edicoes] = novo
+            st.rerun()
+    if resultado.filtros:
+        filtros = resultado.filtros
+        if filtros.get("referencia") in meses_disponiveis and filtros.get("anoDotacao") in anos_dotacao:
+            st.session_state["dp_referencia"] = int(filtros["referencia"])
+            st.session_state["dp_ano_dotacao"] = int(filtros["anoDotacao"])
+            st.rerun()
+    if resultado.restaurar and resultado.restaurar.get("referencia") == ano_mes_referencia:
+        st.session_state[chave_edicoes] = {}
         st.rerun()
-if resultado.filtros:
-    filtros = resultado.filtros
-    if filtros.get("referencia") in meses_disponiveis and filtros.get("anoDotacao") in anos_dotacao:
-        st.session_state["dp_referencia"] = int(filtros["referencia"])
-        st.session_state["dp_ano_dotacao"] = int(filtros["anoDotacao"])
-        st.rerun()
-if resultado.restaurar and resultado.restaurar.get("referencia") == ano_mes_referencia:
-    st.session_state[chave_edicoes] = {}
-    st.rerun()

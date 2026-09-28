@@ -23,11 +23,23 @@ from src.despesas_pessoal import (
     REGRA_ZERO,
     MES_ANTECIPACAO_DECIMO_TERCEIRO,
     MES_PARCELA_DECIMO_TERCEIRO,
+    PARAMETROS_PADRAO,
+    ParametrosProjecao,
+    TABELA_REGRAS,
+    diferencas_do_padrao,
+    execucao_exercicio_por_grupo,
+    execucao_exercicio_por_natureza,
+    liquidada_mensal_por_grupo,
     aplicar_overrides,
     classificar_grupo,
     consolidar_por_elemento,
     consolidar_relatorio_ativo,
     comparar_com_dotacao,
+    comparar_beneficios_por_plano_orcamentario,
+    comparar_projecao_com_executado,
+    SEM_PLANO_ORCAMENTARIO,
+    desvio_por_mes_de_partida,
+    resumo_projecao_com_executado,
     dotacao_atualizada_por_acao_beneficios,
     dotacao_atualizada_por_grupo,
     dotacao_atualizada_por_plano_orcamentario,
@@ -951,3 +963,322 @@ class TestSaldoRemanescenteBeneficiosPorAcao(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestParametrosProjecao(unittest.TestCase):
+    """27/09/2026 — fórmulas editáveis: o padrão reproduz as decisões confirmadas e
+    cada campo ajustado muda só a parte da fórmula que ele representa."""
+
+    _mensal = TestGradeMensal._mensal
+    _anual_vazio = TestGradeMensal._anual_vazio
+
+    def test_padrao_nao_altera_a_grade(self):
+        sem = grade_mensal(self._mensal(), self._anual_vazio(), 2026, 202608)
+        com = grade_mensal(self._mensal(), self._anual_vazio(), 2026, 202608, PARAMETROS_PADRAO)
+        self.assertEqual(sem.linhas["meses"].tolist(), com.linhas["meses"].tolist())
+        self.assertEqual(diferencas_do_padrao(PARAMETROS_PADRAO), [])
+        self.assertEqual(diferencas_do_padrao(None), [])
+
+    def test_multiplicador_por_natureza_muda_so_a_rubrica(self):
+        parametros = ParametrosProjecao(multiplicadores_natureza={"319004": 14.0})
+        self.assertEqual(regra_para_natureza("319004", "31900401", parametros).multiplicador, 14.0)
+        self.assertEqual(regra_para_natureza("319004", "31900401").multiplicador, MULTIPLICADOR_13_3333)
+        # a tabela global nunca é modificada
+        self.assertEqual(TABELA_REGRAS["319004"].multiplicador, MULTIPLICADOR_13_3333)
+        resultado = grade_mensal(self._mensal(), self._anual_vazio(), 2026, 202608, parametros)
+        linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319004"].iloc[0]
+        # Nov = R + metade de (14 − 12) × R
+        self.assertAlmostEqual(linha["meses"][MES_PARCELA_DECIMO_TERCEIRO - 1], 9_000.0 + 9_000.0)
+        self.assertEqual(diferencas_do_padrao(parametros), ["natureza 319004: x13,3333 → x14"])
+
+    def test_multiplicador_por_grupo_de_sentenca_e_indenizacao(self):
+        parametros = ParametrosProjecao(sentenca_inativo=14.0, indenizacao_demais=13.0)
+        self.assertEqual(multiplicador_efetivo(regra_para_natureza("319091", "x"), GRUPO_INATIVO, parametros), 14.0)
+        self.assertAlmostEqual(multiplicador_efetivo(regra_para_natureza("319091", "x"), GRUPO_ATIVO, parametros), MULTIPLICADOR_13_3333)
+        self.assertEqual(multiplicador_efetivo(regra_para_natureza("319094", "x"), GRUPO_ATIVO, parametros), 13.0)
+
+    def test_meses_e_fracao_do_decimo_terceiro(self):
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202601, liquidada=100.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901143", tipo_linha="item_execucao", ano_mes=202601, liquidada=100.0, paga=0.0),
+        ])
+        parametros = ParametrosProjecao(mes_antecipacao_13=7, mes_parcela_13=12, fracao_antecipacao_13=0.4,
+                                        dezembro_ativo_repete_novembro=False)
+        resultado = grade_mensal(mensal, self._anual_vazio(), 2026, 202601, parametros)
+        linha13 = resultado.linhas[resultado.linhas["natureza_detalhada_cod"] == "31901143"].iloc[0]
+        self.assertAlmostEqual(linha13["meses"][6], 40.0)   # Jul: antecipação (40%)
+        self.assertAlmostEqual(linha13["meses"][11], 60.0)  # Dez: parcela final (60%)
+        self.assertAlmostEqual(linha13["meses"][5], 0.0)    # Jun deixa de receber
+        self.assertAlmostEqual(linha13["meses"][10], 0.0)   # Nov deixa de receber
+
+    def test_dezembro_do_ativo_pode_deixar_de_repetir_novembro(self):
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319004", "31900401", tipo_linha="item_execucao", ano_mes=202608, liquidada=9_000.0, paga=0.0),
+        ])
+        padrao = grade_mensal(mensal, self._anual_vazio(), 2026, 202608).linhas.iloc[0]["meses"]
+        self.assertAlmostEqual(padrao[11], padrao[10])
+        ajustada = grade_mensal(mensal, self._anual_vazio(), 2026, 202608,
+                                ParametrosProjecao(dezembro_ativo_repete_novembro=False)).linhas.iloc[0]["meses"]
+        self.assertAlmostEqual(ajustada[11], 9_000.0)
+
+    def test_extra_da_patronal_pode_voltar_a_ser_dividido(self):
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_RPPS, "319113", "31911301", tipo_linha="item_execucao", ano_mes=202601, liquidada=10_000.0, paga=0.0),
+        ])
+        parametros = ParametrosProjecao(extra_concentrado_natureza={"319113": False})
+        linha = grade_mensal(mensal, self._anual_vazio(), 2026, 202601, parametros).linhas.iloc[0]
+        self.assertAlmostEqual(linha["meses"][5], 15_000.0)
+        self.assertAlmostEqual(linha["meses"][10], 15_000.0)
+
+    def test_sem_regra_beneficios_usa_multiplicador_ajustado_e_avisa(self):
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_BENEFICIOS_OBRIGATORIOS, "339039", "33903901", tipo_linha="item_execucao",
+                            ano_mes=202601, liquidada=100.0, paga=0.0),
+        ])
+        parametros = ParametrosProjecao(multiplicador_sem_regra_beneficios=14.0)
+        resultado = grade_mensal(mensal, self._anual_vazio(), 2026, 202601, parametros)
+        self.assertAlmostEqual(resultado.linhas.iloc[0]["meses"][10], 200.0)  # R + metade de 2 × R
+        self.assertTrue(any("x14 da decisão 5" in a for a in resultado.alertas))
+
+    def test_criterio_de_mes_fechado_editavel(self):
+        df = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=m, liquidada=v, paga=0.0)
+            for m, v in ((202606, 1000.0), (202607, 1000.0), (202608, 600.0))
+        ])
+        self.assertEqual(ultimo_mes_fechado(df), 202608)  # 600 >= 50% de 1000
+        self.assertEqual(ultimo_mes_fechado(df, ParametrosProjecao(fracao_minima_fechamento=0.8)), 202607)
+
+    def test_validacao_recusa_valores_sem_regra_definida(self):
+        for ajuste in (
+            {"sentenca_ativo": 11.9}, {"sentenca_ativo": float("nan")}, {"indenizacao_demais": True},
+            {"multiplicadores_natureza": {"319011": 10.0}}, {"multiplicadores_natureza": {"319091": 13.0}},
+            {"multiplicadores_natureza": {"999999": 13.0}}, {"extra_concentrado_natureza": {"319092": True}},
+            {"mes_antecipacao_13": 0}, {"mes_parcela_13": 13}, {"mes_antecipacao_13": 11},
+            {"fracao_antecipacao_13": 1.5}, {"fracao_minima_fechamento": -0.1}, {"janela_meses_fechamento": 0},
+        ):
+            with self.subTest(ajuste=ajuste), self.assertRaises(ValueError):
+                ParametrosProjecao(**ajuste)
+
+
+class TestExecucaoExerciciosAnteriores(unittest.TestCase):
+    def _anual(self):
+        return pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", ano=2025, tipo_linha="empenho", empenhada=1000.0, liquidada=0.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", ano=2025, tipo_linha="item_execucao", empenhada=0.0, liquidada=900.0, paga=-5.0),
+            _linha_execucao(ACAO_INATIVO, "319001", "31900101", ano=2025, tipo_linha="empenho", empenhada=300.0, liquidada=None, paga=None),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", ano=2026, tipo_linha="empenho", empenhada=9999.0, liquidada=0.0, paga=0.0),
+            _linha_execucao("20RK", "339030", "33903001", ano=2025, tipo_linha="empenho", empenhada=77.0, liquidada=0.0, paga=0.0),
+        ])
+
+    def test_por_grupo_so_do_exercicio_preserva_nulo_e_negativo(self):
+        resultado = execucao_exercicio_por_grupo(self._anual(), 2025).set_index("grupo")
+        self.assertEqual(list(resultado.index), [GRUPO_ATIVO, GRUPO_INATIVO])
+        self.assertEqual(resultado.loc[GRUPO_ATIVO, "empenhada"], 1000.0)
+        self.assertEqual(resultado.loc[GRUPO_ATIVO, "liquidada"], 900.0)
+        self.assertEqual(resultado.loc[GRUPO_ATIVO, "paga"], -5.0)
+        self.assertTrue(pd.isna(resultado.loc[GRUPO_INATIVO, "liquidada"]))
+
+    def test_por_natureza_mantem_codigo_como_texto(self):
+        resultado = execucao_exercicio_por_natureza(self._anual(), 2025)
+        self.assertEqual(resultado["natureza_despesa_cod"].tolist(), ["319011", "319001"])
+        self.assertEqual(resultado.iloc[0]["natureza_despesa_desc"], "NATUREZA 319011")
+
+    def test_medida_ausente_vira_nulo(self):
+        anual = self._anual().drop(columns="paga")
+        self.assertTrue(execucao_exercicio_por_grupo(anual, 2025)["paga"].isna().all())
+
+    def test_liquidada_mensal_nulo_em_mes_sem_dado(self):
+        mensal = pd.DataFrame([
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202501, liquidada=10.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202503, liquidada=0.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="empenho", ano_mes=202503, liquidada=999.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202601, liquidada=50.0),
+        ])
+        resultado = liquidada_mensal_por_grupo(mensal, 2025)
+        self.assertEqual(resultado.loc[GRUPO_ATIVO, 1], 10.0)
+        self.assertTrue(pd.isna(resultado.loc[GRUPO_ATIVO, 2]))
+        self.assertEqual(resultado.loc[GRUPO_ATIVO, 3], 0.0)
+        self.assertTrue(liquidada_mensal_por_grupo(mensal, 2024).empty)
+
+
+class TestProjecaoReconstruidaComExecutado(unittest.TestCase):
+    """27/09/2026 — projeção de um exercício passado × Liquidada real. Valores
+    esperados calculados à mão nos comentários."""
+
+    def _mensal(self):
+        linhas = []
+        # Ativo 319011 (x12): Jan-Ago = 100; real Set-Dez = 110, 120, 130, 140.
+        for mes, valor in [*((m, 100.0) for m in range(1, 9)), (9, 110.0), (10, 120.0), (11, 130.0), (12, 140.0)]:
+            linhas.append(_linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao",
+                                          ano_mes=202500 + mes, liquidada=valor, paga=0.0, po_cod="0000", po_desc=""))
+        # Inativo 319001 (x12): Jan-Set = 50; Out-Dez sem linha na base (nulo, não zero).
+        for mes in range(1, 10):
+            linhas.append(_linha_execucao(ACAO_INATIVO, "319001", "31900101", tipo_linha="item_execucao",
+                                          ano_mes=202500 + mes, liquidada=50.0, paga=0.0, po_cod="0000", po_desc=""))
+        return pd.DataFrame(linhas)
+
+    def _anual_vazio(self):
+        return TestGradeMensal._anual_vazio(self)
+
+    def test_mes_a_mes_compara_projecao_com_liquidada(self):
+        comparacao = comparar_projecao_com_executado(self._mensal(), self._anual_vazio(), 2025, 8)
+        ativo = comparacao[comparacao["grupo"] == GRUPO_ATIVO]
+        # projeção a partir de Ago = 100 em Set-Dez (Dez repete Nov = 100).
+        self.assertEqual(ativo["mes"].tolist(), [9, 10, 11, 12])
+        self.assertEqual(ativo["projetado"].tolist(), [100.0] * 4)
+        self.assertEqual(ativo["executado"].tolist(), [110.0, 120.0, 130.0, 140.0])
+        self.assertEqual(ativo["diferenca"].tolist(), [10.0, 20.0, 30.0, 40.0])
+        inativo = comparacao[comparacao["grupo"] == GRUPO_INATIVO]
+        self.assertEqual(inativo["executado"].iloc[0], 50.0)
+        self.assertEqual(inativo["diferenca"].iloc[0], 0.0)
+        self.assertTrue(inativo["executado"].iloc[1:].isna().all())
+        self.assertTrue(inativo["diferenca"].iloc[1:].isna().all())
+
+    def test_resumo_so_soma_meses_com_os_dois_lados(self):
+        resumo = resumo_projecao_com_executado(
+            comparar_projecao_com_executado(self._mensal(), self._anual_vazio(), 2025, 8)
+        ).set_index("grupo")
+        self.assertEqual(resumo.loc[GRUPO_ATIVO, "meses"], 4)
+        self.assertEqual(resumo.loc[GRUPO_ATIVO, "projetado"], 400.0)
+        self.assertEqual(resumo.loc[GRUPO_ATIVO, "executado"], 500.0)
+        self.assertEqual(resumo.loc[GRUPO_ATIVO, "diferenca"], 100.0)
+        self.assertAlmostEqual(resumo.loc[GRUPO_ATIVO, "diferenca_pct"], 0.25)
+        # Inativo: só Set tem executado — Out-Dez projetados (150) ficam fora da soma.
+        self.assertEqual(resumo.loc[GRUPO_INATIVO, "meses"], 1)
+        self.assertEqual(resumo.loc[GRUPO_INATIVO, "projetado"], 50.0)
+        self.assertEqual(resumo.loc[GRUPO_INATIVO, "diferenca_pct"], 0.0)
+        self.assertEqual(resumo.loc["total", "meses"], 4)
+        self.assertEqual(resumo.loc["total", "projetado"], 450.0)
+        self.assertEqual(resumo.loc["total", "executado"], 550.0)
+        self.assertAlmostEqual(resumo.loc["total", "diferenca_pct"], 100.0 / 450.0)
+
+    def test_usa_os_parametros_em_uso(self):
+        # Sem repetir Nov em Dez, o Ativo continua liso (100) — mesmo resultado aqui;
+        # com parcela final em Dez e 319011 x13, Dez recebe metade do extra: 100 + 50.
+        parametros = ParametrosProjecao(multiplicadores_natureza={"319011": 13.0}, mes_parcela_13=12,
+                                        dezembro_ativo_repete_novembro=False)
+        comparacao = comparar_projecao_com_executado(self._mensal(), self._anual_vazio(), 2025, 8, parametros)
+        ativo = comparacao[comparacao["grupo"] == GRUPO_ATIVO].set_index("mes")
+        self.assertEqual(ativo.loc[12, "projetado"], 150.0)
+        self.assertEqual(ativo.loc[12, "diferenca"], -10.0)
+
+    def test_mes_de_referencia_sem_mes_a_projetar_e_recusado(self):
+        for mes in (0, 12):
+            with self.subTest(mes=mes), self.assertRaises(ValueError):
+                comparar_projecao_com_executado(self._mensal(), self._anual_vazio(), 2025, mes)
+
+
+class TestDesvioPorMesDePartida(unittest.TestCase):
+    """Mesmo cenário de `TestProjecaoReconstruidaComExecutado`: Ativo 100 em Jan-Ago e
+    110/120/130/140 em Set-Dez; Inativo 50 em Jan-Set e sem linha em Out-Dez."""
+
+    _mensal = TestProjecaoReconstruidaComExecutado._mensal
+    _anual_vazio = TestProjecaoReconstruidaComExecutado._anual_vazio
+
+    def test_uma_linha_por_mes_de_partida_com_dado_e_valores_a_mao(self):
+        desvio = desvio_por_mes_de_partida(self._mensal(), self._anual_vazio(), 2025)
+        self.assertEqual(sorted(desvio["mes_referencia"].unique()), list(range(1, 12)))
+        por = desvio.set_index(["mes_referencia", "grupo"])
+        # Partida Out: Ativo projeta 120 em Nov e Dez; executado 130 + 140 → diferença 30 / 240.
+        self.assertEqual(por.loc[(10, GRUPO_ATIVO), "projetado"], 240.0)
+        self.assertEqual(por.loc[(10, GRUPO_ATIVO), "diferenca"], 30.0)
+        self.assertAlmostEqual(por.loc[(10, GRUPO_ATIVO), "diferenca_pct"], 0.125)
+        # Inativo sem Liquidada em Out: não há projeção nem executado comparáveis (nulo, não 0).
+        self.assertEqual(por.loc[(10, GRUPO_INATIVO), "meses"], 0)
+        self.assertTrue(pd.isna(por.loc[(10, GRUPO_INATIVO), "diferenca_pct"]))
+        self.assertAlmostEqual(por.loc[(10, "total"), "diferenca_pct"], 0.125)
+        # Partida Set: Ativo projeta 110 × 3 = 330; executado 120 + 130 + 140 = 390.
+        self.assertAlmostEqual(por.loc[(9, GRUPO_ATIVO), "diferenca_pct"], 60.0 / 330.0)
+
+    def test_bate_com_a_comparacao_individual_de_cada_mes(self):
+        desvio = desvio_por_mes_de_partida(self._mensal(), self._anual_vazio(), 2025)
+        for mes in range(1, 12):
+            with self.subTest(mes=mes):
+                individual = resumo_projecao_com_executado(
+                    comparar_projecao_com_executado(self._mensal(), self._anual_vazio(), 2025, mes)
+                )
+                do_mes = desvio.loc[desvio["mes_referencia"] == mes].drop(columns="mes_referencia")
+                pd.testing.assert_frame_equal(do_mes.reset_index(drop=True), individual.reset_index(drop=True),
+                                              check_dtype=False)
+
+    def test_mes_sem_liquidada_nao_vira_linha(self):
+        mensal = self._mensal()
+        mensal = mensal[mensal["ano_mes"] != 202503]
+        desvio = desvio_por_mes_de_partida(mensal, self._anual_vazio(), 2025)
+        self.assertNotIn(3, set(desvio["mes_referencia"]))
+        self.assertTrue(desvio_por_mes_de_partida(mensal, self._anual_vazio(), 2024).empty)
+
+
+class TestBeneficiosPorPlanoOrcamentario(unittest.TestCase):
+    """Outros Benefícios por (Ação, PO), 2025, partida Ago. Todas x12, sem repetição
+    de dezembro (exclusiva do Ativo): cada mês futuro projeta o valor de Ago.
+      212B/0005 Alimentação  100 em Jan-Ago, 110 em Set-Dez → +40 (+10%)
+      212B/0003 Transporte    50 em Jan-Ago,  40 em Set-Dez → −40 (−20%)
+      2004/0001 Assist. Méd.  20 o ano todo                 →   0
+      212B/0001 Pré-Escolar   30 o ano todo                 →   0 (mesmo código de PO de 2004)
+    Total: projetado 4 × 200 = 800, executado 800."""
+
+    _anual_vazio = TestProjecaoReconstruidaComExecutado._anual_vazio
+
+    def _mensal(self):
+        planos = [
+            (ACAO_BENEFICIOS_OBRIGATORIOS, "0005", "339046", "ALIMENTACAO", 100.0, 110.0),
+            (ACAO_BENEFICIOS_OBRIGATORIOS, "0003", "339049", "TRANSPORTE", 50.0, 40.0),
+            (ACAO_ASSISTENCIA_MEDICA, "0001", "339008", "ASSISTENCIA MEDICA", 20.0, 20.0),
+            (ACAO_BENEFICIOS_OBRIGATORIOS, "0001", "339008", "PRE-ESCOLAR", 30.0, 30.0),
+        ]
+        linhas = []
+        for acao, po, natureza, desc, ate_ago, depois in planos:
+            for mes in range(1, 13):
+                linhas.append(_linha_execucao(
+                    acao, natureza, natureza + "01", tipo_linha="item_execucao", ano_mes=202500 + mes,
+                    liquidada=ate_ago if mes <= 8 else depois, paga=0.0, po_cod=po, po_desc=desc,
+                ))
+        return pd.DataFrame(linhas)
+
+    def test_desvio_por_plano_com_valores_a_mao(self):
+        comparacao = comparar_beneficios_por_plano_orcamentario(self._mensal(), self._anual_vazio(), 2025, 8)
+        resumo = resumo_projecao_com_executado(comparacao, chave="plano").set_index("plano")
+        self.assertEqual(list(resumo.index), ["2004/0001", "212B/0001", "212B/0003", "212B/0005", "total"])
+        self.assertEqual(resumo.loc["212B/0005", "diferenca"], 40.0)
+        self.assertAlmostEqual(resumo.loc["212B/0005", "diferenca_pct"], 0.10)
+        self.assertEqual(resumo.loc["212B/0003", "diferenca"], -40.0)
+        self.assertAlmostEqual(resumo.loc["212B/0003", "diferenca_pct"], -0.20)
+        # mesmo código "0001" nas duas ações: linhas separadas, cada uma com o seu valor.
+        self.assertEqual(resumo.loc["2004/0001", "projetado"], 80.0)
+        self.assertEqual(resumo.loc["212B/0001", "projetado"], 120.0)
+        self.assertEqual(resumo.loc["total", "projetado"], 800.0)
+        self.assertEqual(resumo.loc["total", "executado"], 800.0)
+        rotulos = comparacao.drop_duplicates("plano").set_index("plano")
+        self.assertEqual(rotulos.loc["212B/0001", "po_desc"], "PRE-ESCOLAR")
+        self.assertEqual(rotulos.loc["212B/0001", "po_cod"], "0001")  # zero à esquerda preservado
+
+    def test_soma_dos_planos_fecha_com_a_linha_do_grupo(self):
+        for mes in (1, 5, 8, 11):
+            with self.subTest(mes=mes):
+                por_plano = resumo_projecao_com_executado(
+                    comparar_beneficios_por_plano_orcamentario(self._mensal(), self._anual_vazio(), 2025, mes), chave="plano",
+                ).set_index("plano").loc["total"]
+                grupo = resumo_projecao_com_executado(
+                    comparar_projecao_com_executado(self._mensal(), self._anual_vazio(), 2025, mes)
+                ).set_index("grupo").loc[GRUPO_OUTROS_BENEFICIOS]
+                self.assertAlmostEqual(por_plano["projetado"], grupo["projetado"])
+                self.assertAlmostEqual(por_plano["executado"], grupo["executado"])
+
+    def test_percentual_nulo_sobre_projetado_zero_ou_negativo(self):
+        comparacao = pd.DataFrame([
+            {"plano": "A", "mes": 9, "projetado": -100.0, "executado": 50.0, "diferenca": 150.0},
+            {"plano": "B", "mes": 9, "projetado": 0.0, "executado": 5.0, "diferenca": 5.0},
+        ])
+        resumo = resumo_projecao_com_executado(comparacao, chave="plano").set_index("plano")
+        self.assertTrue(pd.isna(resumo.loc["A", "diferenca_pct"]))
+        self.assertTrue(pd.isna(resumo.loc["B", "diferenca_pct"]))
+        self.assertEqual(resumo.loc["A", "diferenca"], 150.0)  # a diferença em R$ continua lá
+
+    def test_executado_sem_po_aparece_explicito(self):
+        mensal = self._mensal()
+        mensal.loc[mensal["po_desc"] == "TRANSPORTE", "po_cod"] = None
+        comparacao = comparar_beneficios_por_plano_orcamentario(mensal, self._anual_vazio(), 2025, 8)
+        self.assertIn(f"{ACAO_BENEFICIOS_OBRIGATORIOS}/{SEM_PLANO_ORCAMENTARIO}", set(comparacao["plano"]))
+        sem_po = comparacao[comparacao["po_cod"] == SEM_PLANO_ORCAMENTARIO]
+        self.assertEqual(sem_po["executado"].tolist(), [40.0] * 4)
