@@ -8,8 +8,14 @@ de prazos vive em `src/prazos_sincronizacao.py`. Não importa Streamlit.
 Persistência (aprovada pelo usuário em 27/09/2026 — ver
 `docs/superpowers/specs/2026-09-27-google-agenda-design.md`): `DIRETORIO_PADRAO` guarda o
 `credentials.json` (cliente OAuth "Desktop app" colocado pelo usuário, ver
-`docs/google_agenda.md`) e o `token.json` gravado após a autorização. Segredo local, fora do
-git (`.gitignore`).
+`docs/google_agenda.md`). Segredo local, fora do git (`.gitignore`).
+
+O `token.json` (refresh token com acesso de leitura e escrita à agenda) fica em
+`DIRETORIO_TOKEN`, no perfil do Windows (`%APPDATA%\\UFRPE BudgetLab`), NÃO na pasta do
+projeto — decisão do usuário em 28/09/2026: a pasta do projeto é sincronizada com o Google
+Drive, e o token não deve ir para a nuvem. Um token gravado no local antigo (antes dessa
+decisão) é migrado automaticamente na primeira leitura. `desconectar` também revoga o acesso
+na conta Google, e apaga o token local mesmo se a revogação falhar.
 
 Calendário sempre o principal (`primary`): o usuário quer ver também as reuniões em que é
 convidado. Eventos criados pelo BudgetLab levam `budgetlab="1"` e `budgetlab_prazo_id=<id>` em
@@ -19,12 +25,14 @@ convidado. Eventos criados pelo BudgetLab levam `budgetlab="1"` e `budgetlab_pra
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import date, datetime, time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import httplib2
+import requests
 from google.auth.exceptions import GoogleAuthError, RefreshError, TransportError
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -32,8 +40,14 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 DIRETORIO_PADRAO = Path("data/google_agenda")
+#: fora da pasta do projeto (sincronizada com o Google Drive) — ver docstring do módulo.
+DIRETORIO_TOKEN = Path(os.environ.get("APPDATA") or Path.home()) / "UFRPE BudgetLab"
 ARQUIVO_CREDENCIAIS = "credentials.json"
 ARQUIVO_TOKEN = "token.json"
+URL_REVOGACAO = "https://oauth2.googleapis.com/revoke"
+#: tempo máximo (s) esperando o usuário concluir a autorização no navegador — sem ele, fechar
+#: a aba deixaria a página do BudgetLab presa para sempre.
+TEMPO_LIMITE_AUTORIZACAO = 300
 #: um único escopo para as duas fases (leitura e escrita de eventos) — evita pedir nova
 #: autorização quando a sincronização de prazos entrar.
 ESCOPOS = ["https://www.googleapis.com/auth/calendar.events"]
@@ -91,12 +105,25 @@ def normalizar_evento(bruto: dict) -> dict:
     }
 
 
-def _carregar_credenciais(diretorio: Path):
+def _caminho_token(diretorio: Path, diretorio_token: Path) -> Path:
+    """Caminho do token, migrando um token gravado no local antigo (pasta do projeto). Se os
+    dois existirem, o novo prevalece e o antigo é apagado — nunca fica cópia no Drive."""
+
+    antigo = diretorio / ARQUIVO_TOKEN
+    novo = diretorio_token / ARQUIVO_TOKEN
+    if antigo.exists():
+        if not novo.exists():
+            _gravar_atomico(novo, antigo.read_text(encoding="utf-8"))
+        antigo.unlink()
+    return novo
+
+
+def _carregar_credenciais(diretorio: Path, diretorio_token: Path):
     """Credenciais do `token.json`, ou `None` se ausente/ilegível. Não renova (sem rede)."""
 
     from google.oauth2.credentials import Credentials
 
-    caminho = diretorio / ARQUIVO_TOKEN
+    caminho = _caminho_token(diretorio, diretorio_token)
     if not caminho.exists():
         return None
     try:
@@ -105,14 +132,16 @@ def _carregar_credenciais(diretorio: Path):
         return None
 
 
-def situacao_conexao(diretorio: str | Path = DIRETORIO_PADRAO) -> str:
+def situacao_conexao(
+    diretorio: str | Path = DIRETORIO_PADRAO, diretorio_token: str | Path = DIRETORIO_TOKEN,
+) -> str:
     """"sem_credenciais" (falta o `credentials.json`), "desconectado" (sem token utilizável)
     ou "conectado". Não acessa a rede — um token revogado só é detectado em `cliente`."""
 
     diretorio = Path(diretorio)
     if not (diretorio / ARQUIVO_CREDENCIAIS).exists():
         return "sem_credenciais"
-    credenciais = _carregar_credenciais(diretorio)
+    credenciais = _carregar_credenciais(diretorio, Path(diretorio_token))
     if credenciais is None or not (credenciais.valid or credenciais.refresh_token):
         return "desconectado"
     return "conectado"
@@ -129,31 +158,73 @@ def _gravar_atomico(caminho: Path, texto: str) -> None:
             temporario.unlink()
 
 
-def conectar(diretorio: str | Path = DIRETORIO_PADRAO) -> None:
+def conectar(
+    diretorio: str | Path = DIRETORIO_PADRAO, diretorio_token: str | Path = DIRETORIO_TOKEN,
+) -> None:
     """Abre o navegador para o usuário autorizar e grava o `token.json`. Bloqueia até a
-    autorização terminar — aceitável num app local de um único usuário."""
+    autorização terminar (no máximo `TEMPO_LIMITE_AUTORIZACAO`) — aceitável num app local de
+    um único usuário. Qualquer falha do fluxo (acesso negado, aba fechada, porta ocupada) vira
+    `ErroGoogleAgenda`: a página mostra um aviso e nenhum token é gravado."""
 
     diretorio = Path(diretorio)
     caminho_credenciais = diretorio / ARQUIVO_CREDENCIAIS
     if not caminho_credenciais.exists():
         raise ErroGoogleAgenda(f"Arquivo {caminho_credenciais} não encontrado — ver docs/google_agenda.md.")
-    fluxo = InstalledAppFlow.from_client_secrets_file(str(caminho_credenciais), ESCOPOS)
-    credenciais = fluxo.run_local_server(port=0)
-    _gravar_atomico(diretorio / ARQUIVO_TOKEN, credenciais.to_json())
+    try:
+        fluxo = InstalledAppFlow.from_client_secrets_file(str(caminho_credenciais), ESCOPOS)
+        credenciais = fluxo.run_local_server(port=0, timeout_seconds=TEMPO_LIMITE_AUTORIZACAO)
+    except Exception as erro:  # noqa: BLE001 — as exceções do oauthlib/wsgiref não têm base comum
+        raise ErroGoogleAgenda(
+            "Autorização do Google Agenda não concluída (acesso negado, janela fechada ou tempo "
+            f"esgotado). Tente conectar novamente. Detalhe: {erro}"
+        ) from erro
+    _gravar_atomico(_caminho_token(diretorio, Path(diretorio_token)), credenciais.to_json())
 
 
-def desconectar(diretorio: str | Path = DIRETORIO_PADRAO) -> None:
-    """Apaga só o `token.json`; o `credentials.json` permanece para reconectar."""
+def _revogar(token: str) -> bool:
+    """Revoga o acesso na conta Google. 400 = token já inválido no Google (acesso já não
+    existe), conta como revogado."""
 
-    (Path(diretorio) / ARQUIVO_TOKEN).unlink(missing_ok=True)
+    try:
+        resposta = requests.post(
+            URL_REVOGACAO, data={"token": token},
+            headers={"content-type": "application/x-www-form-urlencoded"}, timeout=10,
+        )
+    except requests.RequestException:
+        return False
+    return resposta.status_code in (200, 400)
 
 
-def cliente(diretorio: str | Path = DIRETORIO_PADRAO) -> "ClienteGoogleAgenda":
+def desconectar(
+    diretorio: str | Path = DIRETORIO_PADRAO, diretorio_token: str | Path = DIRETORIO_TOKEN,
+    revogar: bool = True,
+) -> bool:
+    """Revoga o acesso na conta Google (se `revogar`) e apaga o `token.json` local — SEMPRE,
+    mesmo se a revogação falhar (sem internet). O `credentials.json` permanece para
+    reconectar. Devolve `False` só quando havia token e a revogação no Google não foi
+    confirmada: a página avisa para revogar manualmente."""
+
+    caminho = _caminho_token(Path(diretorio), Path(diretorio_token))
+    revogado = True
+    if revogar and caminho.exists():
+        try:
+            dados = json.loads(caminho.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            dados = {}
+        token = dados.get("refresh_token") or dados.get("token")
+        revogado = _revogar(token) if token else True
+    caminho.unlink(missing_ok=True)
+    return revogado
+
+
+def cliente(
+    diretorio: str | Path = DIRETORIO_PADRAO, diretorio_token: str | Path = DIRETORIO_TOKEN,
+) -> "ClienteGoogleAgenda":
     """Cliente pronto para uso, renovando o token se expirado. Token revogado é apagado (a
     situação volta a "desconectado") e vira `ErroGoogleAgenda` pedindo reconexão."""
 
-    diretorio = Path(diretorio)
-    credenciais = _carregar_credenciais(diretorio)
+    diretorio, diretorio_token = Path(diretorio), Path(diretorio_token)
+    credenciais = _carregar_credenciais(diretorio, diretorio_token)
     if credenciais is None:
         raise ErroGoogleAgenda("Google Agenda não conectado.")
     if not credenciais.valid:
@@ -162,11 +233,12 @@ def cliente(diretorio: str | Path = DIRETORIO_PADRAO) -> "ClienteGoogleAgenda":
         try:
             credenciais.refresh(Request())
         except RefreshError as erro:
-            desconectar(diretorio)
+            # o Google já recusou o token: revogar de novo só custaria uma chamada de rede
+            desconectar(diretorio, diretorio_token, revogar=False)
             raise ErroGoogleAgenda("Autorização do Google Agenda revogada ou expirada — conecte novamente.") from erro
         except TransportError as erro:  # sem internet: o token continua válido para depois
             raise ErroGoogleAgenda(f"Sem conexão com o Google Agenda: {erro}") from erro
-        _gravar_atomico(diretorio / ARQUIVO_TOKEN, credenciais.to_json())
+        _gravar_atomico(diretorio_token / ARQUIVO_TOKEN, credenciais.to_json())
     servico = build("calendar", "v3", credentials=credenciais, cache_discovery=False)
     return ClienteGoogleAgenda(servico)
 

@@ -108,6 +108,30 @@ class PainelPrazosGoogleAgendaTests(unittest.TestCase):
             self.assertNotIn(bruto, conteudo)
         self.assertIn("&lt;img src=x onerror=alert(1)&gt;", conteudo)
 
+    def test_desconectar_sem_revogacao_confirmada_avisa(self):
+        from src.prazos_sincronizacao import ResumoSincronizacao
+        resumo = ResumoSincronizacao(executado_em="2026-09-27T12:00:00+00:00")
+        situacao = mock.Mock(return_value="conectado")
+
+        def desconectar_sem_revogar(*_args, **_kwargs):
+            situacao.return_value = "desconectado"
+            return False
+
+        with mock.patch("src.google_agenda.situacao_conexao", situacao), \
+             mock.patch("src.google_agenda.cliente", return_value=mock.Mock(listar_eventos=mock.Mock(return_value=[]))), \
+             mock.patch("src.google_agenda.desconectar", side_effect=desconectar_sem_revogar) as desconectar, \
+             mock.patch("src.prazos_sincronizacao.sincronizar", return_value=resumo), \
+             mock.patch("src.prazos_sincronizacao.salvar_resumo"), \
+             mock.patch("src.prazos_sincronizacao.carregar_ultimo_resumo", return_value=None):
+            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+            app.run(timeout=60)
+            app.switch_page("app_pages/painel_prazos.py")
+            app.run(timeout=60)
+            next(b for b in app.button if b.label == "Desconectar").click().run(timeout=60)
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(desconectar.call_count, 1)
+        self.assertTrue(any("myaccount.google.com/permissions" in w.value for w in app.warning))
+
     def test_pasta_de_prazos_ausente_vira_aviso(self):
         from src.prazos_sincronizacao import ErroSincronizacao
         with mock.patch("src.google_agenda.situacao_conexao", return_value="conectado"), \

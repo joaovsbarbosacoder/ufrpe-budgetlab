@@ -336,6 +336,8 @@ def _render_conexao() -> str:
     situacao = google_agenda.situacao_conexao()
     with st.container(border=True):
         st.markdown("<div class='pp-label'>Google Agenda</div>", unsafe_allow_html=True)
+        if "pp_google_aviso" in st.session_state:
+            render_alert(st.session_state.pop("pp_google_aviso"), "warning")
         if situacao == "sem_credenciais":
             st.markdown(
                 "Integração não configurada. Siga o passo a passo em `docs/google_agenda.md` "
@@ -359,7 +361,14 @@ def _render_conexao() -> str:
                 _executar_sincronizacao()
                 st.rerun()
             if c2.button("Desconectar", icon=":material/link_off:", use_container_width=True):
-                google_agenda.desconectar()
+                if not google_agenda.desconectar():
+                    # o token local já foi apagado; só a revogação no Google não foi confirmada
+                    st.session_state["pp_google_aviso"] = (
+                        "Desconectado neste computador, mas o Google não confirmou a revogação do "
+                        "acesso (sem internet?). Para garantir, remova o \"UFRPE BudgetLab\" em "
+                        "https://myaccount.google.com/permissions."
+                    )
+                st.session_state.pop("pp_google_erro_sync", None)
                 _eventos_proximos.clear()
                 st.rerun()
             if "pp_google_erro_sync" in st.session_state:

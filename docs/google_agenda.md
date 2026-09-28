@@ -17,8 +17,15 @@ convidado, e (b) sincronizar os prazos cadastrados nos dois sentidos.
 7. Abra **Gerenciamento de Prazos** e clique em **Conectar ao Google Agenda**. O navegador
    abre para você autorizar; depois disso a página mostra "Conectado".
 
-O `credentials.json` e o `token.json` ficam só na sua máquina (`data/google_agenda/` está no
-`.gitignore`). Para desconectar, use o botão **Desconectar** — só o token é apagado.
+O `credentials.json` fica em `data/google_agenda/` (no `.gitignore`). O `token.json` — que dá
+acesso de leitura e escrita à sua agenda — fica **fora da pasta do projeto**, em
+`%APPDATA%\UFRPE BudgetLab\token.json`, para não ser copiado para a nuvem pelo Google Drive
+(a pasta do projeto é sincronizada). Um token gravado no local antigo é movido para lá
+automaticamente.
+
+O botão **Desconectar** revoga o acesso na sua conta Google e apaga o token local. Sem
+internet, o token local é apagado mesmo assim e a página avisa para remover o acesso
+manualmente em <https://myaccount.google.com/permissions>.
 
 Cada sincronização que altera algo, tem conflito ou erro é registrada, sem apagar as
 anteriores, em `data/google_agenda/historico_sincronizacao.jsonl` — inclusive o valor

@@ -18,7 +18,10 @@ from googleapiclient.errors import HttpError
 from src.google_agenda import (
     ARQUIVO_CREDENCIAIS,
     ARQUIVO_TOKEN,
+    DIRETORIO_PADRAO,
+    DIRETORIO_TOKEN,
     MARCADOR,
+    URL_REVOGACAO,
     ClienteGoogleAgenda,
     ErroGoogleAgenda,
     cliente,
@@ -93,36 +96,75 @@ class TestNormalizarEvento(unittest.TestCase):
         self.assertEqual(evento["minha_resposta"], "needsAction")
 
 
-class TestSituacaoConexao(unittest.TestCase):
+_TOKEN_VALIDO = json.dumps({
+    "client_id": "x", "client_secret": "y", "refresh_token": "z",
+    "token": "t", "scopes": ["https://www.googleapis.com/auth/calendar.events"],
+})
+
+
+class _ComDiretorios(unittest.TestCase):
+    """`diretorio` (credentials.json, pasta do projeto) e `token_dir` (token, fora do
+    projeto) temporários e separados — nunca o %APPDATA% real."""
+
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
+        self._tmp_token = tempfile.TemporaryDirectory()
         self.diretorio = Path(self._tmp.name)
+        self.token_dir = Path(self._tmp_token.name) / "UFRPE BudgetLab"  # ainda não existe
 
     def tearDown(self):
         self._tmp.cleanup()
+        self._tmp_token.cleanup()
 
+    def _credenciais(self):
+        (self.diretorio / ARQUIVO_CREDENCIAIS).write_text("{}", encoding="utf-8")
+
+    def _token(self, conteudo=_TOKEN_VALIDO, onde=None):
+        onde = onde or self.token_dir
+        onde.mkdir(parents=True, exist_ok=True)
+        (onde / ARQUIVO_TOKEN).write_text(conteudo, encoding="utf-8")
+
+
+class TestSituacaoConexao(_ComDiretorios):
     def test_sem_credenciais(self):
-        self.assertEqual(situacao_conexao(self.diretorio), "sem_credenciais")
+        self.assertEqual(situacao_conexao(self.diretorio, self.token_dir), "sem_credenciais")
 
     def test_diretorio_inexistente_e_sem_credenciais(self):
-        self.assertEqual(situacao_conexao(self.diretorio / "nao_existe"), "sem_credenciais")
+        self.assertEqual(situacao_conexao(self.diretorio / "nao_existe", self.token_dir), "sem_credenciais")
 
     def test_credenciais_sem_token_e_desconectado(self):
-        (self.diretorio / ARQUIVO_CREDENCIAIS).write_text("{}", encoding="utf-8")
-        self.assertEqual(situacao_conexao(self.diretorio), "desconectado")
+        self._credenciais()
+        self.assertEqual(situacao_conexao(self.diretorio, self.token_dir), "desconectado")
 
     def test_token_com_refresh_token_e_conectado(self):
-        (self.diretorio / ARQUIVO_CREDENCIAIS).write_text("{}", encoding="utf-8")
-        (self.diretorio / ARQUIVO_TOKEN).write_text(json.dumps({
-            "client_id": "x", "client_secret": "y", "refresh_token": "z",
-            "token": "t", "scopes": ["https://www.googleapis.com/auth/calendar.events"],
-        }), encoding="utf-8")
-        self.assertEqual(situacao_conexao(self.diretorio), "conectado")
+        self._credenciais()
+        self._token()
+        self.assertEqual(situacao_conexao(self.diretorio, self.token_dir), "conectado")
 
     def test_token_corrompido_e_desconectado(self):
-        (self.diretorio / ARQUIVO_CREDENCIAIS).write_text("{}", encoding="utf-8")
-        (self.diretorio / ARQUIVO_TOKEN).write_text("não é json", encoding="utf-8")
-        self.assertEqual(situacao_conexao(self.diretorio), "desconectado")
+        self._credenciais()
+        self._token("não é json")
+        self.assertEqual(situacao_conexao(self.diretorio, self.token_dir), "desconectado")
+
+    def test_token_fica_fora_da_pasta_do_projeto_por_padrao(self):
+        # a pasta do projeto é sincronizada com o Google Drive: o token não pode ir para lá
+        self.assertNotEqual(DIRETORIO_TOKEN.resolve(), DIRETORIO_PADRAO.resolve())
+        self.assertNotIn(Path.cwd().resolve(), DIRETORIO_TOKEN.resolve().parents)
+
+    def test_token_antigo_na_pasta_do_projeto_e_migrado(self):
+        self._credenciais()
+        self._token(onde=self.diretorio)  # local antigo, anterior a esta mudança
+        self.assertEqual(situacao_conexao(self.diretorio, self.token_dir), "conectado")
+        self.assertFalse((self.diretorio / ARQUIVO_TOKEN).exists())
+        self.assertEqual((self.token_dir / ARQUIVO_TOKEN).read_text(encoding="utf-8"), _TOKEN_VALIDO)
+
+    def test_token_antigo_e_descartado_quando_ja_existe_o_novo(self):
+        self._credenciais()
+        self._token()
+        self._token("antigo", onde=self.diretorio)
+        self.assertEqual(situacao_conexao(self.diretorio, self.token_dir), "conectado")
+        self.assertFalse((self.diretorio / ARQUIVO_TOKEN).exists())
+        self.assertEqual((self.token_dir / ARQUIVO_TOKEN).read_text(encoding="utf-8"), _TOKEN_VALIDO)
 
 
 class _Requisicao:
@@ -264,62 +306,115 @@ class TestClienteGoogleAgenda(unittest.TestCase):
             cliente.excluir_evento("x")
 
 
-class TestConectarDesconectar(unittest.TestCase):
+class TestConectarDesconectar(_ComDiretorios):
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.diretorio = Path(self._tmp.name)
-        (self.diretorio / ARQUIVO_CREDENCIAIS).write_text("{}", encoding="utf-8")
+        super().setUp()
+        self._credenciais()
 
-    def tearDown(self):
-        self._tmp.cleanup()
+    def _fluxo(self, **run_local_server):
+        fluxo = mock.Mock()
+        fluxo.run_local_server.configure_mock(**run_local_server)
+        patcher = mock.patch("src.google_agenda.InstalledAppFlow")
+        classe_fluxo = patcher.start()
+        self.addCleanup(patcher.stop)
+        classe_fluxo.from_client_secrets_file.return_value = fluxo
+        return fluxo
 
-    def test_conectar_grava_token(self):
+    def test_conectar_grava_token_fora_da_pasta_do_projeto(self):
         credenciais = mock.Mock()
         credenciais.to_json.return_value = '{"refresh_token": "z"}'
-        fluxo = mock.Mock()
-        fluxo.run_local_server.return_value = credenciais
-        with mock.patch("src.google_agenda.InstalledAppFlow") as classe_fluxo:
-            classe_fluxo.from_client_secrets_file.return_value = fluxo
-            conectar(self.diretorio)
+        self._fluxo(return_value=credenciais)
+        conectar(self.diretorio, self.token_dir)
         self.assertEqual(
-            json.loads((self.diretorio / ARQUIVO_TOKEN).read_text(encoding="utf-8")),
+            json.loads((self.token_dir / ARQUIVO_TOKEN).read_text(encoding="utf-8")),
             {"refresh_token": "z"},
         )
+        self.assertFalse((self.diretorio / ARQUIVO_TOKEN).exists())
 
     def test_conectar_sem_credenciais_e_erro(self):
         (self.diretorio / ARQUIVO_CREDENCIAIS).unlink()
         with self.assertRaises(ErroGoogleAgenda):
-            conectar(self.diretorio)
+            conectar(self.diretorio, self.token_dir)
+
+    def test_autorizacao_negada_vira_erro_google_agenda(self):
+        from oauthlib.oauth2.rfc6749.errors import AccessDeniedError
+        self._fluxo(side_effect=AccessDeniedError("access_denied"))
+        with self.assertRaises(ErroGoogleAgenda) as contexto:
+            conectar(self.diretorio, self.token_dir)
+        self.assertIn("não concluída", str(contexto.exception))
+        self.assertFalse((self.token_dir / ARQUIVO_TOKEN).exists())
+
+    def test_autorizacao_abandonada_vira_erro_google_agenda(self):
+        # navegador fechado: após o tempo limite a biblioteca falha com AttributeError
+        fluxo = self._fluxo(side_effect=AttributeError("'NoneType' object has no attribute 'replace'"))
+        with self.assertRaises(ErroGoogleAgenda):
+            conectar(self.diretorio, self.token_dir)
+        self.assertIn("timeout_seconds", fluxo.run_local_server.call_args.kwargs)
 
     def _token_expirado(self):
         # sem "token": credencial inválida com refresh_token → cliente() tenta renovar
-        (self.diretorio / ARQUIVO_TOKEN).write_text(json.dumps({
+        self._token(json.dumps({
             "client_id": "x", "client_secret": "y", "refresh_token": "z",
             "scopes": ["https://www.googleapis.com/auth/calendar.events"],
-        }), encoding="utf-8")
+        }))
 
     def test_renovar_token_sem_internet_vira_erro_e_mantem_token(self):
         self._token_expirado()
         with mock.patch("google.oauth2.credentials.Credentials.refresh",
                         side_effect=TransportError("sem rede")):
             with self.assertRaises(ErroGoogleAgenda):
-                cliente(self.diretorio)
-        self.assertTrue((self.diretorio / ARQUIVO_TOKEN).exists())
+                cliente(self.diretorio, self.token_dir)
+        self.assertTrue((self.token_dir / ARQUIVO_TOKEN).exists())
 
-    def test_renovar_token_revogado_desconecta(self):
+    def test_renovar_token_revogado_desconecta_sem_tentar_revogar(self):
         self._token_expirado()
         with mock.patch("google.oauth2.credentials.Credentials.refresh",
-                        side_effect=RefreshError("invalid_grant")):
+                        side_effect=RefreshError("invalid_grant")), \
+             mock.patch("src.google_agenda.requests.post") as post:
             with self.assertRaises(ErroGoogleAgenda):
-                cliente(self.diretorio)
-        self.assertFalse((self.diretorio / ARQUIVO_TOKEN).exists())
+                cliente(self.diretorio, self.token_dir)
+        self.assertFalse((self.token_dir / ARQUIVO_TOKEN).exists())
+        post.assert_not_called()  # o token já é inválido: revogar só custaria uma chamada de rede
 
-    def test_desconectar_apaga_so_o_token(self):
-        (self.diretorio / ARQUIVO_TOKEN).write_text("{}", encoding="utf-8")
-        desconectar(self.diretorio)
-        self.assertFalse((self.diretorio / ARQUIVO_TOKEN).exists())
+    def test_desconectar_revoga_no_google_e_apaga_o_token(self):
+        self._token()
+        resposta = mock.Mock(status_code=200)
+        with mock.patch("src.google_agenda.requests.post", return_value=resposta) as post:
+            self.assertTrue(desconectar(self.diretorio, self.token_dir))
+        self.assertEqual(post.call_args.args[0], URL_REVOGACAO)
+        self.assertEqual(post.call_args.kwargs["data"], {"token": "z"})  # refresh token
+        self.assertFalse((self.token_dir / ARQUIVO_TOKEN).exists())
         self.assertTrue((self.diretorio / ARQUIVO_CREDENCIAIS).exists())
-        desconectar(self.diretorio)  # idempotente
+
+    def test_desconectar_sem_internet_apaga_o_token_mesmo_assim(self):
+        import requests
+        self._token()
+        with mock.patch("src.google_agenda.requests.post", side_effect=requests.ConnectionError("sem rede")):
+            self.assertFalse(desconectar(self.diretorio, self.token_dir))
+        self.assertFalse((self.token_dir / ARQUIVO_TOKEN).exists())
+
+    def test_desconectar_com_recusa_do_google_apaga_o_token_e_informa(self):
+        self._token()
+        with mock.patch("src.google_agenda.requests.post", return_value=mock.Mock(status_code=503)):
+            self.assertFalse(desconectar(self.diretorio, self.token_dir))
+        self.assertFalse((self.token_dir / ARQUIVO_TOKEN).exists())
+
+    def test_desconectar_token_ja_invalido_no_google_conta_como_revogado(self):
+        self._token()
+        with mock.patch("src.google_agenda.requests.post", return_value=mock.Mock(status_code=400)):
+            self.assertTrue(desconectar(self.diretorio, self.token_dir))
+
+    def test_desconectar_sem_token_e_idempotente(self):
+        with mock.patch("src.google_agenda.requests.post") as post:
+            self.assertTrue(desconectar(self.diretorio, self.token_dir))
+        post.assert_not_called()
+
+    def test_desconectar_apaga_tambem_token_no_local_antigo(self):
+        self._token(onde=self.diretorio)
+        with mock.patch("src.google_agenda.requests.post", return_value=mock.Mock(status_code=200)):
+            desconectar(self.diretorio, self.token_dir)
+        self.assertFalse((self.diretorio / ARQUIVO_TOKEN).exists())
+        self.assertFalse((self.token_dir / ARQUIVO_TOKEN).exists())
 
 
 if __name__ == "__main__":
