@@ -20,7 +20,9 @@ não presumir regra não documentada).
 
 Este módulo não lê nem depende de nenhuma base de dados do projeto — é
 conteúdo estático, mantido junto ao código para poder evoluir por revisão
-igual a qualquer outra regra do sistema.
+igual a qualquer outra regra do sistema. A inclusão, edição e exclusão de
+verbetes pela interface fica em `src.glossario_cadastro`, que parte desta base
+sem nunca alterá-la.
 """
 
 from __future__ import annotations
@@ -40,6 +42,12 @@ class TermoGlossario:
     ver_tambem: tuple[str, ...] = field(default_factory=tuple)
     aliases: tuple[str, ...] = field(default_factory=tuple)
     uso_no_sistema: str | None = None
+    #: True só para verbetes incluídos pelo usuário (ver `src.glossario_cadastro`); os
+    #: verbetes de `GLOSSARIO` são a base fixa do código e ficam sempre em False.
+    personalizado: bool = False
+    #: Data (AAAA-MM-DD) da última inclusão/edição feita pela interface. None nos verbetes
+    #: da base fixa ainda não alterados e em cadastros gravados antes deste campo existir.
+    atualizado_em: str | None = None
 
     @property
     def titulo(self) -> str:
@@ -941,28 +949,33 @@ GLOSSARIO: tuple[TermoGlossario, ...] = (
 )
 
 
-def termos_por_tema() -> dict[str, tuple[TermoGlossario, ...]]:
+def termos_por_tema(
+    termos: tuple[TermoGlossario, ...] = GLOSSARIO,
+) -> dict[str, tuple[TermoGlossario, ...]]:
     """Agrupa os verbetes por tema, preservando a ordem de `TEMAS`."""
 
     agrupado: dict[str, list[TermoGlossario]] = {tema: [] for tema in TEMAS}
-    for termo in GLOSSARIO:
+    for termo in termos:
         agrupado[termo.tema].append(termo)
     return {tema: tuple(sorted(itens, key=lambda t: t.termo)) for tema, itens in agrupado.items()}
 
 
-def buscar(consulta: str) -> tuple[TermoGlossario, ...]:
+def buscar(
+    consulta: str, termos: tuple[TermoGlossario, ...] = GLOSSARIO
+) -> tuple[TermoGlossario, ...]:
     """Filtra verbetes por nome, sigla, alias, definição, uso, tema ou fonte.
 
     Busca case-insensitive e sem acentuação (evita frustrar o usuário que
-    digitar "orcamento" em vez de "orçamento").
+    digitar "orcamento" em vez de "orçamento"). `termos` permite buscar no
+    cadastro editável (`src.glossario_cadastro`) em vez da base fixa.
     """
 
     alvo = _normalizar(consulta.strip())
     if not alvo:
-        return GLOSSARIO
+        return termos
     return tuple(
         termo
-        for termo in GLOSSARIO
+        for termo in termos
         if alvo in _normalizar(termo.termo)
         or (termo.sigla and alvo in _normalizar(termo.sigla))
         or any(alvo in _normalizar(alias) for alias in termo.aliases)

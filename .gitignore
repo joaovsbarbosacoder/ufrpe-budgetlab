@@ -61,6 +61,11 @@ data/teds/*
 data/limite_empenho/*
 !data/limite_empenho/.gitkeep
 
+# Cadastro editavel do Glossario (verbetes incluidos/editados pelo app; a base fixa continua em
+# src/glossario.py) — ver src/glossario_cadastro.py.
+data/glossario/*
+!data/glossario/.gitkeep
+
 # Integracao com o Google Agenda: credenciais do cliente OAuth, token de acesso e resumo da
 # ultima sincronizacao (segredo local, nunca versionado) - ver src/google_agenda.py.
 data/google_agenda/*

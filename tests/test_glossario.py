@@ -88,7 +88,8 @@ class GlossarioPageTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(app.title[0].value, "Glossário")
         # Expanders com ícone são expostos como ``status`` no AppTest 1.61.
-        self.assertEqual(len(app.get("status")), 10)
+        # 10 cartões por página + o expander "Exportar e importar o glossário".
+        self.assertEqual(len(app.get("status")), 11)
         self.assertEqual(len(app.text_input), 1)
         self.assertEqual(len(app.selectbox), 1)
         self.assertEqual(len(app.segmented_control), 1)

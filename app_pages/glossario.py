@@ -12,11 +12,14 @@ import hashlib
 import math
 import re
 import unicodedata
+from datetime import date
 
 import streamlit as st
 
 from src import design_tokens
-from src.glossario import GLOSSARIO, TEMAS, TermoGlossario, buscar
+from src import glossario_cadastro
+from src.glossario import TEMAS, TermoGlossario, buscar
+from src.glossario_cadastro import ErroGlossario
 from src.ui_theme import render_page_header
 
 
@@ -33,13 +36,117 @@ def _baseada_em_manual(termo: TermoGlossario) -> bool:
     )
 
 
-def _renderizar_cartao(termo: TermoGlossario) -> None:
+def _separar_lista(texto: str) -> list[str]:
+    return [item.strip() for item in texto.split(",") if item.strip()]
+
+
+@st.dialog("Verbete do glossário", width="large")
+def _dialogo_verbete(termo_atual: TermoGlossario | None, nomes_existentes: tuple[str, ...]) -> None:
+    """Formulário de inclusão (`termo_atual is None`) ou edição de um verbete."""
+
+    edicao = termo_atual is not None
+    prefixo = f"glossario_form_{_slug(termo_atual.termo) if termo_atual else 'novo'}"
+    st.caption(
+        "A primeira frase da definição vira o resumo do cartão; o restante aparece em "
+        "“Detalhes e referência”."
+    )
+    with st.form(f"{prefixo}_formulario", border=False):
+        termo = st.text_input("Termo *", value=termo_atual.termo if termo_atual else "")
+        sigla = st.text_input("Sigla", value=(termo_atual.sigla or "") if termo_atual else "")
+        tema = st.selectbox(
+            "Tema *",
+            TEMAS,
+            index=TEMAS.index(termo_atual.tema) if termo_atual else 0,
+        )
+        definicao = st.text_area(
+            "Definição *", value=termo_atual.definicao if termo_atual else "", height=160
+        )
+        fonte = st.text_input(
+            "Fonte *",
+            value=termo_atual.fonte if termo_atual else "",
+            help="Manual e página (ex.: MTO, p. 45). Se o conceito não vem do MCASP nem do MTO, "
+            "comece por “Contexto do sistema” — isso o classifica fora de “MCASP/MTO”.",
+        )
+        uso = st.text_input(
+            "Uso no BudgetLab",
+            value=(termo_atual.uso_no_sistema or "") if termo_atual else "",
+        )
+        aliases = st.text_input(
+            "Também encontrado por (separe por vírgula)",
+            value=", ".join(termo_atual.aliases) if termo_atual else "",
+        )
+        opcoes_ver_tambem = tuple(
+            nome
+            for nome in nomes_existentes
+            if not termo_atual or nome != termo_atual.termo
+        )
+        ver_tambem = st.multiselect(
+            "Ver também",
+            opcoes_ver_tambem,
+            default=[
+                nome for nome in (termo_atual.ver_tambem if termo_atual else ()) if nome in opcoes_ver_tambem
+            ],
+        )
+        enviado = st.form_submit_button(
+            "Salvar alterações" if edicao else "Incluir verbete",
+            type="primary",
+            icon=":material/save:",
+        )
+
+    if not enviado:
+        return
+    dados = {
+        "termo": termo,
+        "sigla": sigla,
+        "tema": tema,
+        "definicao": definicao,
+        "fonte": fonte,
+        "uso_no_sistema": uso,
+        "aliases": _separar_lista(aliases),
+        "ver_tambem": ver_tambem,
+    }
+    try:
+        if termo_atual:
+            ajustados = glossario_cadastro.atualizar(termo_atual.termo, dados)
+            mensagem = f"Verbete “{termo.strip()}” atualizado."
+            if ajustados:
+                mensagem += " Referências em “Ver também” ajustadas em: " + ", ".join(ajustados) + "."
+        else:
+            glossario_cadastro.incluir(dados)
+            mensagem = f"Verbete “{termo.strip()}” incluído."
+    except ErroGlossario as erro:
+        st.error(str(erro))
+        return
+    st.session_state["glossario_aviso"] = mensagem
+    st.rerun()
+
+
+@st.dialog("Excluir verbete")
+def _dialogo_exclusao(termo: TermoGlossario) -> None:
+    st.warning(
+        f"Excluir **{termo.termo}** remove o verbete do cadastro. Para voltar à base padrão "
+        "do glossário, apague o arquivo `data/glossario/cadastro.json`.",
+        icon=":material/warning:",
+    )
+    if st.button("Excluir definitivamente", type="primary", key=f"glossario_confirma_{_slug(termo.termo)}"):
+        try:
+            glossario_cadastro.excluir(termo.termo)
+        except ErroGlossario as erro:
+            st.error(str(erro))
+            return
+        st.session_state["glossario_aviso"] = f"Verbete “{termo.termo}” excluído."
+        st.rerun()
+
+
+def _renderizar_cartao(termo: TermoGlossario, nomes_existentes: tuple[str, ...]) -> None:
     with st.container(border=True, height="stretch", key=f"glossario_card_{_slug(termo.titulo)}"):
         st.caption(termo.tema)
         with st.container(horizontal=True, vertical_alignment="center", gap="small"):
             st.markdown(f"#### {termo.termo}")
             if termo.sigla:
                 st.badge(termo.sigla, color="blue")
+            if termo.personalizado:
+                st.badge("Personalizado", color="green")
 
         st.markdown(termo.resumo)
 
@@ -59,6 +166,22 @@ def _renderizar_cartao(termo: TermoGlossario) -> None:
 
             st.markdown("**Referência**")
             st.caption(termo.fonte)
+            if termo.atualizado_em:
+                st.caption(f"Atualizado em {date.fromisoformat(termo.atualizado_em):%d/%m/%Y}")
+
+        with st.container(horizontal=True, gap="small"):
+            if st.button(
+                "Editar",
+                icon=":material/edit:",
+                key=f"glossario_editar_{_slug(termo.termo)}",
+            ):
+                _dialogo_verbete(termo, nomes_existentes)
+            if st.button(
+                "Excluir",
+                icon=":material/delete:",
+                key=f"glossario_excluir_{_slug(termo.termo)}",
+            ):
+                _dialogo_exclusao(termo)
 
 
 st.html(
@@ -92,8 +215,20 @@ render_page_header(
     "Referência",
 )
 
-quantidade_siglas = sum(termo.sigla is not None for termo in GLOSSARIO)
-quantidade_manuais = sum(_baseada_em_manual(termo) for termo in GLOSSARIO)
+try:
+    GLOSSARIO_VIGENTE = glossario_cadastro.carregar()
+except ErroGlossario as erro:
+    st.error(str(erro), icon=":material/error:")
+    st.stop()
+
+nomes_existentes = tuple(sorted((termo.termo for termo in GLOSSARIO_VIGENTE), key=_slug))
+
+aviso = st.session_state.pop("glossario_aviso", None)
+if aviso:
+    st.toast(aviso, icon=":material/check_circle:")
+
+quantidade_siglas = sum(termo.sigla is not None for termo in GLOSSARIO_VIGENTE)
+quantidade_manuais = sum(_baseada_em_manual(termo) for termo in GLOSSARIO_VIGENTE)
 
 with st.container(border=True, key="glossario_intro"):
     st.markdown("#### Leitura rápida, com rastreabilidade")
@@ -104,7 +239,7 @@ with st.container(border=True, key="glossario_intro"):
         "declarado na própria fonte."
     )
     metricas = st.columns(3)
-    metricas[0].metric("Verbetes", len(GLOSSARIO))
+    metricas[0].metric("Verbetes", len(GLOSSARIO_VIGENTE))
     metricas[1].metric("Siglas explicadas", quantidade_siglas)
     metricas[2].metric("Baseados nos manuais", quantidade_manuais)
 
@@ -131,7 +266,59 @@ with st.container(border=True, key="glossario_controles"):
         key="glossario_origem",
     )
 
-resultados = list(buscar(consulta))
+if st.button("Novo verbete", icon=":material/add:", type="primary", key="glossario_novo"):
+    _dialogo_verbete(None, nomes_existentes)
+
+with st.expander("Exportar e importar o glossário", icon=":material/swap_vert:"):
+    st.caption(
+        "Exporte o glossário atual (base + suas edições) para levá-lo a outro computador. "
+        "A importação apenas mescla: acrescenta verbetes novos e nunca remove os que já existem."
+    )
+    st.download_button(
+        "Exportar glossário (JSON)",
+        data=glossario_cadastro.exportar(),
+        file_name="glossario_budgetlab.json",
+        mime="application/json",
+        icon=":material/download:",
+        key="glossario_exportar",
+    )
+    arquivo_importado = st.file_uploader(
+        "Importar glossário (JSON exportado)", type=["json"], key="glossario_importar"
+    )
+    if arquivo_importado is not None:
+        conteudo_importado = arquivo_importado.getvalue()
+        try:
+            plano = glossario_cadastro.analisar_importacao(conteudo_importado)
+        except ErroGlossario as erro:
+            st.error(str(erro))
+        else:
+            st.write(
+                f"**{len(plano.novos)}** verbete(s) novo(s) · **{len(plano.iguais)}** já "
+                f"idêntico(s) · **{len(plano.conflitos)}** com conteúdo diferente do atual."
+            )
+            substituir = False
+            if plano.conflitos:
+                st.caption(
+                    "Verbetes com o mesmo termo e conteúdo diferente: "
+                    + ", ".join(atual.termo for atual, _ in plano.conflitos)
+                )
+                substituir = st.checkbox(
+                    "Substituir os verbetes atuais pelos do arquivo nesses casos",
+                    key="glossario_importar_substituir",
+                )
+            if plano.novos or (substituir and plano.conflitos):
+                if st.button("Confirmar importação", type="primary", key="glossario_importar_confirmar"):
+                    try:
+                        glossario_cadastro.aplicar_importacao(conteudo_importado, substituir)
+                    except ErroGlossario as erro:
+                        st.error(str(erro))
+                    else:
+                        st.session_state["glossario_aviso"] = "Importação concluída."
+                        st.rerun()
+            else:
+                st.info("Nada a importar: o arquivo não traz verbetes novos nem substituições escolhidas.")
+
+resultados = list(buscar(consulta, GLOSSARIO_VIGENTE))
 if tema_selecionado != "Todos os temas":
     resultados = [termo for termo in resultados if termo.tema == tema_selecionado]
 if origem == "MCASP/MTO":
@@ -177,7 +364,7 @@ else:
             colunas = st.columns(2)
             for coluna, termo in zip(colunas, pagina_atual[indice : indice + 2], strict=False):
                 with coluna:
-                    _renderizar_cartao(termo)
+                    _renderizar_cartao(termo, nomes_existentes)
 
     if total_paginas > 1:
         st.caption(
