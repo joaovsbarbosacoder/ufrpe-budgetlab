@@ -8,6 +8,8 @@ from unittest import mock
 
 from streamlit.testing.v1 import AppTest
 
+from tests._apptest import TEMPO_LIMITE_APPTEST
+
 from src import glossario_cadastro
 from src.glossario import GLOSSARIO, TEMAS, buscar
 from src.glossario_cadastro import (
@@ -338,17 +340,17 @@ class PersistenciaTests(CadastroBase):
 
 class PaginaCadastroTests(CadastroBase):
     def _abrir(self) -> AppTest:
-        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
         app.run()
         app.switch_page("app_pages/glossario.py")
-        app.run(timeout=30)
+        app.run()
         return app
 
     def test_pagina_reflete_termo_incluido_no_cadastro(self) -> None:
         with mock.patch.object(glossario_cadastro, "CAMINHO_PADRAO", self.caminho):
             incluir(NOVO)
             app = self._abrir()
-            app.text_input[0].set_value("Termo de Teste").run(timeout=30)
+            app.text_input[0].set_value("Termo de Teste").run()
 
         self.assertEqual(len(app.exception), 0)
         titulos = [m.value for m in app.markdown if m.value.startswith("####")]

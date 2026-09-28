@@ -37,6 +37,8 @@ from pathlib import Path
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
+from tests._apptest import TEMPO_LIMITE_APPTEST
+
 from src.importacao_execucao import Manifesto, situacao_historico
 from tests._reimportacao_isolamento import IsolamentoReimportacaoMixin
 
@@ -92,10 +94,10 @@ class ReimportacaoPageTests(IsolamentoReimportacaoMixin, unittest.TestCase):
         self._manifesto_baseline = self.manifesto_atual_path.read_bytes()
 
     def _open_page(self) -> AppTest:
-        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
         app.run()
         app.switch_page("app_pages/atualizar_planilhas.py")
-        app.run(timeout=60)
+        app.run()
         return app
 
     def _upload(self, app: AppTest, content: bytes, filename: str) -> None:
@@ -103,7 +105,7 @@ class ReimportacaoPageTests(IsolamentoReimportacaoMixin, unittest.TestCase):
         # de Dotação — ver docstring do módulo).
         uploader = next(u for u in app.file_uploader if u.label == "Nova extração (.xlsx)")
         uploader.set_value((filename, content, XLSX_MIME))
-        app.run(timeout=60)
+        app.run()
 
     def test_procedencia_por_exercicio_lista_anos_e_sinaliza_arquivo_presente(self) -> None:
         app = self._open_page()
@@ -151,12 +153,12 @@ class ReimportacaoPageTests(IsolamentoReimportacaoMixin, unittest.TestCase):
 
         checkbox = next(c for c in app.checkbox if "confirmo a atualização" in c.label)
         checkbox.check()
-        app.run(timeout=60)
+        app.run()
 
         confirmar = next(b for b in app.button if b.label == "Confirmar substituição")
         self.assertFalse(confirmar.disabled)
         confirmar.click()
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         self.assertNotEqual(self.manifesto_atual_path.read_bytes(), self._manifesto_baseline)
@@ -179,7 +181,7 @@ class ReimportacaoPageTests(IsolamentoReimportacaoMixin, unittest.TestCase):
         confirmar = next(b for b in app.button if b.label == "Confirmar importação")
         self.assertFalse(confirmar.disabled)
         confirmar.click()
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         self.assertNotEqual(self.manifesto_atual_path.read_bytes(), self._manifesto_baseline)
@@ -196,7 +198,7 @@ class ReimportacaoPageTests(IsolamentoReimportacaoMixin, unittest.TestCase):
         self.assertFalse(confirmar.disabled)
 
         confirmar.click()
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         self.assertNotEqual(self.manifesto_atual_path.read_bytes(), self._manifesto_baseline)
@@ -277,10 +279,10 @@ class PastaDeEntradaTests(IsolamentoReimportacaoMixin, unittest.TestCase):
         (self.diretorio_entrada / filename).write_bytes(conteudo)
 
     def _open_page(self) -> AppTest:
-        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
         app.run()
         app.switch_page("app_pages/atualizar_planilhas.py")
-        app.run(timeout=60)
+        app.run()
         return app
 
     def test_arquivo_seguro_e_aplicado_automaticamente_sem_clique(self) -> None:
@@ -313,10 +315,10 @@ class PastaDeEntradaTests(IsolamentoReimportacaoMixin, unittest.TestCase):
 
         checkbox = next(c for c in app.checkbox if "confirmo a atualização" in c.label)
         checkbox.check()
-        app.run(timeout=60)
+        app.run()
         confirmar = next(b for b in app.button if b.label == "Confirmar substituição")
         confirmar.click()
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         self.assertNotEqual(self.manifesto_atual_path.read_bytes(), self._manifesto_baseline)

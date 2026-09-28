@@ -14,6 +14,8 @@ from unittest import mock
 
 from streamlit.testing.v1 import AppTest
 
+from tests._apptest import TEMPO_LIMITE_APPTEST
+
 from src.teds_auditoria import ENTIDADE_ALERTA, historico_auditoria
 from src.teds_schema import conectar
 
@@ -48,7 +50,7 @@ class CentralAlertasPageTests(unittest.TestCase):
 
     def _rodar(self) -> AppTest:
         with mock.patch("src.teds_ui.conexao", self._abrir):
-            app = AppTest.from_file(str(PROJECT_ROOT / PAGINA), default_timeout=30)
+            app = AppTest.from_file(str(PROJECT_ROOT / PAGINA), default_timeout=TEMPO_LIMITE_APPTEST)
             app.run()
         return app
 
@@ -65,7 +67,7 @@ class CentralAlertasPageTests(unittest.TestCase):
 
     def test_marcar_em_analise_grava_auditoria_e_a_tela_passa_a_exibi_la(self):
         with mock.patch("src.teds_ui.conexao", self._abrir):
-            app = AppTest.from_file(str(PROJECT_ROOT / PAGINA), default_timeout=30)
+            app = AppTest.from_file(str(PROJECT_ROOT / PAGINA), default_timeout=TEMPO_LIMITE_APPTEST)
             app.run()
             app.text_input(key="ca_resp_txt_1").set_value("Ana").run()
             botao = next(b for b in app.button if b.label == "Marcar em análise")

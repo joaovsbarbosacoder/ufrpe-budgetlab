@@ -16,6 +16,8 @@ from unittest import mock
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
+from tests._apptest import TEMPO_LIMITE_APPTEST
+
 from src.teds_lotes import importar_doc_ne
 from src.teds_normalizacao import texto_para_valor
 from src.teds_schema import conectar
@@ -55,7 +57,7 @@ class ImportacoesPageTests(unittest.TestCase):
         return conexao
 
     def _app(self) -> AppTest:
-        app = AppTest.from_file(str(PROJECT_ROOT / PAGINA), default_timeout=60)
+        app = AppTest.from_file(str(PROJECT_ROOT / PAGINA), default_timeout=TEMPO_LIMITE_APPTEST)
         return app
 
     def _valor(self) -> Decimal:
@@ -167,7 +169,7 @@ class ValidacaoDoRodapeTests(unittest.TestCase):
 
     def _validar(self, df: pd.DataFrame) -> AppTest:
         with mock.patch("src.teds_ui.conexao", self._abrir):
-            app = AppTest.from_file(str(PROJECT_ROOT / PAGINA), default_timeout=60)
+            app = AppTest.from_file(str(PROJECT_ROOT / PAGINA), default_timeout=TEMPO_LIMITE_APPTEST)
             app.session_state["imp_step"] = 3
             app.session_state["imp_tipo_rotulo_confirmado"] = "SIMEC — DOC NC"
             app.session_state["imp_df"] = df

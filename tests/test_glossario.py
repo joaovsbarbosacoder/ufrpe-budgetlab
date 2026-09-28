@@ -5,6 +5,8 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
+from tests._apptest import TEMPO_LIMITE_APPTEST
+
 from src.glossario import GLOSSARIO, SIGLAS_DA_INTERFACE, TEMAS, buscar, termos_por_tema
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -76,10 +78,10 @@ class GlossarioDadosTests(unittest.TestCase):
 
 class GlossarioPageTests(unittest.TestCase):
     def _open_page(self) -> AppTest:
-        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
         app.run()
         app.switch_page("app_pages/glossario.py")
-        app.run(timeout=30)
+        app.run()
         return app
 
     def test_renderiza_primeira_pagina_de_cartoes_sem_busca(self) -> None:
@@ -97,7 +99,7 @@ class GlossarioPageTests(unittest.TestCase):
     def test_busca_filtra_os_cartoes(self) -> None:
         app = self._open_page()
 
-        app.text_input[0].set_value("PTRES").run(timeout=30)
+        app.text_input[0].set_value("PTRES").run()
 
         self.assertEqual(len(app.exception), 0)
         self.assertGreaterEqual(len(app.get("status")), 1)
@@ -107,7 +109,7 @@ class GlossarioPageTests(unittest.TestCase):
     def test_busca_por_nova_sigla_operacional(self) -> None:
         app = self._open_page()
 
-        app.text_input[0].set_value("PF").run(timeout=30)
+        app.text_input[0].set_value("PF").run()
 
         self.assertEqual(len(app.exception), 0)
         headings = [m.value for m in app.markdown if m.value.startswith("####")]
@@ -116,7 +118,7 @@ class GlossarioPageTests(unittest.TestCase):
     def test_busca_sem_resultado_mostra_aviso(self) -> None:
         app = self._open_page()
 
-        app.text_input[0].set_value("termo-que-nao-existe-no-glossario").run(timeout=30)
+        app.text_input[0].set_value("termo-que-nao-existe-no-glossario").run()
 
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(len(app.warning) >= 1)

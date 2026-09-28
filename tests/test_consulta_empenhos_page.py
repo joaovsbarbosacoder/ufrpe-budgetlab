@@ -32,6 +32,8 @@ from unittest.mock import patch
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
+from tests._apptest import TEMPO_LIMITE_APPTEST
+
 from src.importacao_execucao_mensal import gerar_manifesto
 from src.tesouro_execucao_mensal import agregar_por_ne, ler_execucao_mensal
 from src.ui_theme import format_brl_full
@@ -63,10 +65,10 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         self._patch_manifesto.stop()
 
     def _open_page(self) -> AppTest:
-        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
         app.run()
         app.switch_page("app_pages/consulta_empenhos.py")
-        app.run(timeout=60)
+        app.run()
         return app
 
     def _kpis_html(self, app: AppTest) -> str:
@@ -141,7 +143,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         ver_mais = next(b for b in app.button if b.label == "Ver mais")
         ver_mais.click()
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         cartoes = self._cartoes_lista(app)
@@ -162,7 +164,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         caixa = next(c for c in app.checkbox if c.key.endswith(ne_primeira))
         caixa.set_value(True)
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(
@@ -172,7 +174,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         limpar = next(b for b in app.button if b.label == "Limpar seleção do grupo")
         limpar.click()
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any("Marque a caixinha" in item.value for item in app.caption))
@@ -182,7 +184,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         botao = next(b for b in app.button if b.label == "Selecionar todos")
         botao.click()
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(all(c.value for c in app.checkbox))
@@ -193,11 +195,11 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         selecionar = next(b for b in app.button if b.label == "Selecionar todos")
         selecionar.click()
-        app.run(timeout=60)
+        app.run()
 
         desmarcar = next(b for b in app.button if b.label == "Desmarcar todos")
         desmarcar.click()
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(all(not c.value for c in app.checkbox))
@@ -211,12 +213,12 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         selecionar = next(b for b in app.button if b.label == "Selecionar todos")
         selecionar.click()
-        app.run(timeout=60)
+        app.run()
         marcados_antes = sum(1 for c in app.checkbox if c.value)
 
         vermais = next(b for b in app.button if b.label == "Ver mais")
         vermais.click()
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(sum(1 for c in app.checkbox if c.value), marcados_antes)
@@ -238,7 +240,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         caixa = next(c for c in app.checkbox if c.key.endswith(ne_primeira))
         caixa.set_value(True)
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         rotulos_blocos = {"Elemento de Despesa", "Grupo de Despesa", "Ação de Governo", "UGR - Gestão"}
@@ -251,7 +253,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         caixa = next(c for c in app.checkbox if c.key.endswith(ne_primeira))
         caixa.set_value(True)
-        app.run(timeout=60)
+        app.run()
 
         bloco = next(e for e in app.expander if e.label == "Elemento de Despesa")
         # "NEs" (coluna de contagem) do bloco tem que bater com o tamanho do grupo marcado
@@ -276,7 +278,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
             b for b in app.button if b.label == "Ver mais" and "_cons_vermais_" in b.key
         )
         vermais_cons.click()
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         depois = self._qtd_grupos_consolidacao(app)
@@ -294,7 +296,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         filtro_ano = next(m for m in app.multiselect if m.label == "Exercício")
         primeira_opcao = filtro_ano.options[0]  # nenhuma seleção = "Todos"
         filtro_ano.set_value([primeira_opcao])
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         kpis = self._kpis_html(app)
@@ -305,7 +307,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         acao_filter = next(m for m in app.multiselect if m.label == "Ação de Governo")
         primeira_opcao = acao_filter.options[0]
         acao_filter.set_value([primeira_opcao])
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         kpis = self._kpis_html(app)
@@ -325,12 +327,12 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         acao_filter = next(m for m in app.multiselect if m.label == "Ação de Governo")
         duas_opcoes = acao_filter.options[:2]
         acao_filter.set_value([duas_opcoes[0]])
-        app.run(timeout=60)
+        app.run()
         empenhos_um = self._empenhos_no_kpi(app)
 
         acao_filter = next(m for m in app.multiselect if m.label == "Ação de Governo")
         acao_filter.set_value(duas_opcoes)
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         empenhos_dois = self._empenhos_no_kpi(app)
@@ -340,7 +342,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         app = self._open_page()
         acao_filter = next(m for m in app.multiselect if m.label == "Ação de Governo")
         acao_filter.set_value([acao_filter.options[0]])
-        app.run(timeout=60)
+        app.run()
         self.assertEqual(
             next(m for m in app.multiselect if m.label == "Ação de Governo").value,
             [acao_filter.options[0]],
@@ -348,7 +350,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
 
         limpar = next(b for b in app.button if b.label == "Limpar filtros")
         limpar.click()
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(next(m for m in app.multiselect if m.label == "Ação de Governo").value, [])
@@ -359,7 +361,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         app = self._open_page()
         busca = next(t for t in app.text_input if t.label == "Busca livre")
         busca.set_value("UFRPE")
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         kpis = self._kpis_html(app)
@@ -369,7 +371,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         app = self._open_page()
         busca = next(t for t in app.text_input if t.label == "Busca livre")
         busca.set_value("texto que nao existe em nenhum empenho xyz123")
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(
@@ -386,7 +388,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         app = self._open_page()
         busca = next(t for t in app.text_input if t.label == "Busca livre")
         busca.set_value("informatica")
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         acao_filter = next(m for m in app.multiselect if m.label == "Ação de Governo")
@@ -433,7 +435,7 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         ne_segunda = self._ne_do_cartao(cartoes[1])
 
         cartoes[1].click()
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(

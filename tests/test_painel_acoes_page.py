@@ -14,6 +14,8 @@ from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
+from tests._apptest import TEMPO_LIMITE_APPTEST
+
 from src.importacao_dotacao import gerar_manifesto, ler_dotacao_anual
 from tests.test_tesouro_dotacao_anual import (
     workbook_bytes,
@@ -123,13 +125,13 @@ class PainelAcoesPageTests(unittest.TestCase):
         return caminho
 
     def _open_page(self) -> AppTest:
-        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
         app.run()
         app.switch_page("app_pages/painel_acoes.py")
-        app.run(timeout=20)
+        app.run()
         if app.selectbox:
             app.selectbox[0].select(2024)
-            app.run(timeout=20)
+            app.run()
         return app
 
     def test_renders_cards_after_loading_validated_base(self) -> None:
@@ -163,7 +165,7 @@ class PainelAcoesPageTests(unittest.TestCase):
         acao_filter = next(m for m in app.multiselect if m.label == "Ação Governo")
         self.assertEqual(acao_filter.value, [])
         acao_filter.set_value(["ACAO2 — Segunda ação"])
-        app.run(timeout=20)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         cards_html_after = " ".join(item.value for item in app.markdown)
@@ -177,7 +179,7 @@ class PainelAcoesPageTests(unittest.TestCase):
 
         acao_filter = next(m for m in app.multiselect if m.label == "Ação Governo")
         acao_filter.set_value(["ACAO1 — Acao desc A"])
-        app.run(timeout=20)
+        app.run()
         self.assertEqual(len(app.exception), 0)
 
         fonte_filter = next(m for m in app.multiselect if m.label == "Fonte Detalhada")

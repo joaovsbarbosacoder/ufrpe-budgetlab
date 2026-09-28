@@ -10,6 +10,8 @@ import pandas as pd
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
+from tests._apptest import TEMPO_LIMITE_APPTEST
+
 from src.importacao_emendas import Manifesto as ManifestoEmendas
 from src.tesouro_emendas_acompanhamento import ler_emendas_acompanhamento
 
@@ -70,9 +72,9 @@ class EmendasParlamentaresPageTests(unittest.TestCase):
             ),
         ):
             app = AppTest.from_file(
-                str(PROJECT_ROOT / "app_pages" / "emendas_parlamentares.py")
+                str(PROJECT_ROOT / "app_pages" / "emendas_parlamentares.py"), default_timeout=TEMPO_LIMITE_APPTEST
             )
-            app.run(timeout=30)
+            app.run()
         return app
 
     def test_renderiza_base_real_sem_emendas_ficticias(self) -> None:

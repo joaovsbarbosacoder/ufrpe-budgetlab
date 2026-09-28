@@ -46,6 +46,8 @@ from pathlib import Path
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
+from tests._apptest import TEMPO_LIMITE_APPTEST
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DIRETORIO_BOLSAS = Path("data/bolsas_auxilios")
 DIRETORIO_CONTINUOS = Path("data/contratos_continuos")
@@ -61,18 +63,18 @@ def _abrir_pagina_e_clicar(pagina: str, prefixo_ano: str) -> AppTest:
     app com a tela de ESCOLHA do relatório visível (ver limitação de `AppTest` na docstring do
     módulo sobre por que este helper não vai além disso)."""
 
-    app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+    app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
     app.run()
     app.switch_page(pagina)
-    app.run(timeout=60)
+    app.run()
 
     botoes_ano = [b for b in app.button if b.key and b.key.startswith(f"{prefixo_ano}_ano_")]
     if botoes_ano:
         mais_antigo = min(botoes_ano, key=lambda b: int(b.key.rsplit("_", 1)[1]))
-        mais_antigo.click().run(timeout=60)
+        mais_antigo.click().run()
 
     botao = next(b for b in app.button if "Relat" in b.label)
-    botao.click().run(timeout=60)
+    botao.click().run()
     return app
 
 
@@ -141,7 +143,7 @@ def _renderiza_conteudo(tipo_id: str, processo_key: str = "teste") -> AppTest:
     sintético, não depende do cadastro real. `AppTest.from_function` monta um app de uma
     função Python só para este teste, sem precisar de um arquivo `.py` à parte."""
 
-    app = AppTest.from_function(_app_fn, args=(tipo_id, processo_key))
+    app = AppTest.from_function(_app_fn, args=(tipo_id, processo_key), default_timeout=TEMPO_LIMITE_APPTEST)
     app.run()
     return app
 

@@ -26,6 +26,8 @@ from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
+from tests._apptest import TEMPO_LIMITE_APPTEST
+
 from src.importacao_execucao_mensal import gerar_manifesto
 from src.tesouro_execucao_mensal import ler_execucao_mensal
 
@@ -54,10 +56,10 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
         self._patch_manifesto.stop()
 
     def _open_page(self) -> AppTest:
-        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
         app.run()
         app.switch_page("app_pages/empenhos_execucao_retardada.py")
-        app.run(timeout=60)
+        app.run()
         return app
 
     def test_renders_page_from_current_manifest(self) -> None:
@@ -94,7 +96,7 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
 
         usar_rs = next(t for t in app.toggle if t.key and "usar_rs" in t.key)
         usar_rs.set_value(False)
-        app.run(timeout=60)
+        app.run()
 
         self.assertTrue(
             any("Ligue pelo menos um dos dois cortes" in item.value for item in app.warning)
@@ -105,7 +107,7 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
 
         usar_pct = next(t for t in app.toggle if t.key and "usar_pct" in t.key)
         usar_pct.set_value(True)
-        app.run(timeout=60)
+        app.run()
 
         self.assertTrue(
             any("saldo ≥" in item.value and " ou " in item.value for item in app.caption)
@@ -118,13 +120,13 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
 
         usar_pct = next(t for t in app.toggle if t.key and "usar_pct" in t.key)
         usar_pct.set_value(True)
-        app.run(timeout=60)
+        app.run()
 
         seletor = next(s for s in app.segmented_control if s.key and "modo_combinacao" in s.key)
         self.assertEqual(seletor.value, "OU")  # padrao preserva o comportamento ja validado
 
         seletor.set_value("E")
-        app.run(timeout=60)
+        app.run()
 
         self.assertTrue(
             any("saldo ≥" in item.value and " e " in item.value for item in app.caption)
@@ -144,7 +146,7 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
 
         busca = next(t for t in app.text_input if t.label == "Busca livre")
         busca.set_value("termo-que-nao-deve-existir-em-nenhuma-ne-xyzxyz")
-        app.run(timeout=60)
+        app.run()
 
         self.assertTrue(any("Nenhum empenho encontrado" in item.value for item in app.warning))
         self.assertNotEqual(empenhos_no_escopo_antes, "0")
@@ -158,7 +160,7 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
         app = self._open_page()
         busca = next(t for t in app.text_input if t.label == "Busca livre")
         busca.set_value("informatica")
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         acao_filter = next(m for m in app.multiselect if m.label == "Ação de Governo")

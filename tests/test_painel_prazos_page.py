@@ -7,16 +7,18 @@ from unittest import mock
 
 from streamlit.testing.v1 import AppTest
 
+from tests._apptest import TEMPO_LIMITE_APPTEST
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class PainelPrazosGoogleAgendaTests(unittest.TestCase):
     def _abrir(self, situacao: str) -> AppTest:
         with mock.patch("src.google_agenda.situacao_conexao", return_value=situacao):
-            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
-            app.run(timeout=60)
+            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
+            app.run()
             app.switch_page("app_pages/painel_prazos.py")
-            app.run(timeout=60)
+            app.run()
         return app
 
     def test_sem_credenciais_mostra_instrucao(self):
@@ -37,10 +39,10 @@ class PainelPrazosGoogleAgendaTests(unittest.TestCase):
              mock.patch("src.prazos_sincronizacao.sincronizar", return_value=resumo) as sync, \
              mock.patch("src.prazos_sincronizacao.salvar_resumo"), \
              mock.patch("src.prazos_sincronizacao.carregar_ultimo_resumo", return_value=None):
-            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
-            app.run(timeout=60)
+            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
+            app.run()
             app.switch_page("app_pages/painel_prazos.py")
-            app.run(timeout=60)
+            app.run()
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(sync.call_count, 1)
         self.assertIn("Sincronizar agora", [b.label for b in app.button])
@@ -51,11 +53,11 @@ class PainelPrazosGoogleAgendaTests(unittest.TestCase):
              mock.patch("src.google_agenda.cliente", return_value=mock.Mock(listar_eventos=mock.Mock(return_value=[]))), \
              mock.patch("src.prazos_sincronizacao.sincronizar", side_effect=ErroGoogleAgenda("sem rede")) as sync, \
              mock.patch("src.prazos_sincronizacao.carregar_ultimo_resumo", return_value=None):
-            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
-            app.run(timeout=60)
+            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
+            app.run()
             app.switch_page("app_pages/painel_prazos.py")
-            app.run(timeout=60)
-            app.run(timeout=60)  # nova interação dentro dos 5 minutos
+            app.run()
+            app.run()  # nova interação dentro dos 5 minutos
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(sync.call_count, 1)
         self.assertTrue(any("sem rede" in e.value for e in app.error))
@@ -78,10 +80,10 @@ class PainelPrazosGoogleAgendaTests(unittest.TestCase):
              mock.patch("src.prazos_sincronizacao.sincronizar", return_value=resumo), \
              mock.patch("src.prazos_sincronizacao.salvar_resumo"), \
              mock.patch("src.prazos_sincronizacao.carregar_ultimo_resumo", return_value=None):
-            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
-            app.run(timeout=60)
+            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
+            app.run()
             app.switch_page("app_pages/painel_prazos.py")
-            app.run(timeout=60)
+            app.run()
         st.cache_data.clear()
         self.assertEqual(len(app.exception), 0)
         linha = next(m.value for m in app.markdown if "Reunião" in m.value)
@@ -98,10 +100,10 @@ class PainelPrazosGoogleAgendaTests(unittest.TestCase):
                            descricao="<script>x</script>", responsavel="<b>eu</b>", categoria="<i>c</i>")
         with mock.patch("src.google_agenda.situacao_conexao", return_value="sem_credenciais"), \
              mock.patch("src.prazos_orcamentarios.carregar_prazos", return_value=[prazo]):
-            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
-            app.run(timeout=60)
+            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
+            app.run()
             app.switch_page("app_pages/painel_prazos.py")
-            app.run(timeout=60)
+            app.run()
         self.assertEqual(len(app.exception), 0)
         conteudo = "\n".join(m.value for m in app.markdown)
         for bruto in ("<img src=x", "<script>", "<b>eu</b>", "<i>c</i>"):
@@ -123,11 +125,11 @@ class PainelPrazosGoogleAgendaTests(unittest.TestCase):
              mock.patch("src.prazos_sincronizacao.sincronizar", return_value=resumo), \
              mock.patch("src.prazos_sincronizacao.salvar_resumo"), \
              mock.patch("src.prazos_sincronizacao.carregar_ultimo_resumo", return_value=None):
-            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
-            app.run(timeout=60)
+            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
+            app.run()
             app.switch_page("app_pages/painel_prazos.py")
-            app.run(timeout=60)
-            next(b for b in app.button if b.label == "Desconectar").click().run(timeout=60)
+            app.run()
+            next(b for b in app.button if b.label == "Desconectar").click().run()
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(desconectar.call_count, 1)
         self.assertTrue(any("myaccount.google.com/permissions" in w.value for w in app.warning))
@@ -138,10 +140,10 @@ class PainelPrazosGoogleAgendaTests(unittest.TestCase):
              mock.patch("src.google_agenda.cliente", return_value=mock.Mock(listar_eventos=mock.Mock(return_value=[]))), \
              mock.patch("src.prazos_sincronizacao.sincronizar", side_effect=ErroSincronizacao("pasta ausente")), \
              mock.patch("src.prazos_sincronizacao.carregar_ultimo_resumo", return_value=None):
-            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
-            app.run(timeout=60)
+            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
+            app.run()
             app.switch_page("app_pages/painel_prazos.py")
-            app.run(timeout=60)
+            app.run()
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any("pasta ausente" in e.value for e in app.error))
 

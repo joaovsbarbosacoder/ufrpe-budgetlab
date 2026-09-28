@@ -8,6 +8,8 @@ from unittest.mock import patch
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
+from tests._apptest import TEMPO_LIMITE_APPTEST
+
 from src.despesas_pessoal import MESES_NOMES, grade_mensal, consolidar_por_elemento
 from src.ui_despesas_pessoal import montar_painel, validar_edicao
 
@@ -142,7 +144,7 @@ class TestPainelPessoal(unittest.TestCase):
              patch("src.ui_despesas_pessoal.render_painel", side_effect=render), \
              patch("pathlib.Path.exists", lambda p: True if caminho_base(p) else exists_original(p)), \
              patch("pathlib.Path.stat", stat_base):
-            at = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app_pages/despesas_pessoal.py"), default_timeout=15).run()
+            at = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app_pages/despesas_pessoal.py"), default_timeout=TEMPO_LIMITE_APPTEST).run()
         self.assertEqual(len(at.exception), 0)
         self.assertGreaterEqual(len(montagens), 2)
         self.assertEqual(montagens[-1]["grupos"][0]["children"][0]["meses"][8], -123.45)
@@ -223,7 +225,7 @@ class TestAbasFormulasEHistorico(unittest.TestCase):
              patch("src.ui_despesas_pessoal.render_painel", side_effect=render), \
              patch("pathlib.Path.exists", lambda p: True if p.name in nomes else exists_original(p)), \
              patch("pathlib.Path.stat", lambda p, *a, **k: stat_original(Path(__file__)) if p.name in nomes else stat_original(p, *a, **k)):
-            at = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app_pages/despesas_pessoal.py"), default_timeout=15)
+            at = AppTest.from_file(str(Path(__file__).resolve().parents[1] / "app_pages/despesas_pessoal.py"), default_timeout=TEMPO_LIMITE_APPTEST)
             at.run()
             if acao:
                 acao(at)

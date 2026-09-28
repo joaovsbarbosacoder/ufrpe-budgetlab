@@ -15,6 +15,8 @@ from unittest import mock
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
+from tests._apptest import TEMPO_LIMITE_APPTEST
+
 from src.teds_lotes import importar_doc_nc, importar_doc_ne, importar_nc_tg_historica, sincronizar_execucao_tg
 from src.teds_schema import conectar
 from tests.test_teds_celula_orcamentaria import (
@@ -67,7 +69,7 @@ class CelulasPageTests(unittest.TestCase):
             sincronizar_execucao_tg(self.conn, _execucao_mensal("339032"), "sha", "mensal.xlsx")
 
     def _rodar(self) -> AppTest:
-        app = AppTest.from_file(str(PROJECT_ROOT / PAGINA), default_timeout=60)
+        app = AppTest.from_file(str(PROJECT_ROOT / PAGINA), default_timeout=TEMPO_LIMITE_APPTEST)
         app.run()
         return app
 

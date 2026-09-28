@@ -23,6 +23,8 @@ from pathlib import Path
 from openpyxl import Workbook
 from streamlit.testing.v1 import AppTest
 
+from tests._apptest import TEMPO_LIMITE_APPTEST
+
 from src.importacao_dotacao import Manifesto
 from tests._reimportacao_isolamento import IsolamentoReimportacaoMixin
 from tests.test_tesouro_dotacao_anual import merge_cells
@@ -121,16 +123,16 @@ class DotacaoReimportacaoPageTests(IsolamentoReimportacaoMixin, unittest.TestCas
         self._manifesto_baseline = self.manifesto_atual_path.read_bytes()
 
     def _open_page(self) -> AppTest:
-        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
         app.run()
         app.switch_page("app_pages/atualizar_planilhas.py")
-        app.run(timeout=60)
+        app.run()
         return app
 
     def _upload(self, app: AppTest, content: bytes, filename: str) -> None:
         uploaders = [u for u in app.file_uploader if u.label == "Nova extração (.xlsx)"]
         uploaders[1].set_value((filename, content, XLSX_MIME))
-        app.run(timeout=60)
+        app.run()
 
     def test_retroactive_change_shows_gate_and_blocks_commit_by_default(self) -> None:
         app = self._open_page()
@@ -155,12 +157,12 @@ class DotacaoReimportacaoPageTests(IsolamentoReimportacaoMixin, unittest.TestCas
 
         checkbox = next(c for c in app.checkbox if "confirmo a atualização" in c.label)
         checkbox.check()
-        app.run(timeout=60)
+        app.run()
 
         confirmar = next(b for b in app.button if b.label == "Confirmar substituição")
         self.assertFalse(confirmar.disabled)
         confirmar.click()
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         manifesto_novo = Manifesto.atual(self.tmp_manifestos)
@@ -181,7 +183,7 @@ class DotacaoReimportacaoPageTests(IsolamentoReimportacaoMixin, unittest.TestCas
         confirmar = next(b for b in app.button if b.label == "Confirmar importação")
         self.assertFalse(confirmar.disabled)
         confirmar.click()
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         manifesto_novo = Manifesto.atual(self.tmp_manifestos)
@@ -197,7 +199,7 @@ class DotacaoReimportacaoPageTests(IsolamentoReimportacaoMixin, unittest.TestCas
         self.assertFalse(confirmar.disabled)
 
         confirmar.click()
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         manifesto_novo = Manifesto.atual(self.tmp_manifestos)
@@ -251,10 +253,10 @@ class PastaDeEntradaDotacaoTests(IsolamentoReimportacaoMixin, unittest.TestCase)
         self._manifesto_baseline = self.manifesto_atual_path.read_bytes()
 
     def _open_page(self) -> AppTest:
-        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
         app.run()
         app.switch_page("app_pages/atualizar_planilhas.py")
-        app.run(timeout=60)
+        app.run()
         return app
 
     def test_arquivo_seguro_na_pasta_compartilhada_e_aplicado_automaticamente(self) -> None:

@@ -23,6 +23,8 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
+from tests._apptest import TEMPO_LIMITE_APPTEST
+
 from src.importacao_execucao_mensal import Manifesto
 from tests._reimportacao_isolamento import IsolamentoReimportacaoMixin
 
@@ -35,10 +37,10 @@ XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 @unittest.skipUnless(CAMINHO_FIXTURE.exists(), f"Fixture ausente em {CAMINHO_FIXTURE}")
 class ExecucaoMensalReimportacaoPageTests(IsolamentoReimportacaoMixin, unittest.TestCase):
     def _open_page(self) -> AppTest:
-        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
         app.run()
         app.switch_page("app_pages/atualizar_planilhas.py")
-        app.run(timeout=60)
+        app.run()
         return app
 
     def test_card_execucao_mensal_aparece_na_pagina(self) -> None:
@@ -57,12 +59,12 @@ class ExecucaoMensalReimportacaoPageTests(IsolamentoReimportacaoMixin, unittest.
         app = self._open_page()
         uploader = [u for u in app.file_uploader if u.label == "Nova extração (.xlsx)"][2]
         uploader.set_value((CAMINHO_FIXTURE.name, CAMINHO_FIXTURE.read_bytes(), XLSX_MIME))
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         confirmar = next(b for b in app.button if b.label == "Confirmar importação")
         confirmar.click()
-        app.run(timeout=60)
+        app.run()
 
         self.assertEqual(len(app.exception), 0)
         manifesto = Manifesto.atual(diretorio=self.tmp_manifestos)

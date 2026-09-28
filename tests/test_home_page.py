@@ -5,16 +5,18 @@ from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
+from tests._apptest import TEMPO_LIMITE_APPTEST
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class HomePageTests(unittest.TestCase):
     def _open_page(self) -> AppTest:
-        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+        app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
         app.run()
         app.switch_page("app_pages/home.py")
-        app.run(timeout=20)
+        app.run()
         return app
 
     def test_renders_real_status_metrics_and_quick_accesses(self) -> None:
