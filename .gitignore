@@ -61,6 +61,11 @@ data/teds/*
 data/limite_empenho/*
 !data/limite_empenho/.gitkeep
 
+# Integracao com o Google Agenda: credenciais do cliente OAuth, token de acesso e resumo da
+# ultima sincronizacao (segredo local, nunca versionado) - ver src/google_agenda.py.
+data/google_agenda/*
+!data/google_agenda/.gitkeep
+
 # Sistema operacional
 .DS_Store
 Thumbs.db
