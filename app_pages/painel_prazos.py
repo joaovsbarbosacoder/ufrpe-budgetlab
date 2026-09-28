@@ -33,6 +33,8 @@ atrasado/vencendo — pedido explícito), lendo os mesmos dados por
 
 from __future__ import annotations
 
+import html
+import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -73,6 +75,22 @@ _STATUS_CONCLUIDOS = "Concluídos"
 _STATUS_TODOS = "Todos"
 
 _CHAVES_FILTRO = ("pp_filtro_busca", "pp_filtro_tipo", "pp_filtro_responsavel", "pp_filtro_prioridade")
+
+
+def _html(valor: object) -> str:
+    """Texto do usuário ou de terceiros (título de reunião do Google, copiado para o prazo
+    por "Transformar em prazo") dentro de HTML com `unsafe_allow_html=True`: sempre escapado,
+    nunca interpretado como marcação."""
+
+    return html.escape(str(valor))
+
+
+def _markdown(valor: object) -> str:
+    """Como `_html`, para texto que fica fora de bloco HTML (onde o markdown é interpretado):
+    também escapa os caracteres de formatação (`**` do título aparecia literal ou quebrava o
+    negrito)."""
+
+    return re.sub(r"([\\`*_\[\]{}()#+\-.!|~>])", r"\\\1", _html(valor))
 
 
 def _dash(valor: object) -> str:
@@ -238,13 +256,14 @@ def _render_card(row) -> None:
             st.rerun()
 
         rotulo_tipo = row["tipo"] + (f" · {row['categoria']}" if row["categoria"] else "")
-        st.markdown(f"<div class='pp-tipo'>{rotulo_tipo}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='pp-titulo'>{row['titulo']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='pp-tipo'>{_html(rotulo_tipo)}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='pp-titulo'>{_html(row['titulo'])}</div>", unsafe_allow_html=True)
         if row["descricao"]:
-            st.markdown(f"<div class='pp-desc'>{_truncar(row['descricao'])}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='pp-desc'>{_html(_truncar(row['descricao']))}</div>", unsafe_allow_html=True)
 
         c3, c4 = st.columns(2)
-        c3.markdown(f"<span style='font-size:12px'>{_dash(row['responsavel'])}</span>", unsafe_allow_html=True)
+        # <span> no início da linha não abre bloco HTML: o markdown é interpretado → `_markdown`
+        c3.markdown(f"<span style='font-size:12px'>{_markdown(_dash(row['responsavel']))}</span>", unsafe_allow_html=True)
         c4.markdown(
             f"<div style='text-align:right;font-size:12px;color:{cor}'>{_texto_vencimento(row)}</div>",
             unsafe_allow_html=True,
@@ -376,9 +395,10 @@ def _render_agenda() -> None:
             if evento["minha_resposta"]:
                 detalhes.append(_RESPOSTAS.get(evento["minha_resposta"], evento["minha_resposta"]))
             c1, c2 = st.columns([5, 1], vertical_alignment="center")
+            # título e organizador vêm de terceiros (convites): sempre texto, nunca marcação
             c1.markdown(
-                f"{rotulo} **{evento['titulo'] or '(sem título)'}** "
-                f"<span style='color:{TEXT_MUTED};font-size:12px'>{' · '.join(detalhes)}</span>",
+                f"{rotulo} **{_markdown(evento['titulo'].strip() or '(sem título)')}** "
+                f"<span style='color:{TEXT_MUTED};font-size:12px'>{' · '.join(_markdown(d) for d in detalhes)}</span>",
                 unsafe_allow_html=True,
             )
             if not e_prazo and c2.button("Transformar em prazo", key=f"pp_evento_{evento['id']}",

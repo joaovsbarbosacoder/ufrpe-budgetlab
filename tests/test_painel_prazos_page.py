@@ -60,6 +60,54 @@ class PainelPrazosGoogleAgendaTests(unittest.TestCase):
         self.assertEqual(sync.call_count, 1)
         self.assertTrue(any("sem rede" in e.value for e in app.error))
 
+    def test_titulo_de_reuniao_e_exibido_como_texto(self):
+        # títulos de reunião são escritos por terceiros: nem markdown nem HTML podem passar
+        import streamlit as st
+        from datetime import date, time
+        from src.prazos_sincronizacao import ResumoSincronizacao
+        evento = {
+            "id": "r1", "titulo": "**Reunião** <img src=x onerror=alert(1)>", "descricao": "",
+            "data_inicio": date(2026, 10, 1), "hora_inicio": time(15, 0), "data_fim": date(2026, 10, 1),
+            "hora_fim": time(16, 0), "cancelado": False, "atualizado_em": "", "prazo_id": None,
+            "propriedades": {}, "organizador": "<b>org</b>@ufrpe.br", "minha_resposta": "needsAction", "link": "",
+        }
+        st.cache_data.clear()
+        resumo = ResumoSincronizacao(executado_em="2026-09-27T12:00:00+00:00")
+        with mock.patch("src.google_agenda.situacao_conexao", return_value="conectado"), \
+             mock.patch("src.google_agenda.cliente", return_value=mock.Mock(listar_eventos=mock.Mock(return_value=[evento]))), \
+             mock.patch("src.prazos_sincronizacao.sincronizar", return_value=resumo), \
+             mock.patch("src.prazos_sincronizacao.salvar_resumo"), \
+             mock.patch("src.prazos_sincronizacao.carregar_ultimo_resumo", return_value=None):
+            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+            app.run(timeout=60)
+            app.switch_page("app_pages/painel_prazos.py")
+            app.run(timeout=60)
+        st.cache_data.clear()
+        self.assertEqual(len(app.exception), 0)
+        linha = next(m.value for m in app.markdown if "Reunião" in m.value)
+        self.assertNotIn("<img", linha)
+        self.assertIn("&lt;img src=x onerror=alert", linha)
+        self.assertNotIn("<b>org</b>", linha)
+        self.assertIn("\\*\\*Reunião\\*\\*", linha)
+
+    def test_card_de_prazo_exibe_texto_sem_interpretar_html(self):
+        # "Transformar em prazo" copia título/descrição de reuniões de terceiros para o prazo
+        from datetime import date
+        from src.prazos_orcamentarios import novo_prazo
+        prazo = novo_prazo("<img src=x onerror=alert(1)>", date(2026, 12, 1),
+                           descricao="<script>x</script>", responsavel="<b>eu</b>", categoria="<i>c</i>")
+        with mock.patch("src.google_agenda.situacao_conexao", return_value="sem_credenciais"), \
+             mock.patch("src.prazos_orcamentarios.carregar_prazos", return_value=[prazo]):
+            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"))
+            app.run(timeout=60)
+            app.switch_page("app_pages/painel_prazos.py")
+            app.run(timeout=60)
+        self.assertEqual(len(app.exception), 0)
+        conteudo = "\n".join(m.value for m in app.markdown)
+        for bruto in ("<img src=x", "<script>", "<b>eu</b>", "<i>c</i>"):
+            self.assertNotIn(bruto, conteudo)
+        self.assertIn("&lt;img src=x onerror=alert(1)&gt;", conteudo)
+
     def test_pasta_de_prazos_ausente_vira_aviso(self):
         from src.prazos_sincronizacao import ErroSincronizacao
         with mock.patch("src.google_agenda.situacao_conexao", return_value="conectado"), \
