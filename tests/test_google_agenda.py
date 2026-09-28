@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 import httplib2
+from google.auth.exceptions import RefreshError, TransportError
 from googleapiclient.errors import HttpError
 
 from src.google_agenda import (
@@ -20,6 +21,7 @@ from src.google_agenda import (
     MARCADOR,
     ClienteGoogleAgenda,
     ErroGoogleAgenda,
+    cliente,
     conectar,
     desconectar,
     normalizar_evento,
@@ -224,6 +226,24 @@ class TestClienteGoogleAgenda(unittest.TestCase):
             cliente = ClienteGoogleAgenda(_ServicoFalso(_EventosFalsos(erro=_http_error(status))))
             cliente.excluir_evento("x")  # não lança
 
+    def test_sem_internet_na_listagem_vira_erro_google_agenda(self):
+        # httplib2 converte a falha de DNS em ServerNotFoundError (não é OSError)
+        erro = httplib2.ServerNotFoundError("Unable to find the server at www.googleapis.com")
+        cliente = ClienteGoogleAgenda(_ServicoFalso(_EventosFalsos(erro=erro)))
+        with self.assertRaises(ErroGoogleAgenda):
+            cliente.listar_eventos_de_prazos()
+
+    def test_token_revogado_durante_requisicao_vira_erro_google_agenda(self):
+        cliente = ClienteGoogleAgenda(_ServicoFalso(_EventosFalsos(erro=RefreshError("invalid_grant"))))
+        with self.assertRaises(ErroGoogleAgenda):
+            cliente.criar_evento({"summary": "x"})
+
+    def test_sem_internet_ao_excluir_vira_erro_google_agenda(self):
+        erro = httplib2.ServerNotFoundError("sem rede")
+        cliente = ClienteGoogleAgenda(_ServicoFalso(_EventosFalsos(erro=erro)))
+        with self.assertRaises(ErroGoogleAgenda):
+            cliente.excluir_evento("x")
+
     def test_excluir_com_outro_erro_vira_erro_google_agenda(self):
         cliente = ClienteGoogleAgenda(_ServicoFalso(_EventosFalsos(erro=_http_error(403))))
         with self.assertRaises(ErroGoogleAgenda):
@@ -256,6 +276,29 @@ class TestConectarDesconectar(unittest.TestCase):
         (self.diretorio / ARQUIVO_CREDENCIAIS).unlink()
         with self.assertRaises(ErroGoogleAgenda):
             conectar(self.diretorio)
+
+    def _token_expirado(self):
+        # sem "token": credencial inválida com refresh_token → cliente() tenta renovar
+        (self.diretorio / ARQUIVO_TOKEN).write_text(json.dumps({
+            "client_id": "x", "client_secret": "y", "refresh_token": "z",
+            "scopes": ["https://www.googleapis.com/auth/calendar.events"],
+        }), encoding="utf-8")
+
+    def test_renovar_token_sem_internet_vira_erro_e_mantem_token(self):
+        self._token_expirado()
+        with mock.patch("google.oauth2.credentials.Credentials.refresh",
+                        side_effect=TransportError("sem rede")):
+            with self.assertRaises(ErroGoogleAgenda):
+                cliente(self.diretorio)
+        self.assertTrue((self.diretorio / ARQUIVO_TOKEN).exists())
+
+    def test_renovar_token_revogado_desconecta(self):
+        self._token_expirado()
+        with mock.patch("google.oauth2.credentials.Credentials.refresh",
+                        side_effect=RefreshError("invalid_grant")):
+            with self.assertRaises(ErroGoogleAgenda):
+                cliente(self.diretorio)
+        self.assertFalse((self.diretorio / ARQUIVO_TOKEN).exists())
 
     def test_desconectar_apaga_so_o_token(self):
         (self.diretorio / ARQUIVO_TOKEN).write_text("{}", encoding="utf-8")

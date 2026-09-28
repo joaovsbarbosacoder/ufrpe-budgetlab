@@ -24,7 +24,8 @@ from datetime import date, datetime, time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from google.auth.exceptions import RefreshError
+import httplib2
+from google.auth.exceptions import GoogleAuthError, RefreshError, TransportError
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
@@ -163,9 +164,23 @@ def cliente(diretorio: str | Path = DIRETORIO_PADRAO) -> "ClienteGoogleAgenda":
         except RefreshError as erro:
             desconectar(diretorio)
             raise ErroGoogleAgenda("Autorização do Google Agenda revogada ou expirada — conecte novamente.") from erro
+        except TransportError as erro:  # sem internet: o token continua válido para depois
+            raise ErroGoogleAgenda(f"Sem conexão com o Google Agenda: {erro}") from erro
         _gravar_atomico(diretorio / ARQUIVO_TOKEN, credenciais.to_json())
     servico = build("calendar", "v3", credentials=credenciais, cache_discovery=False)
     return ClienteGoogleAgenda(servico)
+
+
+#: falhas de rede/autorização durante uma requisição. Nenhuma delas é `OSError`: o httplib2
+#: converte falha de DNS ("sem internet") em `ServerNotFoundError`, e o `AuthorizedHttp`
+#: lança `RefreshError`/`TransportError` ao tentar renovar um token revogado ou sem rede.
+_ERROS_DE_CONEXAO = (OSError, httplib2.HttpLib2Error, GoogleAuthError)
+
+
+def _erro_de_conexao(erro: Exception) -> ErroGoogleAgenda:
+    if isinstance(erro, RefreshError):
+        return ErroGoogleAgenda("Autorização do Google Agenda revogada ou expirada — desconecte e conecte novamente.")
+    return ErroGoogleAgenda(f"Sem conexão com o Google Agenda: {erro}")
 
 
 class ClienteGoogleAgenda:
@@ -181,8 +196,8 @@ class ClienteGoogleAgenda:
             return requisicao.execute()
         except HttpError as erro:
             raise ErroGoogleAgenda(f"Erro na API do Google Agenda (HTTP {erro.resp.status}).") from erro
-        except OSError as erro:
-            raise ErroGoogleAgenda(f"Sem conexão com o Google Agenda: {erro}") from erro
+        except _ERROS_DE_CONEXAO as erro:
+            raise _erro_de_conexao(erro) from erro
 
     def _listar_todas(self, **params) -> list[dict]:
         """Percorre todas as páginas; só retorna se a listagem completou (uma listagem
@@ -228,5 +243,5 @@ class ClienteGoogleAgenda:
             if erro.resp.status in (404, 410):
                 return  # já não existe — o objetivo foi atingido
             raise ErroGoogleAgenda(f"Erro ao excluir evento no Google Agenda (HTTP {erro.resp.status}).") from erro
-        except OSError as erro:
-            raise ErroGoogleAgenda(f"Sem conexão com o Google Agenda: {erro}") from erro
+        except _ERROS_DE_CONEXAO as erro:
+            raise _erro_de_conexao(erro) from erro
