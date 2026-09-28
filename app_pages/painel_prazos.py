@@ -52,8 +52,8 @@ from src.prazos_orcamentarios import (
     PRIORIDADES_PRAZO,
     TIPOS_PRAZO,
     ErroPrazoOrcamentario,
-    atualizar,
     carregar_prazos,
+    editar,
     excluir,
     novo_prazo,
     prazos_com_criticidade,
@@ -203,9 +203,7 @@ def _formulario(prazo_existente, sugestao: dict | None = None) -> None:
             return
         candidato["concluido"] = bool(concluido)
         if prazo_existente is not None:
-            candidato["id"] = prazo_existente["id"]
-            candidato["criado_em"] = prazo_existente["criado_em"]
-            atualizar(candidato)
+            editar(prazo_existente["id"], candidato)
         else:
             salvar(candidato)
         st.rerun()
@@ -236,11 +234,7 @@ def _render_card(row) -> None:
         )
         c2.markdown(f"<div style='text-align:right'>{_badge(row['criticidade'], cor)}</div>", unsafe_allow_html=True)
         if concluido_novo != row["concluido"]:
-            candidato = dict(row.drop(labels=["dias_para_vencer", "criticidade"]))
-            candidato["data_prazo"] = row["data_prazo"].isoformat()
-            candidato["concluido"] = bool(concluido_novo)
-            candidato["dias_antecedencia"] = int(row["dias_antecedencia"])
-            atualizar(candidato)
+            editar(row["id"], {"concluido": bool(concluido_novo)})
             st.rerun()
 
         rotulo_tipo = row["tipo"] + (f" · {row['categoria']}" if row["categoria"] else "")

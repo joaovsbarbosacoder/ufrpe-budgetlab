@@ -12,13 +12,17 @@ from datetime import date
 from pathlib import Path
 
 from src.prazos_orcamentarios import (
+    CAMPOS_SINCRONIZACAO,
     DIAS_ANTECEDENCIA_PADRAO,
     PRIORIDADE_PADRAO,
     TIPO_PADRAO,
     ErroPrazoOrcamentario,
     atualizar,
+    carregar_prazo,
     carregar_prazos,
+    editar,
     excluir,
+    gravar_estado_sincronizacao,
     novo_prazo,
     prazos_com_criticidade,
     salvar,
@@ -207,6 +211,89 @@ class TestPrazosComCriticidade(unittest.TestCase):
         concluido["concluido"] = True
         resultado = prazos_com_criticidade([no_prazo, concluido, vencido], hoje=self.HOJE)
         self.assertEqual(list(resultado["titulo"]), ["Vencido", "No prazo", "Concluido"])
+
+
+class TestCamposSincronizacao(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.diretorio = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _salvo(self, **extras) -> dict:
+        prazo = {**novo_prazo("Prazo A", date(2026, 12, 1)), **extras}
+        salvar(prazo, self.diretorio)
+        return prazo
+
+    def test_novo_prazo_traz_campos_de_sincronizacao_vazios(self):
+        prazo = novo_prazo("Prazo A", date(2026, 12, 1))
+        self.assertIsNone(prazo["google_event_id"])
+        self.assertIsNone(prazo["sincronizado_em"])
+        self.assertIsNone(prazo["google_atualizado_em"])
+        self.assertFalse(prazo["removido_no_google"])
+
+    def test_gravar_estado_sincronizacao_preserva_atualizado_em(self):
+        prazo = self._salvo()
+        prazo["google_event_id"] = "ev1"
+        prazo["sincronizado_em"] = prazo["atualizado_em"]
+        gravar_estado_sincronizacao(prazo, self.diretorio)
+        gravado = carregar_prazo(prazo["id"], self.diretorio)
+        self.assertEqual(gravado["atualizado_em"], prazo["atualizado_em"])
+        self.assertEqual(gravado["google_event_id"], "ev1")
+
+    def test_gravar_estado_exige_registro_existente(self):
+        with self.assertRaises(FileNotFoundError):
+            gravar_estado_sincronizacao(novo_prazo("X", date(2026, 12, 1)), self.diretorio)
+
+    def test_editar_preserva_vinculo_com_o_evento(self):
+        prazo = self._salvo(google_event_id="ev1", sincronizado_em="s", google_atualizado_em="g")
+        editado = editar(prazo["id"], {"titulo": "Prazo B", "data_prazo": "2026-12-05"}, self.diretorio)
+        self.assertEqual(editado["titulo"], "Prazo B")
+        self.assertEqual(editado["google_event_id"], "ev1")
+        self.assertEqual(editado["criado_em"], prazo["criado_em"])
+        self.assertEqual(carregar_prazo(prazo["id"], self.diretorio), editado)
+
+    def test_editar_ignora_campos_nao_editaveis(self):
+        prazo = self._salvo(google_event_id="ev1")
+        editado = editar(prazo["id"], {"id": "outro", "google_event_id": None}, self.diretorio)
+        self.assertEqual(editado["id"], prazo["id"])
+        self.assertEqual(editado["google_event_id"], "ev1")
+
+    def test_editar_converte_concluido_para_bool_nativo(self):
+        import numpy as np
+        prazo = self._salvo()
+        editar(prazo["id"], {"concluido": np.bool_(True)}, self.diretorio)
+        self.assertIs(carregar_prazo(prazo["id"], self.diretorio)["concluido"], True)
+
+    def test_reabrir_limpa_removido_no_google(self):
+        prazo = self._salvo(concluido=True, removido_no_google=True)
+        editar(prazo["id"], {"concluido": False}, self.diretorio)
+        self.assertFalse(carregar_prazo(prazo["id"], self.diretorio)["removido_no_google"])
+
+    def test_manter_concluido_preserva_removido_no_google(self):
+        prazo = self._salvo(concluido=True, removido_no_google=True)
+        editar(prazo["id"], {"titulo": "Novo título"}, self.diretorio)
+        self.assertTrue(carregar_prazo(prazo["id"], self.diretorio)["removido_no_google"])
+
+    def test_registro_legado_sem_campos_de_sincronizacao(self):
+        legado = novo_prazo("Legado", date(2026, 12, 1))
+        for campo in CAMPOS_SINCRONIZACAO:
+            legado.pop(campo)
+        df = prazos_com_criticidade([legado], hoje=date(2026, 9, 27))
+        self.assertIsNone(df.loc[0, "google_event_id"])
+        self.assertFalse(df.loc[0, "removido_no_google"])
+
+    def test_registros_misturados_nao_geram_nan(self):
+        legado = novo_prazo("Legado", date(2026, 12, 1))
+        for campo in CAMPOS_SINCRONIZACAO:
+            legado.pop(campo)
+        novo = {**novo_prazo("Novo", date(2026, 12, 2)), "google_event_id": "ev1"}
+        df = prazos_com_criticidade([legado, novo], hoje=date(2026, 9, 27))
+        linha_legado = df[df["titulo"] == "Legado"].iloc[0]
+        self.assertIsNone(linha_legado["google_event_id"])
+        self.assertIsNone(linha_legado["sincronizado_em"])
+        self.assertIs(bool(linha_legado["removido_no_google"]), False)
 
 
 if __name__ == "__main__":

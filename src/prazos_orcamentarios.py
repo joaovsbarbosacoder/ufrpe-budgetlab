@@ -35,12 +35,23 @@ Registro gravado ANTES destes 3 campos existirem é tratado como legado: `prazos
 criticidade` preenche com o padrão (`TIPO_PADRAO`/`""`/`PRIORIDADE_PADRAO`), mesmo
 princípio já usado para `dias_antecedencia` ausente.
 
+Campos de sincronização com o Google Agenda (27/09/2026, ver
+`docs/superpowers/specs/2026-09-27-google-agenda-design.md`): `google_event_id`,
+`sincronizado_em`, `google_atualizado_em`, `removido_no_google` — gravados só por
+`src/prazos_sincronizacao.py` via `gravar_estado_sincronizacao` (que NÃO carimba
+`atualizado_em`, senão toda sincronização pareceria alteração local). A tela edita com
+`editar`, que preserva esses campos — reconstruir o registro com `novo_prazo` perderia o
+vínculo e duplicaria o evento no Google.
+
 Contrato público:
     novo_prazo(titulo, data_prazo, descricao="", responsavel="", dias_antecedencia=30,
                tipo=TIPO_PADRAO, categoria="", prioridade=PRIORIDADE_PADRAO) -> dict
     salvar(prazo, diretorio=DIRETORIO_PADRAO) -> Path
     atualizar(prazo, diretorio=DIRETORIO_PADRAO) -> Path
+    editar(identificador, campos, diretorio=DIRETORIO_PADRAO) -> dict
+    gravar_estado_sincronizacao(prazo, diretorio=DIRETORIO_PADRAO) -> Path
     excluir(identificador, diretorio=DIRETORIO_PADRAO) -> None
+    carregar_prazo(identificador, diretorio=DIRETORIO_PADRAO) -> dict
     carregar_prazos(diretorio=DIRETORIO_PADRAO) -> list[dict]
     prazos_com_criticidade(prazos, hoje=None) -> pd.DataFrame
 """
@@ -70,12 +81,21 @@ TIPO_PADRAO = "Solicitação"
 PRIORIDADES_PRAZO = ("Essencial", "Importante", "Desejável")
 PRIORIDADE_PADRAO = "Importante"
 
+#: estado da sincronização com o Google Agenda — nunca editado pela tela.
+CAMPOS_SINCRONIZACAO = ("google_event_id", "sincronizado_em", "google_atualizado_em", "removido_no_google")
+#: únicos campos que a tela (formulário/checkbox do card) pode alterar via `editar`.
+CAMPOS_EDITAVEIS = (
+    "titulo", "data_prazo", "descricao", "responsavel", "dias_antecedencia",
+    "tipo", "categoria", "prioridade", "concluido",
+)
+
 #: colunas do DataFrame vazio devolvido por `prazos_com_criticidade` quando não há cadastro —
 #: mesmo esquema de quando há dados, para quem consome não precisar tratar caso especial.
 _COLUNAS = (
     "id", "titulo", "data_prazo", "descricao", "responsavel", "dias_antecedencia",
     "tipo", "categoria", "prioridade",
-    "concluido", "criado_em", "atualizado_em", "dias_para_vencer", "criticidade",
+    "concluido", "criado_em", "atualizado_em", *CAMPOS_SINCRONIZACAO,
+    "dias_para_vencer", "criticidade",
 )
 
 
@@ -127,6 +147,10 @@ def novo_prazo(
         "concluido": False,
         "criado_em": agora,
         "atualizado_em": agora,
+        "google_event_id": None,
+        "sincronizado_em": None,
+        "google_atualizado_em": None,
+        "removido_no_google": False,
     }
 
 
@@ -168,6 +192,9 @@ def atualizar(prazo: dict, diretorio: str | Path = DIRETORIO_PADRAO) -> Path:
     if not caminho.exists():
         raise FileNotFoundError(f"Nenhum prazo cadastrado com o ID {prazo['id']}.")
     prazo = {**prazo, "atualizado_em": _agora_iso()}
+    if not prazo.get("concluido"):
+        # reaberto: o evento deve ser recriado na próxima sincronização
+        prazo["removido_no_google"] = False
     _gravar_atomico(prazo, caminho)
     return caminho
 
@@ -178,6 +205,42 @@ def excluir(identificador: str, diretorio: str | Path = DIRETORIO_PADRAO) -> Non
     lembrete que deixou de fazer sentido)."""
 
     _caminho(identificador, Path(diretorio)).unlink(missing_ok=True)
+
+
+def carregar_prazo(identificador: str, diretorio: str | Path = DIRETORIO_PADRAO) -> dict:
+    caminho = _caminho(identificador, Path(diretorio))
+    if not caminho.exists():
+        raise FileNotFoundError(f"Nenhum prazo cadastrado com o ID {identificador}.")
+    return json.loads(caminho.read_text(encoding="utf-8"))
+
+
+def editar(identificador: str, campos: dict, diretorio: str | Path = DIRETORIO_PADRAO) -> dict:
+    """Aplica uma edição da tela sobre o registro gravado: só `CAMPOS_EDITAVEIS` são
+    considerados (id, criado_em e estado de sincronização são preservados). Converte
+    `concluido`/`dias_antecedencia` para tipos nativos (valores vindos de uma linha do
+    DataFrame são `numpy.bool_`/`numpy.int64`, que o `json` não grava)."""
+
+    anterior = carregar_prazo(identificador, diretorio)
+    alteracoes = {chave: valor for chave, valor in campos.items() if chave in CAMPOS_EDITAVEIS}
+    if "concluido" in alteracoes:
+        alteracoes["concluido"] = bool(alteracoes["concluido"])
+    if "dias_antecedencia" in alteracoes:
+        alteracoes["dias_antecedencia"] = int(alteracoes["dias_antecedencia"])
+    if isinstance(alteracoes.get("data_prazo"), date):
+        alteracoes["data_prazo"] = alteracoes["data_prazo"].isoformat()
+    atualizar({**anterior, **alteracoes}, diretorio)
+    return carregar_prazo(identificador, diretorio)
+
+
+def gravar_estado_sincronizacao(prazo: dict, diretorio: str | Path = DIRETORIO_PADRAO) -> Path:
+    """Grava o registro como está — sem carimbar `atualizado_em` (diferente de `atualizar`).
+    Uso exclusivo de `src/prazos_sincronizacao.py`."""
+
+    caminho = _caminho(str(prazo["id"]), Path(diretorio))
+    if not caminho.exists():
+        raise FileNotFoundError(f"Nenhum prazo cadastrado com o ID {prazo['id']}.")
+    _gravar_atomico(prazo, caminho)
+    return caminho
 
 
 def carregar_prazos(diretorio: str | Path = DIRETORIO_PADRAO) -> list[dict]:
@@ -244,6 +307,13 @@ def prazos_com_criticidade(prazos: list[dict], hoje: date | None = None) -> pd.D
     if "prioridade" not in dataframe.columns:
         dataframe["prioridade"] = PRIORIDADE_PADRAO
     dataframe["prioridade"] = dataframe["prioridade"].fillna(PRIORIDADE_PADRAO)
+    for campo in ("google_event_id", "sincronizado_em", "google_atualizado_em"):
+        if campo not in dataframe.columns:
+            dataframe[campo] = None
+        dataframe[campo] = dataframe[campo].astype(object).where(dataframe[campo].notna(), None)
+    if "removido_no_google" not in dataframe.columns:
+        dataframe["removido_no_google"] = False
+    dataframe["removido_no_google"] = dataframe["removido_no_google"].fillna(False).astype(bool)
     dataframe["data_prazo"] = pd.to_datetime(dataframe["data_prazo"]).dt.date
     dataframe["dias_para_vencer"] = dataframe["data_prazo"].apply(lambda d: (d - hoje).days)
     dataframe["criticidade"] = [
