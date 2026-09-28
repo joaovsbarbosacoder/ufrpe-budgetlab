@@ -226,6 +226,20 @@ class TestClienteGoogleAgenda(unittest.TestCase):
             cliente = ClienteGoogleAgenda(_ServicoFalso(_EventosFalsos(erro=_http_error(status))))
             cliente.excluir_evento("x")  # não lança
 
+    def test_erro_http_informa_o_motivo_dado_pelo_google(self):
+        # sem o motivo, um 403 no resumo/histórico não diz se foi limite de uso ou permissão
+        conteudo = b'{"error": {"code": 403, "message": "Rate Limit Exceeded", "errors": [{"reason": "rateLimitExceeded"}]}}'
+        erro = HttpError(httplib2.Response({"status": 403}), conteudo)
+        for chamada in (
+            lambda c: c.criar_evento({"summary": "x"}),
+            lambda c: c.excluir_evento("x"),
+        ):
+            cliente = ClienteGoogleAgenda(_ServicoFalso(_EventosFalsos(erro=erro)))
+            with self.assertRaises(ErroGoogleAgenda) as contexto:
+                chamada(cliente)
+            self.assertIn("HTTP 403", str(contexto.exception))
+            self.assertIn("Rate Limit Exceeded", str(contexto.exception))
+
     def test_sem_internet_na_listagem_vira_erro_google_agenda(self):
         # httplib2 converte a falha de DNS em ServerNotFoundError (não é OSError)
         erro = httplib2.ServerNotFoundError("Unable to find the server at www.googleapis.com")

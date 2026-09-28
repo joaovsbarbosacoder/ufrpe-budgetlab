@@ -177,6 +177,14 @@ def cliente(diretorio: str | Path = DIRETORIO_PADRAO) -> "ClienteGoogleAgenda":
 _ERROS_DE_CONEXAO = (OSError, httplib2.HttpLib2Error, GoogleAuthError)
 
 
+def _erro_http(erro: HttpError, acao: str = "Erro na API do Google Agenda") -> ErroGoogleAgenda:
+    """Inclui o motivo dado pelo Google (ex.: "Rate Limit Exceeded", "Forbidden") — sem ele,
+    um 403 no resumo/histórico não diz se foi limite de uso ou falta de permissão."""
+
+    motivo = getattr(erro, "reason", "") or ""
+    return ErroGoogleAgenda(f"{acao} (HTTP {erro.resp.status}{': ' + motivo if motivo else ''}).")
+
+
 def _erro_de_conexao(erro: Exception) -> ErroGoogleAgenda:
     if isinstance(erro, RefreshError):
         return ErroGoogleAgenda("Autorização do Google Agenda revogada ou expirada — desconecte e conecte novamente.")
@@ -195,7 +203,7 @@ class ClienteGoogleAgenda:
         try:
             return requisicao.execute()
         except HttpError as erro:
-            raise ErroGoogleAgenda(f"Erro na API do Google Agenda (HTTP {erro.resp.status}).") from erro
+            raise _erro_http(erro) from erro
         except _ERROS_DE_CONEXAO as erro:
             raise _erro_de_conexao(erro) from erro
 
@@ -242,6 +250,6 @@ class ClienteGoogleAgenda:
         except HttpError as erro:
             if erro.resp.status in (404, 410):
                 return  # já não existe — o objetivo foi atingido
-            raise ErroGoogleAgenda(f"Erro ao excluir evento no Google Agenda (HTTP {erro.resp.status}).") from erro
+            raise _erro_http(erro, "Erro ao excluir evento no Google Agenda") from erro
         except _ERROS_DE_CONEXAO as erro:
             raise _erro_de_conexao(erro) from erro
