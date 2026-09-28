@@ -136,9 +136,13 @@ class TestSaldoViaExecucaoMensal(unittest.TestCase):
         self.assertTrue(sem_empenho["diverge_saldo"].isna().all())
 
     def test_ne_056_diverge_por_liquidacao_nao_capturada_na_planilha(self):
+        # Recalibrado em 28/09/2026 contra a Execução Mensal extraída em 28/09 (manifesto
+        # execucao_mensal_2026-09-28_815e4591): 2.930,14 → 2.103,39. Conferido à mão — a única
+        # mudança na NE entre as extrações de 25/09 e 28/09 é uma liquidação nova de R$ 826,75
+        # em 09/2026 (natureza 33901804); empenhado 74.460,00 − liquidado 72.356,61 = 2.103,39.
         linha = self._linha("2026NE000056")
         self.assertAlmostEqual(linha["saldo_colado_planilha"], 7246.48, places=2)
-        self.assertAlmostEqual(linha["saldo_execucao"], 2930.14, places=2)
+        self.assertAlmostEqual(linha["saldo_execucao"], 2103.39, places=2)
         self.assertTrue(bool(linha["diverge_saldo"]))
 
     def test_ne_232_bate_exatamente(self):
