@@ -30,6 +30,15 @@ elas e a situação dos prazos orçamentários cadastrados. Esses indicadores n�
 combinam valores financeiros de extrações diferentes. A página também oferece
 acessos diretos aos principais módulos de planejamento, operação e controle.
 
+### Gerenciamento de Prazos
+
+Cadastro manual de prazos do exercício, com alerta conforme a antecedência
+escolhida para cada um (`src/prazos_orcamentarios.py`).
+
+A página pode se conectar ao calendário principal do Google (opcional, ver
+`docs/google_agenda.md`) e mostra os eventos dos próximos 30 dias — inclusive reuniões em
+que o usuário é convidado. Acesso à API isolado em `src/google_agenda.py`.
+
 ### Dotação Anual (BI CPOC - Por Ano)
 
 Uma única aba organiza os lançamentos por ano (não por mês), com blocos

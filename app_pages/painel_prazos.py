@@ -33,9 +33,14 @@ atrasado/vencendo — pedido explícito), lendo os mesmos dados por
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
 import pandas as pd
 import streamlit as st
 
+from src import google_agenda
+from src.google_agenda import ErroGoogleAgenda
 from src.design_tokens import ACCENT, FONT_HEADING, NEGATIVE, POSITIVE, TEXT_MUTED, WARNING
 from src.prazos_orcamentarios import (
     CRITICIDADE_ATRASADO,
@@ -118,14 +123,23 @@ def _truncar(texto: str, tamanho: int = 90) -> str:
     return texto if len(texto) <= tamanho else texto[:tamanho].rstrip() + "…"
 
 
-def _formulario(prazo_existente) -> None:
+def _formulario(prazo_existente, sugestao: dict | None = None) -> None:
     """Campos comuns do formulário de prazo — chamado tanto por `_dialogo_novo` quanto por
     `_dialogo_editar` (só o título do `st.dialog` muda; Streamlit exige um texto estático por
-    decorator, não dá pra ter um único dialog com título dinâmico)."""
+    decorator, não dá pra ter um único dialog com título dinâmico). `sugestao` (evento do
+    Google Agenda, botão "Transformar em prazo") só pré-preenche título, data e descrição de
+    um prazo NOVO."""
 
-    prefixo = f"pp_form_{prazo_existente['id']}" if prazo_existente is not None else "pp_form_novo"
+    if prazo_existente is not None:
+        prefixo = f"pp_form_{prazo_existente['id']}"
+    elif sugestao is not None:
+        prefixo = f"pp_form_evento_{sugestao['id']}"
+    else:
+        prefixo = "pp_form_novo"
+    sugestao = sugestao or {}
     titulo = st.text_input(
-        "Título do prazo", value=prazo_existente["titulo"] if prazo_existente is not None else "",
+        "Título do prazo",
+        value=prazo_existente["titulo"] if prazo_existente is not None else sugestao.get("titulo", ""),
         placeholder="ex.: Prestação de contas — Convênio 12/2026", key=f"{prefixo}_titulo",
     )
     c1, c2 = st.columns(2)
@@ -140,7 +154,8 @@ def _formulario(prazo_existente) -> None:
     )
     c3, c4 = st.columns(2)
     data_prazo = c3.date_input(
-        "Vencimento", value=prazo_existente["data_prazo"] if prazo_existente is not None else None,
+        "Vencimento",
+        value=prazo_existente["data_prazo"] if prazo_existente is not None else sugestao.get("data_inicio"),
         format="DD/MM/YYYY", key=f"{prefixo}_data",
     )
     prioridade = c4.selectbox(
@@ -159,7 +174,8 @@ def _formulario(prazo_existente) -> None:
         key=f"{prefixo}_responsavel",
     )
     descricao = st.text_area(
-        "Descrição", value=prazo_existente["descricao"] if prazo_existente is not None else "",
+        "Descrição",
+        value=prazo_existente["descricao"] if prazo_existente is not None else sugestao.get("descricao", ""),
         key=f"{prefixo}_descricao",
     )
     concluido = st.checkbox(
@@ -196,8 +212,8 @@ def _formulario(prazo_existente) -> None:
 
 
 @st.dialog("Novo prazo")
-def _dialogo_novo() -> None:
-    _formulario(None)
+def _dialogo_novo(sugestao: dict | None = None) -> None:
+    _formulario(None, sugestao)
 
 
 @st.dialog("Editar prazo")
@@ -244,6 +260,81 @@ def _render_card(row) -> None:
 
 
 # ---------------------------------------------------------------------- página
+_FUSO = ZoneInfo(google_agenda.FUSO)
+_RESPOSTAS = {"accepted": "Aceito", "declined": "Recusado", "tentative": "Talvez", "needsAction": "Pendente"}
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _eventos_proximos(dias: int = 30) -> list[dict]:
+    """Cache de 5 min: o Streamlit reexecuta a página a cada clique."""
+
+    agora = datetime.now(_FUSO)
+    return google_agenda.cliente().listar_eventos(agora, agora + timedelta(days=dias))
+
+
+def _render_conexao() -> str:
+    """Bloco "Google Agenda". Devolve a situação da conexão."""
+
+    situacao = google_agenda.situacao_conexao()
+    with st.container(border=True):
+        st.markdown("<div class='pp-label'>Google Agenda</div>", unsafe_allow_html=True)
+        if situacao == "sem_credenciais":
+            st.markdown(
+                "Integração não configurada. Siga o passo a passo em `docs/google_agenda.md` "
+                f"e coloque o `credentials.json` em `{google_agenda.DIRETORIO_PADRAO}`."
+            )
+        elif situacao == "desconectado":
+            if st.button("Conectar ao Google Agenda", icon=":material/link:"):
+                try:
+                    google_agenda.conectar()
+                except ErroGoogleAgenda as erro:
+                    render_alert(str(erro), "error")
+                else:
+                    _eventos_proximos.clear()
+                    st.rerun()
+        else:
+            st.markdown("Conectado ao calendário principal.")
+            if st.button("Desconectar", icon=":material/link_off:"):
+                google_agenda.desconectar()
+                _eventos_proximos.clear()
+                st.rerun()
+    return situacao
+
+
+def _render_agenda() -> None:
+    with st.expander("Agenda — próximos 30 dias", expanded=False):
+        try:
+            eventos = _eventos_proximos()
+        except ErroGoogleAgenda as erro:
+            render_alert(str(erro), "error")
+            return
+        if not eventos:
+            st.info("Nenhum evento nos próximos 30 dias.")
+            return
+        dia_atual = None
+        for evento in eventos:
+            if evento["data_inicio"] != dia_atual:
+                dia_atual = evento["data_inicio"]
+                st.markdown(f"<div class='pp-label'>{dia_atual.strftime('%d/%m/%Y')}</div>", unsafe_allow_html=True)
+            e_prazo = evento["prazo_id"] is not None
+            rotulo = _badge("Prazo", ACCENT) if e_prazo else _badge("Reunião/evento", TEXT_MUTED)
+            horario = "Dia inteiro" if evento["hora_inicio"] is None else evento["hora_inicio"].strftime("%H:%M")
+            detalhes = [horario]
+            if not e_prazo and evento["organizador"]:
+                detalhes.append(evento["organizador"])
+            if evento["minha_resposta"]:
+                detalhes.append(_RESPOSTAS.get(evento["minha_resposta"], evento["minha_resposta"]))
+            c1, c2 = st.columns([5, 1], vertical_alignment="center")
+            c1.markdown(
+                f"{rotulo} **{evento['titulo'] or '(sem título)'}** "
+                f"<span style='color:{TEXT_MUTED};font-size:12px'>{' · '.join(detalhes)}</span>",
+                unsafe_allow_html=True,
+            )
+            if not e_prazo and c2.button("Transformar em prazo", key=f"pp_evento_{evento['id']}",
+                                          use_container_width=True):
+                _dialogo_novo(evento)
+
+
 _inject_css()
 
 col_titulo, col_botao = st.columns([5, 1], vertical_alignment="bottom")
@@ -256,6 +347,10 @@ with col_titulo:
 with col_botao:
     if st.button("+ Novo prazo", type="primary", use_container_width=True, icon=":material/add_alert:"):
         _dialogo_novo()
+
+situacao_google = _render_conexao()
+if situacao_google == "conectado":
+    _render_agenda()
 
 prazos_brutos = carregar_prazos()
 prazos = prazos_com_criticidade(prazos_brutos)
