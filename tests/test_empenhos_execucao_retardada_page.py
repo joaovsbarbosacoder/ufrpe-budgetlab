@@ -24,11 +24,16 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from io import BytesIO
+
+import pandas as pd
+from openpyxl import load_workbook
 from streamlit.testing.v1 import AppTest
 
 from tests._apptest import TEMPO_LIMITE_APPTEST
 
 from src.importacao_execucao_mensal import gerar_manifesto
+from src.relatorio_empenhos_retardada import ContextoRelatorio, gerar_xlsx
 from src.tesouro_execucao_mensal import ler_execucao_mensal
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -166,6 +171,108 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
         acao_filter = next(m for m in app.multiselect if m.label == "Ação de Governo")
         self.assertEqual(len(acao_filter.options), 1)
         self.assertTrue(any("FUNCIONAMENTO DE INSTITUICOES FEDERAIS DE ENSINO SUPERIOR" in o for o in acao_filter.options))
+
+    def test_visualizacao_padrao_em_destaque(self) -> None:
+        app = self._open_page()
+
+        seletor = next(s for s in app.segmented_control if s.key and "visualizacao" in s.key)
+        self.assertEqual(seletor.value, "Em destaque")
+        self.assertTrue(any("empenhos abaixo do corte" in item.value for item in app.caption))
+
+    def test_visualizacao_todos_lista_todo_o_escopo_paginado(self) -> None:
+        # pedido explicito (28/09/2026): a pagina nao mostrava todas as NEs do escopo.
+        app = self._open_page()
+        no_escopo = int(next(m for m in app.metric if m.label == "Empenhos no escopo").value)
+
+        seletor = next(s for s in app.segmented_control if s.key and "visualizacao" in s.key)
+        seletor.set_value("Todos no escopo")
+        app.run()
+
+        self.assertEqual(len(app.exception), 0)
+        self.assertGreater(no_escopo, 100)  # a fixture exige mais de uma pagina
+        self.assertTrue(any(f"de {no_escopo} empenhos." in item.value and "Exibindo 1–100" in item.value for item in app.caption))
+        self.assertFalse(any("empenhos abaixo do corte" in item.value for item in app.caption))
+        botoes_ver = [b for b in app.button if b.label == "Ver"]
+        self.assertEqual(len(botoes_ver), 100)
+        self.assertTrue(any(f"{no_escopo} empenhos — mesma lista" in item.value for item in app.caption))
+
+    def test_visualizacao_todos_funciona_com_cortes_desligados(self) -> None:
+        app = self._open_page()
+        next(t for t in app.toggle if t.key and "usar_rs" in t.key).set_value(False)
+        next(s for s in app.segmented_control if s.key and "visualizacao" in s.key).set_value("Todos no escopo")
+        app.run()
+
+        self.assertEqual(len(app.exception), 0)
+        self.assertFalse(any("Ligue pelo menos um dos dois cortes" in item.value for item in app.warning))
+        self.assertTrue(any(b.label == "Ver" for b in app.button))
+
+    # --- relatório = o que está na tela (pedido explícito, 28/09/2026) ------------------------
+    # A geração do PDF/Excel só roda no clique do download (callable), que o AppTest não
+    # dispara. Por isso os testes abaixo capturam a lista que a página montou via
+    # `montar_lista_relatorio` (a MESMA usada para desenhar a tabela e para os downloads),
+    # comparam com o que a tela mostra, e passam essa lista pelo gerador de Excel.
+    def _abrir_capturando_lista(self, visualizacao: str | None = None) -> tuple[AppTest, list[pd.DataFrame]]:
+        import src.relatorio_empenhos_retardada as modulo
+
+        capturadas: list[pd.DataFrame] = []
+        original = modulo.montar_lista_relatorio
+
+        def _espia(*args, **kwargs):
+            resultado = original(*args, **kwargs)
+            capturadas.append(resultado)
+            return resultado
+
+        patcher = patch("src.relatorio_empenhos_retardada.montar_lista_relatorio", side_effect=_espia)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        app = self._open_page()
+        if visualizacao is not None:
+            next(s for s in app.segmented_control if s.key and "visualizacao" in s.key).set_value(visualizacao)
+            capturadas.clear()
+            app.run()
+        return app, capturadas
+
+    def _linhas_e_saldo_do_xlsx(self, lista: pd.DataFrame) -> tuple[int, float]:
+        contexto = ContextoRelatorio("x", None, "22/09/2026", "hash", "29/09/2026 10:00")
+        planilha = load_workbook(BytesIO(gerar_xlsx(lista, contexto)))["Empenhos"]
+        cabecalho = [c.value for c in planilha[1]]
+        coluna_saldo = cabecalho.index("Saldo")
+        valores = [linha[coluna_saldo].value for linha in planilha.iter_rows(min_row=2)]
+        return len(valores), sum(v for v in valores if v is not None)
+
+    def test_relatorio_em_destaque_bate_com_a_tela(self) -> None:
+        app, capturadas = self._abrir_capturando_lista()
+
+        self.assertEqual(len(app.exception), 0)
+        lista = capturadas[-1]
+        legenda = next(c.value for c in app.caption if " empenhos com saldo ≥" in c.value)
+        em_destaque = int(legenda.split(" de ")[0])
+        self.assertEqual(len(lista), em_destaque)
+        self.assertTrue(lista["passa_corte"].eq(True).all())
+        self.assertTrue(any(f"{em_destaque} empenhos — mesma lista" in c.value for c in app.caption))
+        self.assertEqual({b.label for b in app.get("download_button")}, {"Baixar PDF", "Baixar Excel"})
+
+        linhas_xlsx, saldo_xlsx = self._linhas_e_saldo_do_xlsx(lista)
+        self.assertEqual(linhas_xlsx, em_destaque)
+        self.assertAlmostEqual(saldo_xlsx, float(lista["saldo"].sum()), places=2)
+
+    def test_relatorio_todos_no_escopo_bate_com_a_tela(self) -> None:
+        app, capturadas = self._abrir_capturando_lista("Todos no escopo")
+
+        self.assertEqual(len(app.exception), 0)
+        lista = capturadas[-1]
+        no_escopo = int(next(m for m in app.metric if m.label == "Empenhos no escopo").value)
+        saldo_tela = next(m for m in app.metric if m.label.startswith("Saldo total")).value
+        self.assertEqual(len(lista), no_escopo)
+        # mesmo formato do KPI (reais inteiros, ponto de milhar) — o total do relatório é o do topo.
+        self.assertEqual("R$ " + f"{abs(round(lista['saldo'].sum())):,.0f}".replace(",", "."), saldo_tela.lstrip("−"))
+        # primeira linha exibida na tela = primeira linha do relatório (mesma ordenação).
+        primeira_ne = next(m.value for m in app.markdown if m.value.startswith(str(lista["ano"].iloc[0])) and "NE" in m.value)
+        self.assertTrue(str(lista["ne_ccor"].iloc[0]).endswith(primeira_ne))
+
+        linhas_xlsx, saldo_xlsx = self._linhas_e_saldo_do_xlsx(lista)
+        self.assertEqual(linhas_xlsx, no_escopo)
+        self.assertAlmostEqual(saldo_xlsx, float(lista["saldo"].sum()), places=2)
 
     def test_filtros_avancados_incluem_as_2_dimensoes_exclusivas_da_execucao_mensal(self) -> None:
         # Paridade com Consulta de Empenhos (pedido explícito, 22/09/2026): os 13 avançados
