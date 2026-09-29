@@ -90,12 +90,22 @@ denominador não têm mais `min_value`/`max_value` fixos em 1-12 — aquela faix
 nossa (o exemplo "9/12" da planilha de referência), não uma regra confirmada com a PROPLAD. O
 único valor bloqueado é denominador = 0 (indefinido matematicamente — `Fraction` lançaria
 `ZeroDivisionError`), com aviso explícito em vez de deixar a página quebrar.
+
+REMANEJAMENTO ENTRE IDUSOs (pedido explícito do usuário, 28/09/2026): saldo de limite de um
+IDUSO pode ser remanejado temporariamente para outro, e desfeito quando o usuário quiser. Regra
+e persistência em `src/limite_empenho_remanejamentos.py` (gravação em disco aprovada pelo
+usuário). Nesta página o ajuste aparece só no resumo de cada IDUSO da tabela "Detalhamento por
+PTRES" (limite/saldo ajustados + original lado a lado); linhas de PTRES, Situação, KPIs e
+gráficos continuam com os valores calculados — o total geral não muda, porque remanejamento é
+soma zero. Escolha do usuário: com qualquer filtro ativo o ajuste NÃO é aplicado (o resumo
+passaria a mostrar só parte do grupo), e a página avisa que há remanejamentos em vigor.
 """
 
 from __future__ import annotations
 
 import html as html_lib
 from datetime import datetime
+from decimal import Decimal
 from fractions import Fraction
 
 import pandas as pd
@@ -112,6 +122,15 @@ from src.importacao_execucao_mensal import NOME_PONTEIRO as PONTEIRO_EXECUCAO_ME
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
 from src.limite_empenho import saldo_disponivel_a_empenhar
 from src.limite_empenho_preferencias import carregar_fracao_liberada, salvar_fracao_liberada
+from src.limite_empenho_remanejamentos import (
+    Remanejamento,
+    RemanejamentoInvalido,
+    carregar_remanejamentos,
+    desfazer_remanejamento,
+    limite_por_iduso_com_remanejamentos,
+    registrar_remanejamento,
+    remanejamentos_ativos,
+)
 from src.ui_theme import format_brl_compact, format_brl_full, render_metric_grid, render_page_header
 
 #: heurística de EXIBIÇÃO (não regra de negócio confirmada, ver docstring do módulo): abaixo
@@ -277,7 +296,10 @@ def _opcoes(dataframe: pd.DataFrame, coluna_cod: str, coluna_desc: str) -> dict[
     return opcoes
 
 
-def _render_filtros(resultado: pd.DataFrame) -> pd.DataFrame:
+def _render_filtros(resultado: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+    """Devolve o recorte filtrado e se há algum filtro ativo (remanejamentos entre IDUSOs só
+    são aplicados ao resumo do grupo sem filtro — ver docstring do módulo)."""
+
     opcoes_rp = _opcoes(resultado, "resultado_primario_cod", "resultado_primario_desc")
     opcoes_acao = _opcoes(resultado, "acao_cod", "acao_desc")
     opcoes_gnd = _opcoes(resultado, "gnd_cod", "gnd_desc")
@@ -310,7 +332,8 @@ def _render_filtros(resultado: pd.DataFrame) -> pd.DataFrame:
         filtrado = filtrado[filtrado["acao_cod"] == opcoes_acao[rotulo_acao]]
     if rotulo_gnd != "Todos":
         filtrado = filtrado[filtrado["gnd_cod"] == opcoes_gnd[rotulo_gnd]]
-    return filtrado
+    filtro_ativo = (rotulo_rp, rotulo_acao, rotulo_gnd) != ("Todos", "Todas", "Todos")
+    return filtrado, filtro_ativo
 
 
 # --------------------------------------------------------- painel: por ação
@@ -505,18 +528,40 @@ def _html_bloco_acao(acao_cod: object, acao_desc: object, dados_acao: pd.DataFra
     return f'<div class="le-acao-section">{cabecalho_acao}{linhas}</div>'
 
 
-def _html_bloco_iduso(iduso_cod: object, iduso_desc: object, dados_iduso: pd.DataFrame, cabecalho_colunas: str) -> str:
+def _html_bloco_iduso(
+    iduso_cod: object,
+    iduso_desc: object,
+    dados_iduso: pd.DataFrame,
+    cabecalho_colunas: str,
+    ajuste: pd.Series | None = None,
+) -> str:
+    """`ajuste` é a linha deste IDUSO em `limite_por_iduso_com_remanejamentos` — só passada
+    quando não há filtro ativo e há remanejamento líquido diferente de zero."""
+
     totais = dados_iduso[["dotacao_atualizada", "empenhada", "limite_liberado", "saldo_disponivel"]].sum()
     descricao = iduso_desc if pd.notna(iduso_desc) else ""
-    saldo_negativo = pd.notna(totais["saldo_disponivel"]) and totais["saldo_disponivel"] < 0
+    limite_exibido, saldo_exibido = totais["limite_liberado"], totais["saldo_disponivel"]
+    detalhe_remanejamento = ""
+    if ajuste is not None:
+        limite_exibido, saldo_exibido = ajuste["limite_ajustado"], ajuste["saldo_ajustado"]
+        remanejado = float(ajuste["remanejado_liquido"])
+        sinal = "+" if remanejado > 0 else "−"
+        detalhe_remanejamento = (
+            f'<span>Remanejado <strong>{sinal}{format_brl_full(abs(remanejado))}</strong> '
+            f'(limite original {format_brl_full(totais["limite_liberado"])} · saldo original '
+            f'{format_brl_full(totais["saldo_disponivel"])})</span>'
+        )
+    saldo_negativo = pd.notna(saldo_exibido) and saldo_exibido < 0
+    rotulo_ajustado = " ajustado" if ajuste is not None else ""
     resumo = (
         '<div class="le-iduso-head">'
         f'<div class="le-iduso-title">IDUSO {_esc(iduso_cod)} — {_esc(descricao)}</div>'
         '<div class="le-iduso-stats">'
         f'<span>Dotação <strong>{format_brl_full(totais["dotacao_atualizada"])}</strong></span>'
         f'<span>Empenhado <strong>{format_brl_full(totais["empenhada"])}</strong></span>'
-        f'<span>Limite compartilhado <strong>{format_brl_full(totais["limite_liberado"])}</strong></span>'
-        f'<span>Saldo compartilhado <strong class="{"le-negativo" if saldo_negativo else ""}">{format_brl_full(totais["saldo_disponivel"])}</strong></span>'
+        f'<span>Limite compartilhado{rotulo_ajustado} <strong>{format_brl_full(limite_exibido)}</strong></span>'
+        f'<span>Saldo compartilhado{rotulo_ajustado} <strong class="{"le-negativo" if saldo_negativo else ""}">{format_brl_full(saldo_exibido)}</strong></span>'
+        f"{detalhe_remanejamento}"
         "</div></div>"
     )
 
@@ -533,7 +578,10 @@ def _html_bloco_iduso(iduso_cod: object, iduso_desc: object, dados_iduso: pd.Dat
     return f'<div class="le-iduso-section">{resumo}{cabecalho_colunas}{blocos_acao}</div>'
 
 
-def _render_tabela_ptres(filtrado: pd.DataFrame) -> None:
+def _render_tabela_ptres(filtrado: pd.DataFrame, ajustes_iduso: pd.DataFrame | None = None) -> None:
+    """`ajustes_iduso`: saída de `limite_por_iduso_com_remanejamentos` indexada por
+    `iduso_cod`, ou `None` quando os remanejamentos não se aplicam ao recorte (filtro ativo)."""
+
     st.markdown("##### Detalhamento por PTRES")
     st.caption(
         "Agrupado por IDUSO (limite compartilhado entre as ações do grupo) e por Ação · "
@@ -555,11 +603,99 @@ def _render_tabela_ptres(filtrado: pd.DataFrame) -> None:
         .fillna(0.0)
         .sort_values(ascending=False)
     )
+    def _ajuste(iduso_cod: object) -> pd.Series | None:
+        if ajustes_iduso is None or pd.isna(iduso_cod) or str(iduso_cod) not in ajustes_iduso.index:
+            return None
+        linha = ajustes_iduso.loc[str(iduso_cod)]
+        return linha if float(linha["remanejado_liquido"]) != 0 else None
+
     blocos_iduso = "".join(
-        _html_bloco_iduso(iduso_cod, iduso_desc, filtrado[filtrado["iduso_cod"] == iduso_cod], cabecalho_colunas)
+        _html_bloco_iduso(
+            iduso_cod, iduso_desc, filtrado[filtrado["iduso_cod"] == iduso_cod], cabecalho_colunas,
+            _ajuste(iduso_cod),
+        )
         for iduso_cod, iduso_desc in totais_por_iduso.index
     )
     st.markdown(f'<div class="le-table-scroll">{blocos_iduso}</div>', unsafe_allow_html=True)
+
+
+# ------------------------------------------ painel: remanejamento entre IDUSOs
+def _rotulo_iduso(iduso_cod: str, descricoes: dict[str, str]) -> str:
+    descricao = descricoes.get(iduso_cod)
+    return f"IDUSO {iduso_cod} — {descricao}" if descricao else f"IDUSO {iduso_cod}"
+
+
+def _render_remanejamentos(
+    resultado: pd.DataFrame, ano: int, ativos: list[Remanejamento], ajustes_iduso: pd.DataFrame
+) -> None:
+    st.markdown("##### Remanejamento de limite entre IDUSOs")
+    st.caption(
+        "Move saldo de limite de um IDUSO para outro, temporariamente. Muda só o limite "
+        "compartilhado do grupo — o limite de cada ação/PTRES continua o calculado. Fica salvo "
+        "em disco até ser desfeito."
+    )
+
+    descricoes = {
+        str(cod): (str(desc) if pd.notna(desc) else "")
+        for cod, desc in resultado[["iduso_cod", "iduso_desc"]].drop_duplicates().itertuples(index=False)
+        if pd.notna(cod)
+    }
+    idusos = sorted(descricoes)
+
+    if len(idusos) < 2:
+        st.caption("É preciso haver ao menos dois IDUSOs no escopo para remanejar limite.")
+    else:
+        with st.form("le_form_remanejamento", clear_on_submit=True):
+            col_origem, col_destino, col_valor = st.columns([1.4, 1.4, 1])
+            with col_origem:
+                origem = st.selectbox("De (origem)", idusos, format_func=lambda c: _rotulo_iduso(c, descricoes))
+            with col_destino:
+                destino = st.selectbox(
+                    "Para (destino)", idusos, index=1, format_func=lambda c: _rotulo_iduso(c, descricoes)
+                )
+            with col_valor:
+                valor = st.number_input("Valor (R$)", min_value=0.0, value=0.0, step=1000.0, format="%.2f")
+            observacao = st.text_input("Observação (opcional)")
+            enviado = st.form_submit_button("Registrar remanejamento")
+        if enviado:
+            try:
+                registrar_remanejamento(ano, origem, destino, Decimal(f"{valor:.2f}"), observacao)
+            except RemanejamentoInvalido as error:
+                st.error(str(error))
+            else:
+                st.rerun()
+
+    for _, linha in ajustes_iduso.iterrows():
+        if float(linha["remanejado_liquido"]) < 0 and pd.notna(linha["saldo_ajustado"]) and linha["saldo_ajustado"] < 0:
+            st.warning(
+                f"IDUSO {linha['iduso_cod']} cedeu mais limite do que tinha de saldo — saldo "
+                f"compartilhado ajustado: {format_brl_full(linha['saldo_ajustado'])}."
+            )
+
+    if not ativos:
+        st.caption(f"Nenhum remanejamento em vigor para {ano}.")
+        return
+    st.markdown("###### Em vigor")
+    for item in ativos:
+        col_texto, col_botao = st.columns([5, 1])
+        with col_texto:
+            observacao = f" — {item.observacao}" if item.observacao else ""
+            st.markdown(
+                f"**{format_brl_full(float(item.valor))}** de "
+                f"{_rotulo_iduso(item.iduso_origem, descricoes)} → "
+                f"{_rotulo_iduso(item.iduso_destino, descricoes)}{observacao}  \n"
+                f"<span style='color:{dt.TEXT_MUTED}; font-size:{dt.SIZE['micro']}'>"
+                f"registrado em {_esc(item.criado_em[:16].replace('T', ' '))} UTC</span>",
+                unsafe_allow_html=True,
+            )
+        with col_botao:
+            if st.button("Desfazer", key=f"le_desfazer_{item.id}", width="stretch"):
+                try:
+                    desfazer_remanejamento(item.id)
+                except RemanejamentoInvalido as error:
+                    st.error(str(error))
+                else:
+                    st.rerun()
 
 
 # ---------------------------------------------------------------------- página
@@ -682,9 +818,32 @@ if resultado.empty:
     st.info("Nenhuma combinação Ação/PTRES no escopo discricionário para este exercício.")
     st.stop()
 
+try:
+    remanejamentos_em_vigor = remanejamentos_ativos(carregar_remanejamentos(), int(ano))
+except ValueError as error:
+    st.error(
+        f"{error} — os limites por IDUSO não podem ser exibidos sem saber quais remanejamentos "
+        "estão em vigor. Corrija ou restaure o arquivo antes de continuar."
+    )
+    st.stop()
+ajustes_iduso = limite_por_iduso_com_remanejamentos(resultado, remanejamentos_em_vigor)
+
 with st.container(border=True):
     st.markdown("###### Filtros")
-    filtrado = _render_filtros(resultado)
+    filtrado, filtro_ativo = _render_filtros(resultado)
+
+ausentes = ajustes_iduso.loc[ajustes_iduso["ausente_da_base"], "iduso_cod"].tolist()
+if ausentes:
+    st.warning(
+        "Há remanejamento em vigor envolvendo IDUSO sem nenhuma linha no escopo atual: "
+        + ", ".join(ausentes)
+        + ". O valor não aparece em nenhum resumo de grupo — confira ou desfaça o remanejamento."
+    )
+if filtro_ativo and remanejamentos_em_vigor:
+    st.info(
+        "Há remanejamento(s) entre IDUSOs em vigor, mas eles só são aplicados ao resumo do "
+        "grupo sem filtros — com filtro ativo, o resumo mostra só parte do IDUSO."
+    )
 
 if filtrado.empty:
     st.warning("Nenhum registro corresponde à combinação de filtros selecionada.")
@@ -743,7 +902,10 @@ with col_direita:
         _render_pontos_atencao(filtrado, int(numerador), int(denominador))
 
 with st.container(border=True):
-    _render_tabela_ptres(filtrado)
+    _render_remanejamentos(resultado, int(ano), remanejamentos_em_vigor, ajustes_iduso)
+
+with st.container(border=True):
+    _render_tabela_ptres(filtrado, None if filtro_ativo else ajustes_iduso.set_index("iduso_cod"))
 
 data_extracao_dotacao = manifesto_dotacao.data_extracao[:10]
 data_extracao_execucao = manifesto_execucao_mensal.data_extracao[:10]
