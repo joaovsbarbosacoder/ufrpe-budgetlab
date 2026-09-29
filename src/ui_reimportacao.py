@@ -42,7 +42,12 @@ from typing import Callable, Sequence
 
 import streamlit as st
 
-from src.importacao_versionada import Manifesto, ResultadoImportacao, exige_confirmacao
+from src.importacao_versionada import (
+    Manifesto,
+    ResultadoImportacao,
+    destino_sem_sobrescrever,
+    exige_confirmacao,
+)
 from src.ui_theme import format_brl_full, render_alert
 
 
@@ -127,9 +132,17 @@ def _efetivar_reimportacao(
     ignorar_arquivo_ausente: bool = False,
 ) -> None:
     spec.diretorio_dados_brutos.mkdir(parents=True, exist_ok=True)
-    destino = spec.diretorio_dados_brutos / manifesto_novo.arquivo
+    # Nunca sobrescreve um arquivo de origem já importado (ver `destino_sem_sobrescrever`):
+    # nome repetido com conteúdo diferente ganha nome único, e o manifesto aponta para ele.
+    destino, ja_existe = destino_sem_sobrescrever(
+        spec.diretorio_dados_brutos, manifesto_novo.arquivo, manifesto_novo.sha256,
+    )
+    manifesto_novo.arquivo = destino.name
     try:
-        shutil.move(str(staging_path), str(destino))
+        if ja_existe:
+            staging_path.unlink()  # mesmo conteúdo já está em data/raw/: nada a copiar
+        else:
+            shutil.move(str(staging_path), str(destino))
     except OSError:
         # Só esperado no caminho automático da pasta de entrada (`ignorar_arquivo_ausente`):
         # outra sessão Streamlit já moveu este mesmo arquivo entre o momento em que esta

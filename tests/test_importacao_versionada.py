@@ -21,6 +21,7 @@ from src.importacao_versionada import (
     ArquivoHistoricoAusente,
     Manifesto,
     comparar,
+    destino_sem_sobrescrever,
     exige_confirmacao,
     manifestos_por_ano,
     nome_ponteiro,
@@ -409,6 +410,61 @@ class ArquivoHistoricoAusenteTests(unittest.TestCase):
             with self.subTest(base=base), tempfile.TemporaryDirectory() as tmp:
                 self.assertIsNone(modulo.carregar_atual(tmp, tmp))
                 self.assertTrue(modulo.situacao_historico(tmp, tmp).empty)
+
+
+class DestinoSemSobrescreverTests(unittest.TestCase):
+    """Caso real de 28/09/2026: o navegador reaproveitou o nome "(8).xlsx" num download novo,
+    e a reimportação sobrescreveu o arquivo de origem da extração de 22/09 em data/raw/."""
+
+    NOME = "BI CPOC - EXEC. DESPESAS - Por Ano (8).xlsx"
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.diretorio = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    @staticmethod
+    def _sha(conteudo: bytes) -> str:
+        import hashlib
+        return hashlib.sha256(conteudo).hexdigest()
+
+    def test_nome_livre_usa_o_proprio_nome(self):
+        destino, ja_existe = destino_sem_sobrescrever(self.diretorio, self.NOME, self._sha(b"novo"))
+        self.assertEqual(destino, self.diretorio / self.NOME)
+        self.assertFalse(ja_existe)
+
+    def test_mesmo_nome_e_mesmo_conteudo_reaproveita_o_arquivo(self):
+        (self.diretorio / self.NOME).write_bytes(b"igual")
+        destino, ja_existe = destino_sem_sobrescrever(self.diretorio, self.NOME, self._sha(b"igual"))
+        self.assertEqual(destino, self.diretorio / self.NOME)
+        self.assertTrue(ja_existe)
+
+    def test_mesmo_nome_com_conteudo_diferente_ganha_nome_unico(self):
+        (self.diretorio / self.NOME).write_bytes(b"extracao de 22/09")
+        sha_novo = self._sha(b"extracao de 28/09")
+        destino, ja_existe = destino_sem_sobrescrever(self.diretorio, self.NOME, sha_novo)
+        self.assertEqual(destino.name, f"BI CPOC - EXEC. DESPESAS - Por Ano (8)__{sha_novo[:8]}.xlsx")
+        self.assertFalse(ja_existe)
+        self.assertEqual((self.diretorio / self.NOME).read_bytes(), b"extracao de 22/09")
+
+    def test_nome_unico_ja_existente_com_mesmo_conteudo_e_reaproveitado(self):
+        sha_novo = self._sha(b"extracao de 28/09")
+        (self.diretorio / self.NOME).write_bytes(b"extracao de 22/09")
+        unico = self.diretorio / f"BI CPOC - EXEC. DESPESAS - Por Ano (8)__{sha_novo[:8]}.xlsx"
+        unico.write_bytes(b"extracao de 28/09")
+        destino, ja_existe = destino_sem_sobrescrever(self.diretorio, self.NOME, sha_novo)
+        self.assertEqual(destino, unico)
+        self.assertTrue(ja_existe)
+
+    def test_colisao_improvavel_do_prefixo_usa_o_hash_inteiro(self):
+        sha_novo = self._sha(b"extracao de 28/09")
+        (self.diretorio / self.NOME).write_bytes(b"extracao de 22/09")
+        (self.diretorio / f"BI CPOC - EXEC. DESPESAS - Por Ano (8)__{sha_novo[:8]}.xlsx").write_bytes(b"outro")
+        destino, ja_existe = destino_sem_sobrescrever(self.diretorio, self.NOME, sha_novo)
+        self.assertEqual(destino.name, f"BI CPOC - EXEC. DESPESAS - Por Ano (8)__{sha_novo}.xlsx")
+        self.assertFalse(ja_existe)
 
 
 if __name__ == "__main__":

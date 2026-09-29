@@ -198,6 +198,31 @@ def _sha256(caminho: Path) -> str:
     return h.hexdigest()
 
 
+def destino_sem_sobrescrever(diretorio: str | Path, nome: str, sha256: str) -> tuple[Path, bool]:
+    """Onde gravar em `diretorio` um arquivo de origem chamado `nome`, com conteúdo `sha256`,
+    SEM nunca substituir outro arquivo de origem (regra do projeto: arquivos importados são
+    imutáveis — cada manifesto aponta para o seu, e sobrescrever torna aquela extração
+    irreproduzível). Devolve `(destino, ja_existe)`:
+
+    - nome livre → o próprio nome;
+    - mesmo nome e mesmo conteúdo → o arquivo existente é reaproveitado (`ja_existe=True`);
+    - mesmo nome e conteúdo diferente → `<nome>__<8 primeiros do sha256><extensão>` (e, na
+      colisão improvável também desse nome com outro conteúdo, o sha256 inteiro).
+
+    Caso real (28/09/2026): o navegador reaproveitou "(8).xlsx" num download novo e a
+    reimportação sobrescreveu o arquivo da extração de 22/09."""
+
+    diretorio = Path(diretorio)
+    base = Path(nome)
+    for candidato in (nome, f"{base.stem}__{sha256[:8]}{base.suffix}", f"{base.stem}__{sha256}{base.suffix}"):
+        destino = diretorio / candidato
+        if not destino.exists():
+            return destino, False
+        if _sha256(destino) == sha256:
+            return destino, True
+    raise FileExistsError(f"Não há nome livre para gravar {nome} ({sha256}) em {diretorio}.")
+
+
 def _data_extracao(caminho: Path) -> str:
     return datetime.fromtimestamp(caminho.stat().st_mtime).replace(microsecond=0).isoformat()
 
