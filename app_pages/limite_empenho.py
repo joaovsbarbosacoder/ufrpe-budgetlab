@@ -774,14 +774,17 @@ with col_num:
     # atualização") faz o Streamlit reavaliar `value` a cada rerun a partir do próprio
     # session_state — se outro widget da página disparar um rerun antes do número digitado
     # ser "confirmado" (Enter/Tab), o valor em edição podia ser sobrescrito de volta pelo
-    # `value` reavaliado. Mesmo padrão corrigido abaixo, no denominador.
+    # `value` reavaliado. Mesmo padrão corrigido abaixo, no denominador. Um `value=12` fixo
+    # também não é passado: com a chave já semeada via session_state, o Streamlit registra o
+    # aviso "created with a default value but also had its value set via the Session State
+    # API" a cada abertura da página (28/09/2026). Sem `value`, `step=1` mantém o tipo inteiro.
     numerador = st.number_input(
         # Sem min_value/max_value de propósito (pedido explícito do usuário, 22/09/2026): a
         # PROPLAD não está necessariamente presa a uma escala "de 1 a 12" — o limite antigo de
         # 1-12 era uma suposição nossa, não uma regra confirmada. O único valor que quebraria a
         # conta (denominador = 0) é bloqueado abaixo, depois dos dois campos, com aviso
         # explícito em vez de deixar a página quebrar com ZeroDivisionError.
-        "Fração liberada — numerador", value=12, step=1,
+        "Fração liberada — numerador", step=1,
         key="limite_empenho_numerador",
         help='A fração que a PROPLAD comunica a cada liberação de cota (ex.: "9/12"). '
         "Nunca é calculada por este sistema — atualize aqui quando chegar uma nova liberação. "
@@ -790,7 +793,7 @@ with col_num:
     )
 with col_den:
     denominador = st.number_input(
-        "Fração liberada — denominador", value=12, step=1,
+        "Fração liberada — denominador", step=1,
         key="limite_empenho_denominador",
     )
 
