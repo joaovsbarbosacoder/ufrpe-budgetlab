@@ -152,7 +152,11 @@ from src.ui_filtros_execucao import CAMPOS_AVANCADOS_EXECUCAO, CAMPOS_RAPIDOS_EX
 from src.ui_filtros_execucao import limpar_filtros as _limpar_filtros_compartilhado
 from src.ui_filtros_execucao import render_filtros_avancados as _render_filtros_avancados_compartilhado
 from src.ui_filtros_execucao import render_filtros_rapidos as _render_filtros_rapidos_compartilhado
-from src.ui_linha_do_tempo import abrir_linha_do_tempo
+from src.ui_linha_do_tempo import (
+    BASE_LIQUIDADO_COMPETENCIA,
+    BASE_LIQUIDADO_EXECUCAO_MENSAL,
+    abrir_linha_do_tempo,
+)
 from src.ui_theme import format_brl_compact, format_brl_full, render_page_header
 
 
@@ -877,6 +881,7 @@ def _render_detalhe(
             ne_exibicao = _ne_exibicao(linha["ne_ccor"], linha["ano"])
             if liquidacao_competencia is not None:
                 tempo_ne = _tempo_com_liquidacao_por_competencia(tempo_ne, linha["ne_ccor"], liquidacao_competencia)
+                base_liquidado = BASE_LIQUIDADO_COMPETENCIA
                 legenda = (
                     f"Nota de empenho {ne_exibicao} — Empenhado e Pago por mês de lançamento "
                     "(Execução Mensal); Liquidado por mês de competência (Liquidação por "
@@ -884,7 +889,8 @@ def _render_detalhe(
                 )
             else:
                 legenda = f"Nota de empenho {ne_exibicao} — Execução Mensal (BI CPOC)."
-            abrir_linha_do_tempo(legenda, tempo_ne)
+                base_liquidado = BASE_LIQUIDADO_EXECUCAO_MENSAL
+            abrir_linha_do_tempo(legenda, tempo_ne, base_liquidado)
 
     st.markdown('<div class="ce-section-title">Classificação da despesa</div>', unsafe_allow_html=True)
     st.caption(

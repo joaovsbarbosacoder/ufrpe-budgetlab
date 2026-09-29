@@ -13,13 +13,18 @@ NE/CCor nem bolsa: só recebe o DataFrame já pronto (colunas `ano_mes`, `empenh
 completa numa, "programa (NE curta)" na outra).
 
 Contrato público:
-    abrir_linha_do_tempo(legenda, tempo) -> None       (decorado com @st.dialog, abre um pop-up)
-    renderizar_linha_do_tempo(legenda, tempo) -> None  (mesmo conteúdo, sem @st.dialog — para
+    abrir_linha_do_tempo(legenda, tempo, base_liquidado) -> None       (decorado com @st.dialog)
+    renderizar_linha_do_tempo(legenda, tempo, base_liquidado) -> None  (mesmo conteúdo, sem @st.dialog — para
                                                          quem precisa encaixar dentro de um
                                                          pop-up já aberto; ver uso em
                                                          `app_pages/contratos_continuos.py`,
                                                          "Streamlit não permite dialog dentro
                                                          de dialog")
+
+Base do Liquidado (pedido explícito): o pop-up menciona de qual base vem a coluna Liquidado —
+`BASE_LIQUIDADO_EXECUCAO_MENSAL` (mês de lançamento) ou `BASE_LIQUIDADO_COMPETENCIA` (mês de
+competência, quando a página troca a série via Liquidação por Competência). Cada página
+informa a base que de fato usou; este componente não decide nada, só exibe.
 """
 
 from __future__ import annotations
@@ -42,6 +47,28 @@ def rotulo_ano_mes(ano_mes: int) -> str:
     return f"{MESES_ABREV.get(mes, mes)}/{ano}"
 
 
+#: Rótulo curto (entre parênteses) e nome completo da base de cada série de Liquidado.
+BASE_LIQUIDADO_EXECUCAO_MENSAL = "Execução Mensal"
+BASE_LIQUIDADO_COMPETENCIA = "Competência"
+_DESCRICAO_BASE_LIQUIDADO = {
+    BASE_LIQUIDADO_EXECUCAO_MENSAL: "Execução Mensal (BI CPOC) — por mês de lançamento",
+    BASE_LIQUIDADO_COMPETENCIA: "Liquidação por Competência — por mês de competência (referência)",
+}
+
+
+def rotulo_liquidado(base_liquidado: str) -> str:
+    """Nome da coluna/série Liquidado com a base entre parênteses, ex.: "Liquidado (Competência)"."""
+
+    return f"Liquidado ({base_liquidado})"
+
+
+def descricao_base_liquidado(base_liquidado: str) -> str:
+    """Frase exibida no pop-up identificando a base do Liquidado. Base desconhecida aparece
+    como veio (não é trocada por uma das conhecidas)."""
+
+    return f"Liquidado evidenciado a partir da base: {_DESCRICAO_BASE_LIQUIDADO.get(base_liquidado, base_liquidado)}."
+
+
 def totais_linha_do_tempo(tempo: pd.DataFrame) -> dict[str, float]:
     """Soma de todos os meses exibidos para Empenhado, Liquidado e Pago (`empenhada`,
     `liquidada`, `paga`), para a linha "Total" ao final da grade."""
@@ -49,7 +76,9 @@ def totais_linha_do_tempo(tempo: pd.DataFrame) -> dict[str, float]:
     return {coluna: float(tempo[coluna].sum()) for coluna in ("empenhada", "liquidada", "paga")}
 
 
-def renderizar_linha_do_tempo(legenda: str, tempo: pd.DataFrame) -> None:
+def renderizar_linha_do_tempo(
+    legenda: str, tempo: pd.DataFrame, base_liquidado: str = BASE_LIQUIDADO_EXECUCAO_MENSAL
+) -> None:
     """Mesmo conteúdo de `abrir_linha_do_tempo` (gráfico + grade), sem o `@st.dialog` — para
     quem precisa encaixar isso dentro de um pop-up que JÁ está aberto (Streamlit proíbe dialog
     dentro de dialog, `StreamlitAPIException: Dialogs may not be nested inside other dialogs`;
@@ -67,13 +96,15 @@ def renderizar_linha_do_tempo(legenda: str, tempo: pd.DataFrame) -> None:
     # restante da identidade visual clara.
     d = design_tokens
     st.caption(legenda)
+    st.markdown(f"**{descricao_base_liquidado(base_liquidado)}**")
+    nome_liquidado = rotulo_liquidado(base_liquidado)
     tempo = tempo.sort_values("ano_mes")
     rotulos = [rotulo_ano_mes(am) for am in tempo["ano_mes"]]
 
     totais = totais_linha_do_tempo(tempo)
     figure = go.Figure()
     for coluna, nome, cor in (
-        ("empenhada", "Empenhado", d.ACCENT), ("liquidada", "Liquidado", d.ACCENT_STRONG), ("paga", "Pago", d.POSITIVE),
+        ("empenhada", "Empenhado", d.ACCENT), ("liquidada", nome_liquidado, d.ACCENT_STRONG), ("paga", "Pago", d.POSITIVE),
     ):
         valores = [float(v) for v in tempo[coluna]]
         # O total vai no nome da série (legenda), não numa barra "Total": uma barra somada
@@ -111,7 +142,7 @@ def renderizar_linha_do_tempo(legenda: str, tempo: pd.DataFrame) -> None:
     )
     cabecalho_html = "".join(
         f'<span style="text-align:{alinhamento}">{texto}</span>'
-        for texto, alinhamento in (("Mês", "left"), ("Empenhado", "right"), ("Liquidado", "right"), ("Pago", "right"))
+        for texto, alinhamento in (("Mês", "left"), ("Empenhado", "right"), (nome_liquidado, "right"), ("Pago", "right"))
     )
     # Linha de totais ao final: estilo inline (não uma classe nova) para não exigir que as três
     # páginas que injetam o CSS `.ce-tempo-*` sejam alteradas.
@@ -137,8 +168,10 @@ def renderizar_linha_do_tempo(legenda: str, tempo: pd.DataFrame) -> None:
 
 
 @st.dialog("Linha do tempo mensal", width="large")
-def abrir_linha_do_tempo(legenda: str, tempo: pd.DataFrame) -> None:
+def abrir_linha_do_tempo(
+    legenda: str, tempo: pd.DataFrame, base_liquidado: str = BASE_LIQUIDADO_EXECUCAO_MENSAL
+) -> None:
     """Abre `renderizar_linha_do_tempo` num pop-up de verdade — use esta função (não aquela
     diretamente) sempre que o chamador NÃO estiver dentro de outro dialog já aberto."""
 
-    renderizar_linha_do_tempo(legenda, tempo)
+    renderizar_linha_do_tempo(legenda, tempo, base_liquidado)

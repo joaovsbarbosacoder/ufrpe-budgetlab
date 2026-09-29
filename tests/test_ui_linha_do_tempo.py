@@ -2,7 +2,13 @@
 
 import pandas as pd
 
-from src.ui_linha_do_tempo import totais_linha_do_tempo
+from src.ui_linha_do_tempo import (
+    BASE_LIQUIDADO_COMPETENCIA,
+    BASE_LIQUIDADO_EXECUCAO_MENSAL,
+    descricao_base_liquidado,
+    rotulo_liquidado,
+    totais_linha_do_tempo,
+)
 
 
 def test_totais_somam_todos_os_meses():
@@ -22,3 +28,17 @@ def test_totais_preservam_valor_negativo():
         {"ano_mes": [202601, 202602], "empenhada": [100.0, -40.0], "liquidada": [0.0, 0.0], "paga": [0.0, 0.0]}
     )
     assert totais_linha_do_tempo(tempo)["empenhada"] == 60.0
+
+
+def test_rotulo_liquidado_menciona_a_base():
+    assert rotulo_liquidado(BASE_LIQUIDADO_COMPETENCIA) == "Liquidado (Competência)"
+    assert rotulo_liquidado(BASE_LIQUIDADO_EXECUCAO_MENSAL) == "Liquidado (Execução Mensal)"
+
+
+def test_descricao_base_liquidado_identifica_cada_base():
+    assert "Liquidação por Competência" in descricao_base_liquidado(BASE_LIQUIDADO_COMPETENCIA)
+    assert "Execução Mensal (BI CPOC)" in descricao_base_liquidado(BASE_LIQUIDADO_EXECUCAO_MENSAL)
+
+
+def test_descricao_base_desconhecida_aparece_como_veio():
+    assert descricao_base_liquidado("Outra base") == "Liquidado evidenciado a partir da base: Outra base."

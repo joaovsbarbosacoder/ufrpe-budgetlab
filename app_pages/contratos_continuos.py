@@ -200,7 +200,12 @@ from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por
 from src.necessidade_empenho import calcular_necessidade_empenho
 from src.relatorio_reforco_empenho import CONTRATOS_CONTINUOS as RELATORIO_CONTRATOS_CONTINUOS
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
-from src.ui_linha_do_tempo import MESES_ABREV, abrir_linha_do_tempo
+from src.ui_linha_do_tempo import (
+    BASE_LIQUIDADO_COMPETENCIA,
+    BASE_LIQUIDADO_EXECUCAO_MENSAL,
+    MESES_ABREV,
+    abrir_linha_do_tempo,
+)
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
 from src.ui_theme import format_brl_compact, render_metric_grid, render_page_header
 
@@ -1013,7 +1018,7 @@ def _render_linhas_resumo(
     nes_com_tempo: set[str],
     source_key: str,
     key_prefix: str,
-) -> tuple[str, pd.DataFrame] | None:
+) -> tuple[str, pd.DataFrame, str] | None:
     """Cabeçalho + uma linha por item de `linhas` (mesmas colunas do Resumo Consolidado) —
     compartilhado entre a visão inline do card (só as `QTD_INICIAL_RESUMO` primeiras) e o
     pop-up "Ver mais" (`_abrir_resumo_completo`, todas as linhas), pedido explícito posterior,
@@ -1021,7 +1026,7 @@ def _render_linhas_resumo(
     lugares. `key_prefix` diferencia as chaves dos botões entre as duas superfícies (a mesma
     NE pode aparecer nas duas ao mesmo tempo — card por trás, pop-up por cima).
 
-    NÃO abre o pop-up "Linha do tempo mensal" sozinha — devolve `(legenda, tempo_ne)` quando
+    NÃO abre o pop-up "Linha do tempo mensal" sozinha — devolve `(legenda, tempo_ne, base_liquidado)` quando
     alguma linha foi clicada nesta execução (`None` caso contrário) e deixa o chamador decidir
     como abrir: `abrir_linha_do_tempo` direto (pop-up de verdade) quando o chamador está fora
     de qualquer dialog, ou via `st.session_state` + `st.rerun()` quando o chamador já está
@@ -1035,7 +1040,7 @@ def _render_linhas_resumo(
     cabecalho[3].markdown('<div class="cc-resumo-col-label" style="text-align:right">Necessidade até Dez.</div>', unsafe_allow_html=True)
     cabecalho[4].markdown('<div class="cc-resumo-col-label" style="text-align:right">Meses Liquidados</div>', unsafe_allow_html=True)
 
-    clicado: tuple[str, pd.DataFrame] | None = None
+    clicado: tuple[str, pd.DataFrame, str] | None = None
     for fornecedor, contrato_numero, ne_curta_linha, valor_empenhado, saldo, necessidade, meses_liquidados, ultimo_mes_liquidado in linhas:
         rotulo = f"{_dash(fornecedor)} — {_dash(contrato_numero)}"
         clicavel = pd.notna(ne_curta_linha) and ne_curta_linha in nes_com_tempo
@@ -1047,6 +1052,7 @@ def _render_linhas_resumo(
                     tempo_ne = _tempo_com_liquidacao_por_competencia(
                         tempo_ne, ne_curta_linha, liquidacao_competencia_por_mes
                     )
+                    base_liquidado = BASE_LIQUIDADO_COMPETENCIA
                     legenda = (
                         f"{_dash(fornecedor)} (NE {ne_curta_linha}) — Empenhado e Pago por mês de "
                         "lançamento (Execução Mensal); Liquidado por mês de competência (Liquidação "
@@ -1054,7 +1060,8 @@ def _render_linhas_resumo(
                     )
                 else:
                     legenda = f"{_dash(fornecedor)} (NE {ne_curta_linha}) — Execução Mensal (BI CPOC)."
-                clicado = (legenda, tempo_ne)
+                    base_liquidado = BASE_LIQUIDADO_EXECUCAO_MENSAL
+                clicado = (legenda, tempo_ne, base_liquidado)
         else:
             linha[0].markdown(f'<div class="cc-resumo-nome-simples">{_esc(rotulo)}</div>', unsafe_allow_html=True)
         linha[1].markdown(_html_valor_resumo(valor_empenhado), unsafe_allow_html=True)

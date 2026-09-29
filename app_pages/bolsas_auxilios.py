@@ -187,7 +187,7 @@ from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_m
 from src.necessidade_empenho import calcular_necessidade_empenho
 from src.relatorio_reforco_empenho import BOLSAS_AUXILIOS as RELATORIO_BOLSAS_AUXILIOS
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
-from src.ui_linha_do_tempo import MESES_ABREV, abrir_linha_do_tempo
+from src.ui_linha_do_tempo import BASE_LIQUIDADO_EXECUCAO_MENSAL, MESES_ABREV, abrir_linha_do_tempo
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
 from src.ui_theme import format_brl_compact, render_metric_grid, render_page_header
 
@@ -867,7 +867,7 @@ def _render_resumo_consolidado(
                     if linha[0].button(rotulo, key=f"bls_resumo_tempo_{source_key}_{row['id']}", use_container_width=True):
                         tempo_ne = tempo_por_ne_curta[tempo_por_ne_curta["ne_curta"] == ne_curta_bolsa]
                         legenda = f"{_dash(row['programa_bolsa'])} (NE {ne_curta_bolsa}) — Execução Mensal (BI CPOC)."
-                        abrir_linha_do_tempo(legenda, tempo_ne)
+                        abrir_linha_do_tempo(legenda, tempo_ne, BASE_LIQUIDADO_EXECUCAO_MENSAL)
                 else:
                     linha[0].markdown(f'<div class="bls-resumo-nome-simples">{_esc(rotulo)}</div>', unsafe_allow_html=True)
                 linha[1].markdown(_html_valor_resumo(row["_valor_mensal"]), unsafe_allow_html=True)
