@@ -134,6 +134,22 @@ class PainelPrazosGoogleAgendaTests(unittest.TestCase):
         self.assertEqual(desconectar.call_count, 1)
         self.assertTrue(any("myaccount.google.com/permissions" in w.value for w in app.warning))
 
+    def test_falha_ao_gravar_resumo_nao_derruba_a_pagina(self):
+        # a sincronização já aconteceu; só o registro do resumo em disco falhou
+        from src.prazos_sincronizacao import ResumoSincronizacao
+        resumo = ResumoSincronizacao(executado_em="2026-09-28T12:00:00+00:00", criados=["Prazo A"])
+        with mock.patch("src.google_agenda.situacao_conexao", return_value="conectado"), \
+             mock.patch("src.google_agenda.cliente", return_value=mock.Mock(listar_eventos=mock.Mock(return_value=[]))), \
+             mock.patch("src.prazos_sincronizacao.sincronizar", return_value=resumo), \
+             mock.patch("src.prazos_sincronizacao.salvar_resumo", side_effect=PermissionError("arquivo em uso")), \
+             mock.patch("src.prazos_sincronizacao.carregar_ultimo_resumo", return_value=None):
+            app = AppTest.from_file(str(PROJECT_ROOT / "app.py"), default_timeout=TEMPO_LIMITE_APPTEST)
+            app.run()
+            app.switch_page("app_pages/painel_prazos.py")
+            app.run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(any("arquivo em uso" in w.value for w in app.warning))
+
     def test_pasta_de_prazos_ausente_vira_aviso(self):
         from src.prazos_sincronizacao import ErroSincronizacao
         with mock.patch("src.google_agenda.situacao_conexao", return_value="conectado"), \

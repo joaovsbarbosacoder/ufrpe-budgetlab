@@ -297,7 +297,14 @@ def _executar_sincronizacao() -> None:
         st.session_state["pp_google_erro_sync"] = str(erro)
         return
     st.session_state.pop("pp_google_erro_sync", None)
-    prazos_sincronizacao.salvar_resumo(resumo)
+    try:
+        prazos_sincronizacao.salvar_resumo(resumo)
+    except OSError as erro:
+        # a sincronização já foi feita; só o registro em disco falhou (ex.: arquivo aberto)
+        st.session_state["pp_google_aviso"] = (
+            f"Sincronização feita, mas o resumo não pôde ser gravado ({erro}). "
+            "Ele será gravado na próxima sincronização."
+        )
     _eventos_proximos.clear()
 
 
@@ -376,6 +383,8 @@ def _render_conexao() -> str:
                     f"Sincronização com o Google Agenda não realizada: {st.session_state['pp_google_erro_sync']}",
                     "error",
                 )
+            if "pp_google_aviso" in st.session_state:  # gerado pela sincronização logo acima
+                render_alert(st.session_state.pop("pp_google_aviso"), "warning")
             _render_resumo_sincronizacao()
     return situacao
 
