@@ -4,8 +4,9 @@ Usa uma fixture congelada em `tests/fixtures/` (não a planilha de trabalho em `
 que é substituída a cada atualização) — pulado se o arquivo não existir. Os casos de
 divergência de saldo (`2026NE000350`, `2026NE000094`) foram originalmente confirmados
 manualmente contra a Execução Anual ativa em 13/08/2026, mesma data da fixture (ver histórico
-da conversa) — `TestSaldoViaExecucaoMensal` recalibrou em 22/09/2026 contra a Execução
-Mensal, a fonte usada pela página real desde então (ver docstring daquela classe). Valor
+da conversa) — `TestSaldoViaExecucaoMensal` confere contra a Execução Mensal (a fonte usada
+pela página real), lida de uma fixture congelada (`CAMINHO_EXECUCAO_MENSAL`), não da
+importação atual em `data/manifestos/` (ver docstring daquela classe). Valor
 empenhado (`valor_empenhado_execucao`, comparado contra a soma por NE — ver docstring de
 `com_saldo_execucao`) tem casos isolados na mesma fixture (`2026NE000148`, diferença pequena
 de arredondamento; `2026NE000178`, planilha zerada mas com valor real na Execução).
@@ -26,11 +27,14 @@ import pandas as pd
 
 from src.contratos_continuos import ErroLayoutBase, NOME_ABA, com_meses_pagos, com_saldo_execucao, ler_contratos_continuos
 from src.execucao_ne_utils import saldo_por_ne
-from src.importacao_execucao_mensal import carregar_atual
 from src.necessidade_empenho import calcular_necessidade_empenho
-from src.tesouro_execucao_mensal import agregar_por_ne
+from src.tesouro_execucao_mensal import agregar_por_ne, ler_execucao_mensal
 
 CAMINHO_BASE = Path("tests/fixtures/contratos_continuos_2026-08-13.xlsm")
+#: Execução Mensal congelada (a mesma de tests/test_bolsas_auxilios.py e
+#: tests/test_consulta_empenhos_page.py) — valores esperados de `TestSaldoViaExecucaoMensal`
+#: conferidos à mão contra ela.
+CAMINHO_EXECUCAO_MENSAL = Path("tests/fixtures/execucao_mensal_2026-09-22.xlsx")
 
 
 def _variante_com_coluna_renomeada(caminho: Path, tmp_dir: Path) -> Path:
@@ -111,8 +115,8 @@ class TestLeituraContratosContinuos(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    CAMINHO_BASE.exists() and Path("data/manifestos/execucao_mensal_atual.json").exists(),
-    "Planilha de Contratos Contínuos ou manifesto de Execução Mensal ausente",
+    CAMINHO_BASE.exists() and CAMINHO_EXECUCAO_MENSAL.exists(),
+    "Fixture de Contratos Contínuos ou de Execução Mensal ausente",
 )
 class TestSaldoViaExecucaoMensal(unittest.TestCase):
     """Confere `saldo_execucao`/`diverge_saldo` contra os casos já levantados manualmente.
@@ -125,14 +129,20 @@ class TestSaldoViaExecucaoMensal(unittest.TestCase):
     Execução Anual em 26/08 — só a CONTAGEM total de divergências mudou (31, não mais 32,
     pra saldo; 31, não mais 30, pra valor empenhado), porque outros NEs da fixture (fora do
     conjunto usado como exemplo nomeado) têm movimento mais recente que diverge entre as
-    duas fontes. NE 2026NE000082 continua batendo exatamente nas duas comparações."""
+    duas fontes. NE 2026NE000082 continua batendo exatamente nas duas comparações.
+
+    DESACOPLADO DA IMPORTAÇÃO ATUAL (30/09/2026, mesma correção de test_bolsas_auxilios.py):
+    a Execução Mensal era lida ao vivo (`carregar_atual()`), e qualquer importação nova que
+    mexesse nestas NEs quebraria o teste sem regressão real. Agora vem da fixture congelada
+    `CAMINHO_EXECUCAO_MENSAL` (extração de 22/09). Todos os valores abaixo continuaram
+    idênticos contra ela; conferidos à mão: NE 350 empenhado 3.112.763,78 − liquidado
+    1.033.302,92 = 2.079.460,86; NE 094 162.070,80 − 101.325,90 = 60.744,90."""
 
     @classmethod
     def setUpClass(cls):
-        # `carregar_atual` da Execução MENSAL — mesmo carregador que a página usa de verdade,
-        # não a leitura de um único arquivo: assim o teste nunca fica desalinhado do que a
-        # Execução Mensal "atual" realmente é depois de uma importação nova.
-        df_execucao = carregar_atual()
+        # mesmo leitor/agregação que a página usa (`agregar_por_ne` da Execução MENSAL), só que
+        # sobre a fixture congelada em vez da importação atual.
+        df_execucao = ler_execucao_mensal(CAMINHO_EXECUCAO_MENSAL)
         cls.por_ne = saldo_por_ne(agregar_por_ne(df_execucao))
         cls.df = com_saldo_execucao(ler_contratos_continuos(CAMINHO_BASE), cls.por_ne)
 
