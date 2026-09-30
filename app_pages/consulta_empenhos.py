@@ -160,6 +160,8 @@ from src.importacao_execucao_mensal import DIRETORIO_MANIFESTOS_PADRAO, NOME_PON
 from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne_e_mes
 from src.relatorio_liquidacao_empenhos import (
     BASE_COMPETENCIA,
+    MODO_SOMENTE_LANCAMENTO,
+    MODOS,
     ContextoRelatorioLiquidacao,
     consolidar_por_dimensao,
     montar_relatorio,
@@ -855,7 +857,19 @@ def _render_relatorio_liquidacao_grupo(
         return
 
     nes = visivel.loc[visivel["ne_ccor"].isin(marcados), ["ne_ccor", "ano", "ne_favorecido", "ne_descricao"]]
-    relatorio = montar_relatorio(nes, lancamento, liquidacao_competencia)
+    modo = st.radio(
+        "Base do relatório",
+        MODOS,
+        horizontal=True,
+        key=f"consulta_empenhos_liquidacao_modo_{source_key}",
+        help=(
+            "Competência quando houver: cada NE por competência se tiver registro nessa base, senão "
+            "pela data de liquidação. Somente data de liquidação: todas as NEs pela Execução Mensal "
+            "(mês de lançamento) — use para comparar exercícios no mesmo critério."
+        ),
+    )
+    somente_lancamento = modo == MODO_SOMENTE_LANCAMENTO
+    relatorio = montar_relatorio(nes, lancamento, liquidacao_competencia, modo)
     grupo = visivel[visivel["ne_ccor"].isin(marcados)]
     consolidacao = [
         (rotulo, consolidar_por_dimensao(grupo, coluna_cod, coluna_desc))
@@ -865,7 +879,10 @@ def _render_relatorio_liquidacao_grupo(
     def _lista(ne_ccors: list[str]) -> str:
         return ", ".join(_ne_curta_execucao(ne) for ne in ne_ccors)
 
-    if liquidacao_competencia is None:
+    if somente_lancamento:
+        origem_competencia = None
+        st.info("Todas as NEs pela data de liquidação (mês de lançamento, Execução Mensal) — por escolha.")
+    elif liquidacao_competencia is None:
         origem_competencia = None
         st.warning(
             "A base de Liquidação por Competência não está disponível: o relatório mostrará "
@@ -893,6 +910,8 @@ def _render_relatorio_liquidacao_grupo(
     por_competencia = int((relatorio.resumo["base"] == BASE_COMPETENCIA).sum())
     st.caption(
         f"{len(relatorio.resumo)} NE(s) marcada(s) — {por_competencia} por competência. "
+        if not somente_lancamento
+        else f"{len(relatorio.resumo)} NE(s) marcada(s), todas pela data de liquidação. "
         "Uma linha por NE e ano, colunas Jan–Dez, em ordem alfabética da descrição. PDF e Excel "
         "trazem também a Consolidação Orçamentária do Grupo; o Excel, ainda, o resumo por NE com "
         "a reconciliação contra o total liquidado da Execução Mensal."
@@ -905,7 +924,8 @@ def _render_relatorio_liquidacao_grupo(
         origem_competencia=origem_competencia,
     )
 
-    nome_arquivo = f"liquidacao_empenhos_{datetime.now():%Y-%m-%d}"
+    sufixo_modo = "data_liquidacao" if somente_lancamento else "competencia"
+    nome_arquivo = f"liquidacao_empenhos_{sufixo_modo}_{datetime.now():%Y-%m-%d}"
     col_pdf, col_xlsx = st.columns(2)
     with col_pdf:
         st.download_button(

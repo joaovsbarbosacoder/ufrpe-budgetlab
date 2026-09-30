@@ -184,6 +184,27 @@ class MontarRelatorioTest(unittest.TestCase):
         rel = montar_relatorio(_nes().iloc[[2]], _lancamento(), _competencia())
         self.assertTrue(rel.por_exercicio.empty)
 
+    def test_modo_somente_lancamento_ignora_competencia(self) -> None:
+        from src.relatorio_liquidacao_empenhos import MODO_SOMENTE_LANCAMENTO
+
+        rel = montar_relatorio(_nes(), _lancamento(), _competencia(), MODO_SOMENTE_LANCAMENTO)
+        self.assertEqual(rel.modo, MODO_SOMENTE_LANCAMENTO)
+        bases = dict(zip(rel.resumo["ne_ccor"], rel.resumo["base"]))
+        self.assertEqual(bases, {NE_COMP: BASE_LANCAMENTO, NE_LANC: BASE_LANCAMENTO, NE_VAZIA: BASE_SEM_DADO})
+        # NE_COMP agora pela Execução Mensal: 2025-03 = 1.000, 2026-02 = 500
+        comp = rel.mensal[rel.mensal["ne_ccor"] == NE_COMP].set_index("ano")
+        self.assertEqual(comp.loc[2025, 3], 1_000.0)
+        self.assertEqual(comp.loc[2026, 2], 500.0)
+        self.assertEqual(rel.nes_competencia_divergente, [])
+        self.assertTrue((rel.resumo["diferenca"].dropna() == 0).all())
+        # comparativo: todos os anos na mesma base -> sem aviso de mistura
+        self.assertIsNone(rel.aviso_bases_por_exercicio)
+        self.assertEqual(rel.por_exercicio["nes_competencia"].sum(), 0)
+
+    def test_modo_desconhecido_e_rejeitado(self) -> None:
+        with self.assertRaises(ValueError):
+            montar_relatorio(_nes(), _lancamento(), _competencia(), "qualquer")
+
     def test_sem_base_de_competencia_tudo_por_lancamento(self) -> None:
         rel = montar_relatorio(_nes(), _lancamento(), None)
         bases = dict(zip(rel.resumo["ne_ccor"], rel.resumo["base"]))
@@ -337,6 +358,7 @@ class GerarArquivosTest(unittest.TestCase):
         self.assertIn("2025NE000010", avisos[1])
         self.assertIn("2026NE000099", avisos[2])
         parametros = dict(pares)
+        self.assertEqual(parametros["Base do relatório"], "Competência quando houver")
         self.assertEqual(parametros["Por competência"], "1")
         self.assertEqual(parametros["Por data de liquidação"], "1")
 
@@ -385,6 +407,22 @@ class GerarArquivosTest(unittest.TestCase):
     def test_xlsx_sem_consolidacao_nao_cria_a_aba(self) -> None:
         livro = load_workbook(BytesIO(gerar_xlsx(self.rel, _contexto())))
         self.assertNotIn("Consolidação", livro.sheetnames)
+
+    def test_xlsx_e_pdf_no_modo_somente_lancamento(self) -> None:
+        from src.relatorio_liquidacao_empenhos import MODO_SOMENTE_LANCAMENTO, titulo_relatorio
+
+        rel = montar_relatorio(_nes(), _lancamento(), _competencia(), MODO_SOMENTE_LANCAMENTO)
+        livro = load_workbook(BytesIO(gerar_xlsx(rel, _contexto())))
+        pares = [(l[0].value, l[1].value) for l in livro["Parâmetros"].iter_rows(min_row=2)]
+        parametros = dict(pares)
+        self.assertEqual(parametros["Base do relatório"], MODO_SOMENTE_LANCAMENTO)
+        self.assertIn("não usada", parametros["Liquidação por Competência"])
+        avisos = [v for k, v in pares if k == "Avisos"]
+        # só o aviso de NE sem dado — nada sobre competência
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("sem liquidação na Execução Mensal", avisos[0])
+        self.assertTrue(gerar_pdf(rel, _contexto()).startswith(b"%PDF"))
+        self.assertIn("DATA DE LIQUIDAÇÃO", titulo_relatorio(MODO_SOMENTE_LANCAMENTO))
 
     def test_xlsx_aviso_geral_sem_competencia(self) -> None:
         rel = montar_relatorio(_nes(), _lancamento(), None)

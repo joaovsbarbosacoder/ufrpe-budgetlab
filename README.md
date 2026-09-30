@@ -106,7 +106,10 @@ traz, em vez dele, a Consolidação Orçamentária do Grupo da tela (também pre
 no Excel, aba "Consolidação"). As NEs saem
 em ordem alfabética da descrição do empenho. Um quadro "Comparativo por
 exercício" (PDF e aba "Por exercício" do Excel) soma as NEs por ano do mês,
-informando quantas NEs de cada base compõem cada ano.
+informando quantas NEs de cada base compõem cada ano. O seletor "Base do
+relatório" permite gerar tudo "Somente por data de liquidação", para comparar
+exercícios no mesmo critério quando a base de competência não cobre os anos
+anteriores; o modo aparece no título, nos parâmetros e no nome do arquivo.
 
 ### Emendas Parlamentares
 

@@ -49,6 +49,12 @@ COMPARATIVO POR EXERCÍCIO (pedido explícito posterior): `por_exercicio` soma a
 exercício" do Excel. Um ano pode misturar NEs das duas bases; a mistura é exposta (contagem de
 NEs por base em cada ano), não resolvida.
 
+MODO (pedido explícito posterior): `montar_relatorio(..., modo=)` — `MODO_COMPETENCIA_QUANDO_HOUVER`
+(padrão, regra da base acima) ou `MODO_SOMENTE_LANCAMENTO` (toda NE pela data de liquidação,
+para comparar exercícios no mesmo critério). O modo aparece no título do PDF, nos parâmetros e
+no nome do arquivo; no modo "somente data de liquidação" os avisos de competência não se
+aplicam e não aparecem.
+
 ORDEM (pedido explícito posterior): NEs em ordem alfabética da descrição (depois favorecido,
 depois NE; sem acento/caixa; descrição nula por último) no PDF e nas abas "Liquidação mensal" e
 "Resumo por NE" do Excel — agrupa a mesma despesa de exercícios diferentes.
@@ -57,7 +63,8 @@ Contrato público:
     BASE_COMPETENCIA, BASE_LANCAMENTO, BASE_SEM_DADO
     ContextoRelatorioLiquidacao (dataclass)
     RelatorioLiquidacao (dataclass: resumo, mensal, serie)
-    montar_relatorio(nes, lancamento, competencia) -> RelatorioLiquidacao
+    MODO_COMPETENCIA_QUANDO_HOUVER, MODO_SOMENTE_LANCAMENTO, MODOS, titulo_relatorio(modo)
+    montar_relatorio(nes, lancamento, competencia, modo=MODO_COMPETENCIA_QUANDO_HOUVER) -> RelatorioLiquidacao
     consolidar_por_dimensao(grupo, coluna_cod, coluna_desc) -> pd.DataFrame
     gerar_pdf(relatorio, contexto, consolidacao=()) -> bytes
     gerar_xlsx(relatorio, contexto, consolidacao=()) -> bytes
@@ -81,6 +88,20 @@ from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Space
 from src.execucao_ne_utils import ne_curta
 
 TITULO = "LIQUIDAÇÃO MENSAL POR EMPENHO"
+
+#: modos do relatório (seletor "Base do relatório" da página). O padrão é o comportamento
+#: original: competência quando a NE tem registro nessa base, data de liquidação caso contrário.
+#: "Somente data de liquidação" põe TODAS as NEs na Execução Mensal (mês de lançamento) — para
+#: comparar exercícios sob o mesmo critério quando a base de competência não cobre os anos
+#: anteriores.
+MODO_COMPETENCIA_QUANDO_HOUVER = "Competência quando houver"
+MODO_SOMENTE_LANCAMENTO = "Somente data de liquidação"
+MODOS = (MODO_COMPETENCIA_QUANDO_HOUVER, MODO_SOMENTE_LANCAMENTO)
+
+_SUBTITULO_MODO = {
+    MODO_COMPETENCIA_QUANDO_HOUVER: "POR COMPETÊNCIA (QUANDO HOUVER)",
+    MODO_SOMENTE_LANCAMENTO: "SOMENTE POR DATA DE LIQUIDAÇÃO",
+}
 
 BASE_COMPETENCIA = "Competência"
 BASE_LANCAMENTO = "Data de liquidação"
@@ -120,6 +141,8 @@ class RelatorioLiquidacao:
     #: uma linha por ano do mês (comparativo entre exercícios): ano, nes_competencia,
     #: nes_lancamento, 1..12, total — soma das linhas de `mensal` daquele ano.
     por_exercicio: pd.DataFrame
+    #: um de `MODOS`.
+    modo: str = MODO_COMPETENCIA_QUANDO_HOUVER
 
     @property
     def aviso_bases_por_exercicio(self) -> str | None:
@@ -163,11 +186,19 @@ def _chave_alfabetica(valor: object) -> str:
 
 
 def montar_relatorio(
-    nes: pd.DataFrame, lancamento: pd.DataFrame, competencia: pd.DataFrame | None
+    nes: pd.DataFrame,
+    lancamento: pd.DataFrame,
+    competencia: pd.DataFrame | None,
+    modo: str = MODO_COMPETENCIA_QUANDO_HOUVER,
 ) -> RelatorioLiquidacao:
     """`nes`: uma linha por NE marcada (`ne_ccor`, `ano`, `ne_favorecido`, `ne_descricao`). `lancamento` e
     `competencia`: (`ne_ccor`, `ano_mes`, `valor`), a segunda `None` quando a base de
-    competência não está disponível. Não altera nenhuma das entradas."""
+    competência não está disponível. `modo`: um de `MODOS` — em `MODO_SOMENTE_LANCAMENTO` a
+    base de competência é ignorada e toda NE vai pela data de liquidação. Não altera nenhuma
+    das entradas."""
+
+    if modo not in MODOS:
+        raise ValueError(f"Modo desconhecido: {modo!r} (esperado um de {MODOS})")
 
     nes = nes[["ne_ccor", "ano", "ne_favorecido", "ne_descricao"]].drop_duplicates("ne_ccor")
     # ordem alfabética (pedido explícito): descrição, depois favorecido, depois NE — sem
@@ -181,7 +212,7 @@ def montar_relatorio(
     ordem_ne = {ne: posicao for posicao, ne in enumerate(nes["ne_ccor"])}
     alvo = set(nes["ne_ccor"])
     lanc = lancamento.loc[lancamento["ne_ccor"].isin(alvo), ["ne_ccor", "ano_mes", "valor"]]
-    if competencia is not None:
+    if competencia is not None and modo == MODO_COMPETENCIA_QUANDO_HOUVER:
         comp = competencia.loc[competencia["ne_ccor"].isin(alvo), ["ne_ccor", "ano_mes", "valor"]]
     else:
         comp = pd.DataFrame(columns=["ne_ccor", "ano_mes", "valor"])
@@ -249,7 +280,9 @@ def montar_relatorio(
         .reset_index(drop=True)
     )
 
-    return RelatorioLiquidacao(resumo=resumo, mensal=mensal, serie=serie, por_exercicio=_por_exercicio(mensal))
+    return RelatorioLiquidacao(
+        resumo=resumo, mensal=mensal, serie=serie, por_exercicio=_por_exercicio(mensal), modo=modo
+    )
 
 
 def _por_exercicio(mensal: pd.DataFrame) -> pd.DataFrame:
@@ -331,14 +364,23 @@ def _ne_curta(valor: object) -> str:
     return "—" if valor is None or pd.isna(valor) else ne_curta(str(valor))
 
 
+def titulo_relatorio(modo: str) -> str:
+    """Título com o modo — a base aparece no próprio título, não só nos parâmetros."""
+
+    return f"{TITULO} — {_SUBTITULO_MODO.get(modo, modo)}"
+
+
 def _avisos(relatorio: RelatorioLiquidacao, contexto: ContextoRelatorioLiquidacao) -> list[str]:
     avisos = []
-    if contexto.origem_competencia is None:
+    somente_lancamento = relatorio.modo == MODO_SOMENTE_LANCAMENTO
+    # no modo "somente data de liquidação" a ausência de competência é escolha do usuário, não
+    # falta de dado — nenhum aviso de competência; o modo já aparece no título e nos parâmetros.
+    if not somente_lancamento and contexto.origem_competencia is None:
         avisos.append(
             "A base de Liquidação por Competência não está disponível: TODAS as NEs estão por "
             "data de liquidação (mês de lançamento), não por competência."
         )
-    elif relatorio.nes_por_lancamento:
+    elif not somente_lancamento and relatorio.nes_por_lancamento:
         avisos.append(
             "NEs sem registro na base de competência — exibidas por DATA DE LIQUIDAÇÃO (mês de "
             "lançamento), não por competência: "
@@ -354,7 +396,8 @@ def _avisos(relatorio: RelatorioLiquidacao, contexto: ContextoRelatorioLiquidaca
         )
     if relatorio.nes_sem_dado:
         avisos.append(
-            "NEs sem liquidação em nenhuma das bases (Sem dado): "
+            ("NEs sem liquidação na Execução Mensal (Sem dado): " if somente_lancamento
+             else "NEs sem liquidação em nenhuma das bases (Sem dado): ")
             + ", ".join(_ne_curta(ne) for ne in relatorio.nes_sem_dado)
             + "."
         )
@@ -393,13 +436,18 @@ def _linhas_parametros(relatorio: RelatorioLiquidacao, contexto: ContextoRelator
     resumo = relatorio.resumo
     contagem = resumo["base"].value_counts()
     return [
+        ("Base do relatório", relatorio.modo),
         ("Empenhos no relatório", str(len(resumo))),
         ("Por competência", str(int(contagem.get(BASE_COMPETENCIA, 0)))),
         ("Por data de liquidação", str(int(contagem.get(BASE_LANCAMENTO, 0)))),
         ("Sem dado", str(int(contagem.get(BASE_SEM_DADO, 0)))),
         ("Bases", NOTA_BASES),
         ("Execução Mensal", f"extração de {contexto.data_extracao} · hash {contexto.hash_manifesto}"),
-        ("Liquidação por Competência", contexto.origem_competencia or "indisponível"),
+        (
+            "Liquidação por Competência",
+            "não usada (modo somente data de liquidação)" if relatorio.modo == MODO_SOMENTE_LANCAMENTO
+            else contexto.origem_competencia or "indisponível",
+        ),
         ("Emitido em", contexto.data_emissao),
     ]
 
@@ -585,7 +633,7 @@ def gerar_pdf(
     documento = SimpleDocTemplate(
         buffer, pagesize=landscape(A4),
         leftMargin=10 * mm, rightMargin=10 * mm, topMargin=10 * mm, bottomMargin=10 * mm,
-        title=TITULO,
+        title=titulo_relatorio(relatorio.modo),
     )
     estilos = getSampleStyleSheet()
     estilo_parametro = estilos["Normal"].clone("parametro_liquidacao")
@@ -597,7 +645,7 @@ def gerar_pdf(
     estilo_celula.fontSize = 6.5
     estilo_celula.leading = 7.5
 
-    elementos: list = [Paragraph(TITULO, estilos["Heading3"])]
+    elementos: list = [Paragraph(escape(titulo_relatorio(relatorio.modo)), estilos["Heading3"])]
     for aviso in _avisos(relatorio, contexto):
         elementos.append(Paragraph(f"<b>ATENÇÃO:</b> {escape(aviso)}", estilo_aviso))
     for rotulo, valor in _linhas_parametros(relatorio, contexto):

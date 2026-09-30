@@ -251,6 +251,14 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         self.assertEqual(len(downloads), 2)
         self.assertTrue(any("1 NE(s) marcada(s)" in item.value for item in app.caption))
 
+        modo = next(r for r in app.radio if r.label == "Base do relatório")
+        self.assertEqual(modo.value, "Competência quando houver")
+        modo.set_value("Somente data de liquidação")
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(any("todas pela data de liquidação" in item.value for item in app.caption))
+        self.assertEqual(len(self._downloads_liquidacao(app)), 2)
+
     def test_consolidacao_do_grupo_pede_marcacao_quando_vazia(self) -> None:
         app = self._open_page()
 
