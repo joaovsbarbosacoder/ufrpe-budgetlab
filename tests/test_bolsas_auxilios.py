@@ -4,8 +4,9 @@ Usa uma fixture congelada em `tests/fixtures/` (não a planilha de trabalho em `
 que é substituída a cada atualização) — pulado se o arquivo não existir. O caso de
 divergência de saldo (`2026NE000056`) foi originalmente confirmado manualmente contra a
 Execução Anual ativa em 13/08/2026, mesma data da fixture (ver histórico da conversa) —
-`TestSaldoViaExecucaoMensal` recalibrou os números em 22/09/2026 contra a Execução Mensal, a
-fonte usada pela página real desde então (ver docstring daquela classe).
+`TestSaldoViaExecucaoMensal` confere contra a Execução Mensal (a fonte usada pela página real),
+lida de uma fixture congelada (`CAMINHO_EXECUCAO_MENSAL`), não da importação atual em
+`data/manifestos/` (ver docstring daquela classe).
 
 IMPORTANTE: ao atualizar a planilha de trabalho em `data/raw/`, NÃO sobrescreva esta fixture
 automaticamente — ver AGENTS.md, seção sobre atualização de dados de Contratos
@@ -23,11 +24,13 @@ import pandas as pd
 
 from src.bolsas_auxilios import ErroLayoutBase, LINHA_CABECALHO, NOME_ABA, com_saldo_execucao, ler_bolsas_auxilios
 from src.execucao_ne_utils import saldo_por_ne
-from src.importacao_execucao_mensal import carregar_atual
 from src.necessidade_empenho import calcular_necessidade_empenho
-from src.tesouro_execucao_mensal import agregar_por_ne
+from src.tesouro_execucao_mensal import agregar_por_ne, ler_execucao_mensal
 
 CAMINHO_BASE = Path("tests/fixtures/bolsas_auxilios_2026-08-13.xlsx")
+#: Execução Mensal congelada (a mesma fixture de tests/test_consulta_empenhos_page.py) — os
+#: valores esperados de `TestSaldoViaExecucaoMensal` foram calculados à mão contra ela.
+CAMINHO_EXECUCAO_MENSAL = Path("tests/fixtures/execucao_mensal_2026-09-22.xlsx")
 
 
 def _variante_com_coluna_renomeada(caminho: Path, tmp_dir: Path) -> Path:
@@ -96,8 +99,8 @@ class TestLeituraBolsasAuxilios(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    CAMINHO_BASE.exists() and Path("data/manifestos/execucao_mensal_atual.json").exists(),
-    "Planilha de Bolsas ou manifesto de Execução Mensal ausente",
+    CAMINHO_BASE.exists() and CAMINHO_EXECUCAO_MENSAL.exists(),
+    "Fixture de Bolsas ou de Execução Mensal ausente",
 )
 class TestSaldoViaExecucaoMensal(unittest.TestCase):
     """Confere `saldo_execucao`/`diverge_saldo` contra os casos já levantados manualmente.
@@ -105,18 +108,22 @@ class TestSaldoViaExecucaoMensal(unittest.TestCase):
     Números recalibrados em 22/09/2026: Bolsas/Contratos Contínuos/Contratos Pagamentos
     pararam de depender da Execução Anual (pedido do usuário) — `por_ne_execucao` agora vem
     da Execução Mensal (`src.tesouro_execucao_mensal.agregar_por_ne`), não mais de
-    `src.execucao_anual.agregar_por_ne`. A fixture de Bolsas continua congelada em 13/08; a
-    Execução Mensal é lida ao vivo (`data/manifestos/`), então estes números tendem a ficar
-    desatualizados de novo conforme a base avança — mesma natureza frágil de antes, só que
-    contra a fonte nova. NE 2026NE000232 continua batendo exatamente no SALDO (não no valor
-    empenhado, que diverge quase sempre por natureza — a planilha de Bolsas é estática e a
-    Execução Mensal cresce a cada reforço)."""
+    `src.execucao_anual.agregar_por_ne`. NE 2026NE000232 continua batendo exatamente no SALDO
+    (não no valor empenhado, que diverge quase sempre por natureza — a planilha de Bolsas é
+    estática e a Execução Mensal cresce a cada reforço).
+
+    DESACOPLADO DA IMPORTAÇÃO ATUAL (30/09/2026): até aqui a Execução Mensal era lida ao vivo
+    (`carregar_atual()`, `data/manifestos/`), e cada importação nova quebrava estes testes sem
+    haver regressão nenhuma (aconteceu com as de 28/09 e 30/09). Agora ela vem da fixture
+    congelada `CAMINHO_EXECUCAO_MENSAL` (extração de 22/09) — as duas pontas (Bolsas e
+    Execução) ficam congeladas, e os números só mudam quando alguém trocar uma fixture de
+    propósito, recalculando à mão (AGENTS.md)."""
 
     @classmethod
     def setUpClass(cls):
-        # `carregar_atual` da Execução MENSAL — mesmo carregador que a página usa de verdade
-        # (ver mesmo comentário em test_contratos_continuos.py::TestSaldoViaExecucaoMensal).
-        df_execucao = carregar_atual()
+        # mesmo leitor/agregação que a página usa (`agregar_por_ne` da Execução MENSAL), só que
+        # sobre a fixture congelada em vez da importação atual.
+        df_execucao = ler_execucao_mensal(CAMINHO_EXECUCAO_MENSAL)
         cls.por_ne = saldo_por_ne(agregar_por_ne(df_execucao))
         cls.df = com_saldo_execucao(ler_bolsas_auxilios(CAMINHO_BASE), cls.por_ne)
 
@@ -136,13 +143,14 @@ class TestSaldoViaExecucaoMensal(unittest.TestCase):
         self.assertTrue(sem_empenho["diverge_saldo"].isna().all())
 
     def test_ne_056_diverge_por_liquidacao_nao_capturada_na_planilha(self):
-        # Recalibrado em 28/09/2026 contra a Execução Mensal extraída em 28/09 (manifesto
-        # execucao_mensal_2026-09-28_815e4591): 2.930,14 → 2.103,39. Conferido à mão — a única
-        # mudança na NE entre as extrações de 25/09 e 28/09 é uma liquidação nova de R$ 826,75
-        # em 09/2026 (natureza 33901804); empenhado 74.460,00 − liquidado 72.356,61 = 2.103,39.
+        # Contra a fixture de 22/09 (`CAMINHO_EXECUCAO_MENSAL`), conferido à mão: única NE
+        # 153165152392026NE000056; empenhado (deduplicado por bloco) 74.460,00 − liquidado
+        # (soma das linhas de item de execução) 71.529,86 = 2.930,14. (A importação ao vivo de
+        # 28/09 dava 2.103,39 — liquidação nova de R$ 826,75 em 09/2026 — e é justamente esse
+        # tipo de mudança que deixou de quebrar o teste.)
         linha = self._linha("2026NE000056")
         self.assertAlmostEqual(linha["saldo_colado_planilha"], 7246.48, places=2)
-        self.assertAlmostEqual(linha["saldo_execucao"], 2103.39, places=2)
+        self.assertAlmostEqual(linha["saldo_execucao"], 2930.14, places=2)
         self.assertTrue(bool(linha["diverge_saldo"]))
 
     def test_ne_232_bate_exatamente(self):
