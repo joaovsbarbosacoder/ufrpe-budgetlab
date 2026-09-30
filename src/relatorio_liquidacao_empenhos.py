@@ -55,9 +55,10 @@ para comparar exercícios no mesmo critério). O modo aparece no título do PDF,
 no nome do arquivo; no modo "somente data de liquidação" os avisos de competência não se
 aplicam e não aparecem.
 
-ORDEM (pedido explícito posterior): NEs em ordem alfabética da descrição (depois favorecido,
-depois NE; sem acento/caixa; descrição nula por último) no PDF e nas abas "Liquidação mensal" e
-"Resumo por NE" do Excel — agrupa a mesma despesa de exercícios diferentes.
+ORDEM (pedido explícito posterior, substitui a ordem alfabética da descrição usada antes): NEs
+pelo número do empenho — forma curta (ano + número, ex. 2024NE000001 < 2025NE000004 <
+2026NE000004), depois o código completo — no PDF e nas abas "Liquidação mensal" e "Resumo por
+NE" do Excel.
 
 Contrato público:
     BASE_COMPETENCIA, BASE_LANCAMENTO, BASE_SEM_DADO
@@ -74,8 +75,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-import re
-import unicodedata
 from io import BytesIO
 from xml.sax.saxutils import escape
 
@@ -177,20 +176,6 @@ def _soma(serie: pd.Series) -> float | None:
     return None if pd.isna(total) else float(total)
 
 
-def _chave_alfabetica(valor: object) -> str:
-    """Chave de ordenação só com letras e números: sem acento, sem caixa, sem pontuação, com
-    espaços repetidos colapsados e "º"/"°" descartados ("Ação" = "ACAO"; "DIARIAS NO PAIS  -
-    OFICIO Nº 1" = "Diarias no pais oficio n 1"). As descrições do SIAFI variam muito em
-    espaçamento e pontuação — sem isso, um espaço duplo ou um hífen decidia a ordem antes das
-    letras (relato do usuário: "os empenhos não estão em ordem alfabética")."""
-
-    if valor is None or pd.isna(valor):
-        return ""
-    texto = str(valor).replace("º", "").replace("°", "").replace("ª", "")
-    sem_acento = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
-    return " ".join(re.sub(r"[^0-9a-z]+", " ", sem_acento.casefold()).split())
-
-
 def montar_relatorio(
     nes: pd.DataFrame,
     lancamento: pd.DataFrame,
@@ -207,14 +192,12 @@ def montar_relatorio(
         raise ValueError(f"Modo desconhecido: {modo!r} (esperado um de {MODOS})")
 
     nes = nes[["ne_ccor", "ano", "ne_favorecido", "ne_descricao"]].drop_duplicates("ne_ccor")
-    # ordem alfabética (pedido explícito): descrição, depois favorecido, depois NE — sem
-    # diferenciar maiúsculas/acentos; descrição nula vai para o fim. Agrupa despesas iguais de
-    # exercícios diferentes (ex. "DIARIAS NO PAIS" de 2024, 2025 e 2026 lado a lado).
-    nes = nes.assign(
-        _k_desc=nes["ne_descricao"].map(_chave_alfabetica),
-        _k_fav=nes["ne_favorecido"].map(_chave_alfabetica),
-        _k_nulo=nes["ne_descricao"].isna(),
-    ).sort_values(["_k_nulo", "_k_desc", "_k_fav", "ne_ccor"])[["ne_ccor", "ano", "ne_favorecido", "ne_descricao"]]
+    # ordem pelo número do empenho (pedido explícito): NE curta (ano + número), depois o código
+    # completo como desempate (mesma NE curta em UGs diferentes).
+    nes = (
+        nes.assign(_k_ne=nes["ne_ccor"].map(_ne_curta))
+        .sort_values(["_k_ne", "ne_ccor"])[["ne_ccor", "ano", "ne_favorecido", "ne_descricao"]]
+    )
     ordem_ne = {ne: posicao for posicao, ne in enumerate(nes["ne_ccor"])}
     alvo = set(nes["ne_ccor"])
     lanc = lancamento.loc[lancamento["ne_ccor"].isin(alvo), ["ne_ccor", "ano_mes", "valor"]]

@@ -136,42 +136,30 @@ class MontarRelatorioTest(unittest.TestCase):
         rel = montar_relatorio(_nes(), lanc, _competencia())
         self.assertEqual(rel.nes_competencia_divergente, [])
 
-    def test_ordem_alfabetica_pela_descricao_sem_acento_nem_caixa(self) -> None:
-        # "BOLSAS..." < "LIMPEZA..." ; descrição nula (NE_VAZIA) por último
-        self.assertEqual(self.rel.resumo["ne_ccor"].tolist(), [NE_LANC, NE_COMP, NE_VAZIA])
-        self.assertEqual(
-            self.rel.mensal["ne_ccor"].tolist(), [NE_LANC, NE_COMP, NE_COMP, NE_VAZIA]
+    def test_ordem_pelo_numero_do_empenho(self) -> None:
+        # 2025NE000010 < 2026NE000056 < 2026NE000099 — independente da descrição
+        self.assertEqual(self.rel.resumo["ne_ccor"].tolist(), [NE_COMP, NE_LANC, NE_VAZIA])
+        self.assertEqual(self.rel.mensal["ne_ccor"].tolist(), [NE_COMP, NE_COMP, NE_LANC, NE_VAZIA])
+        nes = _nes()
+        nes["ne_descricao"] = ["AAA", "ZZZ", "MMM"]
+        rel = montar_relatorio(nes, _lancamento(), _competencia())
+        self.assertEqual(rel.resumo["ne_ccor"].tolist(), [NE_COMP, NE_LANC, NE_VAZIA])
+
+    def test_ordem_usa_ano_e_numero_da_ne_curta_nao_o_prefixo_da_ug(self) -> None:
+        # UG diferente no prefixo não pode passar na frente de uma NE de ano anterior
+        nes = pd.DataFrame(
+            {
+                "ne_ccor": ["999999999992025NE000001", "153165152392026NE000001", "153165152392024NE000500"],
+                "ano": [2025, 2026, 2024],
+                "ne_favorecido": ["A", "B", "C"],
+                "ne_descricao": ["X", "Y", "Z"],
+            }
         )
-        nes = _nes()
-        nes["ne_descricao"] = ["ágil", "Abacaxi", "acerola"]
-        rel = montar_relatorio(nes, _lancamento(), _competencia())
-        # "abacaxi" < "acerola" < "agil" (acento e caixa ignorados)
-        self.assertEqual(rel.resumo["ne_descricao"].tolist(), ["Abacaxi", "acerola", "ágil"])
-
-    def test_ordem_ignora_pontuacao_e_espacos_repetidos(self) -> None:
-        # casos reais da base: espaço duplo e hífen não podem decidir a ordem antes das letras,
-        # e "N°"/"Nº" são a mesma coisa.
-        nes = _nes()
-        nes["ne_descricao"] = [
-            "DIARIAS NO PAIS  SERVIDOR AGROECOLOGIA",  # NE_LANC — espaço duplo
-            "DIARIAS NO PAIS - DESPACHO Nº 38304",      # NE_COMP
-            "DIARIAS NO PAIS - OF. N° 76",              # NE_VAZIA
-        ]
-        rel = montar_relatorio(nes, _lancamento(), _competencia())
-        # despacho < of < servidor
-        self.assertEqual(rel.resumo["ne_ccor"].tolist(), [NE_COMP, NE_VAZIA, NE_LANC])
-
-        from src.relatorio_liquidacao_empenhos import _chave_alfabetica
-
-        self.assertEqual(_chave_alfabetica("OF. Nº 17"), _chave_alfabetica("of  n° 17"))
-        self.assertEqual(_chave_alfabetica("Ação - Educação"), "acao educacao")
-
-    def test_desempate_por_favorecido_e_ne(self) -> None:
-        nes = _nes()
-        nes["ne_descricao"] = "MESMA"
-        nes["ne_favorecido"] = ["B", "A", "A"]
-        rel = montar_relatorio(nes, _lancamento(), _competencia())
-        self.assertEqual(rel.resumo["ne_ccor"].tolist(), [NE_COMP, NE_VAZIA, NE_LANC])
+        rel = montar_relatorio(nes, _lancamento(), None)
+        self.assertEqual(
+            rel.resumo["ne_ccor"].tolist(),
+            ["153165152392024NE000500", "999999999992025NE000001", "153165152392026NE000001"],
+        )
 
     def test_por_exercicio_soma_por_ano_e_expoe_mistura_de_bases(self) -> None:
         ex = self.rel.por_exercicio.set_index("ano")

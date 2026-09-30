@@ -111,8 +111,8 @@ lançamento, `tesouro_execucao_mensal.liquidado_por_ne_e_mes`) com aviso quando 
 relatório é da NE inteira, não do recorte de linhas dos filtros (a base de competência não tem
 classificação orçamentária).
 Pedido posterior: o PDF troca o "Resumo por NE" pela "Consolidação Orçamentária do Grupo"
-(mesma `consolidar_por_dimensao` usada no quadro da tela) e as NEs saem em ordem alfabética da
-descrição.
+(mesma `consolidar_por_dimensao` usada no quadro da tela) e as NEs saem em ordem do número do
+empenho.
 
 CARTÃO CLICÁVEL (pedido explícito posterior): o botão "Ver", antes numa coluna separada de
 cada linha, foi removido — cada NE vira um único `st.button` de largura total (rótulo "NE —
@@ -912,7 +912,7 @@ def _render_relatorio_liquidacao_grupo(
         f"{len(relatorio.resumo)} NE(s) marcada(s) — {por_competencia} por competência. "
         if not somente_lancamento
         else f"{len(relatorio.resumo)} NE(s) marcada(s), todas pela data de liquidação. "
-        "Uma linha por NE e ano, colunas Jan–Dez, em ordem alfabética da descrição. PDF e Excel "
+        "Uma linha por NE e ano, colunas Jan–Dez, em ordem do número do empenho. PDF e Excel "
         "trazem também a Consolidação Orçamentária do Grupo; o Excel, ainda, o resumo por NE com "
         "a reconciliação contra o total liquidado da Execução Mensal."
     )

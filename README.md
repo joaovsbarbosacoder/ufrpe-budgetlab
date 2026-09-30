@@ -104,7 +104,7 @@ resumo por NE reconcilia o total da série com o liquidado total da NE na
 Execução Mensal e sinaliza competência parcial ou defasada (no Excel); o PDF
 traz, em vez dele, a Consolidação Orçamentária do Grupo da tela (também presente
 no Excel, aba "Consolidação"). As NEs saem
-em ordem alfabética da descrição do empenho. Um quadro "Comparativo por
+em ordem do número do empenho. Um quadro "Comparativo por
 exercício" (PDF e aba "Por exercício" do Excel) soma as NEs por ano do mês,
 informando quantas NEs de cada base compõem cada ano. O seletor "Base do
 relatório" permite gerar tudo "Somente por data de liquidação", para comparar
