@@ -148,6 +148,24 @@ class MontarRelatorioTest(unittest.TestCase):
         # "abacaxi" < "acerola" < "agil" (acento e caixa ignorados)
         self.assertEqual(rel.resumo["ne_descricao"].tolist(), ["Abacaxi", "acerola", "ágil"])
 
+    def test_ordem_ignora_pontuacao_e_espacos_repetidos(self) -> None:
+        # casos reais da base: espaço duplo e hífen não podem decidir a ordem antes das letras,
+        # e "N°"/"Nº" são a mesma coisa.
+        nes = _nes()
+        nes["ne_descricao"] = [
+            "DIARIAS NO PAIS  SERVIDOR AGROECOLOGIA",  # NE_LANC — espaço duplo
+            "DIARIAS NO PAIS - DESPACHO Nº 38304",      # NE_COMP
+            "DIARIAS NO PAIS - OF. N° 76",              # NE_VAZIA
+        ]
+        rel = montar_relatorio(nes, _lancamento(), _competencia())
+        # despacho < of < servidor
+        self.assertEqual(rel.resumo["ne_ccor"].tolist(), [NE_COMP, NE_VAZIA, NE_LANC])
+
+        from src.relatorio_liquidacao_empenhos import _chave_alfabetica
+
+        self.assertEqual(_chave_alfabetica("OF. Nº 17"), _chave_alfabetica("of  n° 17"))
+        self.assertEqual(_chave_alfabetica("Ação - Educação"), "acao educacao")
+
     def test_desempate_por_favorecido_e_ne(self) -> None:
         nes = _nes()
         nes["ne_descricao"] = "MESMA"

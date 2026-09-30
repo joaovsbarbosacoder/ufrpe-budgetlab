@@ -74,6 +74,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+import re
 import unicodedata
 from io import BytesIO
 from xml.sax.saxutils import escape
@@ -177,12 +178,17 @@ def _soma(serie: pd.Series) -> float | None:
 
 
 def _chave_alfabetica(valor: object) -> str:
-    """Chave de ordenação sem acento e sem caixa ("Ação" e "ACAO" empatam)."""
+    """Chave de ordenação só com letras e números: sem acento, sem caixa, sem pontuação, com
+    espaços repetidos colapsados e "º"/"°" descartados ("Ação" = "ACAO"; "DIARIAS NO PAIS  -
+    OFICIO Nº 1" = "Diarias no pais oficio n 1"). As descrições do SIAFI variam muito em
+    espaçamento e pontuação — sem isso, um espaço duplo ou um hífen decidia a ordem antes das
+    letras (relato do usuário: "os empenhos não estão em ordem alfabética")."""
 
     if valor is None or pd.isna(valor):
         return ""
-    sem_acento = unicodedata.normalize("NFKD", str(valor)).encode("ascii", "ignore").decode("ascii")
-    return sem_acento.casefold().strip()
+    texto = str(valor).replace("º", "").replace("°", "").replace("ª", "")
+    sem_acento = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
+    return " ".join(re.sub(r"[^0-9a-z]+", " ", sem_acento.casefold()).split())
 
 
 def montar_relatorio(
