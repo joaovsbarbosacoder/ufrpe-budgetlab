@@ -605,6 +605,17 @@ _LARGURAS_CONSOLIDACAO_PDF = [305, 70, 40, 92, 92, 92, 92]
 _COR_TITULO_NE = colors.HexColor("#E8EEF7")
 
 
+def _comandos_nosplit_por_ne(inicios: list[int], total_linhas: int) -> list[tuple]:
+    """Um `NOSPLIT` por bloco de NE da tabela mensal (faixa de título + linhas de ano dela) —
+    a quebra de página só acontece ENTRE NEs, nunca separando a faixa "NE — favorecido —
+    descrição" dos valores a que ela se refere. `inicios`: índice da faixa de cada NE, em ordem;
+    o bloco vai até a linha anterior à próxima faixa (a última, até `total_linhas - 1`). Tabela
+    única (não um bloco por NE), para manter o cabeçalho repetido e as colunas alinhadas."""
+
+    fins = [proximo - 1 for proximo in inicios[1:]] + [total_linhas - 1]
+    return [("NOSPLIT", (0, inicio), (-1, fim)) for inicio, fim in zip(inicios, fins)]
+
+
 def _estilo_tabela(colunas_valor_inicio: int, com_total: bool, zebra: bool = True) -> TableStyle:
     comandos = [
         ("FONTSIZE", (0, 0), (-1, -1), 6.5),
@@ -667,6 +678,7 @@ def gerar_pdf(
     mensal = relatorio.mensal
     dados: list[list[object]] = [_CABECALHO_MENSAL_PDF]
     comandos_titulo: list[tuple] = []
+    inicios_ne: list[int] = []
     ne_anterior = None
     for _, linha in mensal.iterrows():
         if linha["ne_ccor"] != ne_anterior:
@@ -677,6 +689,7 @@ def gerar_pdf(
                 f"{escape(_texto(linha['ne_descricao']) or '(sem descrição)')}"
             )
             indice = len(dados)
+            inicios_ne.append(indice)
             dados.append([Paragraph(titulo, estilo_titulo_ne)] + [""] * (len(_CABECALHO_MENSAL_PDF) - 1))
             comandos_titulo += [
                 ("SPAN", (0, indice), (-1, indice)),
@@ -693,7 +706,7 @@ def gerar_pdf(
         )
     tabela = Table(dados, colWidths=_LARGURAS_MENSAL_PDF, repeatRows=1)
     estilo_mensal = _estilo_tabela(3, com_total=False, zebra=False)
-    for comando in comandos_titulo:
+    for comando in comandos_titulo + _comandos_nosplit_por_ne(inicios_ne, len(dados)):
         estilo_mensal.add(*comando)
     tabela.setStyle(estilo_mensal)
     elementos.append(Paragraph("Liquidação mensal (uma linha por NE e ano do mês)", estilos["Heading4"]))  # sem keepWithNext: tabela longa, não pode ser empurrada inteira pra próxima página

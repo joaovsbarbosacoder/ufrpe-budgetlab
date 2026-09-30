@@ -440,6 +440,37 @@ class GerarArquivosTest(unittest.TestCase):
         self.assertTrue(conteudo.startswith(b"%PDF"))
         self.assertGreater(len(conteudo), 1_000)
 
+    def test_nosplit_cobre_faixa_e_linhas_de_cada_ne(self) -> None:
+        from src.relatorio_liquidacao_empenhos import _comandos_nosplit_por_ne
+
+        # cabeçalho na linha 0; NE A: faixa 1 + linhas 2-3; NE B: faixa 4 + linha 5; NE C: 6-7
+        self.assertEqual(
+            _comandos_nosplit_por_ne([1, 4, 6], 8),
+            [("NOSPLIT", (0, 1), (-1, 3)), ("NOSPLIT", (0, 4), (-1, 5)), ("NOSPLIT", (0, 6), (-1, 7))],
+        )
+        self.assertEqual(_comandos_nosplit_por_ne([], 1), [])
+
+    def test_pdf_com_muitas_nes_quebra_paginas_sem_erro(self) -> None:
+        # 60 NEs com 2 anos cada — força várias quebras de página com NOSPLIT em todos os blocos
+        nes = pd.DataFrame(
+            {
+                "ne_ccor": [f"153165152392026NE{n:06d}" for n in range(60)],
+                "ano": 2026,
+                "ne_favorecido": "EMPRESA",
+                "ne_descricao": [f"DESPESA {n:02d}" for n in range(60)],
+            }
+        )
+        lancamento = pd.DataFrame(
+            {
+                "ne_ccor": [ne for ne in nes["ne_ccor"] for _ in range(2)],
+                "ano_mes": [202512, 202601] * 60,
+                "valor": [10.0, 20.0] * 60,
+            }
+        )
+        rel = montar_relatorio(nes, lancamento, None)
+        self.assertEqual(len(rel.mensal), 120)
+        self.assertTrue(gerar_pdf(rel, _contexto(origem_competencia=None)).startswith(b"%PDF"))
+
     def test_pdf_sem_competencia_e_so_sem_dado(self) -> None:
         rel = montar_relatorio(_nes().iloc[[2]], _lancamento(), None)
         self.assertTrue(gerar_pdf(rel, _contexto(origem_competencia=None)).startswith(b"%PDF"))
