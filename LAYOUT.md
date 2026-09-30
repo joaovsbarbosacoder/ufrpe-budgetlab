@@ -138,8 +138,14 @@ Ordem vertical de renderização. "N cols" indica quantas colunas a linha usa. B
 - Dois cortes de sensibilidade (`st.columns(2)`), cada um `st.columns([3,1], vertical_alignment="bottom")`:
   valor mínimo (R$) + toggle de percentual mínimo
 - Faixa de KPIs (`st.columns(4)`, `st.metric`)
-- Cabeçalho de tabela (`st.columns([1.3,2,1.2,1.2,1.2,0.9,0.8])`, 7 colunas)
-- Lista de linhas (mesma grade de 7 colunas), cada uma clicável
+- `st.segmented_control` "Exibir": "Em destaque" (padrão) / "Todos no escopo" (desde
+  28/09/2026)
+- Cabeçalho de tabela (`st.columns([1.3,2,1.2,1.2,1.2,0.9,0.8])`, 7 colunas; em "Todos no
+  escopo", 8 colunas — coluna "Corte" antes do botão)
+- Lista de linhas (mesma grade), cada uma clicável — paginada em 100 linhas
+  (`st.number_input` "Página" só aparece com mais de uma página)
+- "Relatório": `st.columns(2)` com `st.download_button` PDF | Excel
+  (`src/relatorio_empenhos_retardada.py`, geração só no clique)
 - `@st.dialog("Detalhe do empenho", width="large")`:
   - `st.columns(4)` de métricas
   - `st.expander` — "Linhas de origem (rastreabilidade)" (`st.dataframe`)

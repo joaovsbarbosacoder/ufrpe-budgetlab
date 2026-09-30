@@ -92,6 +92,25 @@ Nota de Empenho, exibindo as linhas de origem (`linha_origem`).
 Layout de origem, regras de reconciliação e decisões de arquitetura estão
 em `docs/base_execucao_anual.md`.
 
+### Consulta de Empenhos — relatório de liquidação do grupo
+
+Na página **Consulta de Empenhos** (Execução Mensal), as NEs marcadas na
+lista podem ser extraídas em PDF e Excel (`src/relatorio_liquidacao_empenhos.py`):
+Liquidado mês a mês, uma linha por NE e ano. Cada NE usa uma única base,
+indicada na coluna "Base": **Competência** (mês de referência, base
+Liquidação por Competência) quando a NE tem registro nela; caso contrário,
+**Data de liquidação** (mês de lançamento, Execução Mensal), com aviso. O
+resumo por NE reconcilia o total da série com o liquidado total da NE na
+Execução Mensal e sinaliza competência parcial ou defasada (no Excel); o PDF
+traz, em vez dele, a Consolidação Orçamentária do Grupo da tela (também presente
+no Excel, aba "Consolidação"). As NEs saem
+em ordem do número do empenho. Um quadro "Comparativo por
+exercício" (PDF e aba "Por exercício" do Excel) soma as NEs por ano do mês,
+informando quantas NEs de cada base compõem cada ano. O seletor "Base do
+relatório" permite gerar tudo "Somente por data de liquidação", para comparar
+exercícios no mesmo critério quando a base de competência não cobre os anos
+anteriores; o modo aparece no título, nos parâmetros e no nome do arquivo.
+
 ### Emendas Parlamentares
 
 O relatório **Emendas — Acompanhamento** possui leitor específico em

@@ -61,6 +61,12 @@ Esquema aprovado antes da implementação original (ver histórico da conversa):
     explícito de ajuste: a primeira versão usava seleção de linha em `st.dataframe` com o
     detalhe renderizado abaixo, que não ficou claro como resposta ao clique; o pop-up deixa
     inequívoco que o clique funcionou, sem navegar para aba/página separada.
+  * Visualização "Em destaque" (padrão) / "Todos no escopo" (pedido explícito, 28/09/2026: a
+    página não mostrava todas as NEs do escopo, só as acima do corte): "Todos" lista todas as
+    NEs de `visivel`, com coluna "Corte" (✓ passa / vazio não passa / "—" nenhum corte ligado).
+    Lista paginada em `TAMANHO_PAGINA` linhas (o escopo chega a milhares de NEs). Relatório em
+    PDF e Excel (`src/relatorio_empenhos_retardada.py`) com a lista exibida — a visualização
+    escolhida, todas as páginas — mais procedência, cortes e filtros aplicados.
   * Indicadores gerenciais no topo via `render_metric_grid` (`src/ui_theme.py`), mesmo padrão
     das demais páginas — não HTML customizado.
   * Fora de escopo, por pedido explícito: nenhum cálculo de ritmo/atraso temporal (% liquidado
@@ -80,6 +86,13 @@ import streamlit as st
 from src.execucao_ne_utils import detalhar_nota_empenho, saldo_por_ne
 from src.execucao_ne_utils import ne_curta as _ne_curta_execucao
 from src.importacao_execucao_mensal import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
+from src.relatorio_empenhos_retardada import (
+    COLUNA_PASSA_CORTE,
+    ContextoRelatorio,
+    gerar_pdf,
+    gerar_xlsx,
+    montar_lista_relatorio,
+)
 from src.tesouro_execucao_mensal import agregar_por_ne
 from src.ui_filtros_execucao import (
     CAMPOS_AVANCADOS_EXECUCAO,
@@ -118,6 +131,10 @@ CAMPOS_PAGINA = CAMPOS_RAPIDOS_EXECUCAO + CAMPOS_AVANCADOS_PAGINA
 
 CORTE_RS_PADRAO = 10_000.0
 CORTE_PCT_PADRAO = 20.0  # %
+
+VISAO_DESTAQUE = "Em destaque"
+VISAO_TODOS = "Todos no escopo"
+TAMANHO_PAGINA = 100
 
 COLUNAS_BUSCA = [
     "ne_ccor", "ne_descricao", "ne_favorecido", "natureza_detalhada_label",
@@ -176,6 +193,19 @@ def _dataframe_restrito_a_busca(dataframe: pd.DataFrame, busca: str) -> pd.DataF
             mascara = mascara | dataframe[coluna].astype("string").str.lower().str.contains(alvo, na=False, regex=False)
     nes_que_batem = set(dataframe.loc[mascara, "ne_ccor"])
     return dataframe[dataframe["ne_ccor"].isin(nes_que_batem)]
+
+
+def _filtros_selecionados(source_key: str) -> list[tuple[str, list[str]]]:
+    """(rótulo do filtro, rótulos "código — descrição" selecionados) de cada campo com alguma
+    seleção — só para o cabeçalho do relatório, lido das mesmas chaves de `st.session_state`
+    que `src/ui_filtros_execucao.py` usa nos `st.multiselect`."""
+
+    filtros = []
+    for filter_name, label, _code, _desc in CAMPOS_PAGINA:
+        rotulos = st.session_state.get(f"{_PREFIXO_FILTRO}_{filter_name}_{source_key}") or []
+        if rotulos:
+            filtros.append((label, [str(r) for r in rotulos]))
+    return filtros
 
 
 def _brl(valor: object) -> str:
@@ -472,34 +502,120 @@ else:  # "E", só possível com os dois cortes ativos (ver modo_combinacao acima
 em_destaque = visivel[em_destaque_mascara]
 abaixo_do_corte = visivel[~em_destaque_mascara]
 
-st.markdown("#### Em destaque")
+# Visualização (pedido explícito, 28/09/2026: "a página não mostra todos os empenhos que estão
+# dentro daquele escopo"): "Em destaque" (padrão — comportamento já validado) ou "Todos no
+# escopo" (todas as NEs de `visivel`, com a coluna "Corte" indicando quem passa do(s) corte(s)
+# ligado(s); funciona mesmo com os dois cortes desligados). O relatório (PDF/Excel) segue a
+# visualização escolhida — "o que está na tela" (pedido explícito).
+st.markdown("#### Empenhos")
+visualizacao = st.segmented_control(
+    "Exibir",
+    options=[VISAO_DESTAQUE, VISAO_TODOS],
+    default=VISAO_DESTAQUE,
+    key=f"{_PREFIXO_FILTRO}_visualizacao_{source_key}",
+) or VISAO_DESTAQUE
+mostrar_todos = visualizacao == VISAO_TODOS
+
 if descricao_corte is None:
-    st.warning("Ligue pelo menos um dos dois cortes acima para ver os empenhos em destaque.")
+    if not mostrar_todos:
+        st.warning(
+            "Ligue pelo menos um dos dois cortes acima para ver os empenhos em destaque "
+            f'(ou escolha "{VISAO_TODOS}").'
+        )
 else:
     st.caption(f"{len(em_destaque)} de {len(visivel)} empenhos com {descricao_corte}.")
 
-if em_destaque.empty:
-    if descricao_corte is not None:
+# UMA lista só, já ordenada, para a tela e para o relatório (PDF/Excel) — ver
+# `montar_lista_relatorio`: o relatório não pode divergir do que está na tela.
+ordenado = montar_lista_relatorio(visivel, em_destaque_mascara, cortes_ligados=descricao_corte is not None, todos=mostrar_todos)
+
+if ordenado.empty:
+    if descricao_corte is not None and not mostrar_todos:
         st.info("Nenhum empenho passa do(s) corte(s) ligado(s) acima.")
 else:
-    ordenado = em_destaque.sort_values("saldo", ascending=False, na_position="last").reset_index(drop=True)
-    cabecalho = st.columns([1.3, 2, 1.2, 1.2, 1.2, 0.9, 0.8])
-    for coluna, rotulo in zip(cabecalho, ["NE", "Favorecido", "Empenhado", "Liquidado", "Saldo", "% Saldo", ""]):
+
+    # Paginação: "Todos no escopo" chega a milhares de NEs (uma linha de widgets por NE, com
+    # botão "Ver") — desenhar tudo de uma vez travaria a página. O relatório sempre leva a lista
+    # inteira, não só a página visível.
+    total_paginas = max(1, -(-len(ordenado) // TAMANHO_PAGINA))
+    pagina = 1
+    if total_paginas > 1:
+        pagina_key = f"{_PREFIXO_FILTRO}_pagina_{visualizacao}_{source_key}"
+        # filtro/corte mudou e a lista encolheu: página guardada fora do novo intervalo volta
+        # para a última válida (number_input levanta erro com valor acima de max_value).
+        if st.session_state.get(pagina_key, 1) > total_paginas:
+            st.session_state[pagina_key] = total_paginas
+        pagina = st.number_input(
+            f"Página (de {total_paginas}, {TAMANHO_PAGINA} empenhos por página)",
+            min_value=1,
+            max_value=total_paginas,
+            value=1,
+            step=1,
+            key=pagina_key,
+        )
+    inicio = (int(pagina) - 1) * TAMANHO_PAGINA
+    trecho = ordenado.iloc[inicio : inicio + TAMANHO_PAGINA]
+    if total_paginas > 1:
+        st.caption(f"Exibindo {inicio + 1}–{inicio + len(trecho)} de {len(ordenado)} empenhos.")
+
+    proporcoes = [1.3, 2, 1.2, 1.2, 1.2, 0.9, 0.7, 0.8] if mostrar_todos else [1.3, 2, 1.2, 1.2, 1.2, 0.9, 0.8]
+    rotulos = ["NE", "Favorecido", "Empenhado", "Liquidado", "Saldo", "% Saldo"] + (["Corte"] if mostrar_todos else []) + [""]
+    cabecalho = st.columns(proporcoes)
+    for coluna, rotulo in zip(cabecalho, rotulos):
         coluna.markdown(f"**{rotulo}**" if rotulo else "")
-    for posicao, linha in ordenado.iterrows():
-        c = st.columns([1.3, 2, 1.2, 1.2, 1.2, 0.9, 0.8])
+    for posicao, linha in trecho.iterrows():
+        c = st.columns(proporcoes)
         c[0].write(_ne_exibicao(linha["ne_ccor"], linha["ano"]))
         c[1].write(_dash(linha["ne_favorecido"]))
         c[2].write(_brl(linha["empenhada"]))
         c[3].write(_brl(linha["liquidada"]))
         c[4].write(_brl(linha["saldo"]))
         c[5].write(_pct(linha["percentual_saldo"]))
-        if c[6].button("Ver", key=f"{_PREFIXO_FILTRO}_ver_{source_key}_{posicao}"):
+        if mostrar_todos:
+            c[6].write("—" if pd.isna(linha[COLUNA_PASSA_CORTE]) else ("✓" if linha[COLUNA_PASSA_CORTE] else ""))
+        if c[-1].button("Ver", key=f"{_PREFIXO_FILTRO}_ver_{source_key}_{visualizacao}_{posicao}"):
             _abrir_detalhe(filtrado, linha)
 
-if descricao_corte is not None and not abaixo_do_corte.empty:
+if not mostrar_todos and descricao_corte is not None and not abaixo_do_corte.empty:
     soma_abaixo = abaixo_do_corte["saldo"].sum()
     st.caption(f"+ {len(abaixo_do_corte)} empenhos abaixo do corte, somando {_brl(soma_abaixo)} de saldo.")
 
 data_extracao_texto = datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y")
+
+if not ordenado.empty:
+    contexto_relatorio = ContextoRelatorio(
+        visualizacao=visualizacao,
+        descricao_corte=descricao_corte,
+        data_extracao=data_extracao_texto,
+        hash_manifesto=manifesto.sha256[:8],
+        data_emissao=datetime.now().strftime("%d/%m/%Y %H:%M"),
+        busca=(busca or "").strip(),
+        filtros=_filtros_selecionados(source_key),
+    )
+    nome_arquivo = f"empenhos_execucao_retardada_{'todos' if mostrar_todos else 'destaque'}_{manifesto.data_extracao[:10]}"
+    st.markdown("#### Relatório")
+    st.caption(f"{len(ordenado)} empenhos — mesma lista exibida acima ({visualizacao.lower()}), todas as páginas.")
+    col_pdf, col_xlsx = st.columns(2)
+    with col_pdf:
+        st.download_button(
+            "Baixar PDF",
+            data=lambda: gerar_pdf(ordenado, contexto_relatorio),
+            file_name=f"{nome_arquivo}.pdf",
+            mime="application/pdf",
+            type="primary",
+            width="stretch",
+            on_click="ignore",
+            key=f"{_PREFIXO_FILTRO}_download_pdf_{source_key}",
+        )
+    with col_xlsx:
+        st.download_button(
+            "Baixar Excel",
+            data=lambda: gerar_xlsx(ordenado, contexto_relatorio),
+            file_name=f"{nome_arquivo}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
+            on_click="ignore",
+            key=f"{_PREFIXO_FILTRO}_download_xlsx_{source_key}",
+        )
+
 st.caption(f"Procedência: extração de {data_extracao_texto} · hash {manifesto.sha256[:8]}")

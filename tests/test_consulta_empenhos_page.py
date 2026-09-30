@@ -225,6 +225,40 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         self.assertGreater(len(app.checkbox), marcados_antes)
         self.assertTrue(any(b.label == "Selecionar todos" for b in app.button))
 
+    def _downloads_liquidacao(self, app: AppTest):
+        return [
+            b for b in app.get("download_button")
+            if b.proto.id and "consulta_empenhos_liquidacao_" in b.proto.id
+        ]
+
+    def test_relatorio_de_liquidacao_pede_marcacao_quando_vazio(self) -> None:
+        app = self._open_page()
+
+        self.assertTrue(any(h.value == "Relatório de liquidação do grupo" for h in app.subheader))
+        self.assertTrue(any("para gerar o relatório" in item.value for item in app.caption))
+        self.assertEqual(self._downloads_liquidacao(app), [])
+
+    def test_relatorio_de_liquidacao_oferece_pdf_e_excel_apos_marcar(self) -> None:
+        app = self._open_page()
+        ne_primeira = self._ne_do_cartao(self._cartoes_lista(app)[0])
+
+        caixa = next(c for c in app.checkbox if c.key.endswith(ne_primeira))
+        caixa.set_value(True)
+        app.run()
+
+        self.assertEqual(len(app.exception), 0)
+        downloads = self._downloads_liquidacao(app)
+        self.assertEqual(len(downloads), 2)
+        self.assertTrue(any("1 NE(s) marcada(s)" in item.value for item in app.caption))
+
+        modo = next(r for r in app.radio if r.label == "Base do relatório")
+        self.assertEqual(modo.value, "Competência quando houver")
+        modo.set_value("Somente data de liquidação")
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(any("todas pela data de liquidação" in item.value for item in app.caption))
+        self.assertEqual(len(self._downloads_liquidacao(app)), 2)
+
     def test_consolidacao_do_grupo_pede_marcacao_quando_vazia(self) -> None:
         app = self._open_page()
 
@@ -396,8 +430,32 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         self.assertLess(len(acao_filter.options), self.total_acoes)
         self.assertFalse(any("ADMINISTRACAO DA UNIDADE" in opcao for opcao in acao_filter.options))
 
+    def test_ordem_padrao_e_numero_da_ne_crescente(self) -> None:
+        # pedido explícito (30/09/2026): a lista abre por "Nº da NE", mesma ordem do relatório
+        # de liquidação — NE curta crescente (ano + número).
+        app = self._open_page()
+        ordem = next(s for s in app.selectbox if s.key and s.key.startswith("consulta_empenhos_ordem_"))
+        self.assertEqual(ordem.value, "Nº da NE")
+        nes = [self._ne_do_cartao(c) for c in self._cartoes_lista(app)]
+        self.assertGreater(len(nes), 1)
+        self.assertEqual(nes, sorted(nes))
+
+    def test_ordem_maior_saldo_continua_disponivel(self) -> None:
+        app = self._open_page()
+        ordem = next(s for s in app.selectbox if s.key and s.key.startswith("consulta_empenhos_ordem_"))
+        ordem.set_value("Maior saldo de empenho")
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        primeiro = self._ne_do_cartao(self._cartoes_lista(app)[0])
+        maior_saldo = (
+            agregar_por_ne(self.dataframe).reset_index()
+            .assign(saldo=lambda d: d["empenhada"] - d["liquidada"].fillna(0.0))
+            .sort_values("saldo", ascending=False).iloc[0]["ne_ccor"]
+        )
+        self.assertTrue(maior_saldo.endswith(primeiro))
+
     def test_default_selection_matches_sort_order(self) -> None:
-        # Padrão: "Maior saldo de empenho" — o cartão selecionado (marcado nativamente por
+        # Padrão: "Nº da NE" — o cartão selecionado (marcado nativamente por
         # `type="primary"`, não uma classe CSS própria — ver docstring do módulo) deve ser o
         # primeiro da página 1, e sua NE deve ser a exibida no painel de detalhamento.
         app = self._open_page()

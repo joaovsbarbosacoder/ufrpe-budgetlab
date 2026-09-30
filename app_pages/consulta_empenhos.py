@@ -103,6 +103,17 @@ mês — decisão explícita da v1: não reconcilia com o total liquidado da NE,
 para o valor de lançamento (ver docs/BudgetLab_competencia_por_empenho.md para o desenho
 completo, do qual só esta peça foi implementada até agora).
 
+RELATÓRIO DE LIQUIDAÇÃO DO GRUPO (pedido explícito, 30/09/2026): as NEs marcadas na lista
+(mesmas do "Resumo do grupo selecionado") viram alvo de um relatório PDF/Excel de liquidação
+mês a mês (`_render_relatorio_liquidacao_grupo` + `src/relatorio_liquidacao_empenhos.py`) —
+por competência quando a NE tem registro nessa base, pela data de liquidação (mês de
+lançamento, `tesouro_execucao_mensal.liquidado_por_ne_e_mes`) com aviso quando não tem. O
+relatório é da NE inteira, não do recorte de linhas dos filtros (a base de competência não tem
+classificação orçamentária).
+Pedido posterior: o PDF troca o "Resumo por NE" pela "Consolidação Orçamentária do Grupo"
+(mesma `consolidar_por_dimensao` usada no quadro da tela) e as NEs saem em ordem do número do
+empenho.
+
 CARTÃO CLICÁVEL (pedido explícito posterior): o botão "Ver", antes numa coluna separada de
 cada linha, foi removido — cada NE vira um único `st.button` de largura total (rótulo "NE —
 objeto"), que É o cartão (`_render_cartoes_lista`/`_rotulo_botao_cartao`). Favorecido e
@@ -147,7 +158,18 @@ from src.design_tokens import (
 from src.execucao_ne_utils import ne_curta as _ne_curta_execucao, saldo_por_ne
 from src.importacao_execucao_mensal import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
 from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne_e_mes
+from src.relatorio_liquidacao_empenhos import (
+    BASE_COMPETENCIA,
+    MODO_SOMENTE_LANCAMENTO,
+    MODOS,
+    ContextoRelatorioLiquidacao,
+    consolidar_por_dimensao,
+    montar_relatorio,
+)
+from src.relatorio_liquidacao_empenhos import gerar_pdf as gerar_pdf_liquidacao
+from src.relatorio_liquidacao_empenhos import gerar_xlsx as gerar_xlsx_liquidacao
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne
+from src.tesouro_execucao_mensal import liquidado_por_ne_e_mes as liquidado_lancamento_por_ne_e_mes
 from src.ui_filtros_execucao import CAMPOS_AVANCADOS_EXECUCAO, CAMPOS_RAPIDOS_EXECUCAO, CampoFiltro, apply_filters
 from src.ui_filtros_execucao import limpar_filtros as _limpar_filtros_compartilhado
 from src.ui_filtros_execucao import render_filtros_avancados as _render_filtros_avancados_compartilhado
@@ -216,7 +238,10 @@ DIMENSOES_CONSOLIDACAO_GRUPO = {
     "UGR - Gestão": ("ugr_cod", "ugr_desc"),
 }
 
-ORDENS = ("Maior saldo de empenho", "Maior valor empenhado", "Menor % liquidado", "Nº da NE")
+# "Nº da NE" primeiro = ordem padrão da lista (pedido explícito, 30/09/2026): a mesma do
+# "Relatório de liquidação do grupo", para as NEs marcadas saírem no relatório na ordem em que
+# aparecem na tela.
+ORDENS = ("Nº da NE", "Maior saldo de empenho", "Maior valor empenhado", "Menor % liquidado")
 
 # Pedido explícito: rolagem em vez de clicar em "Ver mais" repetidamente. A lista fica dentro
 # de uma caixa de altura fixa com rolagem própria (`.st-key-ce_list_scroll`, ver `_inject_css`)
@@ -326,6 +351,14 @@ def _cached_linha_do_tempo(caminho_ponteiro: str, sha_manifesto: str) -> pd.Data
     painel de detalhe."""
 
     return linha_do_tempo_por_ne(carregar_atual())
+
+
+@st.cache_data(show_spinner=False)
+def _cached_liquidado_lancamento(caminho_ponteiro: str, sha_manifesto: str) -> pd.DataFrame:
+    """Liquidado por (NE, mês de lançamento), sem preencher 0 — série de fallback do
+    "Relatório de liquidação do grupo" para NEs sem competência."""
+
+    return liquidado_lancamento_por_ne_e_mes(carregar_atual())
 
 
 @st.cache_data(show_spinner="Lendo a Liquidação por Competência...")
@@ -735,29 +768,14 @@ def _html_tabela_agrupada(dataframe: pd.DataFrame, coluna_cod: str, coluna_desc:
     grupo marcado (`_render_consolidacao_grupo`), onde o grupo costuma ser pequeno o bastante
     (algumas NEs escolhidas à mão) pra não precisar de "Ver mais" dentro de cada dimensão."""
 
-    colunas_grupo = [coluna_cod] if coluna_desc is None else [coluna_cod, coluna_desc]
-    agrupado = (
-        dataframe.groupby(colunas_grupo, dropna=False)
-        .agg(qtd=("ne_ccor", "count"), emp=("empenhada", lambda s: s.sum(min_count=1)),
-             liq=("liquidada", lambda s: s.sum(min_count=1)), pag=("paga", lambda s: s.sum(min_count=1)))
-        .reset_index()
-    )
+    # agregação em `consolidar_por_dimensao` (módulo do relatório) — a mesma que alimenta o
+    # quadro "Consolidação Orçamentária do Grupo" do PDF, para tela e PDF nunca divergirem.
+    agrupado = consolidar_por_dimensao(dataframe, coluna_cod, coluna_desc)
     if agrupado.empty:
         return ""
-    agrupado["saldo"] = agrupado["emp"] - agrupado["liq"].fillna(0.0)
-    agrupado = agrupado.sort_values("emp", ascending=False, na_position="last")
 
     linhas = "".join(
-        _html_linha_consolidacao(
-            nome=(
-                "(não informado)"
-                if pd.isna(row[coluna_cod])
-                else str(row[coluna_desc]) if coluna_desc and pd.notna(row[coluna_desc]) else str(row[coluna_cod])
-            ),
-            codigo=row[coluna_cod],
-            tem_codigo=True,
-            linha=row,
-        )
+        _html_linha_consolidacao(nome=row["nome"], codigo=row["codigo"], tem_codigo=True, linha=row)
         for _, row in agrupado.iterrows()
     )
     return f'<div class="ce-cons-head">{_CONSOLIDACAO_CABECALHO}</div>{linhas}'
@@ -816,6 +834,123 @@ def _render_resumo_grupo(visivel: pd.DataFrame, marcados: set[str], source_key: 
         for ne in marcados:
             st.session_state.pop(f"consulta_empenhos_marca_{source_key}_{ne}", None)
         st.rerun()
+
+
+def _render_relatorio_liquidacao_grupo(
+    visivel: pd.DataFrame,
+    marcados: set[str],
+    source_key: str,
+    liquidacao_competencia: pd.DataFrame | None,
+    manifesto: Manifesto,
+    caminho_ponteiro: Path,
+) -> None:
+    """Botões PDF/Excel do relatório de liquidação mensal das NEs marcadas (pedido explícito,
+    30/09/2026 — ver `src/relatorio_liquidacao_empenhos.py`): por competência quando a NE tem
+    registro nessa base, por data de liquidação (com aviso) quando não tem. Os arquivos só são
+    gerados no clique (`data=lambda`, mesmo padrão de `app_pages/empenhos_execucao_retardada.py`)."""
+
+    if not marcados:
+        st.caption("Marque a caixinha ao lado de um ou mais empenhos na lista para gerar o relatório.")
+        return
+
+    try:
+        lancamento = _cached_liquidado_lancamento(str(caminho_ponteiro), manifesto.sha256)
+    except Exception as error:
+        st.error(f"Não foi possível ler a liquidação da Execução Mensal: {error}")
+        return
+
+    nes = visivel.loc[visivel["ne_ccor"].isin(marcados), ["ne_ccor", "ano", "ne_favorecido", "ne_descricao"]]
+    modo = st.radio(
+        "Base do relatório",
+        MODOS,
+        horizontal=True,
+        key=f"consulta_empenhos_liquidacao_modo_{source_key}",
+        help=(
+            "Competência quando houver: cada NE por competência se tiver registro nessa base, senão "
+            "pela data de liquidação. Somente data de liquidação: todas as NEs pela Execução Mensal "
+            "(mês de lançamento) — use para comparar exercícios no mesmo critério."
+        ),
+    )
+    somente_lancamento = modo == MODO_SOMENTE_LANCAMENTO
+    relatorio = montar_relatorio(nes, lancamento, liquidacao_competencia, modo)
+    grupo = visivel[visivel["ne_ccor"].isin(marcados)]
+    consolidacao = [
+        (rotulo, consolidar_por_dimensao(grupo, coluna_cod, coluna_desc))
+        for rotulo, (coluna_cod, coluna_desc) in DIMENSOES_CONSOLIDACAO_GRUPO.items()
+    ]
+
+    def _lista(ne_ccors: list[str]) -> str:
+        return ", ".join(_ne_curta_execucao(ne) for ne in ne_ccors)
+
+    if somente_lancamento:
+        origem_competencia = None
+        st.info("Todas as NEs pela data de liquidação (mês de lançamento, Execução Mensal) — por escolha.")
+    elif liquidacao_competencia is None:
+        origem_competencia = None
+        st.warning(
+            "A base de Liquidação por Competência não está disponível: o relatório mostrará "
+            "todas as NEs pela data de liquidação (mês de lançamento)."
+        )
+    else:
+        modificado = datetime.fromtimestamp(CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime)
+        origem_competencia = f"{CAMINHO_LIQUIDACAO_COMPETENCIA.name} · modificado em {modificado:%d/%m/%Y %H:%M}"
+        if relatorio.nes_por_lancamento:
+            st.warning(
+                f"{len(relatorio.nes_por_lancamento)} NE(s) sem registro na base de competência serão "
+                f"exibidas pela data de liquidação (mês de lançamento): {_lista(relatorio.nes_por_lancamento)}"
+            )
+    if relatorio.nes_competencia_divergente:
+        st.warning(
+            f"{len(relatorio.nes_competencia_divergente)} NE(s) com liquidado por competência diferente "
+            f"do total liquidado na Execução Mensal (competência parcial ou defasada): "
+            f"{_lista(relatorio.nes_competencia_divergente)}"
+        )
+    if relatorio.nes_sem_dado:
+        st.info(f"NE(s) sem liquidação em nenhuma das bases: {_lista(relatorio.nes_sem_dado)}")
+    if relatorio.aviso_bases_por_exercicio:
+        st.warning(relatorio.aviso_bases_por_exercicio)
+
+    por_competencia = int((relatorio.resumo["base"] == BASE_COMPETENCIA).sum())
+    st.caption(
+        f"{len(relatorio.resumo)} NE(s) marcada(s) — {por_competencia} por competência. "
+        if not somente_lancamento
+        else f"{len(relatorio.resumo)} NE(s) marcada(s), todas pela data de liquidação. "
+        "Uma linha por NE e ano, colunas Jan–Dez, em ordem do número do empenho. PDF e Excel "
+        "trazem também a Consolidação Orçamentária do Grupo; o Excel, ainda, o resumo por NE com "
+        "a reconciliação contra o total liquidado da Execução Mensal."
+    )
+
+    contexto = ContextoRelatorioLiquidacao(
+        data_extracao=datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y"),
+        hash_manifesto=manifesto.sha256[:8],
+        data_emissao=datetime.now().strftime("%d/%m/%Y %H:%M"),
+        origem_competencia=origem_competencia,
+    )
+
+    sufixo_modo = "data_liquidacao" if somente_lancamento else "competencia"
+    nome_arquivo = f"liquidacao_empenhos_{sufixo_modo}_{datetime.now():%Y-%m-%d}"
+    col_pdf, col_xlsx = st.columns(2)
+    with col_pdf:
+        st.download_button(
+            "Baixar PDF",
+            data=lambda: gerar_pdf_liquidacao(relatorio, contexto, consolidacao),
+            file_name=f"{nome_arquivo}.pdf",
+            mime="application/pdf",
+            type="primary",
+            width="stretch",
+            on_click="ignore",
+            key=f"consulta_empenhos_liquidacao_pdf_{source_key}",
+        )
+    with col_xlsx:
+        st.download_button(
+            "Baixar Excel",
+            data=lambda: gerar_xlsx_liquidacao(relatorio, contexto, consolidacao),
+            file_name=f"{nome_arquivo}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch",
+            on_click="ignore",
+            key=f"consulta_empenhos_liquidacao_xlsx_{source_key}",
+        )
 
 
 def _tempo_com_liquidacao_por_competencia(
@@ -1102,10 +1237,16 @@ with coluna_principal:
         elif ordem == "Menor % liquidado":
             proporcao = visivel["liquidada"].fillna(0.0) / visivel["empenhada"].replace(0, pd.NA)
             ordenado = visivel.assign(_p=proporcao).sort_values("_p", na_position="last")
-        elif ordem == "Nº da NE":
-            ordenado = visivel.sort_values("ne_ccor")
-        else:
+        elif ordem == "Maior saldo de empenho":
             ordenado = visivel.sort_values("saldo", ascending=False, na_position="last")
+        else:
+            # "Nº da NE": NE curta (ano + número), depois o código completo — mesmo critério do
+            # relatório de liquidação (o código completo começa pela UG, não pelo ano).
+            ordenado = (
+                visivel.assign(_k_ne=visivel["ne_ccor"].map(_ne_curta_execucao))
+                .sort_values(["_k_ne", "ne_ccor"])
+                .drop(columns="_k_ne")
+            )
         ordenado = ordenado.reset_index(drop=True)
 
         selecionado_key = f"consulta_empenhos_selecionado_{source_key}"
@@ -1203,6 +1344,18 @@ with st.container(border=True):
         st.caption("Marque a caixinha ao lado de um ou mais empenhos na lista para ver a consolidação aqui.")
     else:
         _render_consolidacao_grupo(visivel[visivel["ne_ccor"].isin(marcados)])
+
+# Mesmas NEs marcadas — relatório de liquidação mensal (PDF/Excel), por competência quando
+# disponível (pedido explícito, ver `src/relatorio_liquidacao_empenhos.py`).
+with st.container(border=True):
+    st.subheader("Relatório de liquidação do grupo")
+    st.caption(
+        "Liquidado mês a mês das NEs marcadas, por competência (mês de referência da despesa). "
+        "NE sem registro de competência sai pela data de liquidação (mês de lançamento), com aviso."
+    )
+    _render_relatorio_liquidacao_grupo(
+        visivel, marcados, source_key, liquidacao_competencia, manifesto, caminho_ponteiro
+    )
 
 data_extracao_texto = datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y")
 st.caption(
