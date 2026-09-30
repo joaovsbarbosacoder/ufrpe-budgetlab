@@ -238,7 +238,10 @@ DIMENSOES_CONSOLIDACAO_GRUPO = {
     "UGR - Gestão": ("ugr_cod", "ugr_desc"),
 }
 
-ORDENS = ("Maior saldo de empenho", "Maior valor empenhado", "Menor % liquidado", "Nº da NE")
+# "Nº da NE" primeiro = ordem padrão da lista (pedido explícito, 30/09/2026): a mesma do
+# "Relatório de liquidação do grupo", para as NEs marcadas saírem no relatório na ordem em que
+# aparecem na tela.
+ORDENS = ("Nº da NE", "Maior saldo de empenho", "Maior valor empenhado", "Menor % liquidado")
 
 # Pedido explícito: rolagem em vez de clicar em "Ver mais" repetidamente. A lista fica dentro
 # de uma caixa de altura fixa com rolagem própria (`.st-key-ce_list_scroll`, ver `_inject_css`)
@@ -1234,10 +1237,16 @@ with coluna_principal:
         elif ordem == "Menor % liquidado":
             proporcao = visivel["liquidada"].fillna(0.0) / visivel["empenhada"].replace(0, pd.NA)
             ordenado = visivel.assign(_p=proporcao).sort_values("_p", na_position="last")
-        elif ordem == "Nº da NE":
-            ordenado = visivel.sort_values("ne_ccor")
-        else:
+        elif ordem == "Maior saldo de empenho":
             ordenado = visivel.sort_values("saldo", ascending=False, na_position="last")
+        else:
+            # "Nº da NE": NE curta (ano + número), depois o código completo — mesmo critério do
+            # relatório de liquidação (o código completo começa pela UG, não pelo ano).
+            ordenado = (
+                visivel.assign(_k_ne=visivel["ne_ccor"].map(_ne_curta_execucao))
+                .sort_values(["_k_ne", "ne_ccor"])
+                .drop(columns="_k_ne")
+            )
         ordenado = ordenado.reset_index(drop=True)
 
         selecionado_key = f"consulta_empenhos_selecionado_{source_key}"

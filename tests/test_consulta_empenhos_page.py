@@ -430,8 +430,32 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         self.assertLess(len(acao_filter.options), self.total_acoes)
         self.assertFalse(any("ADMINISTRACAO DA UNIDADE" in opcao for opcao in acao_filter.options))
 
+    def test_ordem_padrao_e_numero_da_ne_crescente(self) -> None:
+        # pedido explícito (30/09/2026): a lista abre por "Nº da NE", mesma ordem do relatório
+        # de liquidação — NE curta crescente (ano + número).
+        app = self._open_page()
+        ordem = next(s for s in app.selectbox if s.key and s.key.startswith("consulta_empenhos_ordem_"))
+        self.assertEqual(ordem.value, "Nº da NE")
+        nes = [self._ne_do_cartao(c) for c in self._cartoes_lista(app)]
+        self.assertGreater(len(nes), 1)
+        self.assertEqual(nes, sorted(nes))
+
+    def test_ordem_maior_saldo_continua_disponivel(self) -> None:
+        app = self._open_page()
+        ordem = next(s for s in app.selectbox if s.key and s.key.startswith("consulta_empenhos_ordem_"))
+        ordem.set_value("Maior saldo de empenho")
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        primeiro = self._ne_do_cartao(self._cartoes_lista(app)[0])
+        maior_saldo = (
+            agregar_por_ne(self.dataframe).reset_index()
+            .assign(saldo=lambda d: d["empenhada"] - d["liquidada"].fillna(0.0))
+            .sort_values("saldo", ascending=False).iloc[0]["ne_ccor"]
+        )
+        self.assertTrue(maior_saldo.endswith(primeiro))
+
     def test_default_selection_matches_sort_order(self) -> None:
-        # Padrão: "Maior saldo de empenho" — o cartão selecionado (marcado nativamente por
+        # Padrão: "Nº da NE" — o cartão selecionado (marcado nativamente por
         # `type="primary"`, não uma classe CSS própria — ver docstring do módulo) deve ser o
         # primeiro da página 1, e sua NE deve ser a exibida no painel de detalhamento.
         app = self._open_page()
