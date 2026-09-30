@@ -44,6 +44,11 @@ Mensal (Liquidado por data de liquidação, sobre o recorte de linhas dos filtro
 isso no título do quadro. O Excel continua com o "Resumo por NE" (reconciliação) e ganhou a
 mesma consolidação na aba "Consolidação" (formato longo, coluna "Dimensão").
 
+COMPARATIVO POR EXERCÍCIO (pedido explícito posterior): `por_exercicio` soma as linhas de
+`mensal` por ano do mês (Jan…Dez + Total) — PDF, logo após a tabela mensal, e aba "Por
+exercício" do Excel. Um ano pode misturar NEs das duas bases; a mistura é exposta (contagem de
+NEs por base em cada ano), não resolvida.
+
 ORDEM (pedido explícito posterior): NEs em ordem alfabética da descrição (depois favorecido,
 depois NE; sem acento/caixa; descrição nula por último) no PDF e nas abas "Liquidação mensal" e
 "Resumo por NE" do Excel — agrupa a mesma despesa de exercícios diferentes.
@@ -112,6 +117,16 @@ class RelatorioLiquidacao:
     mensal: pd.DataFrame
     #: formato longo: ne_ccor, base, ano_mes, valor.
     serie: pd.DataFrame
+    #: uma linha por ano do mês (comparativo entre exercícios): ano, nes_competencia,
+    #: nes_lancamento, 1..12, total — soma das linhas de `mensal` daquele ano.
+    por_exercicio: pd.DataFrame
+
+    @property
+    def aviso_bases_por_exercicio(self) -> str | None:
+        """Texto do aviso quando o comparativo por exercício mistura bases (ver
+        `_aviso_bases_por_exercicio`); `None` quando todos os anos usam a mesma."""
+
+        return _aviso_bases_por_exercicio(self.por_exercicio)
 
     @property
     def nes_por_lancamento(self) -> list[str]:
@@ -234,7 +249,30 @@ def montar_relatorio(
         .reset_index(drop=True)
     )
 
-    return RelatorioLiquidacao(resumo=resumo, mensal=mensal, serie=serie)
+    return RelatorioLiquidacao(resumo=resumo, mensal=mensal, serie=serie, por_exercicio=_por_exercicio(mensal))
+
+
+def _por_exercicio(mensal: pd.DataFrame) -> pd.DataFrame:
+    """Comparativo entre exercícios: soma, por ano do mês, das linhas (NE, ano) de `mensal`.
+    NE "Sem dado" (sem ano) não entra — não há o que somar. Um ano pode reunir NEs das duas
+    bases (competência e data de liquidação): a mistura NÃO é escondida nem resolvida aqui — as
+    colunas `nes_competencia`/`nes_lancamento` dizem quantas NEs de cada base compõem o ano.
+    Mês sem nenhuma NE com valor fica nulo (não zero)."""
+
+    com_ano = mensal[mensal["ano"].notna()]
+    colunas = ["ano", "nes_competencia", "nes_lancamento", *range(1, 13), "total"]
+    if com_ano.empty:
+        return pd.DataFrame(columns=colunas)
+    somas = com_ano.groupby("ano")[[*range(1, 13), "total"]].sum(min_count=1)
+    contagem = (
+        com_ano.groupby(["ano", "base"])["ne_ccor"].nunique().unstack("base")
+        .reindex(columns=[BASE_COMPETENCIA, BASE_LANCAMENTO]).fillna(0).astype("int64")
+    )
+    resultado = somas.join(contagem)
+    resultado = resultado.rename(columns={BASE_COMPETENCIA: "nes_competencia", BASE_LANCAMENTO: "nes_lancamento"})
+    resultado = resultado.reset_index()
+    resultado["ano"] = resultado["ano"].astype("Int64")
+    return resultado[colunas].sort_values("ano").reset_index(drop=True)
 
 
 def consolidar_por_dimensao(grupo: pd.DataFrame, coluna_cod: str, coluna_desc: str | None) -> pd.DataFrame:
@@ -320,7 +358,35 @@ def _avisos(relatorio: RelatorioLiquidacao, contexto: ContextoRelatorioLiquidaca
             + ", ".join(_ne_curta(ne) for ne in relatorio.nes_sem_dado)
             + "."
         )
+    aviso_exercicio = relatorio.aviso_bases_por_exercicio
+    if aviso_exercicio:
+        avisos.append(aviso_exercicio)
     return avisos
+
+
+def _aviso_bases_por_exercicio(por_exercicio: pd.DataFrame) -> str | None:
+    """Aviso quando o comparativo por exercício não compara a mesma base em todos os anos —
+    algum ano mistura as duas, ou anos diferentes usam bases diferentes (caso comum: NEs
+    antigas sem competência, só por data de liquidação, lado a lado com o ano corrente por
+    competência). `None` quando todos os anos usam uma única e mesma base."""
+
+    if por_exercicio.empty:
+        return None
+
+    def _composicao(linha: pd.Series) -> str:
+        comp, lanc = int(linha["nes_competencia"]), int(linha["nes_lancamento"])
+        if comp and lanc:
+            return f"misto ({comp} por competência, {lanc} por data de liquidação)"
+        return "só por competência" if comp else "só por data de liquidação"
+
+    composicoes = {int(linha["ano"]): _composicao(linha) for _, linha in por_exercicio.iterrows()}
+    if len(set(composicoes.values())) == 1 and not next(iter(composicoes.values())).startswith("misto"):
+        return None
+    return (
+        "O comparativo por exercício NÃO compara a mesma base em todos os anos: "
+        + "; ".join(f"{ano} {texto}" for ano, texto in composicoes.items())
+        + "."
+    )
 
 
 def _linhas_parametros(relatorio: RelatorioLiquidacao, contexto: ContextoRelatorioLiquidacao) -> list[tuple[str, str]]:
@@ -342,6 +408,12 @@ def _linhas_parametros(relatorio: RelatorioLiquidacao, contexto: ContextoRelator
 def _texto_objeto(serie: pd.Series) -> pd.Series:
     return serie.map(_texto).astype(object)
 
+
+NOTA_EXERCICIO = (
+    "Cada ano soma as linhas das NEs marcadas naquele ano do mês, cada NE na sua base. NEs COMP. "
+    "= NEs por competência; NEs LIQ. = NEs por data de liquidação (mês de lançamento). Ano com "
+    "as duas contagens acima de zero mistura as duas bases."
+)
 
 NOTA_CONSOLIDACAO = (
     "Valores da Execução Mensal (Liquidado por data de liquidação, não por competência), sobre o "
@@ -428,11 +500,28 @@ def gerar_xlsx(
         "Total", "Liquidado na base", "Liquidado total (Execução Mensal)", "Diferença", "Liquidado",
         "Empenhado", "Liquidado (data de liquidação)", "Pago", "Saldo",
     }
-    colunas_inteiras = {"Exercício da NE", "Ano", "Mês", "NEs"}
+    colunas_inteiras = {"Exercício da NE", "Ano", "Mês", "NEs", "NEs por competência", "NEs por data de liquidação"}
+
+    exercicio = relatorio.por_exercicio
+    aba_exercicio = pd.DataFrame(
+        {
+            "Ano": exercicio["ano"].astype("Int64"),
+            "NEs por competência": exercicio["nes_competencia"].astype("Int64"),
+            "NEs por data de liquidação": exercicio["nes_lancamento"].astype("Int64"),
+        }
+    )
+    for numero, nome in enumerate(MESES, start=1):
+        aba_exercicio[nome] = exercicio[numero].astype("float64")
+    aba_exercicio["Total"] = exercicio["total"].astype("float64")
 
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        abas = {"Liquidação mensal": aba_mensal, "Resumo por NE": aba_resumo, "Série": aba_serie}
+        abas = {
+            "Liquidação mensal": aba_mensal,
+            "Por exercício": aba_exercicio,
+            "Resumo por NE": aba_resumo,
+            "Série": aba_serie,
+        }
         if aba_consolidacao is not None:
             abas["Consolidação"] = aba_consolidacao
         for nome, dados in abas.items():
@@ -461,6 +550,8 @@ def gerar_xlsx(
 #: landscape(A4) com 10mm de margem (~785pt úteis).
 _CABECALHO_MENSAL_PDF = ["NE", "ANO", "BASE", *[m.upper() for m in MESES], "TOTAL"]
 _LARGURAS_MENSAL_PDF = [62, 26, 52] + [51] * 12 + [58]
+_CABECALHO_EXERCICIO_PDF = ["ANO", "NEs COMP.", "NEs LIQ.", *[m.upper() for m in MESES], "TOTAL"]
+_LARGURAS_EXERCICIO_PDF = [36, 52, 52] + [51] * 12 + [58]
 _CABECALHO_CONSOLIDACAO_PDF = ["GRUPO", "CÓDIGO", "NEs", "EMPENHADO (R$)", "LIQUIDADO (R$)", "PAGO (R$)", "SALDO (R$)"]
 _LARGURAS_CONSOLIDACAO_PDF = [305, 70, 40, 92, 92, 92, 92]
 _COR_TITULO_NE = colors.HexColor("#E8EEF7")
@@ -557,9 +648,36 @@ def gerar_pdf(
     for comando in comandos_titulo:
         estilo_mensal.add(*comando)
     tabela.setStyle(estilo_mensal)
-    elementos.append(Paragraph("Liquidação mensal (uma linha por NE e ano do mês)", estilo_secao))
+    elementos.append(Paragraph("Liquidação mensal (uma linha por NE e ano do mês)", estilos["Heading4"]))  # sem keepWithNext: tabela longa, não pode ser empurrada inteira pra próxima página
     elementos.append(tabela)
     elementos.append(Spacer(1, 10))
+
+    # ---- comparativo por exercício (soma das NEs por ano do mês)
+    exercicio = relatorio.por_exercicio
+    if not exercicio.empty:
+        dados_ex: list[list[object]] = [_CABECALHO_EXERCICIO_PDF]
+        for _, linha in exercicio.iterrows():
+            dados_ex.append(
+                [
+                    str(int(linha["ano"])),
+                    str(int(linha["nes_competencia"])),
+                    str(int(linha["nes_lancamento"])),
+                    *[_formatar_brl(linha[m]) for m in range(1, 13)],
+                    _formatar_brl(linha["total"]),
+                ]
+            )
+        tabela_ex = Table(dados_ex, colWidths=_LARGURAS_EXERCICIO_PDF, repeatRows=1)
+        tabela_ex.setStyle(_estilo_tabela(1, com_total=False))
+        elementos.append(
+            KeepTogether(
+                [
+                    Paragraph("Comparativo por exercício (soma das NEs marcadas, por ano do mês)", estilo_secao),
+                    Paragraph(escape(NOTA_EXERCICIO), estilo_nota_secao),
+                    tabela_ex,
+                ]
+            )
+        )
+        elementos.append(Spacer(1, 10))
 
     # ---- consolidação orçamentária do grupo (mesmo quadro da tela)
     if consolidacao:

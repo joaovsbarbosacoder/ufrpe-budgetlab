@@ -887,6 +887,8 @@ def _render_relatorio_liquidacao_grupo(
         )
     if relatorio.nes_sem_dado:
         st.info(f"NE(s) sem liquidação em nenhuma das bases: {_lista(relatorio.nes_sem_dado)}")
+    if relatorio.aviso_bases_por_exercicio:
+        st.warning(relatorio.aviso_bases_por_exercicio)
 
     por_competencia = int((relatorio.resumo["base"] == BASE_COMPETENCIA).sum())
     st.caption(

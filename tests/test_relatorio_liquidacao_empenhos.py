@@ -155,6 +155,35 @@ class MontarRelatorioTest(unittest.TestCase):
         rel = montar_relatorio(nes, _lancamento(), _competencia())
         self.assertEqual(rel.resumo["ne_ccor"].tolist(), [NE_COMP, NE_VAZIA, NE_LANC])
 
+    def test_por_exercicio_soma_por_ano_e_expoe_mistura_de_bases(self) -> None:
+        ex = self.rel.por_exercicio.set_index("ano")
+        self.assertEqual(ex.index.tolist(), [2025, 2026])  # NE "Sem dado" não entra
+        # 2025: só NE_COMP (competência) — Fev 900, Dez 400
+        self.assertEqual((ex.loc[2025, "nes_competencia"], ex.loc[2025, "nes_lancamento"]), (1, 0))
+        self.assertEqual(ex.loc[2025, 2], 900.0)
+        self.assertTrue(math.isnan(ex.loc[2025, 1]))  # mês sem valor: nulo, não zero
+        self.assertEqual(ex.loc[2025, "total"], 1_300.0)
+        # 2026: NE_COMP (competência, Jan −100) + NE_LANC (lançamento, Jan 300, Fev 0, Mar −50)
+        self.assertEqual((ex.loc[2026, "nes_competencia"], ex.loc[2026, "nes_lancamento"]), (1, 1))
+        self.assertEqual(ex.loc[2026, 1], 200.0)
+        self.assertEqual(ex.loc[2026, 2], 0.0)
+        self.assertEqual(ex.loc[2026, 3], -50.0)
+        self.assertEqual(ex.loc[2026, "total"], 150.0)
+        # reconciliação: cada ano = soma das linhas NE × ano daquele ano
+        for ano, total in ex["total"].items():
+            self.assertAlmostEqual(total, self.rel.mensal.loc[self.rel.mensal["ano"] == ano, "total"].sum())
+
+    def test_sem_aviso_de_bases_quando_todos_os_anos_usam_a_mesma(self) -> None:
+        from src.relatorio_liquidacao_empenhos import _aviso_bases_por_exercicio
+
+        so_comp = montar_relatorio(_nes().iloc[[1]], _lancamento(), _competencia())  # NE_COMP: 2025 e 2026
+        self.assertIsNone(_aviso_bases_por_exercicio(so_comp.por_exercicio))
+        self.assertIsNotNone(_aviso_bases_por_exercicio(self.rel.por_exercicio))
+
+    def test_por_exercicio_vazio_quando_so_ha_ne_sem_dado(self) -> None:
+        rel = montar_relatorio(_nes().iloc[[2]], _lancamento(), _competencia())
+        self.assertTrue(rel.por_exercicio.empty)
+
     def test_sem_base_de_competencia_tudo_por_lancamento(self) -> None:
         rel = montar_relatorio(_nes(), _lancamento(), None)
         bases = dict(zip(rel.resumo["ne_ccor"], rel.resumo["base"]))
@@ -226,6 +255,7 @@ class FixturesReaisTest(unittest.TestCase):
                     self.assertAlmostEqual(linha.liquidado_execucao_mensal, esperado_exec, places=2)
                 if linha.base == BASE_COMPETENCIA:
                     self.assertAlmostEqual(linha.total_base, comp_total[linha.ne_ccor], places=2)
+        self.assertAlmostEqual(rel.por_exercicio["total"].sum(), rel.serie["valor"].sum(), places=2)
         # soma da tabela mensal = soma da série longa = soma dos totais do resumo
         self.assertAlmostEqual(rel.mensal["total"].sum(), rel.serie["valor"].sum(), places=2)
         self.assertAlmostEqual(rel.resumo["total_base"].sum(), rel.serie["valor"].sum(), places=2)
@@ -260,7 +290,17 @@ class GerarArquivosTest(unittest.TestCase):
 
     def test_xlsx_abas_codigos_como_texto_e_nulos_vazios(self) -> None:
         livro = load_workbook(BytesIO(gerar_xlsx(self.rel, _contexto())))
-        self.assertEqual(livro.sheetnames, ["Liquidação mensal", "Resumo por NE", "Série", "Parâmetros"])
+        self.assertEqual(
+            livro.sheetnames, ["Liquidação mensal", "Por exercício", "Resumo por NE", "Série", "Parâmetros"]
+        )
+        aba_ex = livro["Por exercício"]
+        cab_ex = [c.value for c in aba_ex[1]]
+        self.assertEqual(cab_ex[:4], ["Ano", "NEs por competência", "NEs por data de liquidação", "Jan"])
+        linhas_ex = [dict(zip(cab_ex, [c.value for c in l])) for l in aba_ex.iter_rows(min_row=2)]
+        self.assertEqual([l["Ano"] for l in linhas_ex], [2025, 2026])
+        self.assertIsNone(linhas_ex[0]["Jan"])
+        self.assertEqual(linhas_ex[1]["Jan"], 200.0)
+        self.assertEqual(linhas_ex[1]["Total"], 150.0)
         aba = livro["Liquidação mensal"]
         cabecalho = [c.value for c in aba[1]]
         self.assertEqual(
@@ -287,7 +327,10 @@ class GerarArquivosTest(unittest.TestCase):
 
         pares = [(linha[0].value, linha[1].value) for linha in livro["Parâmetros"].iter_rows(min_row=2)]
         avisos = [valor for chave, valor in pares if chave == "Avisos"]
-        self.assertEqual(len(avisos), 3)
+        self.assertEqual(len(avisos), 4)
+        self.assertIn("NÃO compara a mesma base", avisos[3])
+        self.assertIn("2025 só por competência", avisos[3])
+        self.assertIn("2026 misto (1 por competência, 1 por data de liquidação)", avisos[3])
         self.assertIn("DATA DE LIQUIDAÇÃO", avisos[0])
         self.assertIn("2026NE000056", avisos[0])
         self.assertIn("difere do total liquidado", avisos[1])
