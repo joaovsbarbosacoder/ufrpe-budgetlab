@@ -225,6 +225,32 @@ class ConsultaEmpenhosPageTests(unittest.TestCase):
         self.assertGreater(len(app.checkbox), marcados_antes)
         self.assertTrue(any(b.label == "Selecionar todos" for b in app.button))
 
+    def _downloads_liquidacao(self, app: AppTest):
+        return [
+            b for b in app.get("download_button")
+            if b.proto.id and "consulta_empenhos_liquidacao_" in b.proto.id
+        ]
+
+    def test_relatorio_de_liquidacao_pede_marcacao_quando_vazio(self) -> None:
+        app = self._open_page()
+
+        self.assertTrue(any(h.value == "Relatório de liquidação do grupo" for h in app.subheader))
+        self.assertTrue(any("para gerar o relatório" in item.value for item in app.caption))
+        self.assertEqual(self._downloads_liquidacao(app), [])
+
+    def test_relatorio_de_liquidacao_oferece_pdf_e_excel_apos_marcar(self) -> None:
+        app = self._open_page()
+        ne_primeira = self._ne_do_cartao(self._cartoes_lista(app)[0])
+
+        caixa = next(c for c in app.checkbox if c.key.endswith(ne_primeira))
+        caixa.set_value(True)
+        app.run()
+
+        self.assertEqual(len(app.exception), 0)
+        downloads = self._downloads_liquidacao(app)
+        self.assertEqual(len(downloads), 2)
+        self.assertTrue(any("1 NE(s) marcada(s)" in item.value for item in app.caption))
+
     def test_consolidacao_do_grupo_pede_marcacao_quando_vazia(self) -> None:
         app = self._open_page()
 
