@@ -71,6 +71,10 @@ data/glossario/*
 data/google_agenda/*
 !data/google_agenda/.gitkeep
 
+# Copias dos arquivos substituidos por uma restauracao de backup — ver src/backup_dados.py.
+data/_backup_restauracao/
+data/.restauracao-*/
+
 # Sistema operacional
 .DS_Store
 Thumbs.db

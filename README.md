@@ -357,6 +357,28 @@ explicitamente com `--bolsas`, `--contratos`, `--ano`, `--diretorio-bolsas` e
 `--diretorio-contratos`. As planilhas de origem são somente lidas e seus hashes são conferidos
 novamente antes de qualquer gravação.
 
+### Backup dos dados (Administração → Backup dos dados)
+
+`data/raw/`, os cadastros nativos e os bancos SQLite não vão para o git. Para levar o sistema a
+outra máquina, a página gera um `.zip` com as pastas escolhidas de `data/` e restaura um `.zip`
+no destino (`src/backup_dados.py`).
+
+- O `.zip` traz um `MANIFESTO_BACKUP.json` com tamanho e SHA-256 de cada arquivo. Exportar só lê
+  `data/`; bancos SQLite são copiados pela API de backup do SQLite.
+- Segredos: o `token.json` do Google Agenda nunca entra (fica fora de `data/`; na outra máquina,
+  reconecte). `credentials.json` só entra com a caixa marcada. `.env` e
+  `.streamlit/secrets.toml` não são incluídos — copie à mão se existirem.
+- Senha opcional (mín. 8 caracteres): cifra o arquivo inteiro com AES-256-GCM (chave por scrypt) e
+  gera `.zip.enc`; conteúdo, nomes e manifesto ficam ilegíveis. Senha errada ou arquivo adulterado
+  são recusados sem gravar nada. A senha não é recuperável. Sem senha, o `.zip` é comum e legível
+  (a página avisa quando o `credentials.json` vai incluído sem senha). Dependência: `cryptography`.
+- Restaurar confere o pacote inteiro antes de gravar; pacote adulterado, com caminho fora das
+  pastas conhecidas ou fora do manifesto é recusado sem gravar nada.
+- Arquivo existente e diferente nunca é sobrescrito em silêncio: a prévia lista as diferenças e,
+  ao substituir, a cópia atual vai para `data/_backup_restauracao/<carimbo>/`. A gravação é
+  tudo-ou-nada.
+- Limite de upload do Streamlit: 200 MB por padrão (`server.maxUploadSize`).
+
 ## Estrutura do projeto
 
 ```text

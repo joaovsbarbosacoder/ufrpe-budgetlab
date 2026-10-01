@@ -166,6 +166,11 @@ page = st.navigation(
                 title="Atualizar Planilhas",
                 icon="📤",
             ),
+            st.Page(
+                "app_pages/backup_dados.py",
+                title="Backup dos dados",
+                icon="💾",
+            ),
         ],
     },
     position="sidebar",
