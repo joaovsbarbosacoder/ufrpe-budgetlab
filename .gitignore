@@ -35,6 +35,11 @@ data/processed/*
 data/demandas/*
 !data/demandas/.gitkeep
 
+# Banco SQLite da Captacao de Demandas (dado real de producao, gerado pelo app — ver
+# src/captacao/schema.py), nao versionado.
+data/captacao/*
+!data/captacao/.gitkeep
+
 # Emendas parlamentares cadastradas pelo app (mesmo motivo de data/demandas/ acima)
 data/emendas/*
 !data/emendas/.gitkeep

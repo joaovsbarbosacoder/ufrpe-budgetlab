@@ -146,6 +146,14 @@ page = st.navigation(
         # "Administração" — "Administração" precisa continuar por último (ver comentário
         # abaixo), então a nova seção entra antes dela, não depois.
         "Demandas Orçamentárias": [
+            # Novo modelo de captação (src/captacao/, SQLite) — substitui as duas páginas
+            # abaixo, que saem quando "Minhas demandas" e "Consolidação" novas existirem
+            # (etapas 5/6 e 9 do plano); até lá ficam para não deixar o setor sem formulário.
+            st.Page(
+                "app_pages/captacao_ciclo.py",
+                title="Ciclo de Captação",
+                icon="🗓️",
+            ),
             st.Page(
                 "app_pages/demandas_minhas.py",
                 title="Minhas Demandas",
