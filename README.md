@@ -144,6 +144,32 @@ sem a NE na Execução, o empenhado do cadastro; NE compartilhada por mais de um
 cadastro), e o **A empenhar (execução)** fica zero. Saldo, empenhado, liquidado e despesa mensal não
 mudam; a despesa contratual original fica preservada em `despesa_anual_contratual`.
 
+**Aditivos (06/10/2026, `src/contratos_aditivos.py`; aba "Aditivos" na janela de edição).** Quando um
+contrato é prorrogado o valor mensal costuma ser reajustado, e um único valor para o exercício inteiro
+distorcia a projeção. O contrato guarda uma lista de aditivos; cada um tem nº do termo (texto), tipo
+(Reajuste, Repactuação, Prorrogação, Acréscimo/supressão, Outro), situação (**Assinado** ou **Previsto** —
+valor estimado, ainda não assinado), data de início (pode ser passada), data de assinatura (opcional) e,
+opcionalmente, novo valor mensal, nova vigência e novo rateio dos itens (campo vazio = mantém o anterior,
+nunca zero). "Despesa mensal" e "Vigência (fim)" do contrato continuam sendo os **originais**; o valor, a
+vigência e o rateio em vigor em cada data são derivados dos aditivos. Todas as contas passam a somar, mês a
+mês e dia a dia, o valor em vigor (reajuste no meio do mês é proporcional aos dias):
+
+- **Necessidade até dezembro** = custo do exercício − empenhado (nunca negativa); a diferença **retroativa**
+  dos reajustes entra sozinha. **Projeção mensal**: cada mês projetado usa o custo do mês; o retroativo
+  (reajuste assinado depois do início, nos meses já realizados entre as duas datas) entra no primeiro mês
+  projetado, em coluna própria. **Sugestão do Reforço**: alvo = custo de janeiro ao mês vigente − empenhado,
+  em meses do valor vigente; valor mensal e itens da linha são os vigentes. **Despesa anual** e Cobertura por
+  PTRES: soma da série.
+- **Previsto** entra nas contas, destacado (laranja) no Excel/PDF, na faixa do topo e nos avisos. Sem aditivo
+  previsto, a projeção **para no vencimento** e o relatório avisa "Renovação não cadastrada".
+- O Excel do relatório de Necessidade ganha a aba **Aditivos** (um aditivo por linha: valor anterior → novo,
+  datas, retroativo) e colunas no Resumo por NE; contrato **sem aditivo** calcula exatamente o mesmo que antes
+  (teste de não regressão `tests/test_retrato_contratos.py`, com retrato congelado dos contratos reais).
+- Limites: a aba de aditivos edita só os itens de licitação já existentes no contrato; a janela "Novo
+  contrato" não tem aditivos (cadastrados depois, ao editar). Para um contrato que **já teve o reajuste
+  digitado por cima** de "Despesa mensal", volte o campo ao valor antigo e lance o aditivo com o novo — o
+  sistema não faz essa troca sozinho.
+
 **Necessidade de Empenho até Dezembro (card "Resumo Consolidado").** É o que falta empenhar
 para cobrir os meses do exercício: despesa mensal × meses restantes, nunca negativa, em que
 meses restantes = menor entre os meses no ano e os meses em execução (regra acima) − empenhado ÷

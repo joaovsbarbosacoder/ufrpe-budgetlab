@@ -16,7 +16,7 @@ nunca convertido em número). Datas são gravadas como texto "AAAA-MM-DD" (o `st
 `date`, que o motor de persistência não serializa dentro de estruturas aninhadas).
 
 Contrato público:
-    TIPOS, SITUACOES
+    TIPOS, SITUACOES, ROTULO_TIPO, ROTULO_SITUACAO
     Aditivo (dataclass)
     aditivos_do_registro(bruto) -> list[Aditivo]
     aditivo_para_registro(aditivo) -> dict
@@ -43,6 +43,13 @@ from src.necessidade_empenho import janela_de_execucao
 
 TIPOS = ("REAJUSTE", "REPACTUACAO", "PRORROGACAO", "ACRESCIMO_SUPRESSAO", "OUTRO")
 SITUACOES = ("PREVISTO", "ASSINADO")
+
+#: rótulos para tela e relatórios
+ROTULO_TIPO = {
+    "REAJUSTE": "Reajuste", "REPACTUACAO": "Repactuação", "PRORROGACAO": "Prorrogação",
+    "ACRESCIMO_SUPRESSAO": "Acréscimo/supressão", "OUTRO": "Outro",
+}
+ROTULO_SITUACAO = {"ASSINADO": "Assinado", "PREVISTO": "Previsto"}
 
 #: tolerância (pontos percentuais) na soma do rateio, a mesma da janela de itens de licitação.
 _TOLERANCIA_RATEIO = 0.5

@@ -13,19 +13,14 @@ import streamlit as st
 from streamlit.errors import StreamlitAPIException
 
 from src.contratos_aditivos import (
+    ROTULO_SITUACAO,
+    ROTULO_TIPO,
     SITUACOES,
     TIPOS,
     Aditivo,
     aditivo_para_registro,
     aditivos_do_registro,
 )
-
-_ROTULO_TIPO_ADITIVO = {
-    "REAJUSTE": "Reajuste", "REPACTUACAO": "Repactuação", "PRORROGACAO": "Prorrogação",
-    "ACRESCIMO_SUPRESSAO": "Acréscimo/supressão", "OUTRO": "Outro",
-}
-_ROTULO_SITUACAO_ADITIVO = {"ASSINADO": "Assinado", "PREVISTO": "Previsto"}
-
 
 def _data_do_cartao(valor: object) -> date | None:
     """Data guardada no cartão de aditivo (texto ISO, `date` ou nulo) -> `date` do `st.date_input`."""
@@ -71,11 +66,11 @@ def render_aba_aditivos(k: str, aditivos: list[Aditivo], itens_base: object) -> 
             cartao["numero"] = c_num.text_input("Nº do termo", value=cartao.get("numero") or "", key=f"{kk}_numero")
             cartao["tipo"] = c_tipo.selectbox(
                 "Tipo", list(TIPOS), index=TIPOS.index(cartao["tipo"]) if cartao.get("tipo") in TIPOS else 0,
-                format_func=_ROTULO_TIPO_ADITIVO.get, key=f"{kk}_tipo",
+                format_func=ROTULO_TIPO.get, key=f"{kk}_tipo",
             )
             cartao["situacao"] = c_sit.selectbox(
                 "Situação", list(SITUACOES), index=SITUACOES.index(cartao["situacao"]) if cartao.get("situacao") in SITUACOES else 0,
-                format_func=_ROTULO_SITUACAO_ADITIVO.get, key=f"{kk}_situacao",
+                format_func=ROTULO_SITUACAO.get, key=f"{kk}_situacao",
                 help="Previsto = valor estimado, ainda não assinado: entra nas contas, destacado nos relatórios.",
             )
             cartao["data_inicio"] = c_ini.date_input(

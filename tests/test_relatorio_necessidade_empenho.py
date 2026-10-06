@@ -27,7 +27,9 @@ from src.relatorio_necessidade_empenho import (
     meses_vigentes_no_exercicio,
     montar_relatorio,
     necessidade_por_ne,
+    notas_de_aditivos,
     projetar_necessidade_mensal,
+    valor_estimado_em_previstos,
 )
 
 NE_A = "2026NE000010"  # competência
@@ -333,7 +335,7 @@ class TestXlsx(unittest.TestCase):
     def test_abas(self):
         self.assertEqual(
             self.livro.sheetnames,
-            ["Projeção mensal", "Detalhe mensal", "Total mensal", "Resumo por NE", "Parâmetros"],
+            ["Projeção mensal", "Detalhe mensal", "Total mensal", "Resumo por NE", "Aditivos", "Parâmetros"],
         )
 
     def test_projecao_mensal_uma_linha_por_ne_com_todos_os_meses_e_saldo_atual(self):
@@ -1051,6 +1053,169 @@ class TestProjecaoComAditivos(unittest.TestCase):
         self.assertEqual(
             projetar_necessidade_mensal(1000.0, 500.0, 10, 3, custos=custos)[9:], [0.0, 1_200.0, 1_200.0]
         )
+
+
+class TestRelatorioComAditivos(unittest.TestCase):
+    """Relatório e avisos com aditivos (06/10/2026). NE B (contrato 20/2026): despesa original 10.400; 2º TA
+    em 01/07/2026 a 10.800, assinado em 15/09; julho e agosto já realizados → retroativo 800."""
+
+    TA_ASSINADO = {**_ta("2º TA", "2026-07-01", 10_800.0), "data_assinatura": "2026-09-15"}
+
+    @classmethod
+    def _montar(cls, aditivos, despesa=10_400.0, meses_realizados=(7, 8), **campos_b):
+        liquidacao = TestProjecaoComAditivos._realizado_de_b(*meses_realizados)
+        filtrado = _filtrado()
+        indice = filtrado.index[filtrado["ne_curta"] == NE_B][0]
+        filtrado["aditivos"] = None
+        filtrado["aditivos"] = filtrado["aditivos"].astype(object)
+        filtrado.at[indice, "aditivos"] = aditivos
+        filtrado.at[indice, "despesa_mensal"] = despesa
+        for campo, valor in campos_b.items():
+            filtrado.at[indice, campo] = valor
+        return _relatorio(liquidacao, filtrado=filtrado)
+
+    @staticmethod
+    def _abas(relatorio):
+        livro = load_workbook(BytesIO(gerar_xlsx(relatorio, _contexto())))
+        return livro
+
+    @staticmethod
+    def _linhas_da_aba(aba):
+        cabecalho = [c.value for c in aba[1]]
+        return cabecalho, [dict(zip(cabecalho, [c.value for c in aba[n]])) for n in range(2, aba.max_row + 1)]
+
+    def test_excel_tem_a_aba_aditivos_com_uma_linha_por_aditivo(self):
+        livro = self._abas(self._montar([self.TA_ASSINADO]))
+        self.assertIn("Aditivos", livro.sheetnames)
+        cabecalho, linhas = self._linhas_da_aba(livro["Aditivos"])
+        self.assertEqual(
+            cabecalho,
+            ["Contrato", "NE", "Nº do termo", "Tipo", "Situação", "Início", "Assinatura", "Valor anterior",
+             "Valor novo", "Nova vigência", "Retroativo"],
+        )
+        self.assertEqual(len(linhas), 1)
+        linha = linhas[0]
+        self.assertEqual((linha["Contrato"], linha["NE"], linha["Nº do termo"]), ("20/2026", NE_B, "2º TA"))
+        self.assertEqual((linha["Tipo"], linha["Situação"]), ("Reajuste", "Assinado"))
+        self.assertEqual(linha["Início"].date().isoformat(), "2026-07-01")
+        self.assertEqual(linha["Assinatura"].date().isoformat(), "2026-09-15")
+        self.assertEqual((linha["Valor anterior"], linha["Valor novo"]), (10_400.0, 10_800.0))
+        self.assertIsNone(linha["Nova vigência"])  # vazio = mantém, nunca zero
+        self.assertAlmostEqual(linha["Retroativo"], 800.0)
+
+    def test_valor_anterior_do_segundo_aditivo_e_o_valor_do_primeiro(self):
+        ta1 = _ta("1º TA", "2025-07-01", 10_400.0)
+        ta2 = {**_ta("2º TA", "2026-07-01", 10_800.0), "data_assinatura": "2026-09-15"}
+        _, linhas = self._linhas_da_aba(self._abas(self._montar([ta1, ta2], despesa=10_000.0))["Aditivos"])
+        self.assertEqual([(l["Nº do termo"], l["Valor anterior"], l["Valor novo"]) for l in linhas],
+                         [("1º TA", 10_000.0, 10_400.0), ("2º TA", 10_400.0, 10_800.0)])
+
+    def test_aba_aditivos_vazia_sem_aditivos(self):
+        cabecalho, linhas = self._linhas_da_aba(self._abas(self._montar([]))["Aditivos"])
+        self.assertEqual(linhas, [])
+        self.assertEqual(len(cabecalho), 11)
+
+    def test_resumo_por_ne_traz_valor_vigente_custo_e_retroativo(self):
+        cabecalho, linhas = self._linhas_da_aba(self._abas(self._montar([self.TA_ASSINADO]))["Resumo por NE"])
+        for coluna in ("Valor mensal vigente", "Custo do exercício", "Retroativo"):
+            self.assertIn(coluna, cabecalho)
+        b = next(l for l in linhas if l["NE"] == NE_B)
+        self.assertAlmostEqual(b["Retroativo"], 800.0)
+        self.assertAlmostEqual(b["Custo do exercício"], 6 * 10_400.0 + 6 * 10_800.0)
+        a = next(l for l in linhas if l["NE"] == NE_A)
+        self.assertEqual(a["Retroativo"], 0.0)  # sem aditivo: nenhum retroativo
+
+    def test_detalhe_mensal_distingue_previsto_e_traz_o_retroativo(self):
+        previsto = {**_ta("2º TA", "2026-11-01", 12_000.0, situacao="PREVISTO")}
+        relatorio = self._montar([previsto], despesa=10_400.0, meses_realizados=(7, 8))
+        cabecalho, linhas = self._linhas_da_aba(self._abas(relatorio)["Detalhe mensal"])
+        self.assertIn("Retroativo", cabecalho)
+        tipos = {(l["NE"], l["Nº do mês"]): l["Tipo"] for l in linhas}
+        self.assertEqual(tipos[(NE_B, 7)], "Realizado")
+        self.assertEqual(tipos[(NE_B, 10)], "Projetado")
+        self.assertEqual(tipos[(NE_B, 11)], "Projetado — aditivo previsto")
+
+    def test_retroativo_no_detalhe_so_no_primeiro_mes_projetado(self):
+        _, linhas = self._linhas_da_aba(self._abas(self._montar([self.TA_ASSINADO]))["Detalhe mensal"])
+        com_retroativo = [(l["Nº do mês"], l["Retroativo"]) for l in linhas if l["NE"] == NE_B and l["Retroativo"]]
+        self.assertEqual(len(com_retroativo), 1)
+        self.assertEqual(com_retroativo[0][0], 9)
+        self.assertAlmostEqual(com_retroativo[0][1], 800.0)
+
+    # ---- avisos
+    def _avisos_de(self, relatorio):
+        return _avisos(relatorio, _contexto())
+
+    def test_aviso_renovacao_nao_cadastrada(self):
+        relatorio = self._montar([], despesa=1000.0, meses_realizados=(), vigencia_fim=pd.Timestamp("2026-10-31"))
+        avisos = [a for a in self._avisos_de(relatorio) if a.startswith("Renovação não cadastrada")]
+        self.assertEqual(len(avisos), 1)
+        self.assertIn(NE_B, avisos[0])
+        self.assertIn("31/10/2026", avisos[0])
+
+    def test_sem_aviso_de_renovacao_quando_ha_aditivo_que_estende_a_vigencia_nem_que_previsto(self):
+        for situacao in ("ASSINADO", "PREVISTO"):
+            ta = {**_ta("2º TA", "2026-11-01", 1_200.0, vigencia="2027-10-31", situacao=situacao)}
+            relatorio = self._montar([ta], despesa=1000.0, meses_realizados=(), vigencia_fim=pd.Timestamp("2026-10-31"))
+            self.assertFalse(any(a.startswith("Renovação não cadastrada") for a in self._avisos_de(relatorio)), situacao)
+
+    def test_sem_aviso_de_renovacao_para_suspenso_sem_vigencia_ou_vigencia_alem_do_exercicio(self):
+        casos = [
+            {"status_contrato": "SUSPENSO", "vigencia_fim": pd.Timestamp("2026-10-31")},
+            {"vigencia_fim": pd.NaT},
+            {"vigencia_fim": pd.Timestamp("2027-03-31")},
+        ]
+        for campos in casos:
+            relatorio = self._montar([], despesa=1000.0, meses_realizados=(), **campos)
+            self.assertFalse(any(a.startswith("Renovação não cadastrada") for a in self._avisos_de(relatorio)), campos)
+
+    def test_aviso_de_aditivos_previstos_lista_contrato_e_termo(self):
+        ta = {**_ta("2º TA", "2026-11-01", 1_200.0, situacao="PREVISTO")}
+        relatorio = self._montar([ta], despesa=1000.0, meses_realizados=())
+        avisos = [a for a in self._avisos_de(relatorio) if a.startswith("Aditivos previstos (valores estimados)")]
+        self.assertEqual(len(avisos), 1)
+        self.assertIn(NE_B, avisos[0])
+        self.assertIn("2º TA", avisos[0])
+
+    def test_aviso_de_valor_mensal_negativo(self):
+        relatorio = self._montar([_ta("3º TA", "2026-11-01", -50.0)], despesa=1000.0, meses_realizados=())
+        avisos = [a for a in self._avisos_de(relatorio) if a.startswith("Aditivo com valor mensal negativo")]
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("3º TA", avisos[0])
+
+    def test_contrato_sem_aditivo_nao_gera_nenhum_dos_tres_avisos(self):
+        avisos = self._avisos_de(_relatorio(_liquidacao_mensal()))
+        for prefixo in ("Aditivos previstos", "Aditivo com valor mensal negativo"):
+            self.assertFalse(any(a.startswith(prefixo) for a in avisos), prefixo)
+
+    # ---- PDF e notas
+    def test_pdf_sai_com_previsto_e_retroativo_e_traz_as_notas(self):
+        previsto = {**_ta("3º TA", "2026-11-01", 12_000.0, situacao="PREVISTO")}
+        relatorio = self._montar([self.TA_ASSINADO, previsto])
+        self.assertTrue(gerar_pdf(relatorio, _contexto()).startswith(b"%PDF"))
+        notas = notas_de_aditivos(relatorio)
+        self.assertTrue(any("valor estimado (aditivo previsto)" in n for n in notas))
+        retro = [n for n in notas if "retroativo" in n]
+        self.assertEqual(len(retro), 1)
+        self.assertIn(NE_B, retro[0])
+        self.assertIn("800,00", retro[0])
+        self.assertIn("2º TA", retro[0])
+
+    def test_sem_aditivo_nao_ha_notas(self):
+        self.assertEqual(notas_de_aditivos(_relatorio(_liquidacao_mensal())), [])
+
+    # ---- faixa do topo
+    def test_valor_estimado_em_previstos(self):
+        # 1.000/mês, empenhado 5.000; previsto 1.200 a partir de 01/07: custo 13.200 contra 12.000 sem ele
+        # → necessidade 8.200 − 7.000 = 1.200 de estimado
+        filtrado = pd.DataFrame([_linha(
+            ne_curta="2026NE000999", despesa_mensal=1000.0, valor_empenhado_planilha_total_ne=5_000.0,
+            aditivos=[_ta("1º TA", "2026-07-01", 1_200.0, situacao="PREVISTO")],
+        )])
+        self.assertAlmostEqual(valor_estimado_em_previstos(filtrado, None, 2026), 1_200.0)
+        assinado = filtrado.copy()
+        assinado.at[0, "aditivos"] = [_ta("1º TA", "2026-07-01", 1_200.0)]
+        self.assertEqual(valor_estimado_em_previstos(assinado, None, 2026), 0.0)
 
 
 if __name__ == "__main__":

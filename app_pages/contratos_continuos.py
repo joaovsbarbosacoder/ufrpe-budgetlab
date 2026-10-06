@@ -214,7 +214,7 @@ from src.relatorio_necessidade_empenho import ContextoRelatorioNecessidade
 from src.relatorio_necessidade_empenho import gerar_pdf as gerar_pdf_necessidade
 from src.relatorio_necessidade_empenho import gerar_xlsx as gerar_xlsx_necessidade
 from src.relatorio_necessidade_empenho import montar_relatorio as montar_relatorio_necessidade
-from src.relatorio_necessidade_empenho import mes_referencia_do_exercicio, necessidade_por_ne
+from src.relatorio_necessidade_empenho import mes_referencia_do_exercicio, necessidade_por_ne, valor_estimado_em_previstos
 from src.relatorio_reforco_empenho import CONTRATOS_CONTINUOS as RELATORIO_CONTRATOS_CONTINUOS
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_linha_do_tempo import (
@@ -1234,6 +1234,11 @@ def _render_resumo_consolidado(
                     if sem_necessidade_por_vigencia else "."
                 )
             )
+            if por_ne["inclui_previsto"].any() or sem_ne["inclui_previsto"].any():
+                st.caption(
+                    "A necessidade inclui valores estimados de aditivos previstos (ainda não assinados); "
+                    "o relatório de Necessidade de Empenho os marca e lista nos avisos."
+                )
         if algum_ne_via_competencia:
             st.caption(
                 "Saldo/Necessidade usa Liquidado por competência (mês de referência) para as NEs com "
@@ -1721,6 +1726,7 @@ if filtrado.empty:
 # e a grade de indicadores do exercício. Substitui a antiga linha de 4 métricas.
 _por_ne_topo, _sem_ne_topo = necessidade_por_ne(filtrado, meses_liquidados_por_ne, ano_selecionado)
 _necessidade_topo = float(_por_ne_topo["necessidade"].sum() + _sem_ne_topo["necessidade"].sum())
+_estimado_previstos = valor_estimado_em_previstos(filtrado, meses_liquidados_por_ne, ano_selecionado)
 _empenhado_topo = float(_por_ne_topo["valor_empenhado_exibido"].sum() + _sem_ne_topo["valor_empenhado_exibido"].sum())
 st.markdown(
     cartao_resumo(
@@ -1732,6 +1738,10 @@ st.markdown(
             "detalhe": (
                 f"{len(_por_ne_topo)} NE(s) e {len(_sem_ne_topo)} contrato(s) sem NE consideradas, "
                 "conforme o Resumo Consolidado"
+                + (
+                    f" · inclui {formatar_brl(_estimado_previstos)} estimados em aditivos previstos"
+                    if filtrado["tem_aditivo_previsto"].any() else ""
+                )
             ),
             "tom": "warn" if _necessidade_topo > 0 else "ok",
         },
@@ -1766,6 +1776,8 @@ else:
 
 if dotacao_dimensoes is not None:
     st.markdown('<div class="cad-secao-titulo">Cobertura orçamentária por PTRES</div>', unsafe_allow_html=True)
+    if filtrado["tem_aditivo_previsto"].any():
+        st.caption("A despesa estimada por PTRES inclui aditivos previstos (valores estimados, ainda não assinados).")
     _render_quadro_dotacao(filtrado, dotacao_dimensoes, ano_exercicio_dotacao)
 else:
     st.info(

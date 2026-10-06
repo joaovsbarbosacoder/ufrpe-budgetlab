@@ -106,7 +106,7 @@ from __future__ import annotations
 import calendar
 import math
 from dataclasses import dataclass, replace
-from datetime import date
+from datetime import date, timedelta
 from io import BytesIO
 from xml.sax.saxutils import escape
 
@@ -122,6 +122,8 @@ from src.contratos_aditivos import (
     custo_mensal,
     dia_de_referencia,
     meses_com_previsto,
+    ROTULO_SITUACAO,
+    ROTULO_TIPO,
     retroativo_por_aditivo,
     serie_valor_mensal,
     valor_vigente_em,
@@ -697,6 +699,7 @@ def montar_relatorio(
     aviso_vigencia = pd.Series(None, index=linhas.index, dtype="object", name="aviso_vigencia")
     retroativo = pd.Series(0.0, index=linhas.index, dtype="float64", name="retroativo")
     meses_previstos = pd.Series("", index=linhas.index, dtype="object", name="meses_previstos")
+    retroativo_termos = pd.Series("", index=linhas.index, dtype="object", name="retroativo_termos")
     for indice, linha in linhas.iterrows():
         adit = aditivos_do_registro(linha["aditivos"])
         vigencia_ef = vigencia_efetiva(linha["vigencia_fim"], adit)[0]
@@ -737,10 +740,12 @@ def montar_relatorio(
             # retroativo dos reajustes assinados depois do início de vigência (só nos meses já realizados): soma-se
             # ao primeiro mês projetado e fica em coluna própria (spec §4.3)
             realizados = {m for m in range(1, 13) if not pd.isna(realizado.at[indice, f"r{m}"])}
-            total_retroativo = sum(v for _, v in retroativo_por_aditivo(linha["despesa_mensal"], adit, exercicio, realizados))
+            retros = retroativo_por_aditivo(linha["despesa_mensal"], adit, exercicio, realizados)
+            total_retroativo = sum(v for _, v in retros)
             if total_retroativo and not pd.isna(projetado.at[indice, f"p{inicio}"]):
                 projetado.at[indice, f"p{inicio}"] += total_retroativo
                 retroativo.at[indice] = total_retroativo
+                retroativo_termos.at[indice] = ", ".join(a.numero for a, v in retros if v)
         motivo, aviso = limite.motivo, limite.aviso
         if limite.mes_do_fim is not None and ate_limite == 0 and limite.aviso == "suspenso":
             # suspenso com data: a suspensão chega antes do primeiro mês sem liquidação
@@ -755,7 +760,7 @@ def montar_relatorio(
     linhas["retroativo"] = retroativo
     linhas["inclui_previsto"] = linhas["inclui_previsto"].fillna(False).astype(bool)
     mensal = pd.concat(
-        [realizado, projetado, primeiro_mes, meses_projetados, observacao, aviso_vigencia, retroativo, meses_previstos],
+        [realizado, projetado, primeiro_mes, meses_projetados, observacao, aviso_vigencia, retroativo, meses_previstos, retroativo_termos],
         axis=1,
     )
     return RelatorioNecessidade(
@@ -898,7 +903,83 @@ def _avisos(relatorio: RelatorioNecessidade, contexto: ContextoRelatorioNecessid
             "conta os meses restantes pelo empenhado (empenhado ÷ despesa mensal). Os dois estão no "
             "Resumo por NE."
         )
+    avisos += _avisos_de_aditivos(relatorio, rotulo)
     return avisos
+
+
+def _avisos_de_aditivos(relatorio: RelatorioNecessidade, rotulo) -> list[str]:
+    """Avisos dos aditivos (06/10/2026): renovação não cadastrada, aditivos previstos e valor negativo."""
+
+    sem_renovacao, previstos, negativos = [], [], []
+    ultimo_dia = pd.Timestamp(year=relatorio.exercicio, month=12, day=31)
+    for indice, linha in relatorio.linhas.iterrows():
+        aditivos = aditivos_do_registro(linha["aditivos"])
+        status = str(linha["status_contrato"]).strip().upper()
+        vigencia = vigencia_efetiva(linha["vigencia_fim"], aditivos)[0]
+        if (
+            status not in (STATUS_SUSPENSO, STATUS_VENCIDO) and pd.notna(vigencia)
+            and vigencia.year == relatorio.exercicio and vigencia < ultimo_dia
+        ):
+            sem_renovacao.append(f"{rotulo(indice)} (vigência até {vigencia:%d/%m/%Y})")
+        if linha["inclui_previsto"]:
+            termos = ", ".join(a.numero for a in aditivos if a.previsto)
+            previstos.append(f"{rotulo(indice)} ({termos})")
+        termos_negativos = [a.numero for a in aditivos if a.valor_mensal is not None and a.valor_mensal < 0]
+        if termos_negativos:
+            negativos.append(f"{rotulo(indice)} ({', '.join(termos_negativos)})")
+    avisos = []
+    if sem_renovacao:
+        avisos.append(
+            "Renovação não cadastrada — a vigência efetiva acaba no exercício e não há aditivo (nem previsto) "
+            "depois dela; a projeção e a necessidade param no vencimento (cadastre o aditivo, mesmo como "
+            "previsto, para estimar a renovação): " + "; ".join(sem_renovacao) + "."
+        )
+    if previstos:
+        avisos.append(
+            "Aditivos previstos (valores estimados): ainda não assinados, entram na necessidade e na projeção: "
+            + "; ".join(previstos) + "."
+        )
+    if negativos:
+        avisos.append("Aditivo com valor mensal negativo (confira o termo): " + "; ".join(negativos) + ".")
+    return avisos
+
+
+def notas_de_aditivos(relatorio: RelatorioNecessidade) -> list[str]:
+    """Notas do PDF sobre aditivos (06/10/2026): a legenda dos meses de aditivo previsto e, por NE, o
+    retroativo incluído no primeiro mês projetado. Sem aditivos, lista vazia."""
+
+    notas = []
+    if any(str(texto) for texto in relatorio.mensal["meses_previstos"]):
+        notas.append("Meses em laranja: valor estimado (aditivo previsto), ainda não assinado.")
+    for indice, linha in relatorio.linhas.iterrows():
+        retroativo = float(relatorio.mensal.at[indice, "retroativo"])
+        if retroativo:
+            termos = relatorio.mensal.at[indice, "retroativo_termos"]
+            notas.append(
+                f"{_texto_ou_traco(linha['ne_curta'])} inclui R$ {_formatar_brl(retroativo)} de retroativo ({termos})."
+            )
+    return notas
+
+
+def valor_estimado_em_previstos(
+    filtrado: pd.DataFrame, meses_liquidados_por_ne: pd.DataFrame | None, exercicio: int
+) -> float:
+    """Quanto da Necessidade de Empenho até Dezembro vem de aditivos PREVISTO (valores estimados): a
+    necessidade com eles menos a necessidade sem eles. 0,0 quando não há aditivo previsto."""
+
+    if "aditivos" not in filtrado.columns:
+        return 0.0
+    listas = [aditivos_do_registro(valor) for valor in filtrado["aditivos"]]
+    if not any(a.previsto for lista in listas for a in lista):
+        return 0.0
+    sem_previstos = filtrado.copy()
+    sem_previstos["aditivos"] = pd.Series([[a for a in lista if not a.previsto] for lista in listas], index=filtrado.index, dtype=object)
+
+    def total(tabela: pd.DataFrame) -> float:
+        por_ne, sem_ne = necessidade_por_ne(tabela, meses_liquidados_por_ne, exercicio)
+        return float(por_ne["necessidade"].sum() + sem_ne["necessidade"].sum())
+
+    return total(filtrado) - total(sem_previstos)
 
 
 NOTA_PROJECAO = (
@@ -936,12 +1017,17 @@ def _linhas_parametros(relatorio: RelatorioNecessidade, contexto: ContextoRelato
 _COLUNAS_VALOR_XLSX = {
     "Empenhado", "Liquidado", "Saldo atual do empenho", "Despesa mensal", "Necessidade até dezembro (Resumo)",
     "Necessidade projetada (grade)", "Total realizado", "Total projetado", "Total", "Valor", *MESES,
+    # aditivos (06/10/2026)
+    "Valor mensal vigente", "Custo do exercício", "Retroativo", "Valor anterior", "Valor novo",
 }
+_COLUNAS_DATA_XLSX = ("Vigência (fim)", "Início da execução", "Início", "Assinatura", "Nova vigência")
 _COLUNAS_NUMERO_XLSX = {
     "Meses no ano", "Meses já empenhados", "Meses restantes", "Meses liquidados (competência)",
     "Meses vigentes no exercício",
 }
 _PREENCHIMENTO_PROJETADO = "FFF2CC"
+#: mês projetado por aditivo PREVISTO (valor estimado, ainda não assinado)
+_PREENCHIMENTO_PREVISTO = "F8CBAD"
 
 
 def _soma(valores: list[float | None]) -> float | None:
@@ -994,15 +1080,59 @@ def _aba_detalhe_mensal(relatorio: RelatorioNecessidade) -> pd.DataFrame:
             valor, projetado = relatorio.valor_do_mes(indice, mes)
             if valor is None:
                 continue
+            # o retroativo dos reajustes entra no primeiro mês projetado (spec §4.3)
+            retroativo = float(relatorio.mensal.at[indice, "retroativo"])
+            retroativo_do_mes = retroativo if retroativo and mes == relatorio.mensal.at[indice, "primeiro_mes_projecao"] else None
             registros.append(
                 {
                     "NE": _texto(linha["ne_curta"]), "Fornecedor": _texto(linha["fornecedor"]),
                     "Contrato": _texto(linha["contrato_numero"]), "Nº do mês": mes, "Mês": MESES[mes - 1],
-                    "Tipo": TIPO_PROJETADO if projetado else TIPO_REALIZADO, "Valor": valor,
+                    "Tipo": relatorio.tipo_do_mes(indice, mes), "Valor": valor,
+                    "Retroativo": retroativo_do_mes,
                 }
             )
-    aba = pd.DataFrame(registros, columns=["NE", "Fornecedor", "Contrato", "Nº do mês", "Mês", "Tipo", "Valor"])
+    aba = pd.DataFrame(
+        registros, columns=["NE", "Fornecedor", "Contrato", "Nº do mês", "Mês", "Tipo", "Valor", "Retroativo"]
+    )
     aba["Valor"] = aba["Valor"].astype("float64")
+    aba["Retroativo"] = aba["Retroativo"].astype("float64")
+    return aba
+
+
+COLUNAS_ABA_ADITIVOS = [
+    "Contrato", "NE", "Nº do termo", "Tipo", "Situação", "Início", "Assinatura", "Valor anterior",
+    "Valor novo", "Nova vigência", "Retroativo",
+]
+
+
+def _aba_aditivos(relatorio: RelatorioNecessidade) -> pd.DataFrame:
+    """Uma linha por aditivo dos contratos do relatório (06/10/2026), para conferir cada número com o termo:
+    valor anterior → novo, datas e retroativo calculado. Vazio = "mantém o anterior" (nulo, nunca zero);
+    `Retroativo` só existe para aditivo assinado com valor novo e assinatura posterior ao início."""
+
+    registros = []
+    for indice, linha in relatorio.linhas.iterrows():
+        aditivos = aditivos_do_registro(linha["aditivos"])
+        realizados = {m for m in range(1, 13) if not pd.isna(relatorio.mensal.at[indice, f"r{m}"])}
+        retroativos = {id(a): v for a, v in retroativo_por_aditivo(linha["despesa_mensal"], aditivos, relatorio.exercicio, realizados)}
+        for aditivo in aditivos:
+            anterior = (
+                None if aditivo.data_inicio is None
+                else valor_vigente_em(linha["despesa_mensal"], aditivos, aditivo.data_inicio - timedelta(days=1))[0]
+            )
+            registros.append(
+                {
+                    "Contrato": _texto(linha["contrato_numero"]), "NE": _texto(linha["ne_curta"]),
+                    "Nº do termo": aditivo.numero, "Tipo": ROTULO_TIPO.get(aditivo.tipo, aditivo.tipo),
+                    "Situação": ROTULO_SITUACAO.get(aditivo.situacao, aditivo.situacao),
+                    "Início": aditivo.data_inicio, "Assinatura": aditivo.data_assinatura,
+                    "Valor anterior": anterior, "Valor novo": aditivo.valor_mensal,
+                    "Nova vigência": aditivo.vigencia_fim, "Retroativo": retroativos.get(id(aditivo)),
+                }
+            )
+    aba = pd.DataFrame(registros, columns=COLUNAS_ABA_ADITIVOS)
+    for coluna in ("Valor anterior", "Valor novo", "Retroativo"):
+        aba[coluna] = aba[coluna].astype("float64")
     return aba
 
 
@@ -1027,7 +1157,7 @@ def _formatar_aba(planilha, dados: pd.DataFrame) -> None:
         letra = planilha.cell(row=1, column=indice).column_letter
         if cabecalho in _COLUNAS_VALOR_XLSX:
             formato = "#,##0.00"
-        elif cabecalho in ("Vigência (fim)", "Início da execução"):
+        elif cabecalho in _COLUNAS_DATA_XLSX:
             formato = "dd/mm/yyyy"
         elif cabecalho in _COLUNAS_NUMERO_XLSX or cabecalho == "Nº do mês":
             formato = "0.00" if cabecalho in _COLUNAS_NUMERO_XLSX else "0"
@@ -1043,8 +1173,8 @@ def _formatar_aba(planilha, dados: pd.DataFrame) -> None:
 
 def gerar_xlsx(relatorio: RelatorioNecessidade, contexto: ContextoRelatorioNecessidade) -> bytes:
     """Abas: "Projeção mensal" (uma linha por NE, Jan…Dez; meses projetados sombreados e em
-    itálico), "Detalhe mensal" (formato longo com o Tipo de cada mês), "Total mensal", "Resumo por
-    NE" e "Parâmetros" (totais, regra e avisos). Nenhuma linha de total no meio das abas de dados.
+    itálico; mês de aditivo previsto em laranja), "Detalhe mensal" (formato longo com o Tipo de cada mês e o
+    retroativo), "Total mensal", "Resumo por NE", "Aditivos" (um aditivo por linha) e "Parâmetros" (totais, regra e avisos). Nenhuma linha de total no meio das abas de dados.
     Nulo é célula vazia, nunca zero."""
 
     from openpyxl.styles import Font, PatternFill
@@ -1059,6 +1189,9 @@ def gerar_xlsx(relatorio: RelatorioNecessidade, contexto: ContextoRelatorioNeces
             "Liquidado": linhas["valor_liquidado"],
             "Saldo atual do empenho": linhas["saldo"],
             "Despesa mensal": linhas["despesa_mensal"],
+            "Valor mensal vigente": linhas["valor_mensal_vigente"],
+            "Custo do exercício": linhas["custo_exercicio"],
+            "Retroativo": linhas["retroativo"],
             "Meses no ano": linhas["meses_no_ano"],
             "Meses já empenhados": linhas["meses_ja_empenhados"],
             "Meses vigentes no exercício": linhas["meses_vigentes"],
@@ -1082,6 +1215,7 @@ def gerar_xlsx(relatorio: RelatorioNecessidade, contexto: ContextoRelatorioNeces
     projecao, projetados = _aba_projecao_mensal(relatorio)
     detalhe = _aba_detalhe_mensal(relatorio)
     total_mensal = _aba_total_mensal(relatorio)
+    aditivos = _aba_aditivos(relatorio)
     parametros = [("Avisos", aviso) for aviso in _avisos(relatorio, contexto)] + _linhas_parametros(relatorio, contexto)
     coluna_jan = list(projecao.columns).index(MESES[0]) + 1
 
@@ -1090,11 +1224,12 @@ def gerar_xlsx(relatorio: RelatorioNecessidade, contexto: ContextoRelatorioNeces
         projecao.to_excel(writer, sheet_name="Projeção mensal", index=False)
         planilha = writer.sheets["Projeção mensal"]
         _formatar_aba(planilha, projecao)
-        for numero_linha, meses_projetados in enumerate(projetados, start=2):
+        for (numero_linha, meses_projetados), indice in zip(enumerate(projetados, start=2), relatorio.linhas.index):
             for mes, projetado in enumerate(meses_projetados):
                 if projetado:
                     celula = planilha.cell(row=numero_linha, column=coluna_jan + mes)
-                    celula.fill = PatternFill("solid", fgColor=_PREENCHIMENTO_PROJETADO)
+                    previsto = relatorio.tipo_do_mes(indice, mes + 1) == TIPO_PROJETADO_PREVISTO
+                    celula.fill = PatternFill("solid", fgColor=_PREENCHIMENTO_PREVISTO if previsto else _PREENCHIMENTO_PROJETADO)
                     celula.font = Font(italic=True)
         detalhe.to_excel(writer, sheet_name="Detalhe mensal", index=False)
         _formatar_aba(writer.sheets["Detalhe mensal"], detalhe)
@@ -1102,6 +1237,8 @@ def gerar_xlsx(relatorio: RelatorioNecessidade, contexto: ContextoRelatorioNeces
         _formatar_aba(writer.sheets["Total mensal"], total_mensal)
         resumo.to_excel(writer, sheet_name="Resumo por NE", index=False)
         _formatar_aba(writer.sheets["Resumo por NE"], resumo)
+        aditivos.to_excel(writer, sheet_name="Aditivos", index=False)
+        _formatar_aba(writer.sheets["Aditivos"], aditivos)
         pd.DataFrame(parametros, columns=["Parâmetro", "Valor"]).to_excel(writer, sheet_name="Parâmetros", index=False)
         writer.sheets["Parâmetros"].column_dimensions["A"].width = 46
         writer.sheets["Parâmetros"].column_dimensions["B"].width = 120
@@ -1120,6 +1257,7 @@ _CABECALHO_RESUMO_PDF = [
 _LARGURAS_RESUMO_PDF = [62, 195, 72, 72, 66, 76, 76, 40, 126]
 _COR_TITULO_NE = colors.HexColor("#E8EEF7")
 _COR_PROJETADO = colors.HexColor(f"#{_PREENCHIMENTO_PROJETADO}")
+_COR_PREVISTO = colors.HexColor(f"#{_PREENCHIMENTO_PREVISTO}")
 
 
 def _estilo_base() -> list[tuple]:
@@ -1195,8 +1333,9 @@ def gerar_pdf(relatorio: RelatorioNecessidade, contexto: ContextoRelatorioNecess
         ]
         for mes, (_, projetado) in enumerate(valores, start=1):
             if projetado:
+                previsto = relatorio.tipo_do_mes(indice, mes) == TIPO_PROJETADO_PREVISTO
                 comandos += [
-                    ("BACKGROUND", (mes + 1, posicao + 1), (mes + 1, posicao + 1), _COR_PROJETADO),
+                    ("BACKGROUND", (mes + 1, posicao + 1), (mes + 1, posicao + 1), _COR_PREVISTO if previsto else _COR_PROJETADO),
                     ("FONTNAME", (mes + 1, posicao + 1), (mes + 1, posicao + 1), "Helvetica-Oblique"),
                 ]
     tabela = Table(dados, colWidths=_LARGURAS_MENSAL_PDF, repeatRows=1)
@@ -1204,6 +1343,8 @@ def gerar_pdf(relatorio: RelatorioNecessidade, contexto: ContextoRelatorioNecess
     estilo_secao = estilos["Heading4"]
     elementos.append(Paragraph("Realizado × projeção mês a mês (meses projetados sombreados, em itálico)", estilo_secao))
     elementos.append(tabela)
+    for nota in notas_de_aditivos(relatorio):
+        elementos.append(Paragraph(escape(nota), estilo_parametro))
     elementos.append(Spacer(1, 10))
 
     # ---- total mensal de todas as linhas, separando realizado e projetado
