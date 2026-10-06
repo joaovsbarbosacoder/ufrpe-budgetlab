@@ -457,6 +457,33 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
+### Atalho de inicialização com atualização automática (um único computador)
+
+`Iniciar BudgetLab.bat`, na raiz do projeto, abre o sistema com dois cliques
+(chama `scripts/atualizar_e_iniciar.ps1`):
+
+1. atualiza o código pelo GitHub (`git pull --ff-only` no branch atual);
+2. cria o `.venv` na primeira execução e reinstala as dependências somente quando o
+   `requirements.txt` mudou;
+3. inicia o sistema e abre o navegador em `http://localhost:8501`. Se ele já estiver
+   aberto, apenas abre o navegador. A janela do atalho precisa ficar aberta, porque
+   fechá-la encerra o sistema.
+
+Sem internet, ou quando o Git recusa a atualização (alterações locais conflitantes,
+histórico divergente), o atalho mostra o motivo e abre a versão já instalada. Ele nunca
+descarta alterações: não usa `reset`, `stash` nem `checkout`. Os dados locais de
+`data/` que não são versionados (cadastros, bancos SQLite, planilhas importadas) não são
+tocados. A exceção é `data/manifestos/`, que é versionado: uma importação local
+altera esses arquivos e pode fazer o Git recusar a próxima atualização até que as
+alterações sejam enviadas (commit/push) ou resolvidas manualmente.
+
+Para criar o atalho na área de trabalho: clique com o botão direito em
+`Iniciar BudgetLab.bat` > *Enviar para* > *Área de trabalho (criar atalho)*.
+
+O atalho foi pensado para **um único usuário**. Os dados ficam no computador onde o
+sistema roda: cópias em outras máquinas não compartilham cadastros nem importações.
+Requisitos na primeira execução: Python 3.10+, Git e internet.
+
 ### Migração dos cadastros nativos
 
 Bolsas e Auxílios e Contratos Contínuos usam cadastros JSON locais, separados das planilhas
