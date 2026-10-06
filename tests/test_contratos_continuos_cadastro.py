@@ -19,6 +19,7 @@ from unittest import mock
 import pandas as pd
 
 import src.contratos_continuos_cadastro as cadastro
+from src.contratos_aditivos import aditivos_do_registro
 
 
 class TestMesesNoAno(unittest.TestCase):
@@ -198,6 +199,13 @@ class TestAditivosNoCadastro(unittest.TestCase):
             self.assertAlmostEqual(lido.loc[0, "despesa_anual"], 6_000.0)
             self.assertEqual(lido.loc[0, "valor_mensal_vigente"], 1000.0)
             self.assertTrue(pd.isna(lido.loc[0, "vigencia_fim_efetiva"]))
+
+    def test_despesa_anual_pela_serie_e_publica_e_respeita_meses_no_ano(self):
+        # a janela usa a mesma conta ao vivo: 6 primeiros meses da série (jan–jun a 10.400)
+        ta1 = aditivos_do_registro([self.TA1])
+        self.assertAlmostEqual(cadastro.despesa_anual_pela_serie(10_000.0, ta1, 2026, 6), 6 * 10_400.0)
+        self.assertAlmostEqual(cadastro.despesa_anual_pela_serie(10_000.0, [], 2026, float("nan")), 120_000.0)
+        self.assertTrue(pd.isna(cadastro.despesa_anual_pela_serie(float("nan"), [], 2026, 12)))
 
     def test_despesa_anual_nula_continua_nula(self):
         lido = cadastro.como_dataframe([cadastro.novo_contrato(contrato_numero="1/2026")], 2026)

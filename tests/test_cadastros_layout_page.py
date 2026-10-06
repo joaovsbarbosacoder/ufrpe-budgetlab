@@ -193,6 +193,17 @@ class TestLayoutContratosContinuos(_BaseCadastroLayout, unittest.TestCase):
         self.assertTrue(any(chave.endswith("_inicio_data") for chave in datas))
         self.assertTrue(any(chave.endswith("_suspensao") for chave in datas))  # 06/10/2026
 
+    def test_janela_tem_as_abas_periodo_e_aditivos(self) -> None:
+        # 06/10/2026: aditivos (valor mensal/vigência/rateio por período) ficam numa aba ao lado do Período
+        app = self._abrir()
+        self._botoes(app, "editar")[0].click().run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual([aba.label for aba in app.tabs][:2], ["Período", "Aditivos"])
+        self.assertTrue(any(b.key and b.key.endswith("_adt_add") for b in app.button))
+        html = _html(app)
+        self.assertIn("Valor mensal vigente", html)
+        self.assertIn("Vigência efetiva", html)
+
 
 @unittest.skipUnless(
     _tem_cadastro(DIRETORIO_BOLSAS) and MANIFESTO_EXECUCAO.exists(),

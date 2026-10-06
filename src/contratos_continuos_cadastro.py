@@ -60,6 +60,7 @@ Contrato público:
     excluir_contrato(ano, id) -> None
     carregar_contratos(ano) -> list[dict]
     como_dataframe(contratos, exercicio=None, *, hoje=None) -> pd.DataFrame
+    despesa_anual_pela_serie(despesa_mensal, aditivos, exercicio, meses_no_ano) -> float
     anos_disponiveis() -> list[int]
     duplicar_exercicio(ano_origem, ano_destino) -> list[dict]
     migrar_de_planilha(caminho, ano, *, diretorio_base=None) -> list[dict]
@@ -190,7 +191,7 @@ def _itens_validos(valor: object) -> list[dict]:
     return list(ITEM_UNICO_PADRAO)
 
 
-def _despesa_anual(despesa_mensal: object, aditivos: list, exercicio: int, meses_no_ano: object) -> float:
+def despesa_anual_pela_serie(despesa_mensal: object, aditivos: list, exercicio: int, meses_no_ano: object) -> float:
     """Soma dos `meses_no_ano` primeiros meses (12 se vazio; fração no último, e meses além de 12 pelo valor
     de dezembro) da série mensal do exercício, sem corte de vigência/início — como a conta antiga. Despesa
     mensal nula continua nula."""
@@ -268,7 +269,7 @@ def como_dataframe(contratos: list[dict], exercicio: int | None = None, *, hoje:
     else:
         df["despesa_anual"] = pd.Series(
             [
-                _despesa_anual(valor, adit, exercicio, meses)
+                despesa_anual_pela_serie(valor, adit, exercicio, meses)
                 for valor, adit, meses in zip(df["despesa_mensal"], df["aditivos"], df["meses_no_ano"])
             ],
             index=df.index, dtype="float64",

@@ -156,13 +156,20 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from src.contratos_aditivos import aditivo_para_registro
+from src.contratos_aditivos import (
+    aditivo_para_registro,
+    dia_de_referencia,
+    validar_aditivos,
+    valor_vigente_em,
+    vigencia_efetiva,
+)
 from src.contratos_continuos import com_efeitos_da_suspensao, com_meses_pagos, com_saldo_execucao
 from src.contratos_continuos_cadastro import (
     anos_disponiveis,
     atualizar_contrato,
     carregar_contratos,
     como_dataframe,
+    despesa_anual_pela_serie,
     duplicar_exercicio,
     excluir_contrato,
     excluir_exercicio,
@@ -216,6 +223,7 @@ from src.ui_linha_do_tempo import (
     MESES_ABREV,
     abrir_linha_do_tempo,
 )
+from src.ui_aditivos import render_aba_aditivos
 from src.ui_cadastro import (
     aviso_linha_do_tempo,
     cartao_cobertura_ptres,
@@ -537,44 +545,54 @@ def _dialogo_editar_contrato(
     )
 
     _secao("Período de execução")
-    p_vig, p_data, p_mes, p_meses = st.columns(4)
-    # Vigência (fim) — a data de fim do cadastro limita a projeção do relatório de Necessidade de
-    # Empenho (o mês final é proporcional) e manda sobre o status. Vazio = sem data (nulo, nunca
-    # presumido).
-    vigencia = p_vig.date_input(
-        "Vigência (fim)", value=_data_ou_none(linha["vigencia_fim"]), format="DD/MM/YYYY",
-        min_value=date(2000, 1, 1), max_value=date(2100, 12, 31), key=f"{k}_vigencia",
-        help="Fim da vigência do contrato. A projeção do relatório de Necessidade de Empenho para neste "
-             "mês (proporcional aos dias) — a data manda sobre o status.",
-    )
-    # Início da execução por DATA — os meses anteriores ao início não contam na Necessidade de
-    # Empenho e o mês inicial é proporcional aos dias. Manda sobre o mês escolhido ao lado.
-    inicio_execucao_data_editada = p_data.date_input(
-        "Início da execução (data)", value=_data_ou_none(linha["inicio_execucao_data"]), format="DD/MM/YYYY",
-        min_value=date(2000, 1, 1), max_value=date(2100, 12, 31), key=f"{k}_inicio_data",
-        help="Data em que o contrato começou a ser executado neste exercício. Os meses anteriores não entram "
-             "na Necessidade de Empenho e o mês inicial é proporcional aos dias. Se informada, vale mais "
-             "que o mês escolhido ao lado.",
-    )
-    inicio_execucao_mes_editado = _campo_inicio_execucao(p_mes, linha["inicio_execucao_mes"], sugestao_inicio, f"{k}_inicio")
-    # meses_no_ano: total de meses que o contrato é pago no exercício — a maioria é 12 (contrato
-    # "contínuo" de verdade), mas um contrato que só roda parte do ano tem menos.
-    meses_no_ano = p_meses.number_input(
-        "Meses no ano", value=int(_ou_zero(linha["meses_no_ano"]) or 12), step=1, min_value=1, format="%d",
-        key=f"{k}_mesesano",
-    )
-    # Data da suspensão (06/10/2026) — só vale com o status SUSPENSO: a partir dela o contrato não gera
-    # necessidade, projeção nem sugestão de reforço. Sem data, SUSPENSO vale para o exercício inteiro.
-    p_susp, _ = st.columns([1, 3])
-    data_suspensao = p_susp.date_input(
-        "Data da suspensão", value=_data_ou_none(linha["data_suspensao"]), format="DD/MM/YYYY",
-        min_value=date(2000, 1, 1), max_value=date(2100, 12, 31), key=f"{k}_suspensao",
-        help="Só vale com o status SUSPENSO. A partir desta data o contrato não gera necessidade, projeção nem "
-             "sugestão de reforço; os meses anteriores seguem a regra normal. Sem data, a suspensão vale para "
-             "o exercício inteiro.",
-    )
-    if data_suspensao and status != "SUSPENSO":
-        p_susp.caption("Sem efeito: o status não é SUSPENSO.")
+    aba_periodo, aba_aditivos = st.tabs(["Período", "Aditivos"])
+    with aba_aditivos:
+        aditivos_editados = render_aba_aditivos(k, linha["aditivos"], linha["itens"])
+    with aba_periodo:
+        p_vig, p_data, p_mes, p_meses = st.columns(4)
+        # Vigência (fim) — a data de fim do cadastro limita a projeção do relatório de Necessidade de
+        # Empenho (o mês final é proporcional) e manda sobre o status. Vazio = sem data (nulo, nunca
+        # presumido).
+        vigencia = p_vig.date_input(
+            "Vigência (fim)", value=_data_ou_none(linha["vigencia_fim"]), format="DD/MM/YYYY",
+            min_value=date(2000, 1, 1), max_value=date(2100, 12, 31), key=f"{k}_vigencia",
+            help="Fim da vigência do contrato. A projeção do relatório de Necessidade de Empenho para neste "
+                 "mês (proporcional aos dias) — a data manda sobre o status.",
+        )
+        vigencia_ef, definidor_vigencia = vigencia_efetiva(vigencia, aditivos_editados)
+        if definidor_vigencia is not None:
+            p_vig.caption(
+                f"Vigência efetiva: {vigencia_ef:%d/%m/%Y} ({definidor_vigencia.numero or 'aditivo sem nº'}"
+                + (", previsto)" if definidor_vigencia.previsto else ")")
+            )
+        # Início da execução por DATA — os meses anteriores ao início não contam na Necessidade de
+        # Empenho e o mês inicial é proporcional aos dias. Manda sobre o mês escolhido ao lado.
+        inicio_execucao_data_editada = p_data.date_input(
+            "Início da execução (data)", value=_data_ou_none(linha["inicio_execucao_data"]), format="DD/MM/YYYY",
+            min_value=date(2000, 1, 1), max_value=date(2100, 12, 31), key=f"{k}_inicio_data",
+            help="Data em que o contrato começou a ser executado neste exercício. Os meses anteriores não entram "
+                 "na Necessidade de Empenho e o mês inicial é proporcional aos dias. Se informada, vale mais "
+                 "que o mês escolhido ao lado.",
+        )
+        inicio_execucao_mes_editado = _campo_inicio_execucao(p_mes, linha["inicio_execucao_mes"], sugestao_inicio, f"{k}_inicio")
+        # meses_no_ano: total de meses que o contrato é pago no exercício — a maioria é 12 (contrato
+        # "contínuo" de verdade), mas um contrato que só roda parte do ano tem menos.
+        meses_no_ano = p_meses.number_input(
+            "Meses no ano", value=int(_ou_zero(linha["meses_no_ano"]) or 12), step=1, min_value=1, format="%d",
+            key=f"{k}_mesesano",
+        )
+        # Data da suspensão (06/10/2026) — só vale com o status SUSPENSO: a partir dela o contrato não gera
+        # necessidade, projeção nem sugestão de reforço. Sem data, SUSPENSO vale para o exercício inteiro.
+        p_susp, _ = st.columns([1, 3])
+        data_suspensao = p_susp.date_input(
+            "Data da suspensão", value=_data_ou_none(linha["data_suspensao"]), format="DD/MM/YYYY",
+            min_value=date(2000, 1, 1), max_value=date(2100, 12, 31), key=f"{k}_suspensao",
+            help="Só vale com o status SUSPENSO. A partir desta data o contrato não gera necessidade, projeção nem "
+                 "sugestão de reforço; os meses anteriores seguem a regra normal. Sem data, a suspensão vale para "
+                 "o exercício inteiro.",
+        )
+        if data_suspensao and status != "SUSPENSO":
+            p_susp.caption("Sem efeito: o status não é SUSPENSO.")
 
     _secao("Classificação orçamentária")
     q = st.columns(6)
@@ -621,7 +639,7 @@ def _dialogo_editar_contrato(
         meses_empenhados_persistir = meses_empenhados
         meses_liquidados_persistir = meses_liquidados
 
-    despesa_anual = despesa_mensal * meses_no_ano
+    despesa_anual = despesa_anual_pela_serie(despesa_mensal, aditivos_editados, ano_exercicio, meses_no_ano)
     meses_a_empenhar, valor_a_empenhar = calcular_necessidade_empenho(meses_empenhados, meses_liquidados, despesa_mensal)
     if status == "SUSPENSO":  # mesma regra de `com_efeitos_da_suspensao`, com o que está digitado
         empenhado_execucao = linha["valor_empenhado_execucao"]
@@ -679,6 +697,14 @@ def _dialogo_editar_contrato(
         f"{_num(meses_pagos)} · {_fmt_mes(linha['ultimo_mes_pago'])}" if pd.notna(meses_pagos) else "sem dado"
     )
     rotulo_empenhar = "A empenhar (Execução Mensal)" if via_execucao else "A empenhar (planilha)"
+    valor_vigente, definidor_valor = valor_vigente_em(despesa_mensal, aditivos_editados, dia_de_referencia(ano_exercicio))
+    texto_valor_vigente = formatar_brl(valor_vigente) if valor_vigente is not None else "sem valor"
+    if definidor_valor is not None:
+        texto_valor_vigente += f" · {definidor_valor.numero or 'aditivo'}" + (" (previsto)" if definidor_valor.previsto else "")
+    vigencia_efetiva_data, definidor_vig = vigencia_efetiva(vigencia, aditivos_editados)
+    texto_vigencia_efetiva = vigencia_efetiva_data.strftime("%d/%m/%Y") if pd.notna(vigencia_efetiva_data) else "sem data"
+    if definidor_vig is not None:
+        texto_vigencia_efetiva += f" · {definidor_vig.numero or 'aditivo'}" + (" (previsto)" if definidor_vig.previsto else "")
     with topo:
         st.markdown(
             grade_indicadores([
@@ -687,6 +713,8 @@ def _dialogo_editar_contrato(
                 ("Empenhado (Execução Mensal)", formatar_brl(valor_empenhado_execucao) if pd.notna(valor_empenhado_execucao) else "sem NE"),
                 ("Saldo (Execução Mensal)", formatar_brl(saldo_execucao) if pd.notna(saldo_execucao) else "sem NE"),
                 ("Meses de saldo", _num(meses_a_empenhar)),
+                ("Valor mensal vigente", texto_valor_vigente),
+                ("Vigência efetiva", texto_vigencia_efetiva),
                 ("Meses pagos (Pagamentos) · último mês", texto_meses_pagos),
             ]),
             unsafe_allow_html=True,
@@ -710,10 +738,15 @@ def _dialogo_editar_contrato(
     f_chips.markdown(chip(texto_situacao, tom_situacao) + " " + chip(texto_div, tom_div), unsafe_allow_html=True)
     if f_cancelar.button("Cancelar", key=f"{k}_cancelar", use_container_width=True):
         st.session_state.pop(itens_key, None)
+        st.session_state.pop(f"{k}_aditivos", None)
         st.rerun()
     if f_salvar.button("Salvar", key=f"{k}_salvar", type="primary", icon=":material/save:", use_container_width=True):
+        erros_aditivos = validar_aditivos(aditivos_editados)
         if abs(soma_percentuais - 100) > 0.5:
             st.error(f"A soma dos percentuais dos itens precisa fechar em 100% (está em {soma_percentuais:.1f}%).")
+        elif erros_aditivos:
+            for erro in erros_aditivos:
+                st.error(erro)
         else:
             atualizado = {
                 **linha.to_dict(),
@@ -733,8 +766,7 @@ def _dialogo_editar_contrato(
                 "inicio_execucao_mes": inicio_execucao_mes_editado,
                 "inicio_execucao_data": pd.Timestamp(inicio_execucao_data_editada) if inicio_execucao_data_editada else None,
                 "data_suspensao": pd.Timestamp(data_suspensao) if data_suspensao else None,
-                # aditivos seguem como estão gravados (a aba de aditivos edita esta lista)
-                "aditivos": [aditivo_para_registro(a) for a in linha["aditivos"]],
+                "aditivos": [aditivo_para_registro(a) for a in aditivos_editados],
             }
             for chave_extra in (
                 "despesa_anual", "meses_a_empenhar", "valor_a_empenhar", "saldo_execucao",
@@ -749,6 +781,7 @@ def _dialogo_editar_contrato(
                 atualizado.pop(chave_extra, None)
             atualizar_contrato(ano_exercicio, atualizado)
             st.session_state.pop(itens_key, None)
+            st.session_state.pop(f"{k}_aditivos", None)
             st.toast("Contrato salvo.", icon=":material/check_circle:")
             st.rerun()
 
@@ -1764,7 +1797,7 @@ _ORDENACOES_REGISTRO = {
     "Fornecedor (A–Z)": ("fornecedor", True),
     "Maior despesa mensal": ("despesa_mensal", False),
     "Maior valor a empenhar": ("valor_a_empenhar", False),
-    "Vigência mais próxima": ("vigencia_fim", True),
+    "Vigência mais próxima": ("vigencia_fim_efetiva", True),
 }
 _PROPORCOES_REGISTRO = [3.0, 1.45, 1.3, 1.3, 1.3, 1.15, 1.85, 0.95]
 _CABECALHOS_REGISTRO = [
@@ -1818,7 +1851,13 @@ with st.container(border=True, key="cad_registro"):
             cel = st.columns(_PROPORCOES_REGISTRO, vertical_alignment="center")
             numero_linha = _ou_vazio(linha["contrato_numero"])
             ne_linha = _ou_vazio(linha["ne_curta"])
-            subtitulo = " · ".join(parte for parte in (f"Contrato {numero_linha}" if numero_linha else "", f"NE {ne_linha}" if ne_linha else "") if parte)
+            qtd_aditivos = len(linha["aditivos"])
+            subtitulo = " · ".join(
+                parte for parte in (
+                    f"Contrato {numero_linha}" if numero_linha else "", f"NE {ne_linha}" if ne_linha else "",
+                    f"{qtd_aditivos} aditivo(s)" if qtd_aditivos else "",
+                ) if parte
+            )
             texto_situacao, tom_situacao = _situacao(linha["status_contrato"], linha["valor_a_empenhar"])
             a_empenhar_linha = _ou_zero(linha["valor_a_empenhar"])
             cel[0].markdown(celula_principal(linha["fornecedor"] if _ou_vazio(linha["fornecedor"]) else "(sem fornecedor)", subtitulo), unsafe_allow_html=True)
@@ -1829,8 +1868,13 @@ with st.container(border=True, key="cad_registro"):
                 celula_valor(linha["valor_a_empenhar"], "warn" if tom_situacao == "warn" and a_empenhar_linha > 0 else None),
                 unsafe_allow_html=True,
             )
-            vigencia_linha = _data_ou_none(linha["vigencia_fim"])
-            cel[5].markdown(celula_suave(vigencia_linha.strftime("%d/%m/%Y") if vigencia_linha else None), unsafe_allow_html=True)
+            vigencia_linha = _data_ou_none(linha["vigencia_fim_efetiva"])
+            texto_vigencia = vigencia_linha.strftime("%d/%m/%Y") if vigencia_linha else None
+            if texto_vigencia and _data_ou_none(linha["vigencia_fim_efetiva"]) != _data_ou_none(linha["vigencia_fim"]):
+                texto_vigencia += " · TA"  # a vigência vem de um aditivo, não do contrato original
+            if texto_vigencia and linha["tem_aditivo_previsto"]:
+                texto_vigencia += " · previsto"
+            cel[5].markdown(celula_suave(texto_vigencia), unsafe_allow_html=True)
             cel[6].markdown(chip(texto_situacao, tom_situacao), unsafe_allow_html=True)
             with cel[7]:
                 with st.container(key=f"cad_acoes_{id_linha}"):
@@ -1838,6 +1882,7 @@ with st.container(border=True, key="cad_registro"):
                     if b_editar.button("", icon=":material/edit:", key=f"cc_editar_{source_key}_{id_linha}", help="Editar contrato", use_container_width=True):
                         # os itens de licitação editados vivem em `st.session_state`; ao abrir de novo, parte do registro
                         st.session_state.pop(f"cc_{source_key}_{id_linha}_itens", None)
+                        st.session_state.pop(f"cc_{source_key}_{id_linha}_aditivos", None)
                         _dialogo_editar_contrato(
                             linha, ano_selecionado, source_key,
                             sugestao_inicio_por_ne.get(linha["ne_curta"]) if pd.notna(linha["ne_curta"]) else None,
