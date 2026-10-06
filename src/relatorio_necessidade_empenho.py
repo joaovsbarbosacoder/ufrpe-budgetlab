@@ -31,9 +31,10 @@ REGRA (já em uso na página, apenas movida para cá; nada foi acrescentado):
     relatório): os "meses no ano" do contrato ficam limitados aos meses em que ele está vigente
     no exercício (`meses_vigentes_no_exercicio`: de janeiro até o fim da vigência do cadastro,
     mês final proporcional aos dias) — meses restantes = min(meses no ano, meses vigentes) −
-    meses já empenhados. SUSPENSO e contrato cuja vigência acabou antes do exercício (ou VENCIDO
-    sem data) ficam com 0 meses vigentes, logo sem necessidade; sem `vigencia_fim` e ATIVO nada
-    muda. A data manda sobre o status, como na projeção do relatório. Só se aplica quando o
+    meses já empenhados. SUSPENSO sem data de suspensão e contrato cuja vigência acabou antes do
+    exercício (ou VENCIDO sem data) ficam com 0 meses vigentes, logo sem necessidade; SUSPENSO com
+    data de suspensão (06/10/2026) conta só até a véspera dela, como um fim de vigência; sem
+    `vigencia_fim` e ATIVO nada muda. A data manda sobre o status, como na projeção do relatório. Só se aplica quando o
     exercício é informado (`necessidade_por_ne(..., exercicio)`).
   * INÍCIO DA EXECUÇÃO (pedido explícito, 02/10/2026): os meses anteriores ao início NÃO contam —
     meses vigentes = do início (data ou, se só o mês foi definido, o dia 1º dele) até o fim da
@@ -75,7 +76,8 @@ uma linha por NE/item na grade Jan…Dez do exercício, onde TODO mês com dado 
     a projeção para no mês do FIM DA VIGÊNCIA do cadastro (`vigencia_fim`), e o mês final é
     PROPORCIONAL aos dias de vigência (fim em 15/11 → novembro projeta 15/30 da despesa mensal);
     nada é projetado depois do fim. Vigência já encerrada antes do primeiro mês a projetar: sem
-    projeção. Status "SUSPENSO" não projeta nada, mesmo vigente, e manda sobre a data. Sem
+    projeção. Status "SUSPENSO" sem data de suspensão não projeta nada, mesmo vigente, e manda
+    sobre a data; com `data_suspensao` (06/10/2026) projeta até a véspera dela. Sem
     `vigencia_fim` informada, o status decide: "VENCIDO" não projeta; os demais projetam até
     dezembro (com aviso). Data e status que se contradizem (ATIVO com vigência encerrada,
     VENCIDO com vigência futura) seguem a DATA e são listados nos avisos. A coluna
@@ -119,6 +121,7 @@ from src.necessidade_empenho import (  # noqa: F401  (reexportados: contrato pú
     STATUS_ATIVO,
     STATUS_SUSPENSO,
     STATUS_VENCIDO,
+    fim_ate_a_suspensao,
     meses_vigentes_no_exercicio,
 )
 
@@ -140,8 +143,8 @@ NOTA_REGRA = (
     "Necessidade = despesa mensal × meses restantes (nunca negativa) = o que falta empenhar. "
     "Meses restantes = meses no ano (12 quando não cadastrado) − empenhado ÷ despesa mensal (nunca "
     "negativo). Os meses no ano são limitados pelo período de execução (início informado e fim da "
-    "vigência do cadastro, meses inicial e final proporcionais) e o status SUSPENSO zera a "
-    "necessidade. O saldo não entra nesta conta (já está no empenhado). "
+    "vigência do cadastro, meses inicial e final proporcionais); o status SUSPENSO zera a "
+    "necessidade a partir da data da suspensão (sem data, no exercício inteiro). O saldo não entra nesta conta (já está no empenhado). "
     "Saldo = Empenhado − Liquidado por competência quando a NE tem competência apurada; senão "
     "saldo da Execução Mensal (data de liquidação); senão saldo colado na planilha. Contrato sem "
     "NE: sem saldo a abater."
@@ -175,9 +178,10 @@ def _meses_no_ano_efetivos(tabela: pd.DataFrame, exercicio: int | None) -> tuple
         return base, pd.Series(float("nan"), index=tabela.index, dtype="float64")
     vigentes = pd.Series(
         [
-            meses_vigentes_no_exercicio(status, fim, exercicio, inicio)
-            for status, fim, inicio in zip(
-                tabela["status_contrato"], tabela["vigencia_fim"], tabela["inicio_execucao_considerado"]
+            meses_vigentes_no_exercicio(status, fim, exercicio, inicio, suspensao)
+            for status, fim, inicio, suspensao in zip(
+                tabela["status_contrato"], tabela["vigencia_fim"], tabela["inicio_execucao_considerado"],
+                tabela["data_suspensao"],
             )
         ],
         index=tabela.index, dtype="float64",
@@ -211,6 +215,7 @@ def necessidade_por_ne(
     # (chamadores antigos) ficam nulos — nunca inventados.
     colunas_cadastro = (
         "status_contrato", "vigencia_fim", "inicio_execucao_data", "inicio_execucao_mes", "inicio_execucao_efetivo",
+        "data_suspensao",
     )
     extras = {coluna: (coluna, "first") for coluna in colunas_cadastro if coluna in filtrado.columns}
     por_ne = com_ne.groupby("ne_curta", sort=False).agg(
@@ -306,13 +311,13 @@ class LimiteProjecao:
 
 
 def limite_de_projecao(
-    status: object, vigencia_fim: object, exercicio: int, inicio: object = None
+    status: object, vigencia_fim: object, exercicio: int, inicio: object = None, data_suspensao: object = None,
 ) -> LimiteProjecao:
     """Regra de vigência/status e início da execução da projeção: `_limite_por_status_e_fim` (abaixo)
     + o início informado, que impede a projeção antes dele (primeiro mês proporcional aos dias) —
     início em ano posterior ao exercício: nada a projetar; em ano anterior: não limita."""
 
-    base = _limite_por_status_e_fim(status, vigencia_fim, exercicio)
+    base = _limite_por_status_e_fim(status, vigencia_fim, exercicio, data_suspensao)
     if inicio is None or pd.isna(inicio) or base.ultimo_mes == 0:
         return base
     data_inicio = pd.Timestamp(inicio)
@@ -333,17 +338,28 @@ def limite_de_projecao(
     )
 
 
-def _limite_por_status_e_fim(status: object, vigencia_fim: object, exercicio: int) -> LimiteProjecao:
-    """Regra de vigência/status da projeção (docstring do módulo): SUSPENSO não projeta; com
-    `vigencia_fim` a DATA manda (até o mês do fim, o último proporcional aos dias; encerrada
-    antes do exercício, nada); sem data, VENCIDO não projeta e os demais projetam até dezembro.
-    Avisos: `suspenso`, `vigencia_encerrada` (data passada), `vencido_sem_data`, `sem_data`,
-    `vencido_com_vigencia` (status VENCIDO com vigência que ainda alcança o exercício),
-    `ativo_com_vigencia_encerrada` (status diferente de VENCIDO com vigência encerrada)."""
+def _limite_por_status_e_fim(
+    status: object, vigencia_fim: object, exercicio: int, data_suspensao: object = None,
+) -> LimiteProjecao:
+    """Regra de vigência/status da projeção (docstring do módulo): SUSPENSO sem data de suspensão não
+    projeta; SUSPENSO com data projeta até a véspera da suspensão, como um fim de vigência
+    (`fim_ate_a_suspensao`, 06/10/2026); com `vigencia_fim` a DATA manda (até o mês do fim, o último
+    proporcional aos dias; encerrada antes do exercício, nada); sem data, VENCIDO não projeta e os
+    demais projetam até dezembro. Avisos: `suspenso`, `vigencia_encerrada` (data passada),
+    `vencido_sem_data`, `sem_data`, `vencido_com_vigencia` (status VENCIDO com vigência que ainda
+    alcança o exercício), `ativo_com_vigencia_encerrada` (status diferente de VENCIDO com vigência
+    encerrada)."""
 
     status_texto = None if status is None or pd.isna(status) else str(status).strip().upper()
     if status_texto == STATUS_SUSPENSO:
-        return LimiteProjecao(0, 1.0, None, "Suspenso — sem projeção", "suspenso")
+        if data_suspensao is None or pd.isna(data_suspensao):
+            return LimiteProjecao(0, 1.0, None, "Suspenso — sem projeção", "suspenso")
+        fim = fim_ate_a_suspensao(vigencia_fim, data_suspensao)
+        base = _limite_por_status_e_fim(None, fim, exercicio)
+        texto = f"Suspenso em {pd.Timestamp(data_suspensao):%d/%m/%Y}"
+        if fim.year < exercicio:
+            return replace(base, motivo=f"{texto} — sem projeção", aviso="suspenso")
+        return replace(base, motivo=f"{texto} — {base.motivo}", aviso="suspenso")
 
     tem_data = vigencia_fim is not None and not pd.isna(vigencia_fim)
     if not tem_data:
@@ -534,6 +550,7 @@ def montar_relatorio(
         "despesa_mensal", "meses_no_ano", "meses_ja_empenhados", "meses_restantes", "necessidade",
         "base_saldo", "meses_liquidados", "ultimo_mes_liquidado", "status_contrato", "vigencia_fim",
         "meses_vigentes", "inicio_execucao_considerado", "inicio_execucao_efetivo", "inicio_execucao_mes",
+        "data_suspensao",
     ]
     com_ne = por_ne.sort_values("necessidade", ascending=False).rename(
         columns={
@@ -564,6 +581,7 @@ def montar_relatorio(
         linhas[coluna] = pd.to_numeric(linhas[coluna], errors="coerce").astype("float64")
     linhas["ultimo_mes_liquidado"] = pd.to_datetime(linhas["ultimo_mes_liquidado"], errors="coerce")
     linhas["vigencia_fim"] = pd.to_datetime(linhas["vigencia_fim"], errors="coerce")
+    linhas["data_suspensao"] = pd.to_datetime(linhas["data_suspensao"], errors="coerce")
     linhas["inicio_execucao_considerado"] = pd.to_datetime(linhas["inicio_execucao_considerado"], errors="coerce")
     linhas["status_contrato"] = linhas["status_contrato"].astype("object").where(linhas["status_contrato"].notna(), None)
 
@@ -597,7 +615,8 @@ def montar_relatorio(
         vida = max(0, math.floor(linha["meses_no_ano"] - len(meses_com_registro) + 1e-9))
         # vigência/status: até onde o contrato permite projetar (a data manda; SUSPENSO não projeta)
         limite = limite_de_projecao(
-            linha["status_contrato"], linha["vigencia_fim"], exercicio, linha["inicio_execucao_considerado"]
+            linha["status_contrato"], linha["vigencia_fim"], exercicio, linha["inicio_execucao_considerado"],
+            linha["data_suspensao"],
         )
         inicio = max(inicio, limite.primeiro_mes_permitido)  # início da execução informado: nada antes dele
         ate_dezembro = max(0, 12 - inicio + 1)
@@ -617,7 +636,10 @@ def montar_relatorio(
             primeiro_mes.at[indice] = inicio
             meses_projetados.at[indice] = qtd
         motivo, aviso = limite.motivo, limite.aviso
-        if limite.mes_do_fim is not None and ate_limite == 0:
+        if limite.mes_do_fim is not None and ate_limite == 0 and limite.aviso == "suspenso":
+            # suspenso com data: a suspensão chega antes do primeiro mês sem liquidação
+            motivo = f"Suspenso em {pd.Timestamp(linha['data_suspensao']).strftime('%d/%m/%Y')} — sem projeção"
+        elif limite.mes_do_fim is not None and ate_limite == 0:
             # a vigência acaba antes do primeiro mês sem liquidação: nada a projetar
             motivo = f"Vigência encerrada em {pd.Timestamp(linha['vigencia_fim']).strftime('%d/%m/%Y')} — sem projeção"
             aviso = None if str(linha["status_contrato"]).strip().upper() == STATUS_VENCIDO else "ativo_com_vigencia_encerrada"
@@ -719,7 +741,10 @@ def _avisos(relatorio: RelatorioNecessidade, contexto: ContextoRelatorioNecessid
         )
     }
     if por_categoria["suspenso"]:
-        avisos.append("Contratos SUSPENSOS — sem projeção, mesmo vigentes: " + "; ".join(por_categoria["suspenso"]) + ".")
+        avisos.append(
+            "Contratos SUSPENSOS — sem projeção a partir da data da suspensão (sem data informada, nenhuma "
+            "projeção no exercício), mesmo vigentes: " + "; ".join(por_categoria["suspenso"]) + "."
+        )
     if por_categoria["ativo_com_vigencia_encerrada"]:
         avisos.append(
             "Status diferente de VENCIDO, mas a data de vigência já encerrou — a data manda, sem projeção "
@@ -771,7 +796,8 @@ NOTA_PROJECAO = (
     "atual do empenho e os seguintes a despesa mensal cheia (saldo maior que a despesa mensal é "
     "abatido nos meses seguintes). Limitada aos meses que o contrato é pago no exercício menos os "
     "já realizados e pela vigência: a data de fim da vigência do cadastro manda (a projeção para "
-    "no mês do fim, que é proporcional aos dias) e o status SUSPENSO não projeta. Nenhuma média "
+    "no mês do fim, que é proporcional aos dias) e o status SUSPENSO não projeta a partir da data da "
+    "suspensão (sem data, nada). Nenhuma média "
     "nem tendência — só a despesa mensal cadastrada."
 )
 

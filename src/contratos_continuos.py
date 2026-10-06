@@ -28,6 +28,7 @@ Contrato público:
     ler_contratos_continuos(caminho) -> pd.DataFrame
     com_saldo_execucao(df, por_ne_execucao, indice_liquidado_competencia=None) -> pd.DataFrame
     com_meses_pagos(df, meses_pagos) -> pd.DataFrame
+    com_efeitos_da_suspensao(df) -> pd.DataFrame
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ from src.execucao_ne_utils import (
     indice_saldo_por_ne_curta,
     indice_valor_empenhado_por_ne_curta,
 )
-from src.necessidade_empenho import calcular_necessidade_empenho
+from src.necessidade_empenho import STATUS_SUSPENSO, calcular_necessidade_empenho
 
 NOME_ABA = "Planilha atualizada"
 
@@ -287,4 +288,48 @@ def com_meses_pagos(df: pd.DataFrame, meses_pagos: pd.DataFrame) -> pd.DataFrame
     indexado = meses_pagos.set_index("contrato_normalizado")
     resultado["meses_pagos"] = resultado["contrato_normalizado"].map(indexado["meses_pagos"])
     resultado["ultimo_mes_pago"] = resultado["contrato_normalizado"].map(indexado["ultimo_mes_pago"])
+    return resultado
+
+
+#: origem da `despesa_anual` de cada linha depois de `com_efeitos_da_suspensao`.
+DESPESA_CONTRATUAL = "Contratual (despesa mensal × meses no ano)"
+DESPESA_EMPENHADO_SUSPENSO = "Empenhado (contrato suspenso)"
+
+
+def com_efeitos_da_suspensao(df: pd.DataFrame) -> pd.DataFrame:
+    """Contrato SUSPENSO só produz efeito pelo que já foi empenhado e liquidado (pedido explícito,
+    06/10/2026: "os contratos suspensos parem de fazer efeito após a suspensão. Só devem fazer efeito
+    os valores de empenho e liquidação já computados"). Para essas linhas:
+
+      * `despesa_anual` (Despesa anual e Cobertura Orçamentária por PTRES) passa a ser o valor JÁ
+        EMPENHADO — o da Execução Mensal (`valor_empenhado_execucao`) quando a NE foi encontrada nela,
+        senão o `valor_empenhado` do cadastro (decisão do usuário, 06/10/2026). NE compartilhada por
+        mais de uma linha usa o valor do cadastro, para não contar o empenho da NE inteira em cada
+        linha (nenhum rateio é presumido). Empenhado nulo continua nulo, nunca vira zero.
+      * `meses_a_empenhar`/`valor_a_empenhar` ("A empenhar (execução)") viram zero declarado: não se
+        pede reforço para contrato parado. Saldo, empenhado e liquidado não mudam.
+
+    A despesa contratual original fica em `despesa_anual_contratual` e a origem do valor em
+    `despesa_anual_base`, para reconciliação. Precisa de `com_saldo_execucao` antes (usa
+    `valor_empenhado_execucao`); sem essa coluna, usa só o cadastro. Não altera a entrada."""
+
+    resultado = df.copy()
+    status = resultado["status_contrato"].astype("string").str.strip().str.upper()
+    suspenso = status.eq(STATUS_SUSPENSO).fillna(False).astype(bool)
+
+    ne = resultado["ne_curta"]
+    compartilhada = (ne.notna() & ne.duplicated(keep=False)).astype(bool)
+    if "valor_empenhado_execucao" in resultado.columns:
+        execucao = pd.to_numeric(resultado["valor_empenhado_execucao"], errors="coerce").where(~compartilhada)
+    else:
+        execucao = pd.Series(float("nan"), index=resultado.index)
+    empenhado = execucao.fillna(pd.to_numeric(resultado["valor_empenhado"], errors="coerce"))
+
+    resultado["despesa_anual_contratual"] = resultado["despesa_anual"]
+    resultado["despesa_anual"] = resultado["despesa_anual"].where(~suspenso, empenhado)
+    resultado["despesa_anual_base"] = pd.Series(DESPESA_CONTRATUAL, index=resultado.index).where(
+        ~suspenso, DESPESA_EMPENHADO_SUSPENSO
+    )
+    resultado["meses_a_empenhar"] = resultado["meses_a_empenhar"].where(~suspenso, 0.0)
+    resultado["valor_a_empenhar"] = resultado["valor_a_empenhar"].where(~suspenso, 0.0)
     return resultado

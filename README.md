@@ -123,16 +123,26 @@ Liquidado vem da base Liquidação por Competência quando ela está disponível
 tem correspondência, os campos de comparação ficam nulos, nunca zero.
 
 **Campos de período (sempre do cadastro).** Status (`ATIVO`, `VENCIDO` ou `SUSPENSO`), Vigência
-(fim), Início da Execução (por data ou pelo botão de mês) e Meses no Ano. Não há cruzamento com a
+(fim), Início da Execução (por data ou pelo botão de mês), Data da Suspensão e Meses no Ano. Não há cruzamento com a
 base "Contratos — Vigência". A regra comum (`src/necessidade_empenho.py::meses_vigentes_no_exercicio`):
 
-- `SUSPENSO` não gera necessidade nem projeção, mesmo vigente, e vale mais que a data;
+- `SUSPENSO` **com Data da Suspensão** vale até a véspera dela, como um fim de vigência (mês final
+  proporcional); a partir da data, nada de necessidade, projeção ou sugestão de reforço. `SUSPENSO`
+  **sem data** não gera nada no exercício inteiro, mesmo vigente. A data da suspensão só tem efeito
+  com o status `SUSPENSO`;
 - com data, **a data manda sobre o status**: fim anterior ao exercício ou início posterior a ele
   zeram; sem data de fim, `VENCIDO` zera e os demais seguem até dezembro;
 - o mês de início e o mês de fim são **proporcionais aos dias** (fim em 15/11 conta 15/30 de
   novembro; início em 16/07 conta 16/31 de julho);
 - só o início **informado** (data ou botão de mês) corta meses; o mês detectado
   automaticamente pelo primeiro empenho não corta nada, e a data vale mais que o mês.
+
+**Contrato suspenso só conta o que já foi empenhado e liquidado** (06/10/2026,
+`src/contratos_continuos.py::com_efeitos_da_suspensao`). Para contrato `SUSPENSO`, a **Despesa anual**
+(cartão-resumo e Cobertura Orçamentária por PTRES) passa a ser o valor já empenhado (Execução Mensal;
+sem a NE na Execução, o empenhado do cadastro; NE compartilhada por mais de um contrato usa o do
+cadastro), e o **A empenhar (execução)** fica zero. Saldo, empenhado, liquidado e despesa mensal não
+mudam; a despesa contratual original fica preservada em `despesa_anual_contratual`.
 
 **Necessidade de Empenho até Dezembro (card "Resumo Consolidado").** É o que falta empenhar
 para cobrir os meses do exercício: despesa mensal × meses restantes, nunca negativa, em que
@@ -166,8 +176,8 @@ duas colunas e o relatório avisa a diferença.
 **Relatório de Reforço de Empenho.** O botão de relatórios da página também emite Reforço e
 Anulação de Saldo de Empenho (PDF nos modelos detalhado e resumido, `src/relatorio_reforco_empenho.py`).
 A sugestão inicial de cada linha respeita status, vigência e início da execução (data, com mês
-inicial proporcional): contrato suspenso, vencido ou com vigência encerrada começa com sugestão
-zero, e a vigência limita os meses sugeridos. A edição por linha continua livre; a Anulação
+inicial proporcional): contrato suspenso sem data, vencido ou com vigência encerrada começa com sugestão
+zero, e a vigência (ou a véspera da suspensão) limita os meses sugeridos. A edição por linha continua livre; a Anulação
 nunca tem sugestão automática.
 
 **Layout dos cadastros.** Contratos Contínuos e Bolsas e Auxílios compartilham o mesmo desenho

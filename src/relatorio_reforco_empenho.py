@@ -133,6 +133,9 @@ class EspecificacaoRelatorio:
     #: 02/10/2026): o mês inicial da sugestão "por calendário" passa a ser proporcional aos dias, e
     #: a data manda sobre o mês de início (`coluna_inicio_execucao`).
     coluna_inicio_data: str | None = None
+    #: coluna opcional com a data da suspensão (Contratos Contínuos; pedido explícito, 06/10/2026):
+    #: contrato SUSPENSO com data conta só até a véspera dela; sem data, sugestão zerada como antes.
+    coluna_data_suspensao: str | None = None
 
 
 BOLSAS_AUXILIOS = EspecificacaoRelatorio(
@@ -161,6 +164,7 @@ CONTRATOS_CONTINUOS = EspecificacaoRelatorio(
     coluna_status="status_contrato",
     coluna_vigencia_fim="vigencia_fim",
     coluna_inicio_data="inicio_execucao_data",
+    coluna_data_suspensao="data_suspensao",
 )
 
 @dataclass(frozen=True)
@@ -244,7 +248,7 @@ _COLUNAS_LINHAS = [
 #: resultado final de `linhas_para_processo` (ver docstring de `coluna_valor_empenhado`).
 _COLUNAS_CALENDARIO = [
     "_valor_empenhado_item", "_inicio_execucao_mes", "_meses_no_ano", "_status_contrato", "_vigencia_fim",
-    "_inicio_execucao_data",
+    "_inicio_execucao_data", "_data_suspensao",
 ]
 
 
@@ -284,6 +288,7 @@ def _linha_base(linha: pd.Series, spec: EspecificacaoRelatorio) -> dict:
         "_status_contrato": linha.get(spec.coluna_status) if spec.coluna_status else None,
         "_vigencia_fim": linha.get(spec.coluna_vigencia_fim) if spec.coluna_vigencia_fim else None,
         "_inicio_execucao_data": linha.get(spec.coluna_inicio_data) if spec.coluna_inicio_data else None,
+        "_data_suspensao": linha.get(spec.coluna_data_suspensao) if spec.coluna_data_suspensao else None,
     }
 
 
@@ -383,8 +388,9 @@ def _com_sugestao_por_calendario(
 def _com_limite_de_vigencia(resultado: pd.DataFrame, ano_referencia: int) -> pd.DataFrame:
     """Limita `meses_sugeridos` pela vigência/status do contrato (pedido explícito, 02/10/2026) e
     acrescenta `situacao_vigencia` (texto para a tela; nulo quando nada limita). Mesma regra da
-    Necessidade de Empenho (`meses_vigentes_no_exercicio`): SUSPENSO, VENCIDO sem data, ou vigência
-    encerrada antes do exercício → sugestão 0 (zero declarado, não nulo); vigência que acaba no
+    Necessidade de Empenho (`meses_vigentes_no_exercicio`): SUSPENSO sem data de suspensão, VENCIDO
+    sem data, ou vigência encerrada antes do exercício → sugestão 0 (zero declarado, não nulo);
+    SUSPENSO com data → limitado até a véspera da suspensão (06/10/2026); vigência que acaba no
     exercício → a sugestão não passa de (meses vigentes − meses já empenhados), o mês final
     proporcional. Sugestão nula continua nula (sem dado), salvo quando o contrato não está vigente.
     Sem as colunas de status/vigência (Bolsas e Auxílios) nada muda. Só a sugestão inicial é
@@ -398,13 +404,17 @@ def _com_limite_de_vigencia(resultado: pd.DataFrame, ano_referencia: int) -> pd.
         resultado["_inicio_execucao_data"] if "_inicio_execucao_data" in resultado.columns
         else pd.Series(pd.NaT, index=resultado.index)
     )
-    trios = list(zip(resultado["_status_contrato"], resultado["_vigencia_fim"], inicios))
+    suspensoes = (
+        resultado["_data_suspensao"] if "_data_suspensao" in resultado.columns
+        else pd.Series(pd.NaT, index=resultado.index)
+    )
+    quadras = list(zip(resultado["_status_contrato"], resultado["_vigencia_fim"], inicios, suspensoes))
     vigentes = pd.Series(
-        [meses_vigentes_no_exercicio(status, fim, ano_referencia, inicio) for status, fim, inicio in trios],
+        [meses_vigentes_no_exercicio(status, fim, ano_referencia, inicio, suspensao) for status, fim, inicio, suspensao in quadras],
         index=resultado.index, dtype="float64",
     )
     resultado["situacao_vigencia"] = pd.Series(
-        [descricao_vigencia(status, fim, ano_referencia, inicio) for status, fim, inicio in trios],
+        [descricao_vigencia(status, fim, ano_referencia, inicio, suspensao) for status, fim, inicio, suspensao in quadras],
         index=resultado.index, dtype=object,
     )
     valor_mensal = pd.to_numeric(resultado["valor_mensal"], errors="coerce").replace(0, float("nan"))
@@ -493,6 +503,10 @@ def linhas_para_processo(
                 "_inicio_execucao_data": (
                     filtrado[spec.coluna_inicio_data]
                     if spec.coluna_inicio_data and spec.coluna_inicio_data in filtrado.columns else pd.NA
+                ),
+                "_data_suspensao": (
+                    filtrado[spec.coluna_data_suspensao]
+                    if spec.coluna_data_suspensao and spec.coluna_data_suspensao in filtrado.columns else pd.NA
                 ),
             }
         )

@@ -191,6 +191,7 @@ class TestLayoutContratosContinuos(_BaseCadastroLayout, unittest.TestCase):
         datas = [d.key for d in app.date_input if d.key]
         self.assertTrue(any(chave.endswith("_vigencia") for chave in datas))
         self.assertTrue(any(chave.endswith("_inicio_data") for chave in datas))
+        self.assertTrue(any(chave.endswith("_suspensao") for chave in datas))  # 06/10/2026
 
 
 @unittest.skipUnless(

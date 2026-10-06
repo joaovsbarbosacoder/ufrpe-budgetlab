@@ -121,22 +121,43 @@ def _posicao_em_meses(data: pd.Timestamp, fim_do_dia: bool) -> float:
     return (data.month - 1) + dias_decorridos / dias_do_mes
 
 
+def _tem_data(valor: object) -> bool:
+    return valor is not None and not pd.isna(valor)
+
+
+def fim_ate_a_suspensao(vigencia_fim: object, data_suspensao: object) -> pd.Timestamp:
+    """Último dia de execução de um contrato SUSPENSO com data de suspensão: a véspera da
+    suspensão (a partir da data, nada mais conta), ou o fim da vigência, se vier antes."""
+
+    vespera = pd.Timestamp(data_suspensao) - pd.Timedelta(days=1)
+    if _tem_data(vigencia_fim):
+        return min(vespera, pd.Timestamp(vigencia_fim))
+    return vespera
+
+
 def meses_vigentes_no_exercicio(
-    status: object, vigencia_fim: object, exercicio: int, inicio: object = None
+    status: object, vigencia_fim: object, exercicio: int, inicio: object = None, data_suspensao: object = None,
 ) -> float | None:
     """Quantos meses do `exercicio` o contrato está em execução (fração; do início da execução —
     janeiro se não informado — até o fim da vigência — dezembro se não informado —, o mês inicial
     e o final proporcionais aos dias) — `None` quando nada limita (sem data de fim dentro do
-    exercício e sem início depois de 1º de janeiro). SUSPENSO: 0. VENCIDO sem data de fim: 0. Fim
-    em ano anterior ao exercício, ou início em ano posterior: 0. A data manda sobre o status
-    (VENCIDO com vigência futura segue a data). `inicio` é a data de início da execução
-    informada pelo usuário (nunca presumida). Pedido explícito, 02/10/2026 — usada pela
+    exercício e sem início depois de 1º de janeiro). SUSPENSO sem `data_suspensao`: 0. VENCIDO sem
+    data de fim: 0. Fim em ano anterior ao exercício, ou início em ano posterior: 0. A data manda
+    sobre o status (VENCIDO com vigência futura segue a data). `inicio` é a data de início da
+    execução informada pelo usuário (nunca presumida). Pedido explícito, 02/10/2026 — usada pela
     Necessidade de Empenho (Resumo Consolidado/relatório) e pela sugestão do Relatório de
-    Reforço de Contratos Contínuos."""
+    Reforço de Contratos Contínuos.
+
+    SUSPENSO com `data_suspensao` (pedido explícito, 06/10/2026: "os contratos suspensos parem de
+    fazer efeito após a suspensão"): o contrato vale até a véspera da suspensão, como um fim de
+    vigência (`fim_ate_a_suspensao`; o último mês proporcional aos dias). `data_suspensao` só é
+    considerada com o status SUSPENSO."""
 
     status_texto = _status_normalizado(status)
     if status_texto == STATUS_SUSPENSO:
-        return 0.0
+        if not _tem_data(data_suspensao):
+            return 0.0
+        return meses_vigentes_no_exercicio(None, fim_ate_a_suspensao(vigencia_fim, data_suspensao), exercicio, inicio)
     tem_fim = vigencia_fim is not None and not pd.isna(vigencia_fim)
     if not tem_fim and status_texto == STATUS_VENCIDO:
         return 0.0
@@ -164,14 +185,22 @@ def meses_vigentes_no_exercicio(
     return max(0.0, posicao_fim - posicao_inicio)
 
 
-def descricao_vigencia(status: object, vigencia_fim: object, exercicio: int, inicio: object = None) -> str | None:
+def descricao_vigencia(
+    status: object, vigencia_fim: object, exercicio: int, inicio: object = None, data_suspensao: object = None,
+) -> str | None:
     """Texto curto do que a vigência/status e o início da execução fazem com o contrato no
     `exercicio` (para a tela do Relatório de Reforço) — `None` quando nada limita (mesmo critério
     de `meses_vigentes_no_exercicio`)."""
 
     status_texto = _status_normalizado(status)
     if status_texto == STATUS_SUSPENSO:
-        return "Suspenso"
+        if not _tem_data(data_suspensao):
+            return "Suspenso"
+        partes_suspenso = [f"Suspenso em {pd.Timestamp(data_suspensao):%d/%m/%Y}"]
+        complemento = descricao_vigencia(None, vigencia_fim, exercicio, inicio)
+        if complemento:
+            partes_suspenso.append(complemento)
+        return " · ".join(partes_suspenso)
     partes = []
     if inicio is not None and not pd.isna(inicio):
         data_inicio = pd.Timestamp(inicio)

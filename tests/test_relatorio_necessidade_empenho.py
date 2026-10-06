@@ -666,6 +666,78 @@ class TestVigenciaNoCard(unittest.TestCase):
         self.assertIsNone(a["Meses vigentes no exercício"])  # sem limite pela vigência: vazio, não zero
 
 
+class TestDataDaSuspensao(unittest.TestCase):
+    """Data da suspensão (pedido explícito, 06/10/2026): com o status SUSPENSO, o contrato vale até a
+    véspera da suspensão, como um fim de vigência (mês final proporcional); sem a data, SUSPENSO
+    continua zerando o exercício inteiro. Só vale com o status SUSPENSO. Valores calculados à mão."""
+
+    def test_meses_vigentes_ate_a_vespera_da_suspensao(self):
+        casos = [
+            (pd.Timestamp("2026-10-01"), pd.NaT, 9.0),  # véspera 30/09: jan–set
+            (pd.Timestamp("2026-07-16"), pd.NaT, 6 + 15 / 31),  # véspera 15/07: jan–jun + 15/31 de julho
+            (pd.Timestamp("2026-01-01"), pd.NaT, 0.0),  # suspenso desde o início do exercício
+            (pd.Timestamp("2025-05-10"), pd.NaT, 0.0),  # suspenso antes do exercício
+            (pd.Timestamp("2026-10-01"), pd.Timestamp("2026-06-30"), 6.0),  # vigência acaba antes: ela manda
+        ]
+        for suspensao, fim, esperado in casos:
+            obtido = meses_vigentes_no_exercicio("SUSPENSO", fim, 2026, None, suspensao)
+            self.assertAlmostEqual(obtido, esperado, msg=str((suspensao, fim)))
+
+    def test_suspensao_depois_do_exercicio_nao_limita(self):
+        self.assertIsNone(meses_vigentes_no_exercicio("SUSPENSO", pd.NaT, 2026, None, pd.Timestamp("2027-02-01")))
+
+    def test_suspensao_respeita_o_inicio_da_execucao(self):
+        # início 01/03, suspensão 01/10: mar–set = 7 meses
+        obtido = meses_vigentes_no_exercicio("SUSPENSO", pd.NaT, 2026, pd.Timestamp("2026-03-01"), pd.Timestamp("2026-10-01"))
+        self.assertAlmostEqual(obtido, 7.0)
+
+    def test_sem_data_suspenso_continua_zerando_e_data_sem_status_suspenso_nao_tem_efeito(self):
+        self.assertEqual(meses_vigentes_no_exercicio("SUSPENSO", pd.NaT, 2026, None, pd.NaT), 0.0)
+        self.assertIsNone(meses_vigentes_no_exercicio("ATIVO", pd.NaT, 2026, None, pd.Timestamp("2026-10-01")))
+
+    def test_necessidade_conta_so_ate_a_suspensao(self):
+        # NE A: despesa 1000/mês, 12 meses, empenhado 8000 (8 meses). Necessidade sem suspensão: 4000.
+        casos = [("2026-10-01", 1000.0), ("2026-09-16", 500.0), ("2026-09-01", 0.0)]  # 9, 8,5 e 8 meses vigentes
+        for suspensao, esperado in casos:
+            filtrado = _filtrado()
+            filtrado.loc[filtrado["ne_curta"] == NE_A, "status_contrato"] = "SUSPENSO"
+            filtrado.loc[filtrado["ne_curta"] == NE_A, "data_suspensao"] = pd.Timestamp(suspensao)
+            por_ne, _ = necessidade_por_ne(filtrado, _meses_liquidados(), 2026)
+            self.assertAlmostEqual(por_ne.set_index("ne_curta").loc[NE_A, "necessidade"], esperado, msg=suspensao)
+
+    @staticmethod
+    def _projecao_de_b(suspensao: str):
+        filtrado = _filtrado()
+        indice = filtrado.index[filtrado["ne_curta"] == NE_B][0]
+        filtrado.loc[indice, "status_contrato"] = "SUSPENSO"
+        filtrado.loc[indice, "data_suspensao"] = pd.Timestamp(suspensao)
+        relatorio = _relatorio(_liquidacao_mensal(), filtrado=filtrado)
+        linha = relatorio.mensal.loc[relatorio.linhas["ne_curta"] == NE_B].iloc[0]
+        return relatorio, linha, [linha[f"p{m}"] for m in (10, 11, 12)]
+
+    def test_projecao_para_na_vespera_com_mes_proporcional(self):
+        # NE B projeta out–dez (out 500, nov 1000, dez 1000). Suspensão 16/11 → véspera 15/11:
+        # out 500, nov 15/30 de 1000 = 500, dez nada.
+        _, linha, meses = self._projecao_de_b("2026-11-16")
+        self.assertEqual(meses[:2], [500.0, 500.0])
+        self.assertTrue(math.isnan(meses[2]))
+        self.assertEqual(linha["aviso_vigencia"], "suspenso")
+        self.assertTrue(linha["observacao_projecao"].startswith("Suspenso em 16/11/2026"))
+
+    def test_suspensao_antes_do_primeiro_mes_a_projetar_nao_projeta(self):
+        _, linha, meses = self._projecao_de_b("2026-10-01")
+        self.assertTrue(all(math.isnan(v) for v in meses))
+        self.assertEqual(linha["observacao_projecao"], "Suspenso em 01/10/2026 — sem projeção")
+        self.assertEqual(linha["aviso_vigencia"], "suspenso")
+
+    def test_limite_de_projecao_com_data(self):
+        limite = limite_de_projecao("SUSPENSO", pd.NaT, 2026, None, pd.Timestamp("2026-07-16"))
+        self.assertEqual((limite.ultimo_mes, limite.mes_do_fim, limite.aviso), (7, 7, "suspenso"))
+        self.assertAlmostEqual(limite.fracao_ultimo_mes, 15 / 31)
+        sem_data = limite_de_projecao("SUSPENSO", pd.NaT, 2026, None, pd.NaT)
+        self.assertEqual((sem_data.ultimo_mes, sem_data.motivo), (0, "Suspenso — sem projeção"))
+
+
 class TestInicioDaExecucao(unittest.TestCase):
     """Início da execução (pedido explícito, 02/10/2026): os meses anteriores ao início não contam,
     com o mês inicial proporcional aos dias. Só vale o início INFORMADO (data ou mês manual); o

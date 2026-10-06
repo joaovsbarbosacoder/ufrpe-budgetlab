@@ -438,6 +438,28 @@ class TestSugestaoRespeitaVigenciaEStatusContinuos(unittest.TestCase):
         linhas = linhas_para_processo(df, CONTRATOS_CONTINUOS, self.PROCESSO_CELPE, 2026)
         self.assertEqual(linhas.iloc[0]["meses_sugeridos"], 0.0)
 
+    def test_suspenso_com_data_limita_ate_a_vespera_da_suspensao(self):
+        # 06/10/2026: suspensão em 16/03 → véspera 15/03 → teto 2 + 15/31 meses (< sugestão 3,0)
+        ne = "2026NE000102"
+        linhas = self._linhas(
+            self.PROCESSO_CELPE, {ne: {"status_contrato": "SUSPENSO", "data_suspensao": pd.Timestamp("2026-03-16")}}
+        )
+        self.assertAlmostEqual(linhas.iloc[0]["meses_sugeridos"], 2 + 15 / 31)
+        self.assertEqual(linhas.iloc[0]["situacao_vigencia"], "Suspenso em 16/03/2026")
+
+    def test_suspenso_com_data_nunca_aumenta_a_sugestao(self):
+        # suspensão em 01/07 (6 meses vigentes) > sugestão 3,0: inalterada
+        linhas = self._linhas(
+            self.PROCESSO_CELPE,
+            {"2026NE000102": {"status_contrato": "SUSPENSO", "data_suspensao": pd.Timestamp("2026-07-01")}},
+        )
+        self.assertEqual(linhas.iloc[0]["meses_sugeridos"], 3.0)
+
+    def test_data_da_suspensao_sem_status_suspenso_nao_tem_efeito(self):
+        linhas = self._linhas(self.PROCESSO_CELPE, {"2026NE000102": {"data_suspensao": pd.Timestamp("2026-01-01")}})
+        self.assertEqual(linhas.iloc[0]["meses_sugeridos"], 3.0)
+        self.assertTrue(pd.isna(linhas.iloc[0]["situacao_vigencia"]))
+
     def test_base_sem_colunas_de_vigencia_nao_muda(self):
         linhas = linhas_para_processo(_continuos_sintetico(), CONTRATOS_CONTINUOS, self.PROCESSO_APC, 2026)
         apc = linhas[linhas["ne_curta"] == "2026NE000100"].iloc[0]
@@ -455,6 +477,10 @@ class TestSugestaoRespeitaVigenciaEStatusContinuos(unittest.TestCase):
 class TestDescricaoVigencia(unittest.TestCase):
     def test_descricoes(self):
         self.assertEqual(descricao_vigencia("SUSPENSO", pd.NaT, 2026), "Suspenso")
+        self.assertEqual(
+            descricao_vigencia("SUSPENSO", pd.Timestamp("2026-11-30"), 2026, None, pd.Timestamp("2026-08-01")),
+            "Suspenso em 01/08/2026 · Vigência até 30/11/2026",
+        )
         self.assertEqual(descricao_vigencia("VENCIDO", pd.NaT, 2026), "Vencido, sem data de vigência")
         self.assertEqual(descricao_vigencia("ATIVO", pd.Timestamp("2026-03-15"), 2026), "Vigência até 15/03/2026")
         self.assertEqual(descricao_vigencia("ATIVO", pd.Timestamp("2025-12-31"), 2026), "Vigência encerrada em 31/12/2025")

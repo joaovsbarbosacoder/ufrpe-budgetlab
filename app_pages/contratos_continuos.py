@@ -156,7 +156,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from src.contratos_continuos import com_meses_pagos, com_saldo_execucao
+from src.contratos_continuos import com_efeitos_da_suspensao, com_meses_pagos, com_saldo_execucao
 from src.contratos_continuos_cadastro import (
     anos_disponiveis,
     atualizar_contrato,
@@ -515,7 +515,8 @@ def _dialogo_editar_contrato(
     status_atual = status_bruto if pd.notna(status_bruto) and status_bruto in STATUS_OPCOES else "ATIVO"
     status = c_status.selectbox(
         "Status", STATUS_OPCOES, index=STATUS_OPCOES.index(status_atual), key=f"{k}_status",
-        help="SUSPENSO não gera necessidade nem projeção, mesmo vigente.",
+        help="SUSPENSO não gera necessidade, projeção nem sugestão de reforço a partir da data da suspensão "
+             "(sem data, no exercício inteiro), mesmo vigente; a despesa anual passa a ser o já empenhado.",
     )
     numero = c_numero.text_input("Nº do contrato", value=_ou_vazio(linha["contrato_numero"]), key=f"{k}_numero")
     c_ano, c_cnpj, c_tipo = st.columns([1, 1.4, 1.4])
@@ -561,6 +562,18 @@ def _dialogo_editar_contrato(
         "Meses no ano", value=int(_ou_zero(linha["meses_no_ano"]) or 12), step=1, min_value=1, format="%d",
         key=f"{k}_mesesano",
     )
+    # Data da suspensão (06/10/2026) — só vale com o status SUSPENSO: a partir dela o contrato não gera
+    # necessidade, projeção nem sugestão de reforço. Sem data, SUSPENSO vale para o exercício inteiro.
+    p_susp, _ = st.columns([1, 3])
+    data_suspensao = p_susp.date_input(
+        "Data da suspensão", value=_data_ou_none(linha["data_suspensao"]), format="DD/MM/YYYY",
+        min_value=date(2000, 1, 1), max_value=date(2100, 12, 31), key=f"{k}_suspensao",
+        help="Só vale com o status SUSPENSO. A partir desta data o contrato não gera necessidade, projeção nem "
+             "sugestão de reforço; os meses anteriores seguem a regra normal. Sem data, a suspensão vale para "
+             "o exercício inteiro.",
+    )
+    if data_suspensao and status != "SUSPENSO":
+        p_susp.caption("Sem efeito: o status não é SUSPENSO.")
 
     _secao("Classificação orçamentária")
     q = st.columns(6)
@@ -609,6 +622,10 @@ def _dialogo_editar_contrato(
 
     despesa_anual = despesa_mensal * meses_no_ano
     meses_a_empenhar, valor_a_empenhar = calcular_necessidade_empenho(meses_empenhados, meses_liquidados, despesa_mensal)
+    if status == "SUSPENSO":  # mesma regra de `com_efeitos_da_suspensao`, com o que está digitado
+        empenhado_execucao = linha["valor_empenhado_execucao"]
+        despesa_anual = float(empenhado_execucao) if pd.notna(empenhado_execucao) else valor_empenhado
+        meses_a_empenhar, valor_a_empenhar = 0.0, 0.0
 
     # Itens de licitação — rateiam "Despesa Mensal Total" entre si (no SIAFI o reforço de empenho é
     # por item, mas a liquidação não é dividida por item; o item não é uma entidade própria, só um
@@ -665,7 +682,7 @@ def _dialogo_editar_contrato(
         st.markdown(
             grade_indicadores([
                 (rotulo_empenhar, formatar_brl(valor_a_empenhar)),
-                ("Despesa anual", formatar_brl(despesa_anual)),
+                ("Despesa anual (empenhado — suspenso)" if status == "SUSPENSO" else "Despesa anual", formatar_brl(despesa_anual)),
                 ("Empenhado (Execução Mensal)", formatar_brl(valor_empenhado_execucao) if pd.notna(valor_empenhado_execucao) else "sem NE"),
                 ("Saldo (Execução Mensal)", formatar_brl(saldo_execucao) if pd.notna(saldo_execucao) else "sem NE"),
                 ("Meses de saldo", _num(meses_a_empenhar)),
@@ -714,6 +731,7 @@ def _dialogo_editar_contrato(
                 "itens": [dict(item) for item in itens_sessao],
                 "inicio_execucao_mes": inicio_execucao_mes_editado,
                 "inicio_execucao_data": pd.Timestamp(inicio_execucao_data_editada) if inicio_execucao_data_editada else None,
+                "data_suspensao": pd.Timestamp(data_suspensao) if data_suspensao else None,
             }
             for chave_extra in (
                 "despesa_anual", "meses_a_empenhar", "valor_a_empenhar", "saldo_execucao",
@@ -722,6 +740,7 @@ def _dialogo_editar_contrato(
                 "despesa_mensal_total_ne", "meses_empenhados_execucao", "meses_liquidados_execucao",
                 "necessidade_via", "meses_pagos", "ultimo_mes_pago", "contrato_normalizado",
                 "tem_varios_itens", "inicio_execucao_efetivo", "valor_empenhado_autoritativo",
+                "despesa_anual_contratual", "despesa_anual_base",
             ):
                 atualizado.pop(chave_extra, None)
             atualizar_contrato(ano_exercicio, atualizado)
@@ -782,6 +801,13 @@ def _dialogo_novo_contrato(ano_exercicio: int, source_key: str) -> None:
         # meses_no_ano: total de meses que o contrato é pago no exercício — 12 por padrão (contrato
         # "contínuo" de verdade), menor para um contrato que só roda parte do ano.
         meses_no_ano = p3.number_input("Meses no ano", min_value=1, max_value=12, value=12)
+        p4, _ = st.columns([1, 2])
+        data_suspensao = p4.date_input(
+            "Data da suspensão — opcional", value=None, format="DD/MM/YYYY",
+            min_value=date(2000, 1, 1), max_value=date(2100, 12, 31),
+            help="Só vale com o status SUSPENSO: a partir desta data o contrato não gera necessidade, projeção "
+                 "nem sugestão de reforço.",
+        )
 
         _secao("Classificação orçamentária")
         q = st.columns(5)
@@ -812,6 +838,7 @@ def _dialogo_novo_contrato(ano_exercicio: int, source_key: str) -> None:
                     processo_empenho=processo_empenho.strip() or None,
                     vigencia_fim=pd.Timestamp(vigencia) if vigencia else None,
                     inicio_execucao_data=pd.Timestamp(inicio_data) if inicio_data else None,
+                    data_suspensao=pd.Timestamp(data_suspensao) if data_suspensao else None,
                     fornecedor=fornecedor, fornecedor_cnpj_cpf=cnpj, tipo_despesa=tipo_despesa,
                     unidade_cod=unidade, acao_cod=acao, ptres=ptres,
                     natureza_despesa_cod=nd, ugr_cod=ugr, pi_cod=pi,
@@ -1626,6 +1653,9 @@ dataframe["saldo_autoritativo"] = dataframe["saldo_execucao"].fillna(dataframe["
 dataframe["inicio_execucao_efetivo"] = dataframe["inicio_execucao_mes"].fillna(
     dataframe["ne_curta"].map(sugestao_inicio_por_ne)
 )
+# Contrato SUSPENSO (06/10/2026): Despesa anual/Cobertura por PTRES passam a usar o já empenhado e o
+# "A empenhar (execução)" vira zero — ver `src.contratos_continuos.com_efeitos_da_suspensao`.
+dataframe = com_efeitos_da_suspensao(dataframe)
 
 with col_relatorio:
     st.write("")

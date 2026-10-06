@@ -25,7 +25,16 @@ from pathlib import Path
 import openpyxl
 import pandas as pd
 
-from src.contratos_continuos import ErroLayoutBase, NOME_ABA, com_meses_pagos, com_saldo_execucao, ler_contratos_continuos
+from src.contratos_continuos import (
+    DESPESA_CONTRATUAL,
+    DESPESA_EMPENHADO_SUSPENSO,
+    ErroLayoutBase,
+    NOME_ABA,
+    com_efeitos_da_suspensao,
+    com_meses_pagos,
+    com_saldo_execucao,
+    ler_contratos_continuos,
+)
 from src.execucao_ne_utils import saldo_por_ne
 from src.necessidade_empenho import calcular_necessidade_empenho
 from src.tesouro_execucao_mensal import agregar_por_ne, ler_execucao_mensal
@@ -414,6 +423,58 @@ class TestComMesesPagos(unittest.TestCase):
         vazio = pd.DataFrame(columns=["contrato_normalizado", "meses_pagos", "ultimo_mes_pago"])
         df = com_meses_pagos(self._contratos(["23/2025"]), vazio)
         self.assertTrue(pd.isna(df.loc[0, "meses_pagos"]))
+
+
+class TestEfeitosDaSuspensao(unittest.TestCase):
+    """Contrato SUSPENSO só produz efeito pelo já empenhado/liquidado (pedido explícito, 06/10/2026):
+    Despesa anual (e Cobertura por PTRES) = empenhado; "A empenhar (execução)" = 0. Valores à mão."""
+
+    @staticmethod
+    def _df() -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "ne_curta": ["2026NE000001", "2026NE000002", "2026NE000003", None],
+                "status_contrato": ["ATIVO", "suspenso", "SUSPENSO", "SUSPENSO"],
+                "despesa_anual": [12_000.0, 24_000.0, 6_000.0, 3_600.0],
+                "valor_empenhado": [5_000.0, 9_000.0, 1_500.0, float("nan")],
+                "valor_empenhado_execucao": [7_000.0, 10_000.0, float("nan"), float("nan")],
+                "meses_a_empenhar": [2.0, 3.0, 1.0, 1.0],
+                "valor_a_empenhar": [2_000.0, 6_000.0, 500.0, 300.0],
+                "saldo_execucao": [1_000.0, 4_000.0, float("nan"), float("nan")],
+            }
+        )
+
+    def test_ativo_nao_muda(self):
+        resultado = com_efeitos_da_suspensao(self._df())
+        self.assertEqual(resultado.loc[0, "despesa_anual"], 12_000.0)
+        self.assertEqual(resultado.loc[0, "valor_a_empenhar"], 2_000.0)
+        self.assertEqual(resultado.loc[0, "despesa_anual_base"], DESPESA_CONTRATUAL)
+
+    def test_suspenso_usa_o_empenhado_da_execucao_e_zera_o_a_empenhar(self):
+        resultado = com_efeitos_da_suspensao(self._df())
+        self.assertEqual(resultado.loc[1, "despesa_anual"], 10_000.0)  # Execução, não os 24.000 do contrato
+        self.assertEqual(resultado.loc[1, "despesa_anual_contratual"], 24_000.0)  # original preservado
+        self.assertEqual(resultado.loc[1, "despesa_anual_base"], DESPESA_EMPENHADO_SUSPENSO)
+        self.assertEqual((resultado.loc[1, "meses_a_empenhar"], resultado.loc[1, "valor_a_empenhar"]), (0.0, 0.0))
+        self.assertEqual(resultado.loc[1, "saldo_execucao"], 4_000.0)  # saldo não muda
+
+    def test_sem_execucao_usa_o_empenhado_do_cadastro_e_nulo_continua_nulo(self):
+        resultado = com_efeitos_da_suspensao(self._df())
+        self.assertEqual(resultado.loc[2, "despesa_anual"], 1_500.0)
+        self.assertTrue(pd.isna(resultado.loc[3, "despesa_anual"]))  # sem empenho conhecido: nulo, não zero
+
+    def test_ne_compartilhada_nao_repete_o_empenho_da_ne_inteira(self):
+        df = self._df()
+        df.loc[2, "ne_curta"] = "2026NE000002"  # duas linhas na mesma NE (empenho da NE = 10.000)
+        df.loc[2, "valor_empenhado_execucao"] = 10_000.0
+        resultado = com_efeitos_da_suspensao(df)
+        self.assertEqual((resultado.loc[1, "despesa_anual"], resultado.loc[2, "despesa_anual"]), (9_000.0, 1_500.0))
+
+    def test_nao_altera_a_entrada(self):
+        df = self._df()
+        com_efeitos_da_suspensao(df)
+        self.assertEqual(df.loc[1, "despesa_anual"], 24_000.0)
+        self.assertNotIn("despesa_anual_base", df.columns)
 
 
 if __name__ == "__main__":

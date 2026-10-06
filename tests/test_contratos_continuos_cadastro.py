@@ -114,5 +114,27 @@ class TestProcessosNoCadastro(unittest.TestCase):
         self.assertIn("processo_empenho", cadastro.CAMPOS_IDENTIDADE)
 
 
+class TestDataDaSuspensaoNoCadastro(unittest.TestCase):
+    """`data_suspensao` (06/10/2026): dado de execução do exercício, como o status."""
+
+    def test_ida_e_volta_preserva_a_data(self):
+        with tempfile.TemporaryDirectory() as pasta, mock.patch.object(cadastro, "DIRETORIO_PADRAO", Path(pasta)):
+            registro = cadastro.novo_contrato(
+                contrato_numero="9/2026", status_contrato="SUSPENSO", data_suspensao=pd.Timestamp("2026-08-01"),
+            )
+            cadastro.salvar_contrato(2026, registro)
+            lido = cadastro.como_dataframe(cadastro.carregar_contratos(2026))
+        self.assertEqual(lido.loc[0, "data_suspensao"], pd.Timestamp("2026-08-01"))
+
+    def test_registro_anterior_sem_o_campo_fica_nulo(self):
+        legado = cadastro.novo_contrato(contrato_numero="9/2026")
+        legado.pop("data_suspensao")
+        self.assertTrue(pd.isna(cadastro.como_dataframe([legado]).loc[0, "data_suspensao"]))
+
+    def test_e_de_execucao_nao_de_identidade(self):
+        self.assertIn("data_suspensao", cadastro.CAMPOS_EXECUCAO_PADRAO)
+        self.assertNotIn("data_suspensao", cadastro.CAMPOS_IDENTIDADE)
+
+
 if __name__ == "__main__":
     unittest.main()
