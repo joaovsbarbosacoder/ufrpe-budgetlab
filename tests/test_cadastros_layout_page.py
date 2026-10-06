@@ -133,6 +133,19 @@ class _BaseCadastroLayout:
         novo[0].click().run()
         self.assertEqual(len(app.exception), 0)
         self.assertIn("cad-secao-dialogo", _html(app))
+        rotulos = {t.label for t in app.text_input}
+        self.assertIn("Processo da contratação", rotulos)
+        self.assertIn("Processo de empenho", rotulos)
+
+    def test_editar_mostra_os_dois_processos_preenchidos_do_cadastro(self) -> None:
+        # 06/10/2026: processo da contratação e processo de empenho editáveis na janela
+        app = self._abrir()
+        self._botoes(app, "editar")[0].click().run()
+        self.assertEqual(len(app.exception), 0)
+        por_rotulo = {t.label: t for t in app.text_input if t.key and t.key.startswith(f"{self.PREFIXO}_")}
+        self.assertIn("Processo da contratação", por_rotulo)
+        self.assertIn("Processo de empenho", por_rotulo)
+        self.assertTrue(por_rotulo["Processo de empenho"].value)  # todos os registros reais têm o de empenho
 
 
 @unittest.skipUnless(

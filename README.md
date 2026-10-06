@@ -179,6 +179,13 @@ abre uma janela com os campos em seções e só grava ao clicar em "Salvar"; "Re
 mudaram, mas a antiga edição ao vivo na sessão (os quadros refletindo o que estava digitado antes de
 salvar) deixou de existir: os quadros sempre refletem o cadastro gravado.
 
+**Processos nos cadastros.** As janelas de edição e de cadastro novo das duas telas trazem, em
+Identificação, o **Processo da contratação** e o **Processo de empenho** (texto, zeros à esquerda
+preservados; copiados ao duplicar o exercício). Em Contratos os dois já vinham da planilha. Em Bolsas, o
+antigo campo "Processo" é o processo de empenho (bate com o processo das NEs na aba "Base TG" da
+planilha) e passou a se chamar assim; o processo da contratação é campo novo, vazio nos registros
+existentes até ser digitado. O Relatório de Reforço/Anulação continua agrupando pelo processo de empenho.
+
 As seções analíticas das duas telas — **Resumo Consolidado**, **Empenhado × Liquidado** (só em
 Contratos Contínuos) e **Cobertura Orçamentária por PTRES** — seguem o mesmo desenho: cartão com
 kicker, título e destaque à direita, e linhas/tabelas com valores à direita. No Resumo Consolidado a

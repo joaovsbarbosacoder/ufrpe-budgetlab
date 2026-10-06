@@ -410,14 +410,20 @@ def _dialogo_editar_programa(linha: pd.Series, ano: int, source_key: str, sugest
     topo = st.container()  # preenchido no fim, com os valores já calculados dos campos abaixo
 
     _secao("Identificação")
-    c_prog, c_sit, c_proc = st.columns([2.2, 1, 1.2])
+    c_prog, c_sit = st.columns([2.2, 1])
     programa = c_prog.text_input("Item de despesa (programa)", value=_ou_vazio(linha["programa_bolsa"]), key=f"{k}_programa")
     situacao_bruta = linha["situacao_tg"]
     situacao_atual = situacao_bruta if pd.notna(situacao_bruta) and situacao_bruta in SITUACAO_OPCOES else "ATUALIZADO"
     situacao = c_sit.selectbox(
         "Situação TG", SITUACAO_OPCOES, index=SITUACAO_OPCOES.index(situacao_atual), key=f"{k}_situacao",
     )
-    processo = c_proc.text_input("Processo", value=_ou_vazio(linha["processo"]), key=f"{k}_processo")
+    # `processo` é o processo de empenho (o que o Relatório de Reforço agrupa) — ver
+    # `src/bolsas_auxilios_cadastro.py::CAMPOS_IDENTIDADE`; o da contratação é campo à parte.
+    c_proc_emp, c_proc_contr = st.columns(2)
+    processo = c_proc_emp.text_input("Processo de empenho", value=_ou_vazio(linha["processo"]), key=f"{k}_processo")
+    processo_contratacao = c_proc_contr.text_input(
+        "Processo da contratação", value=_ou_vazio(linha["processo_contratacao"]), key=f"{k}_processo_contratacao",
+    )
 
     _secao("Classificação orçamentária")
     q = st.columns(7)
@@ -528,7 +534,8 @@ def _dialogo_editar_programa(linha: pd.Series, ano: int, source_key: str, sugest
     if f_salvar.button("Salvar", key=f"{k}_salvar", type="primary", icon=":material/save:", use_container_width=True):
         atualizado = {
             **linha.to_dict(),
-            "processo": processo or None, "programa_bolsa": programa or None,
+            "processo": processo or None, "processo_contratacao": processo_contratacao.strip() or None,
+            "programa_bolsa": programa or None,
             "unidade_cod": unidade or None, "acao_cod": acao or None, "ptres": ptres or None,
             "fonte_cod": fonte or None, "natureza_despesa_cod": nd or None, "ugr_cod": ugr or None,
             "pi_cod": pi or None, "ne_curta": ne_curta.strip() or None, "meses_no_ano": meses_no_ano,
@@ -578,9 +585,10 @@ def _dialogo_novo_programa(ano: int, source_key: str) -> None:
 
     with st.form(f"bolsas_auxilios_form_{source_key}", clear_on_submit=True, border=False):
         _secao("Identificação")
-        c1, c2 = st.columns([2.2, 1.2])
-        programa = c1.text_input("Item de despesa (programa)")
-        processo = c2.text_input("Processo")
+        programa = st.text_input("Item de despesa (programa)")
+        c1, c2 = st.columns(2)
+        processo = c1.text_input("Processo de empenho")
+        processo_contratacao = c2.text_input("Processo da contratação")
 
         _secao("Classificação orçamentária")
         q = st.columns(7)
@@ -613,7 +621,8 @@ def _dialogo_novo_programa(ano: int, source_key: str) -> None:
                 st.error("Informe ao menos o item de despesa, quantidade efetiva e valor unitário.")
             else:
                 registro = novo_programa(
-                    processo=processo or "—", programa_bolsa=programa, unidade_cod=unidade,
+                    processo=processo or "—", processo_contratacao=processo_contratacao.strip() or None,
+                    programa_bolsa=programa, unidade_cod=unidade,
                     acao_cod=acao, ptres=ptres, fonte_cod=fonte, natureza_despesa_cod=nd,
                     ugr_cod=ugr, pi_cod=pi, ne_curta=ne_curta.strip() or None,
                     meses_no_ano=meses_no_ano, qtd_inicial=qtd_inicial, qtd_efetiva=qtd_efetiva,

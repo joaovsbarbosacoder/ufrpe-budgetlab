@@ -91,5 +91,28 @@ class TestInicioDaExecucaoNoCadastro(unittest.TestCase):
         self.assertNotIn("inicio_execucao_data", cadastro.CAMPOS_IDENTIDADE)
 
 
+class TestProcessosNoCadastro(unittest.TestCase):
+    """Processo da contratação e processo de empenho, editáveis na janela desde 06/10/2026: são
+    identificadores (texto, zeros à esquerda preservados), nunca presumidos um a partir do outro."""
+
+    def test_ida_e_volta_preserva_os_dois_processos_como_texto(self) -> None:
+        with tempfile.TemporaryDirectory() as pasta, mock.patch.object(cadastro, "DIRETORIO_PADRAO", Path(pasta)):
+            registro = cadastro.novo_contrato(
+                contrato_numero="14/2022", processo_contratacao="012543/2024-98", processo_empenho="001370/2026-44",
+            )
+            cadastro.salvar_contrato(2026, registro)
+            lido = cadastro.como_dataframe(cadastro.carregar_contratos(2026))
+        self.assertEqual(lido.loc[0, "processo_contratacao"], "012543/2024-98")
+        self.assertEqual(lido.loc[0, "processo_empenho"], "001370/2026-44")
+
+    def test_processo_nao_informado_fica_nulo(self) -> None:
+        lido = cadastro.como_dataframe([cadastro.novo_contrato(contrato_numero="1/2026", processo_contratacao="000001/2026-01")])
+        self.assertTrue(pd.isna(lido.loc[0, "processo_empenho"]))
+
+    def test_processos_sao_copiados_ao_duplicar_identidade(self) -> None:
+        self.assertIn("processo_contratacao", cadastro.CAMPOS_IDENTIDADE)
+        self.assertIn("processo_empenho", cadastro.CAMPOS_IDENTIDADE)
+
+
 if __name__ == "__main__":
     unittest.main()

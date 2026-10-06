@@ -524,6 +524,15 @@ def _dialogo_editar_contrato(
     )
     cnpj = c_cnpj.text_input("CNPJ/CPF", value=_ou_vazio(linha["fornecedor_cnpj_cpf"]), key=f"{k}_cnpj")
     tipo_despesa = c_tipo.text_input("Tipo de despesa", value=_ou_vazio(linha["tipo_despesa"]), key=f"{k}_tipodespesa")
+    # Os dois processos já vinham da planilha de origem para o cadastro, mas não eram editáveis
+    # (06/10/2026). O de empenho é o que o Relatório de Reforço agrupa (`coluna_processo`).
+    c_proc_contr, c_proc_emp = st.columns(2)
+    processo_contratacao = c_proc_contr.text_input(
+        "Processo da contratação", value=_ou_vazio(linha["processo_contratacao"]), key=f"{k}_processo_contratacao",
+    )
+    processo_empenho = c_proc_emp.text_input(
+        "Processo de empenho", value=_ou_vazio(linha["processo_empenho"]), key=f"{k}_processo_empenho",
+    )
 
     _secao("Período de execução")
     p_vig, p_data, p_mes, p_meses = st.columns(4)
@@ -693,6 +702,8 @@ def _dialogo_editar_contrato(
                 "fornecedor": fornecedor or None, "status_contrato": status,
                 "vigencia_fim": pd.Timestamp(vigencia) if vigencia else None,
                 "contrato_numero": numero or None, "ano_contrato": ano,
+                "processo_contratacao": processo_contratacao.strip() or None,
+                "processo_empenho": processo_empenho.strip() or None,
                 "fornecedor_cnpj_cpf": cnpj or None, "tipo_despesa": tipo_despesa or None,
                 "unidade_cod": unidade or None, "acao_cod": acao or None, "ptres": ptres or None,
                 "natureza_despesa_cod": nd or None, "ugr_cod": ugr or None, "pi_cod": pi or None,
@@ -754,6 +765,9 @@ def _dialogo_novo_contrato(ano_exercicio: int, source_key: str) -> None:
         cnpj = c4.text_input("CNPJ/CPF")
         tipo_despesa = c5.text_input("Tipo de despesa")
         status = c6.selectbox("Status", STATUS_OPCOES)
+        c7, c8 = st.columns(2)
+        processo_contratacao = c7.text_input("Processo da contratação")
+        processo_empenho = c8.text_input("Processo de empenho")
 
         _secao("Período de execução")
         p1, p2, p3 = st.columns(3)
@@ -794,6 +808,8 @@ def _dialogo_novo_contrato(ano_exercicio: int, source_key: str) -> None:
             else:
                 registro = novo_contrato(
                     contrato_numero=numero, ano_contrato=ano, status_contrato=status,
+                    processo_contratacao=processo_contratacao.strip() or None,
+                    processo_empenho=processo_empenho.strip() or None,
                     vigencia_fim=pd.Timestamp(vigencia) if vigencia else None,
                     inicio_execucao_data=pd.Timestamp(inicio_data) if inicio_data else None,
                     fornecedor=fornecedor, fornecedor_cnpj_cpf=cnpj, tipo_despesa=tipo_despesa,
