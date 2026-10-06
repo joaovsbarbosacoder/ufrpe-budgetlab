@@ -7,7 +7,13 @@ from datetime import date
 
 import pandas as pd
 
-from src.necessidade_empenho import calcular_necessidade_empenho, necessidade_ate_dezembro, necessidade_ate_mes_vigente
+from src.necessidade_empenho import (
+    calcular_necessidade_empenho,
+    janela_de_execucao,
+    meses_vigentes_no_exercicio,
+    necessidade_ate_dezembro,
+    necessidade_ate_mes_vigente,
+)
 
 
 class TestCalcularNecessidadeEmpenho(unittest.TestCase):
@@ -216,6 +222,38 @@ class TestNecessidadeAteDezembro(unittest.TestCase):
         necessidade_ate_dezembro(mensal, empenhado, meses)
         for original, copia in zip((mensal, empenhado, meses), copias):
             pd.testing.assert_series_equal(original, copia)
+
+
+class TestJanelaDeExecucao(unittest.TestCase):
+    """Primeiro e último dia (inclusive) em que o contrato está em execução no exercício —
+    base única da série mensal dos aditivos (06/10/2026). `None` = nenhum dia."""
+
+    def test_janela(self):
+        T = pd.Timestamp
+        casos = [
+            (("ATIVO", pd.NaT, 2026, None, None), (T("2026-01-01"), T("2026-12-31"))),
+            (("ATIVO", T("2026-11-15"), 2026, T("2026-07-16"), None), (T("2026-07-16"), T("2026-11-15"))),
+            (("SUSPENSO", pd.NaT, 2026, None, T("2026-10-01")), (T("2026-01-01"), T("2026-09-30"))),
+            (("SUSPENSO", T("2026-06-30"), 2026, None, T("2026-10-01")), (T("2026-01-01"), T("2026-06-30"))),
+            (("SUSPENSO", pd.NaT, 2026, None, None), None),
+            (("SUSPENSO", pd.NaT, 2026, None, T("2026-01-01")), None),
+            (("VENCIDO", pd.NaT, 2026, None, None), None),
+            (("VENCIDO", T("2027-03-01"), 2026, None, None), (T("2026-01-01"), T("2026-12-31"))),
+            (("ATIVO", T("2025-12-31"), 2026, None, None), None),
+            (("ATIVO", pd.NaT, 2026, T("2027-01-01"), None), None),
+            (("ATIVO", pd.NaT, 2026, T("2025-06-01"), None), (T("2026-01-01"), T("2026-12-31"))),
+            (("ATIVO", T("2026-06-30"), 2026, T("2026-08-01"), None), None),
+        ]
+        for argumentos, esperado in casos:
+            self.assertEqual(janela_de_execucao(*argumentos), esperado, msg=str(argumentos))
+
+    def test_meses_vigentes_mantem_a_semantica_do_none(self):
+        T = pd.Timestamp
+        # fim em 31/12 do próprio exercício é um limite declarado: 12,0 (não None)
+        self.assertEqual(meses_vigentes_no_exercicio("ATIVO", T("2026-12-31"), 2026), 12.0)
+        self.assertIsNone(meses_vigentes_no_exercicio("ATIVO", T("2027-03-01"), 2026))
+        self.assertIsNone(meses_vigentes_no_exercicio("ATIVO", pd.NaT, 2026, T("2026-01-01")))
+        self.assertAlmostEqual(meses_vigentes_no_exercicio("ATIVO", T("2026-11-15"), 2026, T("2026-07-16")), 3 + 15 / 30 + 16 / 31)
 
 
 if __name__ == "__main__":

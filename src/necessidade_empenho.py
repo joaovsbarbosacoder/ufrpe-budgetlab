@@ -135,53 +135,79 @@ def fim_ate_a_suspensao(vigencia_fim: object, data_suspensao: object) -> pd.Time
     return vespera
 
 
-def meses_vigentes_no_exercicio(
-    status: object, vigencia_fim: object, exercicio: int, inicio: object = None, data_suspensao: object = None,
-) -> float | None:
-    """Quantos meses do `exercicio` o contrato está em execução (fração; do início da execução —
-    janeiro se não informado — até o fim da vigência — dezembro se não informado —, o mês inicial
-    e o final proporcionais aos dias) — `None` quando nada limita (sem data de fim dentro do
-    exercício e sem início depois de 1º de janeiro). SUSPENSO sem `data_suspensao`: 0. VENCIDO sem
-    data de fim: 0. Fim em ano anterior ao exercício, ou início em ano posterior: 0. A data manda
-    sobre o status (VENCIDO com vigência futura segue a data). `inicio` é a data de início da
-    execução informada pelo usuário (nunca presumida). Pedido explícito, 02/10/2026 — usada pela
-    Necessidade de Empenho (Resumo Consolidado/relatório) e pela sugestão do Relatório de
-    Reforço de Contratos Contínuos.
-
-    SUSPENSO com `data_suspensao` (pedido explícito, 06/10/2026: "os contratos suspensos parem de
-    fazer efeito após a suspensão"): o contrato vale até a véspera da suspensão, como um fim de
-    vigência (`fim_ate_a_suspensao`; o último mês proporcional aos dias). `data_suspensao` só é
-    considerada com o status SUSPENSO."""
+def _janela_com_limite(
+    status: object, vigencia_fim: object, exercicio: int, inicio: object, data_suspensao: object,
+) -> tuple[pd.Timestamp, pd.Timestamp, bool] | None:
+    """(primeiro dia, último dia, limitada) em que o contrato está em execução no `exercicio`;
+    `None` = nenhum dia. `limitada` é True quando um início depois de 1º de janeiro ou um fim DENTRO
+    do exercício (mesmo 31/12) restringe a janela — o que distingue "12 meses declarados" de "nada
+    limita" em `meses_vigentes_no_exercicio`."""
 
     status_texto = _status_normalizado(status)
     if status_texto == STATUS_SUSPENSO:
         if not _tem_data(data_suspensao):
-            return 0.0
-        return meses_vigentes_no_exercicio(None, fim_ate_a_suspensao(vigencia_fim, data_suspensao), exercicio, inicio)
-    tem_fim = vigencia_fim is not None and not pd.isna(vigencia_fim)
+            return None
+        vigencia_fim = fim_ate_a_suspensao(vigencia_fim, data_suspensao)
+        status_texto = None
+    tem_fim = _tem_data(vigencia_fim)
     if not tem_fim and status_texto == STATUS_VENCIDO:
-        return 0.0
+        return None
 
-    posicao_inicio = 0.0
-    if inicio is not None and not pd.isna(inicio):
-        data_inicio = pd.Timestamp(inicio)
+    primeiro, ultimo = pd.Timestamp(year=exercicio, month=1, day=1), pd.Timestamp(year=exercicio, month=12, day=31)
+    limitada = False
+    if _tem_data(inicio):
+        data_inicio = pd.Timestamp(inicio).normalize()
         if data_inicio.year > exercicio:
-            return 0.0
+            return None
         if data_inicio.year == exercicio:
-            posicao_inicio = _posicao_em_meses(data_inicio, fim_do_dia=False)
-
-    posicao_fim = 12.0
-    fim_no_exercicio = False
+            primeiro = data_inicio
+            limitada = limitada or data_inicio != pd.Timestamp(year=exercicio, month=1, day=1)
     if tem_fim:
-        data_fim = pd.Timestamp(vigencia_fim)
+        data_fim = pd.Timestamp(vigencia_fim).normalize()
         if data_fim.year < exercicio:
-            return 0.0
+            return None
         if data_fim.year == exercicio:
-            fim_no_exercicio = True
-            posicao_fim = _posicao_em_meses(data_fim, fim_do_dia=True)
+            ultimo = data_fim
+            limitada = True
+    if primeiro > ultimo:
+        return None
+    return primeiro, ultimo, limitada
 
-    if posicao_inicio == 0.0 and not fim_no_exercicio:
+
+def janela_de_execucao(
+    status: object, vigencia_fim: object, exercicio: int, inicio: object = None, data_suspensao: object = None,
+) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    """Primeiro e último dia (inclusive) em que o contrato está em execução no `exercicio`, ou
+    `None` quando não há nenhum dia (06/10/2026 — base da série mensal dos aditivos). Regras: do
+    início da execução informado (1º de janeiro se não informado) até o fim da vigência (31 de
+    dezembro se não informado); SUSPENSO sem `data_suspensao` e VENCIDO sem data de fim: nenhum dia;
+    SUSPENSO com data vale até a véspera dela (`fim_ate_a_suspensao`); fim em ano anterior ao
+    exercício, ou início em ano posterior: nenhum dia; a data manda sobre o status (VENCIDO com
+    vigência futura segue a data). `data_suspensao` só é considerada com o status SUSPENSO."""
+
+    janela = _janela_com_limite(status, vigencia_fim, exercicio, inicio, data_suspensao)
+    return None if janela is None else (janela[0], janela[1])
+
+
+def meses_vigentes_no_exercicio(
+    status: object, vigencia_fim: object, exercicio: int, inicio: object = None, data_suspensao: object = None,
+) -> float | None:
+    """Quantos meses do `exercicio` o contrato está em execução (fração: o mês inicial e o final
+    proporcionais aos dias), a partir de `janela_de_execucao` — `None` quando nada limita (sem fim
+    dentro do exercício e sem início depois de 1º de janeiro); 0 quando a janela é vazia. Pedido
+    explícito, 02/10/2026 — usada pela Necessidade de Empenho (Resumo Consolidado/relatório) e pela
+    sugestão do Relatório de Reforço de Contratos Contínuos. `inicio` é a data de início da execução
+    informada pelo usuário (nunca presumida); SUSPENSO com `data_suspensao` (06/10/2026) vale até a
+    véspera dela."""
+
+    janela = _janela_com_limite(status, vigencia_fim, exercicio, inicio, data_suspensao)
+    if janela is None:
+        return 0.0
+    primeiro, ultimo, limitada = janela
+    if not limitada:
         return None  # nada limita: o contrato cobre o exercício inteiro
+    posicao_inicio = _posicao_em_meses(primeiro, fim_do_dia=False)
+    posicao_fim = _posicao_em_meses(ultimo, fim_do_dia=True)
     return max(0.0, posicao_fim - posicao_inicio)
 
 
