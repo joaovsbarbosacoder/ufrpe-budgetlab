@@ -196,6 +196,37 @@ CREATE TABLE IF NOT EXISTS avaliacao (
     UNIQUE (demanda_id, criterio_id)
 );
 
+-- Trilha de auditoria dos planos de referência (src/captacao/planos.py): uma linha por
+-- campo alterado, com o valor antes e depois. `item_id` aponta para a tabela indicada em
+-- `tabela` (sem FK, pois há duas tabelas de destino).
+CREATE TABLE IF NOT EXISTS historico_plano (
+    id        INTEGER PRIMARY KEY,
+    tabela    TEXT NOT NULL CHECK (tabela IN ('objetivo_pdi', 'meta_pls')),
+    item_id   INTEGER NOT NULL,
+    acao      TEXT NOT NULL CHECK (acao IN ('CRIAR', 'EDITAR', 'DESATIVAR', 'REATIVAR', 'CARGA')),
+    campo     TEXT,
+    antes     TEXT,
+    depois    TEXT,
+    usuario   TEXT,
+    criado_em TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_historico_plano_item ON historico_plano (tabela, item_id, criado_em);
+
+-- Trilha de auditoria de unidades, ciclos e prorrogações (src/captacao/auditoria.py): uma
+-- linha por campo alterado ou evento (mudança de fase, prorrogação).
+CREATE TABLE IF NOT EXISTS historico_cadastro (
+    id        INTEGER PRIMARY KEY,
+    tabela    TEXT NOT NULL CHECK (tabela IN ('unidade', 'ciclo', 'prorrogacao')),
+    item_id   INTEGER NOT NULL,
+    acao      TEXT NOT NULL CHECK (acao IN ('CRIAR', 'EDITAR', 'ATIVAR', 'DESATIVAR', 'FASE', 'PRORROGAR')),
+    campo     TEXT,
+    antes     TEXT,
+    depois    TEXT,
+    usuario   TEXT,
+    criado_em TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_historico_cadastro_item ON historico_cadastro (tabela, item_id, criado_em);
+
 CREATE TABLE IF NOT EXISTS cenario (
     id             INTEGER PRIMARY KEY,
     ciclo_id       INTEGER NOT NULL REFERENCES ciclo (id),
@@ -223,6 +254,8 @@ TABELAS = (
     "criterio",
     "avaliacao",
     "cenario",
+    "historico_plano",
+    "historico_cadastro",
 )
 
 

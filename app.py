@@ -155,6 +155,16 @@ page = st.navigation(
                 icon="🗓️",
             ),
             st.Page(
+                "app_pages/captacao_unidades.py",
+                title="Unidades da Captação",
+                icon="🏛️",
+            ),
+            st.Page(
+                "app_pages/captacao_planos.py",
+                title="Planos de Referência",
+                icon="🎯",
+            ),
+            st.Page(
                 "app_pages/demandas_minhas.py",
                 title="Minhas Demandas",
                 icon="📝",

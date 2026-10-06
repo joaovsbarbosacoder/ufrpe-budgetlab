@@ -112,6 +112,10 @@ CAMPOS_EXECUCAO_PADRAO = {
     "meses_empenhados": 0.0,
     "meses_liquidados": 0.0,
     "inicio_execucao_mes": None,
+    #: início da execução por DATA (opcional, pedido explícito 02/10/2026): permite o primeiro mês
+    #: proporcional na necessidade de empenho. Por exercício (execução), como `inicio_execucao_mes`;
+    #: manda sobre o mês quando informada. Vazio = nulo, nunca presumido.
+    "inicio_execucao_data": None,
 }
 
 _COLUNAS_TEXTO = [
@@ -124,7 +128,7 @@ _COLUNAS_NUMERICAS = [
     "meses_empenhados", "meses_liquidados", "inicio_execucao_mes",
 ]
 _COLUNAS_VAZIAS = [
-    "id", *_COLUNAS_TEXTO, *_COLUNAS_NUMERICAS, "vigencia_fim", "itens", "tem_varios_itens",
+    "id", *_COLUNAS_TEXTO, *_COLUNAS_NUMERICAS, "vigencia_fim", "inicio_execucao_data", "itens", "tem_varios_itens",
     "despesa_anual", "meses_a_empenhar", "valor_a_empenhar",
 ]
 
@@ -194,6 +198,9 @@ def como_dataframe(contratos: list[dict]) -> pd.DataFrame:
     if "vigencia_fim" not in df.columns:
         df["vigencia_fim"] = pd.NA
     df["vigencia_fim"] = pd.to_datetime(df["vigencia_fim"], errors="coerce")
+    if "inicio_execucao_data" not in df.columns:
+        df["inicio_execucao_data"] = pd.NA
+    df["inicio_execucao_data"] = pd.to_datetime(df["inicio_execucao_data"], errors="coerce")
     if "itens" not in df.columns:
         df["itens"] = None
     df["itens"] = df["itens"].apply(_itens_validos)

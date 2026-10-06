@@ -276,6 +276,10 @@ def _render_conteudo_relatorio(
 
         linha_cols = st.columns(_PROPORCOES_LINHA, vertical_alignment="center")
         linha_cols[0].write(linha.item_despesa)
+        situacao_vigencia = getattr(linha, "situacao_vigencia", None)
+        if situacao_vigencia is not None and pd.notna(situacao_vigencia):
+            # status/vigência que limitou a sugestão inicial (Contratos Contínuos, 02/10/2026)
+            linha_cols[0].caption(f"{situacao_vigencia} — sugestão ajustada por status, vigência ou início da execução")
         linha_cols[1].write(linha.ne_curta)
         # só leitura (pedido explícito: "evidenciar também" o valor mensal da despesa e o saldo
         # do empenho) — `format_brl_full` já distingue nulo de zero ("Valor nulo" vs "R$ 0,00",

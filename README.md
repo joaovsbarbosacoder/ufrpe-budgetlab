@@ -111,6 +111,85 @@ relatório" permite gerar tudo "Somente por data de liquidação", para comparar
 exercícios no mesmo critério quando a base de competência não cobre os anos
 anteriores; o modo aparece no título, nos parâmetros e no nome do arquivo.
 
+### Contratos Contínuos
+
+A página **Contratos Contínuos** trabalha sobre um cadastro nativo, multi-exercício, em
+`data/contratos_continuos/<ano>/` (`src/contratos_continuos_cadastro.py`; a migração a partir
+da planilha de trabalho está em "Migração dos cadastros nativos"). Cada contrato tem despesa
+mensal, itens de licitação com rateio percentual, NE, classificação orçamentária e os campos de
+período descritos abaixo. O saldo e o Empenhado vêm da Execução Mensal, cruzados por NE; o
+Liquidado vem da base Liquidação por Competência quando ela está disponível
+(`data/raw/Liquidação por Competência.xlsx`), senão do mês de lançamento. Quando uma NE não
+tem correspondência, os campos de comparação ficam nulos, nunca zero.
+
+**Campos de período (sempre do cadastro).** Status (`ATIVO`, `VENCIDO` ou `SUSPENSO`), Vigência
+(fim), Início da Execução (por data ou pelo botão de mês) e Meses no Ano. Não há cruzamento com a
+base "Contratos — Vigência". A regra comum (`src/necessidade_empenho.py::meses_vigentes_no_exercicio`):
+
+- `SUSPENSO` não gera necessidade nem projeção, mesmo vigente, e vale mais que a data;
+- com data, **a data manda sobre o status**: fim anterior ao exercício ou início posterior a ele
+  zeram; sem data de fim, `VENCIDO` zera e os demais seguem até dezembro;
+- o mês de início e o mês de fim são **proporcionais aos dias** (fim em 15/11 conta 15/30 de
+  novembro; início em 16/07 conta 16/31 de julho);
+- só o início **informado** (data ou botão de mês) corta meses; o mês detectado
+  automaticamente pelo primeiro empenho não corta nada, e a data vale mais que o mês.
+
+**Necessidade de Empenho até Dezembro (card "Resumo Consolidado").** É o que falta empenhar
+para cobrir os meses do exercício: despesa mensal × meses restantes, nunca negativa, em que
+meses restantes = menor entre os meses no ano e os meses em execução (regra acima) − empenhado ÷
+despesa mensal. O saldo (empenhado − liquidado) **não** entra nessa conta, porque já está dentro do
+empenhado; ele é exibido e abate a projeção mensal, abaixo. Contrato sem NE entra à parte, sem
+saldo. A conta vive em `src/relatorio_necessidade_empenho.py::necessidade_por_ne` e é usada
+pela tela e pelos relatórios, para não divergirem. **Bolsas e Auxílios** usa a mesma regra no Resumo
+Consolidado e no cartão-resumo (`necessidade_ate_dezembro`, em `src/necessidade_empenho.py`): valor
+mensal × meses restantes, sem subtrair o saldo — corrigido em 05/10/2026, quando também lá o saldo era
+descontado duas vezes.
+
+**Relatório de Necessidade de Empenho (PDF e Excel).** Dois botões (PDF e Excel) abaixo do card. Uma linha por NE
+na grade Jan–Dez do exercício: os meses com Liquidação por Competência aparecem como
+**realizado**; do primeiro mês sem liquidação até dezembro aparece a **projeção** (sombreada e
+em itálico), por despesa mensal fixa — o primeiro mês projetado é despesa mensal − saldo atual
+do empenho e os seguintes a despesa mensal cheia (saldo maior que a despesa mensal é abatido
+nos meses seguintes). A projeção respeita o período de execução acima e os meses no ano. NE sem
+nenhuma competência e contrato sem NE projetam a partir do mês seguinte ao da extração da
+Execução Mensal. Nenhuma média nem tendência: só a despesa mensal cadastrada. O PDF traz a
+grade, o total mensal e o resumo por NE; o Excel, as abas Projeção mensal, Detalhe mensal (com o
+tipo de cada mês), Total mensal, Resumo por NE e Parâmetros (totais, regra e avisos). Mês sem dado
+fica vazio (nulo), distinto de zero. Os avisos listam contratos suspensos, vencidos ou com
+vigência encerrada, sem data de vigência, NEs sem saldo ou sem competência, e NEs com primeiro
+empenho depois de janeiro e sem início definido.
+
+A necessidade do card (por empenho) e a projeção da grade (por calendário, a partir do gasto)
+são **métodos diferentes** e seus totais não coincidem por definição; o Resumo por NE traz as
+duas colunas e o relatório avisa a diferença.
+
+**Relatório de Reforço de Empenho.** O botão de relatórios da página também emite Reforço e
+Anulação de Saldo de Empenho (PDF nos modelos detalhado e resumido, `src/relatorio_reforco_empenho.py`).
+A sugestão inicial de cada linha respeita status, vigência e início da execução (data, com mês
+inicial proporcional): contrato suspenso, vencido ou com vigência encerrada começa com sugestão
+zero, e a vigência limita os meses sugeridos. A edição por linha continua livre; a Anulação
+nunca tem sugestão automática.
+
+**Layout dos cadastros.** Contratos Contínuos e Bolsas e Auxílios compartilham o mesmo desenho
+(`src/ui_cadastro.py`): um cartão-resumo no topo (faixa "Necessidade de empenho até dezembro" e grade
+de indicadores) e um **Registro** em tabela — abas de situação com contagem, filtro de categoria (ou
+ação, em Bolsas), ordenação, linhas com título e subtítulo, situação em chip e ações por ícone. "Editar"
+abre uma janela com os campos em seções e só grava ao clicar em "Salvar"; "Remover" pede confirmação;
+"Novo contrato"/"Novo programa" abre o formulário em janela. Os dados e as regras de negócio não
+mudaram, mas a antiga edição ao vivo na sessão (os quadros refletindo o que estava digitado antes de
+salvar) deixou de existir: os quadros sempre refletem o cadastro gravado.
+
+As seções analíticas das duas telas — **Resumo Consolidado**, **Empenhado × Liquidado** (só em
+Contratos Contínuos) e **Cobertura Orçamentária por PTRES** — seguem o mesmo desenho: cartão com
+kicker, título e destaque à direita, e linhas/tabelas com valores à direita. No Resumo Consolidado a
+linha da NE com dado mensal tem um botão de ícone para a linha do tempo mensal. Apenas a
+apresentação mudou; dados, totais e regras são os mesmos.
+
+Limites conhecidos: contrato prorrogado com a data de fim desatualizada no cadastro aparece sem
+projeção até a data ser corrigida no card; a competência dos últimos meses costuma estar
+defasada, o que afeta o saldo e o realizado desses meses; a data de início só é considerada
+quando informada.
+
 ### Emendas Parlamentares
 
 O relatório **Emendas — Acompanhamento** possui leitor específico em

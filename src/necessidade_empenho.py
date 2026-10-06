@@ -13,6 +13,7 @@ essa mesma conta como `meses_a_empenhar`, para não depender do campo manual da 
 
 from __future__ import annotations
 
+import calendar
 from datetime import date
 
 import pandas as pd
@@ -37,6 +38,7 @@ def necessidade_ate_mes_vigente(
     ano_referencia: int,
     hoje: date | None = None,
     meses_no_ano: pd.Series | None = None,
+    fracao_primeiro_mes: pd.Series | None = None,
 ) -> tuple[pd.Series, pd.Series]:
     """Quanto falta empenhar para acompanhar o calendário até o mês vigente — métrica
     diferente de `calcular_necessidade_empenho` (que compara empenhado × liquidado, execução
@@ -78,15 +80,129 @@ def necessidade_ate_mes_vigente(
     nenhum pagamento programado pra eles (bug real reportado pelo usuário, caso concreto:
     AUXÍLIO BEXT — Parcela Única, `meses_no_ano=1`, sugeria 6 meses de reforço já tendo pago o
     único mês devido).
+
+    `fracao_primeiro_mes` (opcional, pedido explícito 02/10/2026 — início da execução por DATA):
+    fração (0-1] do primeiro mês efetivamente em execução (dias de execução ÷ dias do mês). O
+    mês de início deixa de contar inteiro: desconta-se `1 − fração` dos meses decorridos (só
+    quando já decorreu ao menos um mês). Sem ela (`None`) o mês de início conta cheio, como
+    sempre.
     """
     hoje = hoje or date.today()
     mes_vigente = 12 if hoje.year > ano_referencia else max(0, min(hoje.month, 12))
     if hoje.year < ano_referencia:
         mes_vigente = 0
     meses_decorridos = (mes_vigente - inicio_execucao_mes + 1).clip(lower=0)
+    if fracao_primeiro_mes is not None:
+        meses_decorridos = (meses_decorridos - (1 - fracao_primeiro_mes)).where(meses_decorridos > 0, 0).clip(lower=0)
     if meses_no_ano is not None:
         meses_decorridos = meses_decorridos.clip(upper=meses_no_ano)
     meses_empenhados_equivalente = valor_empenhado / valor_mensal.replace(0, pd.NA)
     meses_sugeridos = (meses_decorridos - meses_empenhados_equivalente).clip(lower=0)
     valor_sugerido = meses_sugeridos * valor_mensal
     return meses_sugeridos, valor_sugerido
+
+
+STATUS_ATIVO = "ATIVO"
+STATUS_VENCIDO = "VENCIDO"
+STATUS_SUSPENSO = "SUSPENSO"
+
+
+def _status_normalizado(status: object) -> str | None:
+    return None if status is None or pd.isna(status) else str(status).strip().upper()
+
+
+def _posicao_em_meses(data: pd.Timestamp, fim_do_dia: bool) -> float:
+    """Posição da data dentro do ano, em meses (0 a 12): o mês é proporcional aos dias. Início do
+    dia para a data de INÍCIO (dia 1 → mês cheio), fim do dia para a de FIM (último dia → mês
+    cheio)."""
+
+    dias_do_mes = calendar.monthrange(data.year, data.month)[1]
+    dias_decorridos = data.day if fim_do_dia else data.day - 1
+    return (data.month - 1) + dias_decorridos / dias_do_mes
+
+
+def meses_vigentes_no_exercicio(
+    status: object, vigencia_fim: object, exercicio: int, inicio: object = None
+) -> float | None:
+    """Quantos meses do `exercicio` o contrato está em execução (fração; do início da execução —
+    janeiro se não informado — até o fim da vigência — dezembro se não informado —, o mês inicial
+    e o final proporcionais aos dias) — `None` quando nada limita (sem data de fim dentro do
+    exercício e sem início depois de 1º de janeiro). SUSPENSO: 0. VENCIDO sem data de fim: 0. Fim
+    em ano anterior ao exercício, ou início em ano posterior: 0. A data manda sobre o status
+    (VENCIDO com vigência futura segue a data). `inicio` é a data de início da execução
+    informada pelo usuário (nunca presumida). Pedido explícito, 02/10/2026 — usada pela
+    Necessidade de Empenho (Resumo Consolidado/relatório) e pela sugestão do Relatório de
+    Reforço de Contratos Contínuos."""
+
+    status_texto = _status_normalizado(status)
+    if status_texto == STATUS_SUSPENSO:
+        return 0.0
+    tem_fim = vigencia_fim is not None and not pd.isna(vigencia_fim)
+    if not tem_fim and status_texto == STATUS_VENCIDO:
+        return 0.0
+
+    posicao_inicio = 0.0
+    if inicio is not None and not pd.isna(inicio):
+        data_inicio = pd.Timestamp(inicio)
+        if data_inicio.year > exercicio:
+            return 0.0
+        if data_inicio.year == exercicio:
+            posicao_inicio = _posicao_em_meses(data_inicio, fim_do_dia=False)
+
+    posicao_fim = 12.0
+    fim_no_exercicio = False
+    if tem_fim:
+        data_fim = pd.Timestamp(vigencia_fim)
+        if data_fim.year < exercicio:
+            return 0.0
+        if data_fim.year == exercicio:
+            fim_no_exercicio = True
+            posicao_fim = _posicao_em_meses(data_fim, fim_do_dia=True)
+
+    if posicao_inicio == 0.0 and not fim_no_exercicio:
+        return None  # nada limita: o contrato cobre o exercício inteiro
+    return max(0.0, posicao_fim - posicao_inicio)
+
+
+def descricao_vigencia(status: object, vigencia_fim: object, exercicio: int, inicio: object = None) -> str | None:
+    """Texto curto do que a vigência/status e o início da execução fazem com o contrato no
+    `exercicio` (para a tela do Relatório de Reforço) — `None` quando nada limita (mesmo critério
+    de `meses_vigentes_no_exercicio`)."""
+
+    status_texto = _status_normalizado(status)
+    if status_texto == STATUS_SUSPENSO:
+        return "Suspenso"
+    partes = []
+    if inicio is not None and not pd.isna(inicio):
+        data_inicio = pd.Timestamp(inicio)
+        if data_inicio.year >= exercicio:
+            partes.append(f"Início da execução em {data_inicio:%d/%m/%Y}")
+    if vigencia_fim is None or pd.isna(vigencia_fim):
+        if status_texto == STATUS_VENCIDO:
+            partes.append("Vencido, sem data de vigência")
+    else:
+        fim = pd.Timestamp(vigencia_fim)
+        if fim.year < exercicio:
+            partes.append(f"Vigência encerrada em {fim:%d/%m/%Y}")
+        elif fim.year == exercicio:
+            partes.append(f"Vigência até {fim:%d/%m/%Y}")
+    return " · ".join(partes) if partes else None
+
+
+def necessidade_ate_dezembro(
+    valor_mensal: pd.Series, valor_empenhado: pd.Series, meses_no_ano: pd.Series
+) -> tuple[pd.Series, pd.Series]:
+    """Necessidade de Empenho até Dezembro de cada programa/bolsa: o que falta EMPENHAR para cobrir os
+    meses do exercício, `valor_mensal × meses restantes`, nunca negativa. Meses restantes =
+    `meses_no_ano` (12 se não cadastrado) − `valor_empenhado ÷ valor_mensal` (0 se o valor mensal é 0;
+    empenhado nulo conta como nada empenhado), nunca negativo. Devolve `(meses_restantes, necessidade)`.
+
+    O saldo (empenhado − liquidado) NÃO entra nesta conta: ele já está dentro do empenhado, e subtraí-lo
+    de novo descontava o mesmo valor duas vezes (correção de 05/10/2026 em Bolsas e Auxílios, igual à
+    feita em Contratos Contínuos em 02/10/2026 — ver `src/relatorio_necessidade_empenho.py`). Não altera
+    as entradas."""
+
+    meses_ja_empenhados = (valor_empenhado / valor_mensal.replace(0.0, pd.NA)).fillna(0.0)
+    meses_restantes = (meses_no_ano.fillna(12) - meses_ja_empenhados).clip(lower=0)
+    necessidade = (valor_mensal * meses_restantes).clip(lower=0)
+    return meses_restantes, necessidade

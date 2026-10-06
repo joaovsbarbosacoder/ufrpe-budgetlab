@@ -7,7 +7,7 @@ from datetime import date
 
 import pandas as pd
 
-from src.necessidade_empenho import calcular_necessidade_empenho, necessidade_ate_mes_vigente
+from src.necessidade_empenho import calcular_necessidade_empenho, necessidade_ate_dezembro, necessidade_ate_mes_vigente
 
 
 class TestCalcularNecessidadeEmpenho(unittest.TestCase):
@@ -139,6 +139,83 @@ class TestNecessidadeAteMesVigente(unittest.TestCase):
         )
         self.assertAlmostEqual(meses.iloc[0], 6.0)
         self.assertAlmostEqual(valor.iloc[0], 420_000.0)
+
+
+class TestFracaoDoPrimeiroMes(unittest.TestCase):
+    """Início da execução por data (02/10/2026): o mês de início deixa de contar inteiro. `hoje` =
+    15/10 (mês vigente 10), exercício 2026."""
+
+    HOJE = date(2026, 10, 15)
+
+    def _meses(self, inicio: int, fracao: float | None, empenhado: float = 0.0, meses_no_ano: float | None = None):
+        meses, _ = necessidade_ate_mes_vigente(
+            pd.Series([1000.0]), pd.Series([empenhado]), pd.Series([inicio]), 2026, hoje=self.HOJE,
+            meses_no_ano=None if meses_no_ano is None else pd.Series([meses_no_ano]),
+            fracao_primeiro_mes=None if fracao is None else pd.Series([fracao]),
+        )
+        return meses.iloc[0]
+
+    def test_sem_fracao_o_mes_de_inicio_conta_cheio(self):
+        self.assertAlmostEqual(self._meses(7, None), 4.0)  # jul, ago, set, out
+        self.assertAlmostEqual(self._meses(7, 1.0), 4.0)  # fração 1 = igual
+
+    def test_fracao_desconta_a_parte_nao_executada_do_primeiro_mes(self):
+        # começa 16/07 (16 de 31 dias): 4 − (1 − 16/31) = 3 + 16/31
+        self.assertAlmostEqual(self._meses(7, 16 / 31), 3 + 16 / 31)
+
+    def test_inicio_depois_do_mes_vigente_nao_vira_negativo(self):
+        self.assertEqual(self._meses(11, 0.5), 0.0)  # início em novembro, hoje outubro
+
+    def test_teto_de_meses_no_ano_vale_depois_da_fracao(self):
+        # janeiro pela metade: 10 − 0,5 = 9,5 meses decorridos, mas o contrato só paga 6 no ano
+        self.assertAlmostEqual(self._meses(1, 0.5, meses_no_ano=6), 6.0)
+
+    def test_desconta_o_empenhado_depois_da_fracao(self):
+        self.assertAlmostEqual(self._meses(7, 16 / 31, empenhado=2000.0), 1 + 16 / 31)  # 3,516 − 2 meses empenhados
+
+
+
+class TestNecessidadeAteDezembro(unittest.TestCase):
+    """Necessidade até Dezembro de Bolsas e Auxílios (05/10/2026): o que falta empenhar para cobrir o
+    exercício — `valor_mensal × meses restantes`, SEM subtrair o saldo, que já está no empenhado."""
+
+    def test_valores_a_mao(self):
+        mensal = pd.Series([1000.0, 1000.0, 1000.0, 70_000.0, 0.0])
+        empenhado = pd.Series([8000.0, 12_000.0, 15_000.0, 70_000.0, 500.0])
+        meses_no_ano = pd.Series([12.0, 12.0, 12.0, 1.0, 12.0])
+        restantes, necessidade = necessidade_ate_dezembro(mensal, empenhado, meses_no_ano)
+        # 8 meses empenhados => 4 restantes => 4000; 12 empenhados => 0; empenhou além do ano => 0 (nunca
+        # negativo); parcela única já empenhada (meses_no_ano=1) => 0; despesa mensal 0 => 0
+        self.assertEqual(restantes.tolist(), [4.0, 0.0, 0.0, 0.0, 12.0])
+        self.assertEqual(necessidade.tolist(), [4000.0, 0.0, 0.0, 0.0, 0.0])
+
+    def test_saldo_nao_entra_na_conta_caso_da_ne_88(self):
+        # despesa 927.298,47, empenhado 7.418.387,76 (8 meses), 12 meses no ano: faltam 4 meses =
+        # 3.709.193,88. A regra anterior ainda subtraía o saldo (887.964,05), dando 2.821.229,83.
+        restantes, necessidade = necessidade_ate_dezembro(
+            pd.Series([927_298.47]), pd.Series([7_418_387.76]), pd.Series([12.0])
+        )
+        self.assertAlmostEqual(restantes.iloc[0], 4.0, places=6)
+        self.assertAlmostEqual(necessidade.iloc[0], 3_709_193.88, places=2)
+
+    def test_meses_no_ano_ausente_vira_12(self):
+        restantes, necessidade = necessidade_ate_dezembro(
+            pd.Series([100.0]), pd.Series([600.0]), pd.Series([float("nan")])
+        )
+        self.assertEqual((restantes.iloc[0], necessidade.iloc[0]), (6.0, 600.0))
+
+    def test_empenhado_nulo_conta_como_nada_empenhado(self):
+        restantes, necessidade = necessidade_ate_dezembro(
+            pd.Series([100.0]), pd.Series([float("nan")]), pd.Series([12.0])
+        )
+        self.assertEqual((restantes.iloc[0], necessidade.iloc[0]), (12.0, 1200.0))
+
+    def test_nao_altera_as_entradas(self):
+        mensal, empenhado, meses = pd.Series([100.0, 0.0]), pd.Series([300.0, 5.0]), pd.Series([12.0, float("nan")])
+        copias = [serie.copy(deep=True) for serie in (mensal, empenhado, meses)]
+        necessidade_ate_dezembro(mensal, empenhado, meses)
+        for original, copia in zip((mensal, empenhado, meses), copias):
+            pd.testing.assert_series_equal(original, copia)
 
 
 if __name__ == "__main__":
