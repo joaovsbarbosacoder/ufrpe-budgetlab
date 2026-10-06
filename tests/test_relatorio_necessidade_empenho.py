@@ -883,5 +883,101 @@ class TestInicioNaProjecaoDaGrade(unittest.TestCase):
         self.assertTrue(gerar_pdf(relatorio, _contexto()).startswith(b"%PDF"))
 
 
+def _ta(numero, inicio, valor, vigencia=None, situacao="ASSINADO"):
+    return {
+        "numero": numero, "tipo": "REAJUSTE", "situacao": situacao, "data_inicio": inicio, "data_assinatura": None,
+        "valor_mensal": valor, "vigencia_fim": vigencia, "itens": None,
+    }
+
+
+class TestNecessidadeComAditivos(unittest.TestCase):
+    """Necessidade pela série mensal dos aditivos (06/10/2026): `max(0, custo do exercício − empenhado)`.
+    Valores à mão. Exemplo do spec: R$ 10.000/mês, 1º TA (01/07/2025, 10.400), 2º TA (01/07/2026, 10.800)
+    → custo de 2026 = 6 × 10.400 + 6 × 10.800 = 127.200."""
+
+    ADITIVOS_DO_SPEC = [
+        _ta("1º TA", "2025-07-01", 10_400.0, "2026-06-30"),
+        _ta("2º TA", "2026-07-01", 10_800.0, "2027-06-30"),
+    ]
+
+    @staticmethod
+    def _calcular(**campos):
+        linha = _linha(ne_curta="2026NE000999", **campos)
+        por_ne, _ = necessidade_por_ne(pd.DataFrame([linha]), None, 2026)
+        return por_ne.iloc[0]
+
+    def _do_spec(self, empenhado):
+        return self._calcular(
+            despesa_mensal=10_000.0, vigencia_fim=pd.Timestamp("2025-06-30"), aditivos=self.ADITIVOS_DO_SPEC,
+            valor_empenhado_planilha_total_ne=empenhado,
+        )
+
+    def test_exemplo_do_spec(self):
+        linha = self._do_spec(60_000.0)
+        self.assertAlmostEqual(linha["custo_exercicio"], 127_200.0)
+        self.assertAlmostEqual(linha["necessidade"], 67_200.0)  # inclui a diferença retroativa dos reajustes
+        self.assertFalse(linha["inclui_previsto"])
+        self.assertIn(linha["valor_mensal_vigente"], (10_000.0, 10_400.0, 10_800.0))
+
+    def test_meses_ja_empenhados_percorrem_a_serie(self):
+        # 6 meses a 10.400 (62.400) e 4.800 de julho (10.800) → 6 + 4.800 / 10.800
+        linha = self._do_spec(67_200.0)
+        self.assertAlmostEqual(linha["meses_ja_empenhados"], 6 + 4_800 / 10_800)
+
+    def test_reajuste_no_meio_do_mes(self):
+        # custo: 6 × 1.000 + 1.160 (julho) + 5 × 1.310 = 13.710; empenhado 7.000 → 6.710
+        linha = self._calcular(
+            despesa_mensal=1000.0, aditivos=[_ta("1º TA", "2026-07-16", 1_310.0)],
+            valor_empenhado_planilha_total_ne=7_000.0,
+        )
+        self.assertAlmostEqual(linha["custo_exercicio"], 13_710.0)
+        self.assertAlmostEqual(linha["necessidade"], 6_710.0)
+
+    def test_empenhado_acima_do_custo_nao_gera_necessidade(self):
+        self.assertEqual(self._do_spec(200_000.0)["necessidade"], 0.0)
+
+    def test_despesa_negativa_nunca_gera_necessidade(self):
+        # Review Focus 1: despesa −100 e empenhado −2.000 dariam 1.200 − 2.000 … > 0 sem a guarda
+        linha = self._calcular(despesa_mensal=-100.0, valor_empenhado_planilha_total_ne=-2_000.0)
+        self.assertEqual(linha["necessidade"], 0.0)
+
+    def test_despesa_nula_continua_nula_no_item_sem_ne(self):
+        # (por NE, o `groupby(...).sum()` de `despesa_mensal` já transformava nulo em 0,0 antes dos
+        # aditivos — comportamento anterior preservado; o nulo sobrevive no item sem NE)
+        _, sem_ne = necessidade_por_ne(
+            pd.DataFrame([_linha(despesa_mensal=float("nan"), valor_empenhado=500.0)]), None, 2026
+        )
+        self.assertTrue(pd.isna(sem_ne.iloc[0]["necessidade"]))
+
+    def test_sem_aditivo_igual_a_regra_antiga_despesa_vezes_meses_restantes(self):
+        # 1.000/mês, empenhado 4.500 → 4,5 meses empenhados, 7,5 restantes → 7.500
+        linha = self._calcular(despesa_mensal=1000.0, valor_empenhado_planilha_total_ne=4_500.0)
+        self.assertAlmostEqual(linha["necessidade"], 7_500.0)
+        self.assertAlmostEqual(linha["meses_restantes"], 7.5)
+        self.assertAlmostEqual(linha["meses_ja_empenhados"], 4.5)
+
+    def test_previsto_marca_a_linha(self):
+        previsto = self._calcular(
+            despesa_mensal=1000.0, aditivos=[_ta("1º TA", "2026-07-01", 1_200.0, situacao="PREVISTO")],
+        )
+        assinado = self._calcular(despesa_mensal=1000.0, aditivos=[_ta("1º TA", "2026-07-01", 1_200.0)])
+        self.assertTrue(previsto["inclui_previsto"])
+        self.assertFalse(assinado["inclui_previsto"])
+
+    def test_suspenso_sem_data_continua_zerando_mesmo_com_aditivo(self):
+        linha = self._calcular(
+            despesa_mensal=1000.0, status_contrato="SUSPENSO", aditivos=[_ta("1º TA", "2026-07-01", 1_200.0)],
+        )
+        self.assertEqual(linha["necessidade"], 0.0)
+
+    def test_item_sem_ne_tambem_usa_a_serie(self):
+        linha = _linha(
+            despesa_mensal=1000.0, valor_empenhado=0.0, aditivos=[_ta("1º TA", "2026-07-16", 1_310.0)],
+        )
+        _, sem_ne = necessidade_por_ne(pd.DataFrame([linha]), None, 2026)
+        self.assertAlmostEqual(sem_ne.iloc[0]["necessidade"], 13_710.0)
+        self.assertAlmostEqual(sem_ne.iloc[0]["custo_exercicio"], 13_710.0)
+
+
 if __name__ == "__main__":
     unittest.main()

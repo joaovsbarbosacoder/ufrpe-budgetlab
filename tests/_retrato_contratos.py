@@ -92,8 +92,9 @@ def calcular_retrato(entradas: list[dict], exercicio: int = 2026) -> dict:
 
     relatorio = montar_relatorio(por_ne, sem_ne, None, exercicio, MES_REFERENCIA)
     projecao = {}
-    for posicao, (linha, mensal) in enumerate(zip(relatorio.linhas.itertuples(), relatorio.mensal.itertuples())):
-        chave = f"{linha.ne_curta if isinstance(linha.ne_curta, str) else linha.contrato_numero}#{posicao}"
+    for linha, mensal in zip(relatorio.linhas.itertuples(), relatorio.mensal.itertuples()):
+        # sem a posição na chave: a ordem entre linhas de necessidade empatada não é garantida
+        chave = linha.ne_curta if isinstance(linha.ne_curta, str) else linha.contrato_numero
         projecao[chave] = [_numero(getattr(mensal, f"p{mes}")) for mes in range(1, 13)]
 
     despesa_anual = {str(id_): _numero(valor) for id_, valor in zip(df["id"], df["despesa_anual"])}

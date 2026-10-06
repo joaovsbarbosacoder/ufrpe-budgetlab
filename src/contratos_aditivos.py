@@ -28,6 +28,7 @@ Contrato público:
     custo_mensal(despesa_mensal, aditivos, exercicio, *, status, vigencia_fim, ...) -> list[float]
     retroativo_por_aditivo(despesa_mensal, aditivos, exercicio, meses_realizados) -> list[(Aditivo, float)]
     meses_com_previsto(aditivos, exercicio) -> set[int]
+    dia_de_referencia(exercicio, hoje=None) -> date
 """
 
 from __future__ import annotations
@@ -277,17 +278,21 @@ def _valores_diarios(
 
 
 def _agregar_por_mes(contribuicoes: list[tuple[date, float | None]]) -> list[float]:
-    """Soma por mês (12 valores). Mês sem nenhuma contribuição = 0,0; mês com alguma contribuição de
-    valor desconhecido (`None`) = NaN — nulo nunca vira zero."""
+    """Por mês (12 valores): a soma dos valores diários ÷ dias do mês — dividir só no fim (e não somar
+    `valor ÷ dias` dia a dia) mantém exatos os valores que são múltiplos inteiros, como `1.000 × 31 ÷ 31`.
+    Mês sem nenhuma contribuição = 0,0; mês com alguma contribuição de valor desconhecido (`None`) = NaN
+    — nunca vira zero."""
 
     soma = [0.0] * 12
+    dias = [0] * 12
     desconhecido = [False] * 12
     for dia, valor in contribuicoes:
+        dias[dia.month - 1] = _dias_no_mes(dia)
         if valor is None:
             desconhecido[dia.month - 1] = True
         else:
             soma[dia.month - 1] += valor
-    return [float("nan") if desconhecido[i] else soma[i] for i in range(12)]
+    return [float("nan") if desconhecido[i] else (soma[i] / dias[i] if dias[i] else 0.0) for i in range(12)]
 
 
 def serie_valor_mensal(
@@ -299,9 +304,7 @@ def serie_valor_mensal(
     suspensão (ver `custo_mensal`). NaN no mês em que o valor é desconhecido."""
 
     diarios = _valores_diarios(despesa_mensal, aditivos, exercicio, numero_item, itens_base)
-    return _agregar_por_mes(
-        [(dia, None if valor is None else valor / _dias_no_mes(dia)) for dia, valor in diarios]
-    )
+    return _agregar_por_mes(diarios)
 
 
 def custo_mensal(
@@ -334,15 +337,16 @@ def custo_mensal(
         if dia < primeiro or dia > ultimo:
             continue
         fracao = 1.0 / _dias_no_mes(dia)
+        peso = 1.0  # fração do dia que conta (o último dia pode contar parcialmente, por causa do teto)
         if teto is not None:
             restante = teto - acumulado
             if restante <= 1e-9:
                 break
-            fracao_contada = min(fracao, restante)
-        else:
-            fracao_contada = fracao
-        acumulado += fracao_contada
-        contribuicoes.append((dia, None if valor is None else valor * fracao_contada))
+            peso = min(1.0, restante / fracao)
+            if peso > 1.0 - 1e-9:  # erro de ponto flutuante do acumulado: o dia conta inteiro
+                peso = 1.0
+        acumulado += fracao * peso
+        contribuicoes.append((dia, None if valor is None else valor * peso))
     return _agregar_por_mes(contribuicoes)
 
 
@@ -398,3 +402,17 @@ def meses_com_previsto(aditivos: list[Aditivo], exercicio: int) -> set[int]:
                 if pd.Timestamp(dia) > garantida and pd.Timestamp(dia) <= efetiva:
                     meses.add(dia.month)
     return meses
+
+
+def dia_de_referencia(exercicio: int | None, hoje: date | None = None) -> date:
+    """"Hoje" limitado ao exercício: hoje se está nele, 31/12 se o exercício já passou, 01/01 se ainda
+    não começou. Sem exercício, hoje. Usado para o "valor mensal vigente" exibido."""
+
+    hoje = hoje or date.today()
+    if exercicio is None:
+        return hoje
+    if hoje.year > exercicio:
+        return date(exercicio, 12, 31)
+    if hoje.year < exercicio:
+        return date(exercicio, 1, 1)
+    return hoje

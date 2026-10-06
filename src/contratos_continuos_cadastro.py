@@ -84,6 +84,7 @@ from src.cadastro_por_exercicio import (
 )
 from src.contratos_aditivos import (
     aditivos_do_registro,
+    dia_de_referencia,
     meses_com_previsto,
     serie_valor_mensal,
     valor_vigente_em,
@@ -189,20 +190,6 @@ def _itens_validos(valor: object) -> list[dict]:
     return list(ITEM_UNICO_PADRAO)
 
 
-def _dia_de_referencia(exercicio: int | None, hoje: date | None) -> date:
-    """"Hoje" limitado ao exercício: hoje se está nele, 31/12 se o exercício já passou, 01/01 se ainda
-    não começou. Sem exercício, hoje."""
-
-    hoje = hoje or date.today()
-    if exercicio is None:
-        return hoje
-    if hoje.year > exercicio:
-        return date(exercicio, 12, 31)
-    if hoje.year < exercicio:
-        return date(exercicio, 1, 1)
-    return hoje
-
-
 def _despesa_anual(despesa_mensal: object, aditivos: list, exercicio: int, meses_no_ano: object) -> float:
     """Soma dos `meses_no_ano` primeiros meses (12 se vazio; fração no último, e meses além de 12 pelo valor
     de dezembro) da série mensal do exercício, sem corte de vigência/início — como a conta antiga. Despesa
@@ -260,9 +247,9 @@ def como_dataframe(contratos: list[dict], exercicio: int | None = None, *, hoje:
         pd.Series([vigencia_efetiva(fim, adit)[0] for fim, adit in zip(df["vigencia_fim"], df["aditivos"])], index=df.index),
         errors="coerce",
     )
-    dia_de_referencia = _dia_de_referencia(exercicio, hoje)
+    dia_de_ref = dia_de_referencia(exercicio, hoje)
     df["valor_mensal_vigente"] = pd.Series(
-        [valor_vigente_em(valor, adit, dia_de_referencia)[0] for valor, adit in zip(df["despesa_mensal"], df["aditivos"])],
+        [valor_vigente_em(valor, adit, dia_de_ref)[0] for valor, adit in zip(df["despesa_mensal"], df["aditivos"])],
         index=df.index, dtype="float64",
     )
     df["tem_aditivo_previsto"] = [

@@ -117,6 +117,15 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from src.contratos_aditivos import (
+    aditivos_do_registro,
+    custo_mensal,
+    dia_de_referencia,
+    meses_com_previsto,
+    serie_valor_mensal,
+    valor_vigente_em,
+    vigencia_efetiva,
+)
 from src.necessidade_empenho import (  # noqa: F401  (reexportados: contrato público deste módulo)
     STATUS_ATIVO,
     STATUS_SUSPENSO,
@@ -178,15 +187,79 @@ def _meses_no_ano_efetivos(tabela: pd.DataFrame, exercicio: int | None) -> tuple
         return base, pd.Series(float("nan"), index=tabela.index, dtype="float64")
     vigentes = pd.Series(
         [
-            meses_vigentes_no_exercicio(status, fim, exercicio, inicio, suspensao)
-            for status, fim, inicio, suspensao in zip(
+            meses_vigentes_no_exercicio(status, vigencia_efetiva(fim, aditivos_do_registro(adit))[0], exercicio, inicio, suspensao)
+            for status, fim, inicio, suspensao, adit in zip(
                 tabela["status_contrato"], tabela["vigencia_fim"], tabela["inicio_execucao_considerado"],
-                tabela["data_suspensao"],
+                tabela["data_suspensao"], tabela["aditivos"],
             )
         ],
         index=tabela.index, dtype="float64",
     )
     return pd.concat([base, vigentes], axis=1).min(axis=1), vigentes
+
+
+def _meses_cobertos(empenhado: float, serie: list[float]) -> float:
+    """Meses (fração) que o `empenhado` cobre percorrendo a série mensal a partir de janeiro (depois de
+    dezembro, pelo valor de dezembro). Valor mensal nulo ou ≤ 0 não cobre nada — o mesmo que dividir por
+    zero/nulo e tratar como 0 na regra antiga. Com valor constante, é `empenhado ÷ valor`."""
+
+    restante = 0.0 if pd.isna(empenhado) else float(empenhado)
+    meses = 0.0
+    for indice in range(12):
+        valor = serie[indice]
+        if pd.isna(valor) or valor <= 0:
+            return meses
+        if restante >= valor:
+            restante -= valor
+            meses += 1.0
+        else:
+            return meses + restante / valor
+    final = serie[11]
+    return meses if pd.isna(final) or final <= 0 else meses + restante / final
+
+
+def _aplicar_necessidade(tabela: pd.DataFrame, exercicio: int | None) -> None:
+    """Preenche `meses_ja_empenhados`, `meses_vigentes`, `meses_restantes`, `necessidade` e, com
+    `exercicio`, `custo_exercicio`, `valor_mensal_vigente` e `inclui_previsto` (aditivos, 06/10/2026).
+    Sem `exercicio` mantém a regra anterior (despesa mensal × meses restantes, sem vigência nem aditivos).
+
+    Com `exercicio`: necessidade = max(0, custo do exercício − empenhado), em que o custo soma, mês a
+    mês, o valor em vigor nos dias em execução (`custo_mensal`; a diferença retroativa dos reajustes
+    entra sozinha). Custo ≤ 0 nunca gera necessidade (despesa negativa) e despesa nula continua nula.
+    Empenhado nulo conta como nada empenhado. Com valor constante a conta é a de antes:
+    `despesa × max(0, meses em execução − empenhado ÷ despesa)`."""
+
+    empenhado = tabela["valor_empenhado_exibido"]
+    if exercicio is None:
+        tabela["meses_ja_empenhados"] = (empenhado / tabela["despesa_mensal"].replace(0.0, pd.NA)).fillna(0.0)
+        meses_efetivos, tabela["meses_vigentes"] = _meses_no_ano_efetivos(tabela, exercicio)
+        tabela["meses_restantes"] = (meses_efetivos - tabela["meses_ja_empenhados"]).clip(lower=0)
+        tabela["necessidade"] = (tabela["despesa_mensal"] * tabela["meses_restantes"]).clip(lower=0)
+        return
+
+    aditivos = [aditivos_do_registro(valor) for valor in tabela["aditivos"]]
+    custos, vigentes, previstos, ja_empenhados = [], [], [], []
+    dia_ref = dia_de_referencia(exercicio)
+    for posicao, adit in enumerate(aditivos):
+        linha = tabela.iloc[posicao]
+        custo = custo_mensal(
+            linha["despesa_mensal"], adit, exercicio, status=linha["status_contrato"],
+            vigencia_fim=linha["vigencia_fim"], inicio=linha["inicio_execucao_considerado"],
+            data_suspensao=linha["data_suspensao"], meses_no_ano=linha["meses_no_ano"],
+        )
+        custos.append(float("nan") if any(pd.isna(v) for v in custo) else sum(custo))
+        vigentes.append(valor_vigente_em(linha["despesa_mensal"], adit, dia_ref)[0])
+        previstos.append(bool(meses_com_previsto(adit, exercicio)))
+        ja_empenhados.append(_meses_cobertos(empenhado.iloc[posicao], serie_valor_mensal(linha["despesa_mensal"], adit, exercicio)))
+
+    tabela["custo_exercicio"] = pd.Series(custos, index=tabela.index, dtype="float64")
+    tabela["valor_mensal_vigente"] = pd.Series(vigentes, index=tabela.index, dtype="float64")
+    tabela["inclui_previsto"] = pd.Series(previstos, index=tabela.index, dtype="bool")
+    tabela["meses_ja_empenhados"] = pd.Series(ja_empenhados, index=tabela.index, dtype="float64")
+    meses_efetivos, tabela["meses_vigentes"] = _meses_no_ano_efetivos(tabela, exercicio)
+    tabela["meses_restantes"] = (meses_efetivos - tabela["meses_ja_empenhados"]).clip(lower=0)
+    falta = (tabela["custo_exercicio"] - empenhado.fillna(0.0)).clip(lower=0)
+    tabela["necessidade"] = falta.where(tabela["custo_exercicio"] > 0, 0.0).where(tabela["custo_exercicio"].notna())
 
 
 def necessidade_por_ne(
@@ -215,7 +288,7 @@ def necessidade_por_ne(
     # (chamadores antigos) ficam nulos — nunca inventados.
     colunas_cadastro = (
         "status_contrato", "vigencia_fim", "inicio_execucao_data", "inicio_execucao_mes", "inicio_execucao_efetivo",
-        "data_suspensao",
+        "data_suspensao", "aditivos",
     )
     extras = {coluna: (coluna, "first") for coluna in colunas_cadastro if coluna in filtrado.columns}
     por_ne = com_ne.groupby("ne_curta", sort=False).agg(
@@ -251,22 +324,12 @@ def necessidade_por_ne(
     por_ne.loc[por_ne["saldo_execucao"].notna(), "base_saldo"] = BASE_LANCAMENTO
     por_ne.loc[usa_competencia, "base_saldo"] = BASE_COMPETENCIA
 
-    por_ne["meses_ja_empenhados"] = (
-        por_ne["valor_empenhado_exibido"] / por_ne["despesa_mensal"].replace(0.0, pd.NA)
-    ).fillna(0.0)
-    meses_efetivos, por_ne["meses_vigentes"] = _meses_no_ano_efetivos(por_ne, exercicio)
-    por_ne["meses_restantes"] = (meses_efetivos - por_ne["meses_ja_empenhados"]).clip(lower=0)
     # o saldo (empenhado − liquidado) já está dentro do empenhado: não é subtraído de novo aqui
     # (correção de 02/10/2026, ver docstring do módulo)
-    por_ne["necessidade"] = (por_ne["despesa_mensal"] * por_ne["meses_restantes"]).clip(lower=0)
+    _aplicar_necessidade(por_ne, exercicio)
 
     sem_ne["valor_empenhado_exibido"] = sem_ne["valor_empenhado"]
-    sem_ne["meses_ja_empenhados"] = (
-        sem_ne["valor_empenhado_exibido"] / sem_ne["despesa_mensal"].replace(0.0, pd.NA)
-    ).fillna(0.0)
-    meses_efetivos_sem_ne, sem_ne["meses_vigentes"] = _meses_no_ano_efetivos(sem_ne, exercicio)
-    sem_ne["meses_restantes"] = (meses_efetivos_sem_ne - sem_ne["meses_ja_empenhados"]).clip(lower=0)
-    sem_ne["necessidade"] = (sem_ne["despesa_mensal"] * sem_ne["meses_restantes"]).clip(lower=0)
+    _aplicar_necessidade(sem_ne, exercicio)
     sem_ne["base_saldo"] = BASE_SEM_NE
 
     return por_ne, sem_ne
