@@ -979,5 +979,79 @@ class TestNecessidadeComAditivos(unittest.TestCase):
         self.assertAlmostEqual(sem_ne.iloc[0]["custo_exercicio"], 13_710.0)
 
 
+class TestProjecaoComAditivos(unittest.TestCase):
+    """Projeção mensal pela série dos aditivos (06/10/2026). NE B: lançamento, saldo 500; sem
+    liquidação por competência projeta a partir de outubro (referência = setembro)."""
+
+    @staticmethod
+    def _montar(aditivos, despesa=1000.0, liquidacao=None):
+        filtrado = _filtrado()
+        indice = filtrado.index[filtrado["ne_curta"] == NE_B][0]
+        filtrado["aditivos"] = None
+        filtrado["aditivos"] = filtrado["aditivos"].astype(object)
+        filtrado.at[indice, "aditivos"] = aditivos
+        filtrado.at[indice, "despesa_mensal"] = despesa
+        relatorio = _relatorio(liquidacao if liquidacao is not None else _liquidacao_mensal(), filtrado=filtrado)
+        posicao = relatorio.linhas.index[relatorio.linhas["ne_curta"] == NE_B][0]
+        return relatorio, posicao
+
+    @staticmethod
+    def _realizado_de_b(*meses):
+        return pd.DataFrame(
+            {"ne_curta": [NE_B] * len(meses), "ano_mes": [202600 + m for m in meses], "valor": [10_400.0] * len(meses)}
+        )
+
+    def test_reajuste_assinado_muda_o_valor_dos_meses_projetados(self):
+        # projeta out–dez: out 1.000 − saldo 500 = 500; nov e dez a 1.200 (reajuste em 01/11)
+        relatorio, i = self._montar([_ta("1º TA", "2026-11-01", 1_200.0)])
+        projetado = [relatorio.mensal.at[i, f"p{m}"] for m in (10, 11, 12)]
+        self.assertEqual(projetado, [500.0, 1_200.0, 1_200.0])
+        self.assertEqual(relatorio.linhas.at[i, "retroativo"], 0.0)
+
+    def test_retroativo_entra_no_primeiro_mes_projetado(self):
+        # original 10.400; 2º TA em 01/07 a 10.800, assinado em 15/09; julho e agosto já realizados.
+        # retroativo = (10.800 − 10.400) × 2 = 800. Projeta set–dez: set = (10.800 − saldo 500) + 800.
+        ta = {**_ta("2º TA", "2026-07-01", 10_800.0), "data_assinatura": "2026-09-15"}
+        relatorio, i = self._montar([ta], despesa=10_400.0, liquidacao=self._realizado_de_b(7, 8))
+        self.assertAlmostEqual(relatorio.linhas.at[i, "retroativo"], 800.0)
+        self.assertAlmostEqual(relatorio.mensal.at[i, "p9"], 10_300.0 + 800.0)
+        self.assertAlmostEqual(relatorio.mensal.at[i, "p10"], 10_800.0)
+
+    def test_sem_data_de_assinatura_nao_ha_retroativo(self):
+        relatorio, i = self._montar(
+            [_ta("2º TA", "2026-07-01", 10_800.0)], despesa=10_400.0, liquidacao=self._realizado_de_b(7, 8)
+        )
+        self.assertEqual(relatorio.linhas.at[i, "retroativo"], 0.0)
+        self.assertAlmostEqual(relatorio.mensal.at[i, "p9"], 10_300.0)
+
+    def test_retroativo_sem_mes_realizado_no_intervalo_e_zero(self):
+        ta = {**_ta("2º TA", "2026-07-01", 10_800.0), "data_assinatura": "2026-09-15"}
+        relatorio, i = self._montar([ta])  # NE B não tem nenhum mês realizado
+        self.assertEqual(relatorio.linhas.at[i, "retroativo"], 0.0)
+
+    def test_tipo_do_mes_distingue_o_previsto(self):
+        relatorio, i = self._montar([_ta("1º TA", "2026-11-01", 1_200.0, situacao="PREVISTO")])
+        self.assertEqual(relatorio.tipo_do_mes(i, 10), "Projetado")
+        self.assertEqual(relatorio.tipo_do_mes(i, 11), "Projetado — aditivo previsto")
+        self.assertEqual(relatorio.tipo_do_mes(i, 12), "Projetado — aditivo previsto")
+        self.assertIsNone(relatorio.tipo_do_mes(i, 5))  # sem dado: nem realizado nem projetado
+
+    def test_tipo_do_mes_realizado(self):
+        relatorio, i = self._montar([], liquidacao=self._realizado_de_b(7))
+        self.assertEqual(relatorio.tipo_do_mes(i, 7), "Realizado")
+
+    def test_sem_aditivo_a_projecao_e_a_de_sempre(self):
+        relatorio, i = self._montar([])
+        self.assertEqual([relatorio.mensal.at[i, f"p{m}"] for m in (10, 11, 12)], [500.0, 1000.0, 1000.0])
+        self.assertEqual(relatorio.linhas.at[i, "retroativo"], 0.0)
+        self.assertFalse(relatorio.linhas.at[i, "inclui_previsto"])
+
+    def test_projetar_com_custos_usa_o_custo_de_cada_mes(self):
+        custos = [0.0] * 9 + [500.0, 1_200.0, 1_200.0]
+        self.assertEqual(
+            projetar_necessidade_mensal(1000.0, 500.0, 10, 3, custos=custos)[9:], [0.0, 1_200.0, 1_200.0]
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

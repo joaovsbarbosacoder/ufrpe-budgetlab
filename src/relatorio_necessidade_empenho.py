@@ -122,6 +122,7 @@ from src.contratos_aditivos import (
     custo_mensal,
     dia_de_referencia,
     meses_com_previsto,
+    retroativo_por_aditivo,
     serie_valor_mensal,
     valor_vigente_em,
     vigencia_efetiva,
@@ -147,6 +148,7 @@ _COLUNAS_MESES_LIQUIDADOS = ["ne_curta", "meses_liquidados", "ultimo_mes_liquida
 MESES = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
 TIPO_REALIZADO = "Realizado"
 TIPO_PROJETADO = "Projetado"
+TIPO_PROJETADO_PREVISTO = "Projetado — aditivo previsto"
 
 NOTA_REGRA = (
     "Necessidade = despesa mensal × meses restantes (nunca negativa) = o que falta empenhar. "
@@ -448,7 +450,7 @@ def _limite_por_status_e_fim(
 
 def projetar_necessidade_mensal(
     despesa_mensal: float, saldo: float, primeiro_mes: int, qtd_meses: int, fracao_ultimo_mes: float = 1.0,
-    fracao_primeiro_mes: float = 1.0,
+    fracao_primeiro_mes: float = 1.0, custos: list[float] | None = None,
 ) -> list[float]:
     """Necessidade de empenho projetada por mês (lista de 12; NaN fora dos `qtd_meses` meses a
     partir de `primeiro_mes`, 1-based).
@@ -460,10 +462,15 @@ def projetar_necessidade_mensal(
     0,00, nunca negativo); saldo negativo cai todo no primeiro mês. O ÚLTIMO mês projetado gasta
     só `fracao_ultimo_mes` da despesa mensal (vigência que termina no meio do mês) e o PRIMEIRO só
     `fracao_primeiro_mes` (execução que começa no meio do mês); com um único mês projetado, as duas
-    frações se combinam. Entrada nula (despesa mensal ou saldo) devolve tudo NaN — não vira zero."""
+    frações se combinam. Entrada nula (despesa mensal ou saldo) devolve tudo NaN — não vira zero.
+
+    `custos` (aditivos, 06/10/2026): custo de cada mês (12 valores, de `custo_mensal`) no lugar de
+    `despesa_mensal × fração` — o valor em vigor naquele mês, com as frações de início/fim de execução
+    já embutidas (`fracao_*` são ignoradas). Custo nulo no mês interrompe a projeção (restante NaN);
+    sem `custos` nada muda."""
 
     mensal = [float("nan")] * 12
-    if pd.isna(despesa_mensal) or pd.isna(saldo):
+    if pd.isna(saldo) or (custos is None and pd.isna(despesa_mensal)):
         return mensal
     acumulado = 0.0
     excesso_anterior = 0.0
@@ -478,7 +485,12 @@ def projetar_necessidade_mensal(
             fracao = fracao_ultimo_mes
         else:
             fracao = 1.0
-        acumulado += despesa_mensal * fracao
+        if custos is not None:
+            if pd.isna(custos[mes - 1]):
+                break
+            acumulado += custos[mes - 1]
+        else:
+            acumulado += despesa_mensal * fracao
         excesso = max(0.0, acumulado - saldo)
         mensal[mes - 1] = excesso - excesso_anterior
         excesso_anterior = excesso
@@ -581,6 +593,20 @@ class RelatorioNecessidade:
         vazio = self.mensal[_COLUNAS_REALIZADO].isna().all(axis=1) & self.linhas["ne_curta"].notna()
         return self.linhas.loc[vazio, "ne_curta"].tolist()
 
+    def tipo_do_mes(self, indice: int, mes: int) -> str | None:
+        """Tipo do mês (1-12) da linha: "Realizado", "Projetado", "Projetado — aditivo previsto" (valor
+        estimado por aditivo ainda não assinado) ou `None` quando não há dado."""
+
+        valor, projetado = self.valor_do_mes(indice, mes)
+        if valor is None:
+            return None
+        if not projetado:
+            return TIPO_REALIZADO
+        previstos = str(self.mensal.at[indice, "meses_previstos"])
+        if str(mes) in previstos.split(","):
+            return TIPO_PROJETADO_PREVISTO
+        return TIPO_PROJETADO
+
     def valor_do_mes(self, indice: int, mes: int) -> tuple[float | None, bool]:
         """(valor, projetado) do mês (1-12) da linha: o realizado se houver, senão o projetado;
         `(None, False)` quando não há dado."""
@@ -613,7 +639,7 @@ def montar_relatorio(
         "despesa_mensal", "meses_no_ano", "meses_ja_empenhados", "meses_restantes", "necessidade",
         "base_saldo", "meses_liquidados", "ultimo_mes_liquidado", "status_contrato", "vigencia_fim",
         "meses_vigentes", "inicio_execucao_considerado", "inicio_execucao_efetivo", "inicio_execucao_mes",
-        "data_suspensao",
+        "data_suspensao", "aditivos", "custo_exercicio", "valor_mensal_vigente", "inclui_previsto",
     ]
     com_ne = por_ne.sort_values("necessidade", ascending=False).rename(
         columns={
@@ -669,7 +695,11 @@ def montar_relatorio(
     meses_projetados = pd.Series(0, index=linhas.index, dtype="Int64", name="meses_projetados")
     observacao = pd.Series("", index=linhas.index, dtype="object", name="observacao_projecao")
     aviso_vigencia = pd.Series(None, index=linhas.index, dtype="object", name="aviso_vigencia")
+    retroativo = pd.Series(0.0, index=linhas.index, dtype="float64", name="retroativo")
+    meses_previstos = pd.Series("", index=linhas.index, dtype="object", name="meses_previstos")
     for indice, linha in linhas.iterrows():
+        adit = aditivos_do_registro(linha["aditivos"])
+        vigencia_ef = vigencia_efetiva(linha["vigencia_fim"], adit)[0]
         meses_com_registro = [m for m in range(1, 13) if not pd.isna(realizado.at[indice, f"r{m}"])]
         inicio = (max(meses_com_registro) + 1) if meses_com_registro else mes_referencia + 1
         inicio = max(inicio, 1)
@@ -678,7 +708,7 @@ def montar_relatorio(
         vida = max(0, math.floor(linha["meses_no_ano"] - len(meses_com_registro) + 1e-9))
         # vigência/status: até onde o contrato permite projetar (a data manda; SUSPENSO não projeta)
         limite = limite_de_projecao(
-            linha["status_contrato"], linha["vigencia_fim"], exercicio, linha["inicio_execucao_considerado"],
+            linha["status_contrato"], vigencia_ef, exercicio, linha["inicio_execucao_considerado"],
             linha["data_suspensao"],
         )
         inicio = max(inicio, limite.primeiro_mes_permitido)  # início da execução informado: nada antes dele
@@ -692,24 +722,42 @@ def montar_relatorio(
         fracao = limite.fracao_ultimo_mes if limite.mes_do_fim is not None and ultimo_projetado == limite.mes_do_fim else 1.0
         fracao_inicial = limite.fracao_primeiro_mes if limite.mes_do_inicio is not None and inicio == limite.mes_do_inicio else 1.0
         saldo = 0.0 if linha["base_saldo"] == BASE_SEM_NE else linha["saldo"]
-        projetado.loc[indice] = projetar_necessidade_mensal(
-            linha["despesa_mensal"], saldo, inicio, qtd, fracao, fracao_inicial
+        custos = custo_mensal(
+            linha["despesa_mensal"], adit, exercicio, status=linha["status_contrato"],
+            vigencia_fim=linha["vigencia_fim"], inicio=linha["inicio_execucao_considerado"],
+            data_suspensao=linha["data_suspensao"],
         )
+        projetado.loc[indice] = projetar_necessidade_mensal(
+            linha["despesa_mensal"], saldo, inicio, qtd, fracao, fracao_inicial, custos=custos
+        )
+        meses_previstos.at[indice] = ",".join(str(m) for m in sorted(meses_com_previsto(adit, exercicio)))
         if qtd > 0 and not projetado.loc[indice].isna().all():
             primeiro_mes.at[indice] = inicio
             meses_projetados.at[indice] = qtd
+            # retroativo dos reajustes assinados depois do início de vigência (só nos meses já realizados): soma-se
+            # ao primeiro mês projetado e fica em coluna própria (spec §4.3)
+            realizados = {m for m in range(1, 13) if not pd.isna(realizado.at[indice, f"r{m}"])}
+            total_retroativo = sum(v for _, v in retroativo_por_aditivo(linha["despesa_mensal"], adit, exercicio, realizados))
+            if total_retroativo and not pd.isna(projetado.at[indice, f"p{inicio}"]):
+                projetado.at[indice, f"p{inicio}"] += total_retroativo
+                retroativo.at[indice] = total_retroativo
         motivo, aviso = limite.motivo, limite.aviso
         if limite.mes_do_fim is not None and ate_limite == 0 and limite.aviso == "suspenso":
             # suspenso com data: a suspensão chega antes do primeiro mês sem liquidação
             motivo = f"Suspenso em {pd.Timestamp(linha['data_suspensao']).strftime('%d/%m/%Y')} — sem projeção"
         elif limite.mes_do_fim is not None and ate_limite == 0:
             # a vigência acaba antes do primeiro mês sem liquidação: nada a projetar
-            motivo = f"Vigência encerrada em {pd.Timestamp(linha['vigencia_fim']).strftime('%d/%m/%Y')} — sem projeção"
+            motivo = f"Vigência encerrada em {pd.Timestamp(vigencia_ef).strftime('%d/%m/%Y')} — sem projeção"
             aviso = None if str(linha["status_contrato"]).strip().upper() == STATUS_VENCIDO else "ativo_com_vigencia_encerrada"
         observacao.at[indice] = motivo
         aviso_vigencia.at[indice] = aviso
 
-    mensal = pd.concat([realizado, projetado, primeiro_mes, meses_projetados, observacao, aviso_vigencia], axis=1)
+    linhas["retroativo"] = retroativo
+    linhas["inclui_previsto"] = linhas["inclui_previsto"].fillna(False).astype(bool)
+    mensal = pd.concat(
+        [realizado, projetado, primeiro_mes, meses_projetados, observacao, aviso_vigencia, retroativo, meses_previstos],
+        axis=1,
+    )
     return RelatorioNecessidade(
         linhas=linhas, mensal=mensal, exercicio=exercicio, mes_referencia=mes_referencia
     )
