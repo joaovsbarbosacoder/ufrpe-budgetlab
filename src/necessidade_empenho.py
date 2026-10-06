@@ -39,6 +39,7 @@ def necessidade_ate_mes_vigente(
     hoje: date | None = None,
     meses_no_ano: pd.Series | None = None,
     fracao_primeiro_mes: pd.Series | None = None,
+    pesos_mensais: pd.Series | None = None,
 ) -> tuple[pd.Series, pd.Series]:
     """Quanto falta empenhar para acompanhar o calendário até o mês vigente — métrica
     diferente de `calcular_necessidade_empenho` (que compara empenhado × liquidado, execução
@@ -86,6 +87,12 @@ def necessidade_ate_mes_vigente(
     mês de início deixa de contar inteiro: desconta-se `1 − fração` dos meses decorridos (só
     quando já decorreu ao menos um mês). Sem ela (`None`) o mês de início conta cheio, como
     sempre.
+
+    `pesos_mensais` (opcional, aditivos 06/10/2026): por linha, uma lista de 12 pesos — o valor da série
+    mensal do mês ÷ o valor mensal vigente. Os meses decorridos viram a soma dos pesos do mês de início
+    ao mês vigente (o primeiro mês: `1 − fração` do seu peso é descontado), de modo que `meses_sugeridos`
+    = (custo até o mês vigente − empenhado) ÷ valor vigente. Linha sem lista (`None`) mantém a conta de
+    sempre; peso nulo dentro do intervalo gera sugestão nula.
     """
     hoje = hoje or date.today()
     mes_vigente = 12 if hoje.year > ano_referencia else max(0, min(hoje.month, 12))
@@ -94,6 +101,18 @@ def necessidade_ate_mes_vigente(
     meses_decorridos = (mes_vigente - inicio_execucao_mes + 1).clip(lower=0)
     if fracao_primeiro_mes is not None:
         meses_decorridos = (meses_decorridos - (1 - fracao_primeiro_mes)).where(meses_decorridos > 0, 0).clip(lower=0)
+    if pesos_mensais is not None:
+        meses_decorridos = meses_decorridos.astype("float64")
+        for posicao, pesos in enumerate(pesos_mensais):
+            inicio = inicio_execucao_mes.iloc[posicao]
+            if not isinstance(pesos, (list, tuple)) or pd.isna(inicio):
+                continue
+            primeiro = max(int(inicio), 1)
+            faixa = [pesos[mes - 1] for mes in range(primeiro, mes_vigente + 1)]
+            soma = float("nan") if any(pd.isna(peso) for peso in faixa) else float(sum(faixa))
+            if soma > 0 and fracao_primeiro_mes is not None:
+                soma -= (1 - fracao_primeiro_mes.iloc[posicao]) * pesos[primeiro - 1]
+            meses_decorridos.iloc[posicao] = soma if pd.isna(soma) else max(0.0, soma)
     if meses_no_ano is not None:
         meses_decorridos = meses_decorridos.clip(upper=meses_no_ano)
     meses_empenhados_equivalente = valor_empenhado / valor_mensal.replace(0, pd.NA)

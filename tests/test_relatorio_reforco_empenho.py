@@ -7,6 +7,7 @@ Dados sintéticos — a lógica é pura reorganização de colunas já validadas
 from __future__ import annotations
 
 import unittest
+from datetime import date
 
 import pandas as pd
 
@@ -544,6 +545,95 @@ class TestInicioDaExecucaoPorDataNoReforco(unittest.TestCase):
         bolsas["inicio_execucao_data"] = pd.Timestamp("2020-07-16")
         com = linhas_para_processo(bolsas, BOLSAS_AUXILIOS, processo, 2020)["meses_sugeridos"].tolist()
         self.assertEqual(sem, com)  # Bolsas não tem `coluna_inicio_data`: nada muda
+
+
+def _ta_reforco(numero, inicio, valor, itens=None, situacao="ASSINADO"):
+    return {
+        "numero": numero, "tipo": "REAJUSTE", "situacao": situacao, "data_inicio": inicio, "data_assinatura": None,
+        "valor_mensal": valor, "vigencia_fim": None, "itens": itens,
+    }
+
+
+class TestReforcoComAditivos(unittest.TestCase):
+    """Sugestão "por calendário" e valor/rateio vigentes com aditivos (06/10/2026). "Hoje" = 06/10/2026:
+    janeiro a outubro decorridos. Valores à mão."""
+
+    HOJE = date(2026, 10, 6)
+    PROCESSO_APC = "001370/2026-44"  # APC (3.000/mês, NE ...100), Brascon, Tekis (10.000/mês, itens 70/30)
+
+    @staticmethod
+    def _df(aditivos_por_ne: dict | None = None, empenhado: dict | None = None) -> pd.DataFrame:
+        df = _continuos_sintetico()
+        df["status_contrato"] = "ATIVO"
+        df["vigencia_fim"] = pd.NaT
+        df["inicio_execucao_efetivo"] = 1
+        df["valor_empenhado_autoritativo"] = 0.0
+        df["aditivos"] = None
+        df["aditivos"] = df["aditivos"].astype(object)
+        for ne, aditivos in (aditivos_por_ne or {}).items():
+            df.at[df.index[df["ne_curta"] == ne][0], "aditivos"] = aditivos
+        for ne, valor in (empenhado or {}).items():
+            df.loc[df["ne_curta"] == ne, "valor_empenhado_autoritativo"] = valor
+        return df
+
+    def _linhas(self, df, processo=None):
+        return linhas_para_processo(df, CONTRATOS_CONTINUOS, processo or self.PROCESSO_APC, 2026, hoje=self.HOJE)
+
+    def test_sugestao_percorre_o_custo_ate_o_mes_vigente(self):
+        # APC: 3.000 até junho e 3.300 a partir de 01/07; alvo jan–out = 6×3.000 + 4×3.300 = 31.200;
+        # empenhado 18.000 → faltam 13.200 = 4,0 meses do valor vigente (3.300)
+        df = self._df({"2026NE000100": [_ta_reforco("1º TA", "2026-07-01", 3_300.0)]}, {"2026NE000100": 18_000.0})
+        apc = self._linhas(df).query("ne_curta == '2026NE000100'").iloc[0]
+        self.assertEqual(apc["valor_mensal"], 3_300.0)
+        self.assertAlmostEqual(apc["meses_sugeridos"], 4.0)
+        self.assertEqual(apc["situacao_vigencia"], "1º TA desde 01/07/2026")
+
+    def test_rateio_vigente_define_os_itens_e_seus_valores(self):
+        # Tekis: 10.000 → 11.000 e rateio 70/30 → 60/40 em 01/07: itens a 6.600 e 4.400
+        ta = _ta_reforco(
+            "1º TA", "2026-07-01", 11_000.0, itens=[{"numero": 1, "percentual": 60.0}, {"numero": 2, "percentual": 40.0}]
+        )
+        tekis = self._linhas(self._df({"2026NE000084": [ta]})).query("ne_curta == '2026NE000084'")
+        self.assertEqual(sorted(tekis["valor_mensal"]), [4_400.0, 6_600.0])
+        self.assertEqual(list(tekis["item_licitacao"]), [1, 2])
+
+    def test_valor_vigente_zero_nao_gera_sugestao(self):
+        # Review Focus 5: valor vigente 0 → sem divisão por zero, sugestão nula
+        df = self._df({"2026NE000100": [_ta_reforco("1º TA", "2026-07-01", 0.0)]}, {"2026NE000100": 1_000.0})
+        df.loc[df["ne_curta"] == "2026NE000100", "meses_a_empenhar"] = float("nan")  # sem reserva por execução
+        apc = self._linhas(df).query("ne_curta == '2026NE000100'").iloc[0]
+        self.assertEqual(apc["valor_mensal"], 0.0)
+        self.assertTrue(pd.isna(apc["meses_sugeridos"]))
+
+    def test_aditivo_previsto_aparece_na_situacao(self):
+        df = self._df({"2026NE000100": [_ta_reforco("2º TA", "2026-07-01", 3_300.0, situacao="PREVISTO")]})
+        apc = self._linhas(df).query("ne_curta == '2026NE000100'").iloc[0]
+        self.assertEqual(apc["situacao_vigencia"], "2º TA desde 01/07/2026 (previsto)")
+
+    def test_sem_aditivo_a_linha_e_igual_a_de_sempre(self):
+        base = self._df()
+        sem_coluna = base.drop(columns=["aditivos"])
+        pd.testing.assert_frame_equal(self._linhas(base), self._linhas(sem_coluna))
+        vazio = self._df({"2026NE000100": []})
+        pd.testing.assert_frame_equal(self._linhas(base), self._linhas(vazio))
+        apc = self._linhas(base).query("ne_curta == '2026NE000100'").iloc[0]
+        self.assertAlmostEqual(apc["meses_sugeridos"], 10.0)  # jan–out a 3.000, nada empenhado
+
+    def test_pdfs_saem_com_aditivos(self):
+        df = self._df({"2026NE000100": [_ta_reforco("1º TA", "2026-07-01", 3_300.0)]}, {"2026NE000100": 18_000.0})
+        linhas = self._linhas(df)
+        linhas = linhas.assign(empenhar=linhas["meses_sugeridos"] * linhas["valor_mensal"])
+        self.assertTrue(gerar_pdf_detalhado(CONTRATOS_CONTINUOS, TIPO_REFORCO, self.PROCESSO_APC, linhas).startswith(b"%PDF"))
+        self.assertTrue(gerar_pdf_resumido(CONTRATOS_CONTINUOS, TIPO_REFORCO, self.PROCESSO_APC, linhas).startswith(b"%PDF"))
+
+    def test_vigencia_efetiva_do_aditivo_limita_os_meses(self):
+        # vigência original 2025-12-31 (encerrada); o TA prorroga até 31/03/2026 e reajusta para 3.300 em 01/01:
+        # teto = (3 × 3.300 − 0) ÷ 3.300 = 3 meses
+        ta = {**_ta_reforco("1º TA", "2026-01-01", 3_300.0), "vigencia_fim": "2026-03-31"}
+        df = self._df({"2026NE000100": [ta]})
+        df.loc[df["ne_curta"] == "2026NE000100", "vigencia_fim"] = pd.Timestamp("2025-12-31")
+        apc = self._linhas(df).query("ne_curta == '2026NE000100'").iloc[0]
+        self.assertAlmostEqual(apc["meses_sugeridos"], 3.0)
 
 
 if __name__ == "__main__":

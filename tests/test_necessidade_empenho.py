@@ -256,5 +256,41 @@ class TestJanelaDeExecucao(unittest.TestCase):
         self.assertAlmostEqual(meses_vigentes_no_exercicio("ATIVO", T("2026-11-15"), 2026, T("2026-07-16")), 3 + 15 / 30 + 16 / 31)
 
 
+class TestNecessidadeAteMesVigenteComPesos(unittest.TestCase):
+    def test_pesos_mensais_substituem_os_meses_decorridos(self):
+        # valor vigente 3.300; série 3.000 (jan–jun) e 3.300 (jul–dez) → pesos 3.000/3.300 e 1;
+        # jan–out = 6 × 3.000/3.300 + 4 = 9,4545… meses; empenhado 18.000 = 5,4545… meses → 4,0
+        pesos = [3_000 / 3_300] * 6 + [1.0] * 6
+        meses, valor = necessidade_ate_mes_vigente(
+            pd.Series([3_300.0]), pd.Series([18_000.0]), pd.Series([1]), 2026, hoje=date(2026, 10, 6),
+            pesos_mensais=pd.Series([pesos], dtype=object),
+        )
+        self.assertAlmostEqual(meses.iloc[0], 4.0)
+        self.assertAlmostEqual(valor.iloc[0], 13_200.0)
+
+    def test_pesos_nulos_mantem_a_conta_antiga(self):
+        meses, _ = necessidade_ate_mes_vigente(
+            pd.Series([10_000.0]), pd.Series([70_000.0]), pd.Series([1]), 2026, hoje=date(2026, 10, 15),
+            pesos_mensais=pd.Series([None], dtype=object),
+        )
+        self.assertAlmostEqual(meses.iloc[0], 3.0)
+
+    def test_primeiro_mes_proporcional_aplica_a_fracao_ao_peso_do_mes(self):
+        # início em julho com metade do mês: jul 0,5 + ago + set + out = 3,5 meses (pesos 1)
+        meses, _ = necessidade_ate_mes_vigente(
+            pd.Series([1_000.0]), pd.Series([0.0]), pd.Series([7]), 2026, hoje=date(2026, 10, 6),
+            fracao_primeiro_mes=pd.Series([0.5]), pesos_mensais=pd.Series([[1.0] * 12], dtype=object),
+        )
+        self.assertAlmostEqual(meses.iloc[0], 3.5)
+
+    def test_peso_nulo_no_intervalo_gera_nulo(self):
+        pesos = [float("nan")] * 12
+        meses, _ = necessidade_ate_mes_vigente(
+            pd.Series([0.0]), pd.Series([100.0]), pd.Series([1]), 2026, hoje=date(2026, 10, 6),
+            pesos_mensais=pd.Series([pesos], dtype=object),
+        )
+        self.assertTrue(pd.isna(meses.iloc[0]))
+
+
 if __name__ == "__main__":
     unittest.main()
