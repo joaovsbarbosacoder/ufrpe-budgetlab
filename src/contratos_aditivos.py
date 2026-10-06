@@ -24,14 +24,21 @@ Contrato público:
     valor_vigente_em(despesa_mensal, aditivos, dia) -> (valor | None, Aditivo | None)
     rateio_vigente_em(itens_base, aditivos, dia) -> list[dict]
     vigencia_efetiva(vigencia_fim, aditivos) -> (Timestamp, Aditivo | None)
+    serie_valor_mensal(despesa_mensal, aditivos, exercicio, numero_item=None, itens_base=None) -> list[float]
+    custo_mensal(despesa_mensal, aditivos, exercicio, *, status, vigencia_fim, ...) -> list[float]
+    retroativo_por_aditivo(despesa_mensal, aditivos, exercicio, meses_realizados) -> list[(Aditivo, float)]
+    meses_com_previsto(aditivos, exercicio) -> set[int]
 """
 
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pandas as pd
+
+from src.necessidade_empenho import janela_de_execucao
 
 TIPOS = ("REAJUSTE", "REPACTUACAO", "PRORROGACAO", "ACRESCIMO_SUPRESSAO", "OUTRO")
 SITUACOES = ("PREVISTO", "ASSINADO")
@@ -220,3 +227,174 @@ def vigencia_efetiva(vigencia_fim: object, aditivos: list[Aditivo]) -> tuple[pd.
     if _vazio(vigencia_fim):
         return pd.NaT, None
     return pd.Timestamp(vigencia_fim), None
+
+
+# ---------------------------------------------------------------------------------------------
+# Série mensal, custo do mês, retroativo e previstos (spec §4)
+# ---------------------------------------------------------------------------------------------
+
+
+def _dias_do_exercicio(exercicio: int) -> list[date]:
+    dia, ultimo = date(exercicio, 1, 1), date(exercicio, 12, 31)
+    dias = []
+    while dia <= ultimo:
+        dias.append(dia)
+        dia += timedelta(days=1)
+    return dias
+
+
+def _dias_no_mes(dia: date) -> int:
+    return calendar.monthrange(dia.year, dia.month)[1]
+
+
+def _valores_diarios(
+    despesa_mensal: object, aditivos: list[Aditivo], exercicio: int,
+    numero_item: int | None = None, itens_base: list[dict] | None = None,
+) -> list[tuple[date, float | None]]:
+    """(dia, valor mensal em vigor no dia) para cada dia do exercício. Com `numero_item`, o valor do
+    item: valor do contrato × percentual do item no rateio vigente ÷ 100 (0 se o item não está no
+    rateio). Valor ainda desconhecido (despesa original nula antes do 1º valor de aditivo) = `None`."""
+
+    ordenados = [a for a in sorted(aditivos, key=_chave_ordem) if a.data_inicio is not None]
+    valor = _numero(despesa_mensal)
+    rateio = itens_base if isinstance(itens_base, list) and itens_base else _ITEM_UNICO
+    proximo = 0
+    resultado = []
+    for dia in _dias_do_exercicio(exercicio):
+        while proximo < len(ordenados) and ordenados[proximo].data_inicio <= dia:
+            aditivo = ordenados[proximo]
+            if aditivo.valor_mensal is not None:
+                valor = aditivo.valor_mensal
+            if aditivo.itens is not None:
+                rateio = aditivo.itens
+            proximo += 1
+        if numero_item is None or valor is None:
+            resultado.append((dia, valor))
+        else:
+            percentual = next((float(i["percentual"]) for i in rateio if int(i["numero"]) == numero_item), 0.0)
+            resultado.append((dia, valor * percentual / 100))
+    return resultado
+
+
+def _agregar_por_mes(contribuicoes: list[tuple[date, float | None]]) -> list[float]:
+    """Soma por mês (12 valores). Mês sem nenhuma contribuição = 0,0; mês com alguma contribuição de
+    valor desconhecido (`None`) = NaN — nulo nunca vira zero."""
+
+    soma = [0.0] * 12
+    desconhecido = [False] * 12
+    for dia, valor in contribuicoes:
+        if valor is None:
+            desconhecido[dia.month - 1] = True
+        else:
+            soma[dia.month - 1] += valor
+    return [float("nan") if desconhecido[i] else soma[i] for i in range(12)]
+
+
+def serie_valor_mensal(
+    despesa_mensal: object, aditivos: list[Aditivo], exercicio: int,
+    numero_item: int | None = None, itens_base: list[dict] | None = None,
+) -> list[float]:
+    """12 valores mensais do `exercicio`: a média, por dia, do valor mensal em vigor (um reajuste no
+    meio do mês dá o valor proporcional aos dias dos dois lados). Sem corte de vigência, início ou
+    suspensão (ver `custo_mensal`). NaN no mês em que o valor é desconhecido."""
+
+    diarios = _valores_diarios(despesa_mensal, aditivos, exercicio, numero_item, itens_base)
+    return _agregar_por_mes(
+        [(dia, None if valor is None else valor / _dias_no_mes(dia)) for dia, valor in diarios]
+    )
+
+
+def custo_mensal(
+    despesa_mensal: object, aditivos: list[Aditivo], exercicio: int, *,
+    status: object, vigencia_fim: object, inicio: object = None, data_suspensao: object = None,
+    meses_no_ano: object = None, numero_item: int | None = None, itens_base: list[dict] | None = None,
+) -> list[float]:
+    """Custo de cada mês do `exercicio`: a soma, nos dias em que o contrato está em execução, do valor
+    em vigor ÷ dias do mês. A janela de execução é a de `janela_de_execucao` com a vigência
+    EFETIVA (`vigencia_efetiva`, a do último aditivo que a altera) — SUSPENSO, VENCIDO sem data e
+    início/fim fora do exercício seguem as regras de sempre. `meses_no_ano` (teto de referência; vazio
+    = sem teto) para de contar quando a soma das frações mensais dos dias em execução o atinge.
+    Mês fora da janela = 0,0; valor desconhecido em dia contado = NaN; sem nenhum valor conhecido no
+    exercício, os 12 meses são NaN (despesa nula continua nula). Sem aditivo e com valor constante, a
+    soma é `despesa_mensal × meses em execução` — a conta de antes dos aditivos."""
+
+    diarios = _valores_diarios(despesa_mensal, aditivos, exercicio, numero_item, itens_base)
+    if all(valor is None for _, valor in diarios):
+        return [float("nan")] * 12
+    efetiva, _ = vigencia_efetiva(vigencia_fim, aditivos)
+    janela = janela_de_execucao(status, efetiva, exercicio, inicio, data_suspensao)
+    if janela is None:
+        return [0.0] * 12
+    primeiro, ultimo = janela[0].date(), janela[1].date()
+    teto = None if _vazio(meses_no_ano) else float(meses_no_ano)
+
+    contribuicoes = []
+    acumulado = 0.0
+    for dia, valor in diarios:
+        if dia < primeiro or dia > ultimo:
+            continue
+        fracao = 1.0 / _dias_no_mes(dia)
+        if teto is not None:
+            restante = teto - acumulado
+            if restante <= 1e-9:
+                break
+            fracao_contada = min(fracao, restante)
+        else:
+            fracao_contada = fracao
+        acumulado += fracao_contada
+        contribuicoes.append((dia, None if valor is None else valor * fracao_contada))
+    return _agregar_por_mes(contribuicoes)
+
+
+def retroativo_por_aditivo(
+    despesa_mensal: object, aditivos: list[Aditivo], exercicio: int, meses_realizados: set[int],
+) -> list[tuple[Aditivo, float]]:
+    """Retroativo de cada aditivo ASSINADO com valor novo e `data_assinatura` posterior à
+    `data_inicio`: a soma, nos dias de [data_inicio, data_assinatura) do `exercicio` que caem em meses
+    já realizados (`meses_realizados`, 1-12), de (valor em vigor − valor sem esse aditivo) ÷ dias do
+    mês. Aditivo previsto, sem assinatura, sem valor ou assinado no próprio dia do início não tem
+    retroativo (não entra no resultado)."""
+
+    resultado = []
+    for aditivo in aditivos:
+        if (
+            aditivo.situacao != "ASSINADO" or aditivo.valor_mensal is None
+            or aditivo.data_assinatura is None or aditivo.data_inicio is None
+            or aditivo.data_assinatura <= aditivo.data_inicio
+        ):
+            continue
+        sem_este = [a for a in aditivos if a is not aditivo]
+        com = dict(_valores_diarios(despesa_mensal, aditivos, exercicio))
+        sem = dict(_valores_diarios(despesa_mensal, sem_este, exercicio))
+        total = 0.0
+        for dia, valor in com.items():
+            if not (aditivo.data_inicio <= dia < aditivo.data_assinatura) or dia.month not in meses_realizados:
+                continue
+            anterior = sem[dia]
+            if valor is None or anterior is None:
+                continue
+            total += (valor - anterior) / _dias_no_mes(dia)
+        resultado.append((aditivo, total))
+    return resultado
+
+
+def meses_com_previsto(aditivos: list[Aditivo], exercicio: int) -> set[int]:
+    """Meses (1-12) do `exercicio` cujo valor mensal ou cuja vigência vem de um aditivo PREVISTO —
+    valores estimados, a marcar em tela e relatórios. Vigência: os meses entre o fim da vigência
+    garantida (sem os previstos) e a vigência efetiva."""
+
+    meses = set()
+    for dia in _dias_do_exercicio(exercicio):
+        _, definidor = valor_vigente_em(None, aditivos, dia)
+        if definidor is not None and definidor.previsto:
+            meses.add(dia.month)
+
+    _, definidor_vigencia = vigencia_efetiva(None, aditivos)
+    if definidor_vigencia is not None and definidor_vigencia.previsto:
+        garantida, _ = vigencia_efetiva(None, [a for a in aditivos if not a.previsto])
+        efetiva, _ = vigencia_efetiva(None, aditivos)
+        if not pd.isna(garantida):
+            for dia in _dias_do_exercicio(exercicio):
+                if pd.Timestamp(dia) > garantida and pd.Timestamp(dia) <= efetiva:
+                    meses.add(dia.month)
+    return meses
