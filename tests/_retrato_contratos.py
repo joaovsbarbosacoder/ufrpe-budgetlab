@@ -76,7 +76,7 @@ class _DataFixa(date):
 def calcular_retrato(entradas: list[dict], exercicio: int = 2026) -> dict:
     """Números congelados: necessidade por NE/contrato, projeção mensal, despesa anual e Reforço."""
 
-    df = _com_execucao_sintetica(como_dataframe(entradas))
+    df = _com_execucao_sintetica(como_dataframe(entradas, exercicio))
     por_ne, sem_ne = necessidade_por_ne(df, None, exercicio)
 
     necessidade = {

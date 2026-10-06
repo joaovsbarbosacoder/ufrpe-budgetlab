@@ -59,7 +59,7 @@ Contrato público:
     atualizar_contrato(ano, contrato) -> Path
     excluir_contrato(ano, id) -> None
     carregar_contratos(ano) -> list[dict]
-    como_dataframe(contratos) -> pd.DataFrame
+    como_dataframe(contratos, exercicio=None, *, hoje=None) -> pd.DataFrame
     anos_disponiveis() -> list[int]
     duplicar_exercicio(ano_origem, ano_destino) -> list[dict]
     migrar_de_planilha(caminho, ano, *, diretorio_base=None) -> list[dict]
@@ -67,6 +67,7 @@ Contrato público:
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -80,6 +81,13 @@ from src.cadastro_por_exercicio import (
     excluir_exercicio as _excluir_exercicio,
     novo_registro,
     salvar as _salvar,
+)
+from src.contratos_aditivos import (
+    aditivos_do_registro,
+    meses_com_previsto,
+    serie_valor_mensal,
+    valor_vigente_em,
+    vigencia_efetiva,
 )
 from src.contratos_continuos import ler_contratos_continuos
 from src.necessidade_empenho import calcular_necessidade_empenho
@@ -95,7 +103,7 @@ CAMPOS_IDENTIDADE = [
     "ano_contrato", "contrato_numero", "processo_contratacao", "processo_empenho", "fornecedor",
     "tipo_contrato", "tipo_despesa", "fornecedor_cnpj_cpf", "vigencia_fim", "unidade_cod",
     "acao_cod", "ptres", "fonte_cod", "natureza_despesa_cod", "ugr_cod", "pi_cod",
-    "despesa_mensal", "meses_no_ano", "itens",
+    "despesa_mensal", "meses_no_ano", "itens", "aditivos",
 ]
 
 #: em branco/zerados no exercício novo — o vínculo com a Execução Anual se refaz quando o
@@ -133,6 +141,7 @@ _COLUNAS_NUMERICAS = [
 ]
 _COLUNAS_VAZIAS = [
     "id", *_COLUNAS_TEXTO, *_COLUNAS_NUMERICAS, "vigencia_fim", "inicio_execucao_data", "data_suspensao", "itens", "tem_varios_itens",
+    "aditivos", "vigencia_fim_efetiva", "valor_mensal_vigente", "tem_aditivo_previsto",
     "despesa_anual", "meses_a_empenhar", "valor_a_empenhar",
 ]
 
@@ -180,7 +189,38 @@ def _itens_validos(valor: object) -> list[dict]:
     return list(ITEM_UNICO_PADRAO)
 
 
-def como_dataframe(contratos: list[dict]) -> pd.DataFrame:
+def _dia_de_referencia(exercicio: int | None, hoje: date | None) -> date:
+    """"Hoje" limitado ao exercício: hoje se está nele, 31/12 se o exercício já passou, 01/01 se ainda
+    não começou. Sem exercício, hoje."""
+
+    hoje = hoje or date.today()
+    if exercicio is None:
+        return hoje
+    if hoje.year > exercicio:
+        return date(exercicio, 12, 31)
+    if hoje.year < exercicio:
+        return date(exercicio, 1, 1)
+    return hoje
+
+
+def _despesa_anual(despesa_mensal: object, aditivos: list, exercicio: int, meses_no_ano: object) -> float:
+    """Soma dos `meses_no_ano` primeiros meses (12 se vazio; fração no último, e meses além de 12 pelo valor
+    de dezembro) da série mensal do exercício, sem corte de vigência/início — como a conta antiga. Despesa
+    mensal nula continua nula."""
+
+    serie = serie_valor_mensal(despesa_mensal, aditivos, exercicio)
+    meses = 12.0 if pd.isna(meses_no_ano) else float(meses_no_ano)
+    total = 0.0
+    for indice in range(12):
+        parte = min(1.0, max(0.0, meses - indice))
+        if parte > 0:
+            total += serie[indice] * parte
+    if meses > 12:
+        total += serie[11] * (meses - 12)
+    return total
+
+
+def como_dataframe(contratos: list[dict], exercicio: int | None = None, *, hoje: date | None = None) -> pd.DataFrame:
     """Mesmo esquema de colunas de `src.contratos_continuos.ler_contratos_continuos` (ver
     docstring do módulo, menos `item_licitacao`/`item_percentual`, substituídos por `itens`) —
     `despesa_anual`/`meses_a_empenhar`/`valor_a_empenhar` recalculados aqui (nunca gravados no
@@ -213,11 +253,39 @@ def como_dataframe(contratos: list[dict]) -> pd.DataFrame:
     df["itens"] = df["itens"].apply(_itens_validos)
     df["tem_varios_itens"] = df["itens"].apply(lambda itens: len(itens) > 1)
 
+    # Aditivos (06/10/2026): `despesa_mensal` e `vigencia_fim` seguem os ORIGINAIS do contrato; o que vale
+    # em cada data vem de `src.contratos_aditivos`. Registro anterior aos aditivos = lista vazia.
+    df["aditivos"] = [aditivos_do_registro(valor) for valor in df.get("aditivos", pd.Series([None] * len(df)))]
+    df["vigencia_fim_efetiva"] = pd.to_datetime(
+        pd.Series([vigencia_efetiva(fim, adit)[0] for fim, adit in zip(df["vigencia_fim"], df["aditivos"])], index=df.index),
+        errors="coerce",
+    )
+    dia_de_referencia = _dia_de_referencia(exercicio, hoje)
+    df["valor_mensal_vigente"] = pd.Series(
+        [valor_vigente_em(valor, adit, dia_de_referencia)[0] for valor, adit in zip(df["despesa_mensal"], df["aditivos"])],
+        index=df.index, dtype="float64",
+    )
+    df["tem_aditivo_previsto"] = [
+        any(a.previsto for a in adit) if exercicio is None else bool(meses_com_previsto(adit, exercicio))
+        for adit in df["aditivos"]
+    ]
+
     # meses_no_ano (pedido explícito, mesmo campo de src.bolsas_auxilios_cadastro): total de
     # meses que o contrato é pago no exercício — contrato sem esse campo ainda preenchido
     # (registro anterior a esta correção) cai no padrão de 12 (mesmo critério "contínuo" já
-    # usado antes desta mudança, nenhum contrato existente muda de valor).
-    df["despesa_anual"] = df["despesa_mensal"] * df["meses_no_ano"].fillna(12)
+    # usado antes desta mudança, nenhum contrato existente muda de valor). Com `exercicio`, a
+    # despesa anual é a soma da série mensal (valor em vigor mês a mês, spec §4.5); sem ele, a
+    # conta antiga `despesa_mensal × meses`.
+    if exercicio is None:
+        df["despesa_anual"] = df["despesa_mensal"] * df["meses_no_ano"].fillna(12)
+    else:
+        df["despesa_anual"] = pd.Series(
+            [
+                _despesa_anual(valor, adit, exercicio, meses)
+                for valor, adit, meses in zip(df["despesa_mensal"], df["aditivos"], df["meses_no_ano"])
+            ],
+            index=df.index, dtype="float64",
+        )
     df["meses_a_empenhar"], df["valor_a_empenhar"] = calcular_necessidade_empenho(
         df["meses_empenhados"], df["meses_liquidados"], df["despesa_mensal"]
     )

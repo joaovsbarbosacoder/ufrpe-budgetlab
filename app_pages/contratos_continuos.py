@@ -156,6 +156,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from src.contratos_aditivos import aditivo_para_registro
 from src.contratos_continuos import com_efeitos_da_suspensao, com_meses_pagos, com_saldo_execucao
 from src.contratos_continuos_cadastro import (
     anos_disponiveis,
@@ -732,6 +733,8 @@ def _dialogo_editar_contrato(
                 "inicio_execucao_mes": inicio_execucao_mes_editado,
                 "inicio_execucao_data": pd.Timestamp(inicio_execucao_data_editada) if inicio_execucao_data_editada else None,
                 "data_suspensao": pd.Timestamp(data_suspensao) if data_suspensao else None,
+                # aditivos seguem como estão gravados (a aba de aditivos edita esta lista)
+                "aditivos": [aditivo_para_registro(a) for a in linha["aditivos"]],
             }
             for chave_extra in (
                 "despesa_anual", "meses_a_empenhar", "valor_a_empenhar", "saldo_execucao",
@@ -741,6 +744,7 @@ def _dialogo_editar_contrato(
                 "necessidade_via", "meses_pagos", "ultimo_mes_pago", "contrato_normalizado",
                 "tem_varios_itens", "inicio_execucao_efetivo", "valor_empenhado_autoritativo",
                 "despesa_anual_contratual", "despesa_anual_base",
+                "vigencia_fim_efetiva", "valor_mensal_vigente", "tem_aditivo_previsto",
             ):
                 atualizado.pop(chave_extra, None)
             atualizar_contrato(ano_exercicio, atualizado)
@@ -1560,7 +1564,7 @@ caminho_ponteiro_execucao_mensal = DIRETORIO_MANIFESTOS_PADRAO / NOME_PONTEIRO_E
 
 try:
     registros = carregar_contratos(ano_selecionado)
-    dataframe = como_dataframe(registros)
+    dataframe = como_dataframe(registros, ano_selecionado)
     por_ne_execucao = _cached_por_ne_execucao(
         str(caminho_ponteiro_execucao_mensal), caminho_ponteiro_execucao_mensal.stat().st_mtime
     )
