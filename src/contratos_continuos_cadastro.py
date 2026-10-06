@@ -254,8 +254,8 @@ def como_dataframe(contratos: list[dict], exercicio: int | None = None, *, hoje:
         index=df.index, dtype="float64",
     )
     df["tem_aditivo_previsto"] = [
-        any(a.previsto for a in adit) if exercicio is None else bool(meses_com_previsto(adit, exercicio))
-        for adit in df["aditivos"]
+        any(a.previsto for a in adit) if exercicio is None else bool(meses_com_previsto(adit, exercicio, fim))
+        for adit, fim in zip(df["aditivos"], df["vigencia_fim"])
     ]
 
     # meses_no_ano (pedido explícito, mesmo campo de src.bolsas_auxilios_cadastro): total de

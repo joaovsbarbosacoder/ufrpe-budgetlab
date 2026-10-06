@@ -294,5 +294,24 @@ class TestRetroativoEPrevistos(unittest.TestCase):
         self.assertEqual(meses_com_previsto([assinado, previsto], 2026), {10, 11, 12})
 
 
+class TestMesesComPrevistoUsaAVigenciaDoContrato(unittest.TestCase):
+    """Revisão final (06/10/2026): prorrogação PREVISTA sem valor novo estende a vigência do contrato — os
+    meses estimados precisam ser marcados mesmo quando nenhum aditivo ASSINADO informa vigência."""
+
+    def test_prorrogacao_prevista_sem_valor_marca_os_meses_da_extensao(self):
+        previsto = _ta("1º TA", date(2026, 7, 1), valor=None, vigencia=date(2027, 6, 30), tipo="PRORROGACAO", situacao="PREVISTO")
+        self.assertEqual(
+            meses_com_previsto([previsto], 2026, vigencia_fim=date(2026, 6, 30)), {7, 8, 9, 10, 11, 12}
+        )
+
+    def test_sem_vigencia_do_contrato_nao_ha_extensao_a_marcar(self):
+        previsto = _ta("1º TA", date(2026, 7, 1), valor=None, vigencia=date(2027, 6, 30), tipo="PRORROGACAO", situacao="PREVISTO")
+        self.assertEqual(meses_com_previsto([previsto], 2026), set())
+
+    def test_prorrogacao_assinada_nao_marca_nada(self):
+        assinado = _ta("1º TA", date(2026, 7, 1), valor=None, vigencia=date(2027, 6, 30), tipo="PRORROGACAO")
+        self.assertEqual(meses_com_previsto([assinado], 2026, vigencia_fim=date(2026, 6, 30)), set())
+
+
 if __name__ == "__main__":
     unittest.main()

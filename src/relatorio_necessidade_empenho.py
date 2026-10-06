@@ -253,7 +253,7 @@ def _aplicar_necessidade(tabela: pd.DataFrame, exercicio: int | None) -> None:
         )
         custos.append(float("nan") if any(pd.isna(v) for v in custo) else sum(custo))
         vigentes.append(valor_vigente_em(linha["despesa_mensal"], adit, dia_ref)[0])
-        previstos.append(bool(meses_com_previsto(adit, exercicio)))
+        previstos.append(bool(meses_com_previsto(adit, exercicio, linha["vigencia_fim"])))
         ja_empenhados.append(_meses_cobertos(empenhado.iloc[posicao], serie_valor_mensal(linha["despesa_mensal"], adit, exercicio)))
 
     tabela["custo_exercicio"] = pd.Series(custos, index=tabela.index, dtype="float64")
@@ -297,6 +297,7 @@ def necessidade_por_ne(
     extras = {coluna: (coluna, "first") for coluna in colunas_cadastro if coluna in filtrado.columns}
     por_ne = com_ne.groupby("ne_curta", sort=False).agg(
         **extras,
+        qtd_linhas_na_ne=("ne_curta", "size"),
         fornecedor=("fornecedor", "first"),
         contrato_numero=("contrato_numero", "first"),
         despesa_mensal=("despesa_mensal", "sum"),
@@ -642,6 +643,7 @@ def montar_relatorio(
         "base_saldo", "meses_liquidados", "ultimo_mes_liquidado", "status_contrato", "vigencia_fim",
         "meses_vigentes", "inicio_execucao_considerado", "inicio_execucao_efetivo", "inicio_execucao_mes",
         "data_suspensao", "aditivos", "custo_exercicio", "valor_mensal_vigente", "inclui_previsto",
+        "qtd_linhas_na_ne",
     ]
     com_ne = por_ne.sort_values("necessidade", ascending=False).rename(
         columns={
@@ -730,20 +732,25 @@ def montar_relatorio(
             vigencia_fim=linha["vigencia_fim"], inicio=linha["inicio_execucao_considerado"],
             data_suspensao=linha["data_suspensao"],
         )
+        # retroativo dos reajustes assinados depois do início de vigência (só nos meses já realizados): é custo
+        # do primeiro mês projetado — abatido pelo saldo como qualquer outro (revisão final, 06/10/2026) — e
+        # fica também em coluna própria (spec §4.3)
+        realizados = {m for m in range(1, 13) if not pd.isna(realizado.at[indice, f"r{m}"])}
+        retros = retroativo_por_aditivo(linha["despesa_mensal"], adit, exercicio, realizados)
+        total_retroativo = sum(v for _, v in retros)
+        aplica_retroativo = bool(total_retroativo) and qtd > 0 and inicio <= 12 and not pd.isna(custos[inicio - 1])
+        if aplica_retroativo:
+            custos = [valor + total_retroativo if mes == inicio else valor for mes, valor in enumerate(custos, start=1)]
         projetado.loc[indice] = projetar_necessidade_mensal(
             linha["despesa_mensal"], saldo, inicio, qtd, fracao, fracao_inicial, custos=custos
         )
-        meses_previstos.at[indice] = ",".join(str(m) for m in sorted(meses_com_previsto(adit, exercicio)))
+        meses_previstos.at[indice] = ",".join(
+            str(m) for m in sorted(meses_com_previsto(adit, exercicio, linha["vigencia_fim"]))
+        )
         if qtd > 0 and not projetado.loc[indice].isna().all():
             primeiro_mes.at[indice] = inicio
             meses_projetados.at[indice] = qtd
-            # retroativo dos reajustes assinados depois do início de vigência (só nos meses já realizados): soma-se
-            # ao primeiro mês projetado e fica em coluna própria (spec §4.3)
-            realizados = {m for m in range(1, 13) if not pd.isna(realizado.at[indice, f"r{m}"])}
-            retros = retroativo_por_aditivo(linha["despesa_mensal"], adit, exercicio, realizados)
-            total_retroativo = sum(v for _, v in retros)
-            if total_retroativo and not pd.isna(projetado.at[indice, f"p{inicio}"]):
-                projetado.at[indice, f"p{inicio}"] += total_retroativo
+            if aplica_retroativo:
                 retroativo.at[indice] = total_retroativo
                 retroativo_termos.at[indice] = ", ".join(a.numero for a, v in retros if v)
         motivo, aviso = limite.motivo, limite.aviso
@@ -910,7 +917,7 @@ def _avisos(relatorio: RelatorioNecessidade, contexto: ContextoRelatorioNecessid
 def _avisos_de_aditivos(relatorio: RelatorioNecessidade, rotulo) -> list[str]:
     """Avisos dos aditivos (06/10/2026): renovação não cadastrada, aditivos previstos e valor negativo."""
 
-    sem_renovacao, previstos, negativos = [], [], []
+    sem_renovacao, previstos, negativos, compartilhadas = [], [], [], []
     ultimo_dia = pd.Timestamp(year=relatorio.exercicio, month=12, day=31)
     for indice, linha in relatorio.linhas.iterrows():
         aditivos = aditivos_do_registro(linha["aditivos"])
@@ -921,6 +928,8 @@ def _avisos_de_aditivos(relatorio: RelatorioNecessidade, rotulo) -> list[str]:
             and vigencia.year == relatorio.exercicio and vigencia < ultimo_dia
         ):
             sem_renovacao.append(f"{rotulo(indice)} (vigência até {vigencia:%d/%m/%Y})")
+        if aditivos and pd.notna(linha["qtd_linhas_na_ne"]) and linha["qtd_linhas_na_ne"] > 1:
+            compartilhadas.append(rotulo(indice))
         if linha["inclui_previsto"]:
             termos = ", ".join(a.numero for a in aditivos if a.previsto)
             previstos.append(f"{rotulo(indice)} ({termos})")
@@ -941,6 +950,11 @@ def _avisos_de_aditivos(relatorio: RelatorioNecessidade, rotulo) -> list[str]:
         )
     if negativos:
         avisos.append("Aditivo com valor mensal negativo (confira o termo): " + "; ".join(negativos) + ".")
+    if compartilhadas:
+        avisos.append(
+            "NE compartilhada por mais de um contrato com aditivos — a necessidade usa os aditivos e a vigência do "
+            "primeiro contrato da NE para todos (confira cada contrato): " + "; ".join(compartilhadas) + "."
+        )
     return avisos
 
 

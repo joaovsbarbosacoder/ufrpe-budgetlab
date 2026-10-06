@@ -27,7 +27,7 @@ Contrato público:
     serie_valor_mensal(despesa_mensal, aditivos, exercicio, numero_item=None, itens_base=None) -> list[float]
     custo_mensal(despesa_mensal, aditivos, exercicio, *, status, vigencia_fim, ...) -> list[float]
     retroativo_por_aditivo(despesa_mensal, aditivos, exercicio, meses_realizados) -> list[(Aditivo, float)]
-    meses_com_previsto(aditivos, exercicio) -> set[int]
+    meses_com_previsto(aditivos, exercicio, vigencia_fim=None) -> set[int]
     dia_de_referencia(exercicio, hoje=None) -> date
 """
 
@@ -389,10 +389,12 @@ def retroativo_por_aditivo(
     return resultado
 
 
-def meses_com_previsto(aditivos: list[Aditivo], exercicio: int) -> set[int]:
+def meses_com_previsto(aditivos: list[Aditivo], exercicio: int, vigencia_fim: object = None) -> set[int]:
     """Meses (1-12) do `exercicio` cujo valor mensal ou cuja vigência vem de um aditivo PREVISTO —
     valores estimados, a marcar em tela e relatórios. Vigência: os meses entre o fim da vigência
-    garantida (sem os previstos) e a vigência efetiva."""
+    garantida (a do contrato, `vigencia_fim`, ou a do último aditivo ASSINADO que a informa) e a
+    vigência efetiva. Sem `vigencia_fim` do contrato nem vigência assinada não há extensão a marcar
+    (revisão final, 06/10/2026: uma prorrogação prevista sem valor novo ficava sem marca)."""
 
     meses = set()
     for dia in _dias_do_exercicio(exercicio):
@@ -402,8 +404,8 @@ def meses_com_previsto(aditivos: list[Aditivo], exercicio: int) -> set[int]:
 
     _, definidor_vigencia = vigencia_efetiva(None, aditivos)
     if definidor_vigencia is not None and definidor_vigencia.previsto:
-        garantida, _ = vigencia_efetiva(None, [a for a in aditivos if not a.previsto])
-        efetiva, _ = vigencia_efetiva(None, aditivos)
+        garantida, _ = vigencia_efetiva(vigencia_fim, [a for a in aditivos if not a.previsto])
+        efetiva, _ = vigencia_efetiva(vigencia_fim, aditivos)
         if not pd.isna(garantida):
             for dia in _dias_do_exercicio(exercicio):
                 if pd.Timestamp(dia) > garantida and pd.Timestamp(dia) <= efetiva:

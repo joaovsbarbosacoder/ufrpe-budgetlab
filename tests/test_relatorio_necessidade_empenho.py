@@ -1218,5 +1218,71 @@ class TestRelatorioComAditivos(unittest.TestCase):
         self.assertEqual(valor_estimado_em_previstos(assinado, None, 2026), 0.0)
 
 
+class TestRevisaoFinalAditivos(unittest.TestCase):
+    """Achados da revisão final (06/10/2026)."""
+
+    TA = {**_ta("2º TA", "2026-07-01", 10_800.0), "data_assinatura": "2026-09-15"}
+
+    def _grade(self, saldo):
+        relatorio = TestRelatorioComAditivos._montar([self.TA], saldo_execucao=saldo)
+        i = relatorio.linhas.index[relatorio.linhas["ne_curta"] == NE_B][0]
+        return relatorio, i, [relatorio.mensal.at[i, f"p{m}"] for m in (9, 10, 11, 12)]
+
+    def test_retroativo_e_abatido_pelo_saldo_como_qualquer_custo(self):
+        # saldo 50.000 cobre set–dez (4 × 10.800 = 43.200) mais o retroativo (800): nada a projetar. Antes, a
+        # grade mostrava os 800 mesmo com a necessidade em zero.
+        _, _, grade = self._grade(50_000.0)
+        for valor in grade:
+            self.assertAlmostEqual(valor, 0.0)
+
+    def test_saldo_parcial_abate_o_custo_mais_o_retroativo(self):
+        # saldo 11.000: setembro = 10.800 + 800 − 11.000 = 600; os demais meses, o custo cheio
+        _, _, grade = self._grade(11_000.0)
+        self.assertAlmostEqual(grade[0], 600.0)
+        for valor in grade[1:]:
+            self.assertAlmostEqual(valor, 10_800.0)
+
+    def test_retroativo_continua_registrado_na_coluna_e_nos_termos(self):
+        relatorio, i, _ = self._grade(11_000.0)
+        self.assertAlmostEqual(relatorio.linhas.at[i, "retroativo"], 800.0)
+        self.assertEqual(relatorio.mensal.at[i, "retroativo_termos"], "2º TA")
+
+    def test_prorrogacao_prevista_sem_valor_aparece_nos_avisos_e_marca_o_card(self):
+        previsto = {**_ta("1º TA", "2026-07-01", None, vigencia="2027-06-30", situacao="PREVISTO"), "tipo": "PRORROGACAO"}
+        relatorio = TestRelatorioComAditivos._montar(
+            [previsto], despesa=1000.0, meses_realizados=(), vigencia_fim=pd.Timestamp("2026-06-30"),
+        )
+        avisos = _avisos(relatorio, _contexto())
+        self.assertTrue(any(a.startswith("Aditivos previstos (valores estimados)") for a in avisos))
+        self.assertTrue(relatorio.linhas["inclui_previsto"].any())
+
+    def test_ne_compartilhada_por_contratos_com_aditivos_e_avisada(self):
+        # dois contratos na mesma NE: a necessidade usa os aditivos do primeiro — o aviso evita a perda silenciosa
+        filtrado = pd.DataFrame([
+            _linha(ne_curta="2026NE000777", contrato_numero="1/2026", despesa_mensal=1000.0,
+                   aditivos=[_ta("1º TA", "2026-01-01", 1_100.0)], valor_empenhado_planilha_total_ne=0.0),
+            _linha(ne_curta="2026NE000777", contrato_numero="2/2026", despesa_mensal=500.0,
+                   valor_empenhado_planilha_total_ne=0.0),
+        ])
+        por_ne, sem_ne = necessidade_por_ne(filtrado, None, 2026)
+        relatorio = montar_relatorio(por_ne, sem_ne, None, 2026, MES_REF)
+        avisos = [a for a in _avisos(relatorio, _contexto()) if a.startswith("NE compartilhada")]
+        self.assertEqual(len(avisos), 1)
+        self.assertIn("2026NE000777", avisos[0])
+
+    def test_ne_com_dois_itens_sem_aditivo_nao_gera_aviso(self):
+        avisos = _avisos(_relatorio(_liquidacao_mensal()), _contexto())
+        self.assertFalse(any(a.startswith("NE compartilhada") for a in avisos))  # NE A tem 2 itens, sem aditivo
+
+    def test_despesa_negativa_meses_ja_empenhados_e_zero_por_decisao_documentada(self):
+        # valor mensal ≤ 0 não cobre nenhum mês (antes: empenhado ÷ despesa, um número sem sentido); a
+        # necessidade continua 0 nos dois casos
+        _, sem_ne = necessidade_por_ne(
+            pd.DataFrame([_linha(despesa_mensal=-100.0, valor_empenhado=-2_000.0)]), None, 2026
+        )
+        self.assertEqual(sem_ne.iloc[0]["meses_ja_empenhados"], 0.0)
+        self.assertEqual(sem_ne.iloc[0]["necessidade"], 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
