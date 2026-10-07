@@ -502,7 +502,9 @@ streamlit run app.py
   SHA-256 dos bytes e o caminho — arquivos de mesmo conteúdo e nomes diferentes não compartilham a cópia,
   porque os leitores gravam o nome em `arquivo_origem`). Só é gravado o que volta idêntico na releitura; qualquer falha do cache cai na leitura normal, e
   a planilha original nunca é alterada. Vigência e Pagamentos ficam sem cache (têm colunas de tipo misto
-  que o Parquet não devolveria idênticas). Para limpar, basta apagar a pasta.
+  que o Parquet não devolveria idênticas). Para limpar, basta apagar a pasta. Nos testes o cache fica
+  desligado (`tests/conftest.py` define `BUDGETLAB_CACHE_BASES=desligado`): a suíte sempre lê as planilhas
+  e não toca na pasta real.
 
 ### Atalho de inicialização com atualização automática (um único computador)
 
@@ -619,7 +621,9 @@ de procedência de cada base, não dado bruto.
 python -m unittest discover -s tests -v
 ```
 
-Com as ferramentas de desenvolvimento (`python -m pip install -r requirements-dev.txt`):
+Forma preferencial — com as ferramentas de desenvolvimento
+(`python -m pip install -r requirements-dev.txt`), que agilizam a suíte; o `unittest` acima fica só
+como alternativa quando elas não estiverem disponíveis:
 
 ```powershell
 python -m pytest tests -n auto        # suíte completa em paralelo (pytest-xdist, um processo por núcleo)
