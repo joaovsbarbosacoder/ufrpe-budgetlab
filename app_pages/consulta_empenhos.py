@@ -129,6 +129,7 @@ que não tem esse risco.
 
 from __future__ import annotations
 
+import gc
 import html as html_lib
 from datetime import datetime
 from pathlib import Path
@@ -1065,6 +1066,14 @@ def _render_detalhe(
 
 
 # ---------------------------------------------------------------------- página
+# Memória (07/10/2026): a cada interação o `st.cache_data` devolve uma CÓPIA da base inteira da
+# Execução Mensal (~164 mil linhas × 57 colunas), que fica presa em referências circulares; o coletor
+# do Python dispara pela quantidade de objetos, não pelo tamanho, e a sessão subia ~0,4 GB por
+# interação (1,5 → ~7 GB em 30). Coleta no início (lixo da interação anterior, em qualquer caminho —
+# inclusive os `st.stop()` abaixo) e no fim (para a cópia desta interação não ficar parada com a
+# sessão ociosa). Custo ~0,1 s por coleta; nenhum dado é alterado.
+gc.collect()
+
 render_page_header(
     "Consulta de Empenhos",
     "Execução Mensal da Despesa (BI CPOC), no nível da nota de empenho.",
@@ -1362,3 +1371,5 @@ st.caption(
     f"Última extração: {data_extracao_texto} · hash {manifesto.sha256[:8]} — exercícios não "
     "trazidos por ela usam a extração anterior que os trouxe (composição por ano)."
 )
+
+gc.collect()  # ver o comentário no início da página
