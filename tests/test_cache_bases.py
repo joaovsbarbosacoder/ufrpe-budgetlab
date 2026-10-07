@@ -4,6 +4,7 @@ do arquivo e pelos argumentos, só grava o que volta idêntico, e falha do cache
 from __future__ import annotations
 
 import importlib.util
+import os
 import shutil
 import tempfile
 import unittest
@@ -64,6 +65,23 @@ class TestCacheBases(unittest.TestCase):
         _leitor_teste(self.arquivo)
         self.assertEqual(len(CHAMADAS), 2)
         self.assertFalse(self.cache.exists())
+
+    def test_app_nao_liga_o_cache_durante_os_testes(self):
+        # tests/conftest.py desliga: os testes de página executam o app.py, que chama ativar_no_app()
+        self.assertEqual(os.environ.get(cache_bases.VARIAVEL_AMBIENTE), "desligado")
+        cache_bases.ativar(self.cache)
+        self.assertFalse(cache_bases.ativar_no_app())
+        self.assertFalse(cache_bases.ativo())
+
+    def test_app_liga_o_cache_sem_a_variavel(self):
+        anterior = os.environ.pop(cache_bases.VARIAVEL_AMBIENTE, None)
+        try:
+            self.assertTrue(cache_bases.ativar_no_app())
+            self.assertTrue(cache_bases.ativo())
+        finally:
+            cache_bases.desativar()
+            if anterior is not None:
+                os.environ[cache_bases.VARIAVEL_AMBIENTE] = anterior
 
     def test_segunda_leitura_vem_do_cache_identica(self):
         self.assertTrue(cache_bases.ativar(self.cache))

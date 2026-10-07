@@ -18,8 +18,10 @@ Garantias (dados financeiros não podem ser modificados silenciosamente):
     exemplo), a cópia é apagada e aquele leitor segue sem cache para aquele arquivo.
   * Qualquer falha do cache (pyarrow ausente, disco, permissão) cai na leitura normal — o cache nunca
     impede o sistema de ler a planilha. O arquivo original nunca é alterado.
-  * Desligado por padrão: só o app (`app.py`) liga, com `ativar(...)`. Testes e scripts leem sempre a
-    planilha, salvo quando ligam explicitamente.
+  * Desligado por padrão: só o app (`app.py`) liga, com `ativar_no_app()`. Testes e scripts leem sempre a
+    planilha, salvo quando ligam explicitamente com `ativar(diretorio)`. Os testes de página executam o
+    `app.py`; por isso `tests/conftest.py` define `BUDGETLAB_CACHE_BASES=desligado`, que faz o
+    `ativar_no_app()` não ligar nada (sem isso, a suíte gravava e reaproveitava cópias na pasta real).
 
 Mantém no máximo `LIMITE_ARQUIVOS` cópias (as mais antigas são apagadas).
 """
@@ -41,6 +43,7 @@ from src.leitura_excel import motor_excel
 
 DIRETORIO_PADRAO = Path("data/processed/cache_bases")
 LIMITE_ARQUIVOS = 60
+VARIAVEL_AMBIENTE = "BUDGETLAB_CACHE_BASES"
 
 _diretorio: Path | None = None
 
@@ -54,6 +57,16 @@ def ativar(diretorio: str | Path = DIRETORIO_PADRAO) -> bool:
         return False
     _diretorio = Path(diretorio)
     return True
+
+
+def ativar_no_app() -> bool:
+    """O que o `app.py` chama: liga em `DIRETORIO_PADRAO`, salvo com `BUDGETLAB_CACHE_BASES=desligado`
+    (definida pelos testes) — aí desliga e devolve False."""
+
+    if os.environ.get(VARIAVEL_AMBIENTE, "").strip().lower() == "desligado":
+        desativar()
+        return False
+    return ativar()
 
 
 def desativar() -> None:

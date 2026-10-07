@@ -17,7 +17,7 @@ st.set_page_config(
 apply_theme()
 # Bases já lidas guardadas em Parquet (data/processed/cache_bases/), chaveadas pelo conteúdo do arquivo e
 # pelo código do leitor — ver src/cache_bases.py. Sem pyarrow, segue lendo as planilhas normalmente.
-cache_bases.ativar()
+cache_bases.ativar_no_app()
 
 st.sidebar.markdown(
     f'<div class="ufrpe-sidebar-brand">'
