@@ -211,6 +211,18 @@ class TestTabelaHtml(unittest.TestCase):
         with self.assertRaises(ValueError):
             tabela_html([("A", False), ("B", False)], [], [1.0])
 
+    def test_rolagem_envolve_so_as_linhas(self):
+        html = tabela_html(
+            [("A", False)], [[celula_suave("x")], [celula_suave("y")]], [1.0],
+            rodape=['<div class="cad-total-rotulo">Total</div>'], rolagem=True,
+        )
+        cab, resto = html.split('<div class="cad-tabela-rolagem">')
+        corpo, rodape = resto.split('<div class="cad-tabela-rodape">')
+        self.assertIn("cad-tabela-cab", cab)  # cabeçalho fora da caixa de rolagem
+        self.assertEqual(corpo.count("cad-tabela-linha"), 2)  # todas as linhas dentro
+        self.assertIn("Total", rodape)  # total fora da caixa de rolagem
+        self.assertNotIn("cad-tabela-rolagem", tabela_html([("A", False)], [[celula_suave("x")]], [1.0]))
+
     def test_sem_linhas_ainda_gera_o_cabecalho(self):
         self.assertIn("cad-tabela-cab", tabela_html([("A", False)], [], [1.0]))
 

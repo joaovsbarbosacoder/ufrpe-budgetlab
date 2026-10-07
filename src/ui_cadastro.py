@@ -196,12 +196,14 @@ def tabela_html(
     linhas: list[list[str]],
     proporcoes: list[float],
     rodape: list[str] | None = None,
+    rolagem: bool = False,
 ) -> str:
     """Tabela de linhas limpas em grade CSS (`.cad-tabela`): cabeçalho em caixa-alta esmaecida, uma linha por
     item, rodapé de total opcional. `colunas`: (rótulo, alinhar_à_direita); `proporcoes`: largura relativa de
     cada coluna (frações); `linhas`/`rodape`: listas de células JÁ em HTML (use `celula_*`, que escapam o
     texto). Rótulos são escapados aqui. Uma única linha de texto por linha (sem indentação): o Markdown do
-    Streamlit trata 4+ espaços no começo de linha como bloco de código."""
+    Streamlit trata 4+ espaços no começo de linha como bloco de código. `rolagem=True` põe só as linhas numa
+    caixa de altura máxima com barra de rolagem (`.cad-tabela-rolagem`); cabeçalho e rodapé ficam fora dela."""
 
     if len(colunas) != len(proporcoes):
         raise ValueError("colunas e proporcoes precisam ter o mesmo tamanho")
@@ -215,6 +217,8 @@ def tabela_html(
         return "".join(celula if celula else "<span></span>" for celula in celulas)
 
     corpo = "".join(f'<div class="cad-tabela-linha">{_preenche(celulas)}</div>' for celulas in linhas)
+    if rolagem:
+        corpo = f'<div class="cad-tabela-rolagem">{corpo}</div>'
     total = f'<div class="cad-tabela-rodape">{_preenche(rodape)}</div>' if rodape else ""
     return (
         f'<div class="cad-tabela" style="--cad-cols:{grade}">'
@@ -464,7 +468,10 @@ def css() -> str:
 /* Resumo Consolidado: linhas com botão (`st.columns`) — linha de total e caixa com rolagem da Bolsas */
 [class*="st-key-cad_total_"] {{ border-top: 2px solid {BORDER}; padding: 12px 0 4px; }}
 [class*="st-key-cad_total_"] [data-testid="stHorizontalBlock"] {{ align-items: center; }}
-.st-key-bls_resumo_scroll {{ max-height: 380px; overflow-y: auto; padding-right: 8px; }}
+.st-key-bls_resumo_scroll, .st-key-cc_resumo_scroll {{ max-height: 380px; overflow-y: auto; padding-right: 8px; }}
+/* mesma largura mínima das linhas: no celular a tabela inteira rola para o lado junto, não só o corpo */
+.cad-tabela-rolagem {{ max-height: 380px; overflow-y: auto; min-width: 640px; }}
+.st-key-cc_registro_scroll, .st-key-bls_registro_scroll {{ max-height: 640px; overflow-y: auto; padding-right: 8px; }}
 .cad-vazio {{ text-align: center; color: {TEXT_FAINT}; padding: 28px 0; border-top: 1px solid {BORDER_SOFT}; }}
 
 .cad-secao-dialogo {{ font-family: {FONT_HEADING}; font-size: 12px; letter-spacing: 0.1em; text-transform: uppercase;

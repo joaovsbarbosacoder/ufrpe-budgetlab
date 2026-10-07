@@ -129,7 +129,8 @@ Diferenças deliberadas em relação ao handoff:
     "Novo programa" é um botão principal no cabeçalho que abre uma janela com o formulário em seções;
     grava direto no cadastro nativo do exercício em tela (`src/bolsas_auxilios_cadastro.py`). Não
     tem nome/CPF de bolsista: a granularidade real da base é por programa, não por beneficiário.
-  * O registro mostra 15 linhas (`QTD_INICIAL_REGISTRO`) e "Mostrar mais" revela mais 15 por clique.
+  * O registro mostra 15 linhas (`QTD_INICIAL_REGISTRO`) e "Ver mais" revela todas num clique só
+    (pedido explícito; antes eram +15 por clique), dentro de uma caixa com barra de rolagem.
 """
 
 from __future__ import annotations
@@ -1061,7 +1062,6 @@ _CABECALHOS_REGISTRO = [
     ("Saldo", True), ("A empenhar", True), ("Situação", False), ("Ações", False),
 ]
 QTD_INICIAL_REGISTRO = 15
-QTD_INCREMENTO_REGISTRO = 15
 
 with st.container(border=True, key="cad_registro"):
     c_abas, c_acao, c_ordem = st.columns([3.8, 1.2, 1.3], vertical_alignment="center")
@@ -1089,8 +1089,9 @@ with st.container(border=True, key="cad_registro"):
         unsafe_allow_html=True,
     )
 
-    qtd_registro_key = f"bls_registro_qtd_{source_key}"
-    qtd_registro = st.session_state.get(qtd_registro_key, QTD_INICIAL_REGISTRO)
+    mostrar_todos_key = f"bls_registro_mostrar_todos_{source_key}"
+    mostrar_todos = st.session_state.get(mostrar_todos_key, False)
+    qtd_registro = len(registro) if mostrar_todos else QTD_INICIAL_REGISTRO
 
     if registro.empty:
         st.markdown('<div class="cad-vazio">Nenhum programa nesta situação/ação.</div>', unsafe_allow_html=True)
@@ -1101,45 +1102,49 @@ with st.container(border=True, key="cad_registro"):
                 f'<div class="cad-cabecalho{" direita" if a_direita else ""}">{texto}</div>', unsafe_allow_html=True
             )
 
-    for _, linha in registro.iloc[:qtd_registro].iterrows():
-        id_linha = str(linha["id"])
-        with st.container(key=f"cad_linha_{id_linha}"):
-            cel = st.columns(_PROPORCOES_REGISTRO, vertical_alignment="center")
-            processo_linha = _ou_vazio(linha["processo"])
-            ne_linha = _ou_vazio(linha["ne_curta"])
-            subtitulo = " · ".join(parte for parte in (f"Processo {processo_linha}" if processo_linha else "", f"NE {ne_linha}" if ne_linha else "") if parte)
-            texto_situacao, tom_situacao = _situacao_exibida(linha["situacao_tg"], linha["valor_a_empenhar"])
-            a_empenhar_linha = _ou_zero(linha["valor_a_empenhar"])
-            qtd_linha = linha["qtd_efetiva"]
-            cel[0].markdown(celula_principal(_ou_vazio(linha["programa_bolsa"]) or "(sem item de despesa)", subtitulo), unsafe_allow_html=True)
-            cel[1].markdown(celula_categoria(linha["acao_cod"]), unsafe_allow_html=True)
-            cel[2].markdown(f'<div class="cad-valor">{int(qtd_linha) if pd.notna(qtd_linha) else "—"}</div>', unsafe_allow_html=True)
-            cel[3].markdown(celula_valor(linha["valor_mensal"]), unsafe_allow_html=True)
-            cel[4].markdown(celula_valor(linha["saldo_execucao"]), unsafe_allow_html=True)  # sem NE: "—", não zero
-            cel[5].markdown(celula_valor(linha["valor_a_empenhar"], "warn" if a_empenhar_linha > 0 and tom_situacao == "warn" else None), unsafe_allow_html=True)
-            cel[6].markdown(chip(texto_situacao, tom_situacao), unsafe_allow_html=True)
-            with cel[7]:
-                with st.container(key=f"cad_acoes_{id_linha}"):
-                    b_editar, b_remover = st.columns(2)
-                    if b_editar.button("", icon=":material/edit:", key=f"bls_editar_{source_key}_{id_linha}", help="Editar programa", use_container_width=True):
-                        _dialogo_editar_programa(
-                            linha, ano_selecionado, source_key,
-                            sugestao_inicio_por_ne.get(linha["ne_curta"]) if pd.notna(linha["ne_curta"]) else None,
-                        )
-                    if b_remover.button("", icon=":material/delete:", key=f"bls_remover_{source_key}_{id_linha}", help="Remover programa", use_container_width=True):
-                        _dialogo_remover_programa(
-                            id_linha, f"{_ou_vazio(linha['programa_bolsa']) or '(sem item de despesa)'} — {processo_linha or 's/ processo'}", ano_selecionado
-                        )
+    # Rolagem (pedido explícito): as linhas ficam numa caixa de altura máxima fixa
+    # (`.st-key-bls_registro_scroll` em `src/ui_cadastro.py`), o cabeçalho fica fora dela.
+    with st.container(key="bls_registro_scroll"):
+        for _, linha in registro.iloc[:qtd_registro].iterrows():
+            id_linha = str(linha["id"])
+            with st.container(key=f"cad_linha_{id_linha}"):
+                cel = st.columns(_PROPORCOES_REGISTRO, vertical_alignment="center")
+                processo_linha = _ou_vazio(linha["processo"])
+                ne_linha = _ou_vazio(linha["ne_curta"])
+                subtitulo = " · ".join(parte for parte in (f"Processo {processo_linha}" if processo_linha else "", f"NE {ne_linha}" if ne_linha else "") if parte)
+                texto_situacao, tom_situacao = _situacao_exibida(linha["situacao_tg"], linha["valor_a_empenhar"])
+                a_empenhar_linha = _ou_zero(linha["valor_a_empenhar"])
+                qtd_linha = linha["qtd_efetiva"]
+                cel[0].markdown(celula_principal(_ou_vazio(linha["programa_bolsa"]) or "(sem item de despesa)", subtitulo), unsafe_allow_html=True)
+                cel[1].markdown(celula_categoria(linha["acao_cod"]), unsafe_allow_html=True)
+                cel[2].markdown(f'<div class="cad-valor">{int(qtd_linha) if pd.notna(qtd_linha) else "—"}</div>', unsafe_allow_html=True)
+                cel[3].markdown(celula_valor(linha["valor_mensal"]), unsafe_allow_html=True)
+                cel[4].markdown(celula_valor(linha["saldo_execucao"]), unsafe_allow_html=True)  # sem NE: "—", não zero
+                cel[5].markdown(celula_valor(linha["valor_a_empenhar"], "warn" if a_empenhar_linha > 0 and tom_situacao == "warn" else None), unsafe_allow_html=True)
+                cel[6].markdown(chip(texto_situacao, tom_situacao), unsafe_allow_html=True)
+                with cel[7]:
+                    with st.container(key=f"cad_acoes_{id_linha}"):
+                        b_editar, b_remover = st.columns(2)
+                        if b_editar.button("", icon=":material/edit:", key=f"bls_editar_{source_key}_{id_linha}", help="Editar programa", use_container_width=True):
+                            _dialogo_editar_programa(
+                                linha, ano_selecionado, source_key,
+                                sugestao_inicio_por_ne.get(linha["ne_curta"]) if pd.notna(linha["ne_curta"]) else None,
+                            )
+                        if b_remover.button("", icon=":material/delete:", key=f"bls_remover_{source_key}_{id_linha}", help="Remover programa", use_container_width=True):
+                            _dialogo_remover_programa(
+                                id_linha, f"{_ou_vazio(linha['programa_bolsa']) or '(sem item de despesa)'} — {processo_linha or 's/ processo'}", ano_selecionado
+                            )
 
-    if qtd_registro < len(registro):
+    # "Ver mais" de um clique só (pedido explícito, antes revelava +15 por clique): mostra tudo.
+    if not mostrar_todos and len(registro) > QTD_INICIAL_REGISTRO:
         c_mais, c_texto = st.columns([1, 3], vertical_alignment="center")
-        c_texto.caption(f"Mostrando {qtd_registro} de {len(registro)} programas")
-        if c_mais.button("Mostrar mais", key=f"bls_registro_mais_{source_key}"):
-            st.session_state[qtd_registro_key] = qtd_registro + QTD_INCREMENTO_REGISTRO
+        c_texto.caption(f"Mostrando {QTD_INICIAL_REGISTRO} de {len(registro)} programas")
+        if c_mais.button("Ver mais", key=f"bls_registro_mais_{source_key}"):
+            st.session_state[mostrar_todos_key] = True
             st.rerun()
-    elif len(registro) > QTD_INICIAL_REGISTRO:
-        if st.button("Mostrar menos", key=f"bls_registro_menos_{source_key}"):
-            st.session_state[qtd_registro_key] = QTD_INICIAL_REGISTRO
+    elif mostrar_todos and len(registro) > QTD_INICIAL_REGISTRO:
+        if st.button("Ver menos", key=f"bls_registro_menos_{source_key}"):
+            st.session_state[mostrar_todos_key] = False
             st.rerun()
 
 st.caption(

@@ -62,7 +62,9 @@ uma linha por NE/item na grade Jan…Dez do exercício, onde TODO mês com dado 
     fica vazio ("—", nulo, não zero) — não há dado para inventar.
   * A projeção começa no PRIMEIRO MÊS SEM LIQUIDAÇÃO = mês seguinte ao último mês com registro
     de competência. NE sem nenhum registro de competência (ou base indisponível): começa no mês
-    seguinte ao da extração da Execução Mensal (`mes_referencia_do_exercicio`), com aviso.
+    seguinte ao da extração da Execução Mensal (`mes_referencia_do_exercicio`), com aviso —
+    salvo NE sem nenhuma liquidação também na Execução (`BASE_SEM_LIQUIDACAO`, 06/10/2026): aí
+    começa no início da execução (janeiro, ou o início informado), pois nenhum mês foi coberto.
   * Meses PROJETADOS (sombreados): despesa mensal fixa por mês, abatido o saldo atual do empenho
     (`projetar_necessidade_mensal`) — o primeiro mês projeta (despesa mensal − saldo) e os
     seguintes a despesa mensal cheia; se o saldo for maior que a despesa mensal, o excesso é
@@ -87,7 +89,7 @@ uma linha por NE/item na grade Jan…Dez do exercício, onde TODO mês com dado 
   valores aparecem no relatório (aba/coluna própria) e a diferença é avisada.
 
 Contrato público:
-    BASE_COMPETENCIA, BASE_LANCAMENTO, BASE_PLANILHA, BASE_SEM_SALDO, BASE_SEM_NE, MESES
+    BASE_COMPETENCIA, BASE_LANCAMENTO, BASE_PLANILHA, BASE_SEM_SALDO, BASE_SEM_NE, BASE_SEM_LIQUIDACAO, MESES
     ContextoRelatorioNecessidade (dataclass)
     RelatorioNecessidade (dataclass: linhas, mensal, + totais)
     necessidade_por_ne(filtrado, meses_liquidados_por_ne, exercicio=None) -> (por_ne, sem_ne)
@@ -144,6 +146,9 @@ BASE_LANCAMENTO = "Data de liquidação"
 BASE_PLANILHA = "Saldo colado na planilha"
 BASE_SEM_SALDO = "Sem saldo (assumido 0)"
 BASE_SEM_NE = "Sem NE"
+#: NE na Execução sem nenhuma liquidação lá nem na competência (06/10/2026): liquidado 0,00 confirmado
+#: pelas duas bases — a projeção começa no início da execução, não no mês seguinte ao da extração.
+BASE_SEM_LIQUIDACAO = "Sem liquidação (Execução e Competência)"
 
 _COLUNAS_MESES_LIQUIDADOS = ["ne_curta", "meses_liquidados", "ultimo_mes_liquidado"]
 
@@ -308,7 +313,10 @@ def necessidade_por_ne(
         liquidado_via_competencia=("liquidado_via_competencia", "first"),
         saldo_execucao=("saldo_execucao", "first"),
         saldo_colado_planilha=("saldo_colado_planilha", "first"),
+        **({"sem_liquidacao_confirmada": ("sem_liquidacao_confirmada", "first")} if "sem_liquidacao_confirmada" in com_ne.columns else {}),
     ).reset_index()
+    if "sem_liquidacao_confirmada" not in por_ne.columns:
+        por_ne["sem_liquidacao_confirmada"] = False
     for coluna in colunas_cadastro:
         for tabela in (por_ne, sem_ne):
             if coluna not in tabela.columns:
@@ -328,6 +336,7 @@ def necessidade_por_ne(
     por_ne.loc[por_ne["saldo_colado_planilha"].notna(), "base_saldo"] = BASE_PLANILHA
     por_ne.loc[por_ne["saldo_execucao"].notna(), "base_saldo"] = BASE_LANCAMENTO
     por_ne.loc[usa_competencia, "base_saldo"] = BASE_COMPETENCIA
+    por_ne.loc[usa_competencia & por_ne["sem_liquidacao_confirmada"].fillna(False).astype(bool), "base_saldo"] = BASE_SEM_LIQUIDACAO
 
     # o saldo (empenhado − liquidado) já está dentro do empenhado: não é subtraído de novo aqui
     # (correção de 02/10/2026, ver docstring do módulo)
@@ -338,6 +347,19 @@ def necessidade_por_ne(
     sem_ne["base_saldo"] = BASE_SEM_NE
 
     return por_ne, sem_ne
+
+
+def necessidade_por_linha(filtrado: pd.DataFrame, por_ne: pd.DataFrame, sem_ne: pd.DataFrame) -> pd.Series:
+    """Necessidade até dezembro de cada linha de `filtrado` (mesmo índice), a partir da saída de
+    `necessidade_por_ne`: linha com NE recebe a necessidade da NE (a mesma em todas as linhas de uma
+    NE compartilhada — é um valor da NE, não do contrato); linha sem NE, a sua própria. Coluna "A
+    empenhar" e situação do Registro de contratos (06/10/2026), para concordarem com o Resumo
+    Consolidado. NE sem necessidade calculada fica nula (sem dado), nunca zero."""
+
+    resultado = filtrado["ne_curta"].map(por_ne.set_index("ne_curta")["necessidade"]).astype("float64")
+    if not sem_ne.empty:
+        resultado.loc[sem_ne.index] = sem_ne["necessidade"].astype("float64")
+    return resultado
 
 
 def mes_referencia_do_exercicio(data_extracao: date, exercicio: int) -> int:
@@ -591,9 +613,13 @@ class RelatorioNecessidade:
     @property
     def nes_sem_realizado(self) -> list[str]:
         """NEs sem nenhum registro de competência no exercício (a projeção começa no mês
-        seguinte ao da extração e os meses anteriores ficam "—")."""
+        seguinte ao da extração e os meses anteriores ficam "—") — fora as sem liquidação
+        confirmada (`BASE_SEM_LIQUIDACAO`), que projetam desde o início da execução."""
 
-        vazio = self.mensal[_COLUNAS_REALIZADO].isna().all(axis=1) & self.linhas["ne_curta"].notna()
+        vazio = (
+            self.mensal[_COLUNAS_REALIZADO].isna().all(axis=1) & self.linhas["ne_curta"].notna()
+            & (self.linhas["base_saldo"] != BASE_SEM_LIQUIDACAO)
+        )
         return self.linhas.loc[vazio, "ne_curta"].tolist()
 
     def tipo_do_mes(self, indice: int, mes: int) -> str | None:
@@ -706,7 +732,14 @@ def montar_relatorio(
         adit = aditivos_do_registro(linha["aditivos"])
         vigencia_ef = vigencia_efetiva(linha["vigencia_fim"], adit)[0]
         meses_com_registro = [m for m in range(1, 13) if not pd.isna(realizado.at[indice, f"r{m}"])]
-        inicio = (max(meses_com_registro) + 1) if meses_com_registro else mes_referencia + 1
+        if meses_com_registro:
+            inicio = max(meses_com_registro) + 1
+        elif linha["base_saldo"] == BASE_SEM_LIQUIDACAO:
+            # nada liquidado no exercício (confirmado pelas duas bases): todo o custo desde o início da
+            # execução está por cobrir — começa em janeiro e o início informado (abaixo) corta o que vier antes
+            inicio = 1
+        else:
+            inicio = mes_referencia + 1
         inicio = max(inicio, 1)
         ate_dezembro = max(0, 12 - inicio + 1)
         # não projeta além da vida do contrato: meses pagos no exercício − meses já realizados
@@ -835,6 +868,13 @@ def _avisos(relatorio: RelatorioNecessidade, contexto: ContextoRelatorioNecessid
                 "ficam em '—', não zero; a projeção começa no mês seguinte ao da extração): "
                 + ", ".join(sem_realizado) + "."
             )
+    sem_liquidacao = relatorio.linhas.loc[relatorio.linhas["base_saldo"] == BASE_SEM_LIQUIDACAO, "ne_curta"].tolist()
+    if sem_liquidacao:
+        avisos.append(
+            f"NEs sem nenhuma liquidação em {relatorio.exercicio} na Execução Mensal nem na competência "
+            "(liquidado 0,00 confirmado pelas duas bases): a projeção começa no início da execução, "
+            "abatendo todo o empenhado: " + ", ".join(sem_liquidacao) + "."
+        )
     por_base = relatorio.linhas.groupby("base_saldo")["contrato_numero"].count()
     sem_ne = int(por_base.get(BASE_SEM_NE, 0))
     if sem_ne:

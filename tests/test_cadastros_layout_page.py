@@ -14,11 +14,13 @@ dentro da janela já aberta não são alcançáveis. Por isso o que se testa sã
 
 from __future__ import annotations
 
+import re
 import unittest
 from pathlib import Path
 
 from streamlit.testing.v1 import AppTest
 
+from src.ui_cadastro import css
 from tests._apptest import TEMPO_LIMITE_APPTEST, aquecer_pagina
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -72,6 +74,28 @@ class _BaseCadastroLayout:
         remover = self._botoes(app, "remover")
         self.assertGreater(len(editar), 0)
         self.assertEqual(len(editar), len(remover))
+
+    def test_ver_mais_do_registro_mostra_todas_as_linhas_num_clique_so(self) -> None:
+        app = self._abrir()
+        contagem = re.search(r'cad-contagem">(\d+) registro', _html(app))
+        self.assertIsNotNone(contagem)
+        total = int(contagem.group(1))
+        if total <= 15:
+            self.skipTest(f"registro com {total} linha(s): não há 'Ver mais' a testar")
+        self.assertEqual(len(self._botoes(app, "editar")), 15)
+        (ver_mais,) = self._botoes(app, "registro_mais")
+        self.assertEqual(ver_mais.label, "Ver mais")
+        ver_mais.click().run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(len(self._botoes(app, "editar")), total)  # todas, não +15
+        self.assertEqual(self._botoes(app, "registro_mais"), [])
+        (ver_menos,) = self._botoes(app, "registro_menos")
+        ver_menos.click().run()
+        self.assertEqual(len(self._botoes(app, "editar")), 15)
+
+    def test_linhas_do_registro_ficam_na_caixa_com_rolagem(self) -> None:
+        self.assertIn(f".st-key-{self.PREFIXO}_registro_scroll", css())
+        self.assertIn("overflow-y: auto", css())
 
     def test_editar_abre_a_janela_em_secoes_sem_erro(self) -> None:
         app = self._abrir()
@@ -184,6 +208,22 @@ class TestLayoutContratosContinuos(_BaseCadastroLayout, unittest.TestCase):
         self.assertIn("EMPENHADO × LIQUIDADO", html)
         self.assertIn("Sobra ou Insuficiência no Empenho, por NE", html)
         self.assertIn("cad-saldo", html)  # saldo com o chip Sobra/Insuficiência
+        self.assertIn("cad-tabela-rolagem", html)  # linhas na caixa com barra de rolagem
+
+    def test_ver_mais_do_resumo_expande_no_proprio_quadro_num_clique_so(self) -> None:
+        app = self._abrir()
+        botoes = self._botoes(app, "resumo_ver_mais")
+        if not botoes:
+            self.skipTest("Resumo com até 3 linhas: não há 'Ver mais' a testar")
+        self.assertIn(".st-key-cc_resumo_scroll", css())
+        botoes[0].click().run()
+        self.assertEqual(len(app.exception), 0)
+        legendas = " ".join(c.value for c in app.caption)
+        self.assertIn("Mostrando todas as", legendas)  # tudo de uma vez, no próprio quadro (sem janela)
+        self.assertEqual(self._botoes(app, "resumo_ver_mais"), [])
+        (ver_menos,) = self._botoes(app, "resumo_ver_menos")
+        ver_menos.click().run()
+        self.assertEqual(len(self._botoes(app, "resumo_ver_mais")), 1)
 
     def test_janela_traz_vigencia_e_inicio_da_execucao(self) -> None:
         app = self._abrir()

@@ -141,7 +141,7 @@ base "Contratos — Vigência". A regra comum (`src/necessidade_empenho.py::mese
 `src/contratos_continuos.py::com_efeitos_da_suspensao`). Para contrato `SUSPENSO`, a **Despesa anual**
 (cartão-resumo e Cobertura Orçamentária por PTRES) passa a ser o valor já empenhado (Execução Mensal;
 sem a NE na Execução, o empenhado do cadastro; NE compartilhada por mais de um contrato usa o do
-cadastro), e o **A empenhar (execução)** fica zero. Saldo, empenhado, liquidado e despesa mensal não
+cadastro), e o **Saldo a liquidar (execução)** do cartão-resumo fica zero. Saldo, empenhado, liquidado e despesa mensal não
 mudam; a despesa contratual original fica preservada em `despesa_anual_contratual`.
 
 **Aditivos (06/10/2026, `src/contratos_aditivos.py`; aba "Aditivos" na janela de edição).** Quando um
@@ -181,6 +181,17 @@ Consolidado e no cartão-resumo (`necessidade_ate_dezembro`, em `src/necessidade
 mensal × meses restantes, sem subtrair o saldo — corrigido em 05/10/2026, quando também lá o saldo era
 descontado duas vezes.
 
+**Registro de contratos (06/10/2026).** A coluna **A empenhar** e a **Situação** usam a mesma
+Necessidade até dezembro do card (`necessidade_por_linha`; NE compartilhada mostra o valor da NE em cada
+linha), não mais o saldo — antes, contrato com saldo aparecia como "Necessita reforço" e o sem saldo não.
+Situação, nesta ordem (`src/contratos_continuos.py::situacao_contrato`): Vencido e Suspenso (status do
+cadastro); **Vigência encerrada** (vigência efetiva, com aditivos, anterior a hoje, com outro status — o
+status não é alterado); Necessita reforço (necessidade > 0); Ativo. O saldo (empenhado − liquidado)
+segue na coluna Saldo, em "Meses de saldo" da janela de edição e em **Saldo a liquidar (execução)** no
+cartão-resumo. NE que está na Execução Mensal e não tem nenhuma liquidação, nem lá nem na competência,
+tem liquidado **0,00** (as duas bases confirmam) e é calculada pela Execução; se a Execução tem liquidação e
+a competência não, o liquidado continua nulo e valem os campos manuais do cadastro.
+
 **Relatório de Necessidade de Empenho (PDF e Excel).** Dois botões (PDF e Excel) abaixo do card. Uma linha por NE
 na grade Jan–Dez do exercício: os meses com Liquidação por Competência aparecem como
 **realizado**; do primeiro mês sem liquidação até dezembro aparece a **projeção** (sombreada e
@@ -188,12 +199,27 @@ em itálico), por despesa mensal fixa — o primeiro mês projetado é despesa m
 do empenho e os seguintes a despesa mensal cheia (saldo maior que a despesa mensal é abatido
 nos meses seguintes). A projeção respeita o período de execução acima e os meses no ano. NE sem
 nenhuma competência e contrato sem NE projetam a partir do mês seguinte ao da extração da
-Execução Mensal. Nenhuma média nem tendência: só a despesa mensal cadastrada. O PDF traz a
+Execução Mensal — salvo a NE **sem nenhuma liquidação** também na Execução Mensal (liquidado
+0,00 confirmado pelas duas bases, base "Sem liquidação (Execução e Competência)"), que projeta desde o
+início da execução, para concordar com o card. Nenhuma média nem tendência: só a despesa mensal cadastrada. O PDF traz a
 grade, o total mensal e o resumo por NE; o Excel, as abas Projeção mensal, Detalhe mensal (com o
 tipo de cada mês), Total mensal, Resumo por NE e Parâmetros (totais, regra e avisos). Mês sem dado
 fica vazio (nulo), distinto de zero. Os avisos listam contratos suspensos, vencidos ou com
 vigência encerrada, sem data de vigência, NEs sem saldo ou sem competência, e NEs com primeiro
 empenho depois de janeiro e sem início definido.
+
+**Projeção pela execução (06/10/2026, relatório separado; `src/relatorio_projecao_execucao.py`).** Seção
+própria abaixo do relatório de Necessidade, com botões PDF e Excel; não altera nenhum outro quadro ou
+relatório. Projeta a despesa até dezembro pelo que cada NE de fato liquida: **fator de execução** = 1 +
+(execução observada − 1) × peso, em que a execução observada é o liquidado por competência ÷ custo
+contratado acumulados nos últimos 6 meses fechados (os dois meses anteriores ao da extração ainda estão em
+aberto) e o peso (de 0 a 1) cresce com o número de meses e cai com a oscilação mensal (prudência alta,
+τ² = 0,01). Menos de 3 meses: valor mensal cheio, ou o fator de um **contrato antecessor** escolhido na
+própria seção (a escolha não é gravada no cadastro). Meses em aberto com menos de 50% do esperado (ou sem
+registro) projetam o restante. Mostra, por NE, a despesa projetada pela execução e pelo valor contratado, a
+**necessidade pela execução** (projetada − saldo do empenho) e a Necessidade até dezembro contratual, e avisa
+liquidação muito abaixo do cadastrado (fator < 0,5) ou acima do contrato (execução > 1,03). A diferença para o
+contratado é tratada como execução abaixo do contratado (decisão do usuário). Contrato sem NE fica de fora.
 
 A necessidade do card (por empenho) e a projeção da grade (por calendário, a partir do gasto)
 são **métodos diferentes** e seus totais não coincidem por definição; o Resumo por NE traz as
@@ -209,7 +235,11 @@ nunca tem sugestão automática.
 **Layout dos cadastros.** Contratos Contínuos e Bolsas e Auxílios compartilham o mesmo desenho
 (`src/ui_cadastro.py`): um cartão-resumo no topo (faixa "Necessidade de empenho até dezembro" e grade
 de indicadores) e um **Registro** em tabela — abas de situação com contagem, filtro de categoria (ou
-ação, em Bolsas), ordenação, linhas com título e subtítulo, situação em chip e ações por ícone. "Editar"
+ação, em Bolsas), ordenação, linhas com título e subtítulo, situação em chip e ações por ícone. As linhas
+ficam numa caixa com barra de rolagem; o registro abre com 15 linhas e "Ver mais" mostra todas num clique
+só ("Ver menos" volta às 15). Os quadros "Necessidade de Empenho por NE" e "Empenhado × Liquidado" de
+Contratos Contínuos seguem o mesmo padrão (3 linhas; "Ver mais" expande no próprio quadro, com rolagem,
+em vez de abrir uma janela). "Editar"
 abre uma janela com os campos em seções e só grava ao clicar em "Salvar"; "Remover" pede confirmação;
 "Novo contrato"/"Novo programa" abre o formulário em janela. Os dados e as regras de negócio não
 mudaram, mas a antiga edição ao vivo na sessão (os quadros refletindo o que estava digitado antes de
@@ -457,6 +487,23 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
+### Desempenho na leitura das bases (07/10/2026)
+
+- **Leitor de Excel rápido** (`src/leitura_excel.py`): os leitores que passam por `pandas.read_excel`
+  (Execução Mensal e Anual, Liquidação por Competência, Contratos Contínuos, Bolsas, Vigência e Pagamentos)
+  usam o `python-calamine` quando instalado — de 3 a 6 vezes mais rápido que o openpyxl nas planilhas reais.
+  Sem ele, voltam ao motor padrão do pandas. A paridade é testada sobre as fixtures
+  (`tests/test_leitura_excel.py`); a única diferença conhecida é a favor do dado: célula marcada como data
+  com número fora do intervalo de datas é descartada pelo openpyxl e preservada pelo calamine na coluna
+  bruta. Dotação Anual, Emendas e Captação seguem no openpyxl (leem célula a célula).
+- **Cache das bases lidas** (`src/cache_bases.py`, ligado em `app.py`): o DataFrame devolvido por esses
+  leitores fica gravado em Parquet em `data/processed/cache_bases/` (fora do Git) e é reaproveitado
+  enquanto o conteúdo do arquivo, o caminho dele e o código do leitor não mudarem (a chave inclui o
+  SHA-256 dos bytes e o caminho — arquivos de mesmo conteúdo e nomes diferentes não compartilham a cópia,
+  porque os leitores gravam o nome em `arquivo_origem`). Só é gravado o que volta idêntico na releitura; qualquer falha do cache cai na leitura normal, e
+  a planilha original nunca é alterada. Vigência e Pagamentos ficam sem cache (têm colunas de tipo misto
+  que o Parquet não devolveria idênticas). Para limpar, basta apagar a pasta.
+
 ### Atalho de inicialização com atualização automática (um único computador)
 
 `Iniciar BudgetLab.bat`, na raiz do projeto, abre o sistema com dois cliques
@@ -571,6 +618,18 @@ de procedência de cada base, não dado bruto.
 ```powershell
 python -m unittest discover -s tests -v
 ```
+
+Com as ferramentas de desenvolvimento (`python -m pip install -r requirements-dev.txt`):
+
+```powershell
+python -m pytest tests -n auto        # suíte completa em paralelo (pytest-xdist, um processo por núcleo)
+python -m pytest tests --testmon      # só os testes afetados pelo código alterado desde a última rodada
+```
+
+O `--testmon` (pytest-testmon) serve para as rodadas intermediárias e pode ser combinado com `-n auto`.
+Ele acompanha o código Python, não as planilhas: mudou uma fixture ou base, rode a suíte completa. A
+primeira rodada com `--testmon` executa tudo (monta o mapa em `.testmondata`, fora do Git). Antes de
+concluir uma tarefa, rode a suíte completa com `-n auto`.
 
 ## Evolução prevista
 

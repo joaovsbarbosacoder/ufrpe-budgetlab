@@ -427,7 +427,7 @@ class TestComMesesPagos(unittest.TestCase):
 
 class TestEfeitosDaSuspensao(unittest.TestCase):
     """Contrato SUSPENSO só produz efeito pelo já empenhado/liquidado (pedido explícito, 06/10/2026):
-    Despesa anual (e Cobertura por PTRES) = empenhado; "A empenhar (execução)" = 0. Valores à mão."""
+    Despesa anual (e Cobertura por PTRES) = empenhado; "Saldo a liquidar (execução)" = 0. Valores à mão."""
 
     @staticmethod
     def _df() -> pd.DataFrame:

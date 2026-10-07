@@ -116,12 +116,13 @@ Diferenças deliberadas em relação aos handoffs anteriores:
   * "Remover" pede confirmação numa janela antes de apagar o registro em definitivo do cadastro
     nativo (mesmo critério de `bolsas_auxilios.py`). "Novo contrato" é um botão principal no
     cabeçalho que abre uma janela com o formulário em seções.
-  * O registro mostra 15 linhas (`QTD_INICIAL_REGISTRO`) e "Mostrar mais" revela mais 15 por
-    clique — cada linha tem botões reais, então revelar tudo de uma vez pesaria no navegador. O
-    "Resumo Consolidado" segue minimizado (`QTD_INICIAL_RESUMO`, "Ver mais"): só as linhas visíveis
-    são limitadas, os totais (cabeçalho e rodapé) sempre somam o conjunto inteiro filtrado.
+  * O registro mostra 15 linhas (`QTD_INICIAL_REGISTRO`) e "Ver mais" revela todas num clique só
+    (pedido explícito; antes eram +15 por clique), dentro de uma caixa com barra de rolagem. O
+    "Resumo Consolidado" segue minimizado (`QTD_INICIAL_RESUMO`, "Ver mais" de um clique só, linhas numa
+    caixa com rolagem): só as linhas visíveis são limitadas, os totais (cabeçalho e rodapé) sempre somam
+    o conjunto inteiro filtrado.
   * Quadro "Empenhado × Liquidado" (pedido explícito) — mesmo layout do Resumo
-    Consolidado (cartão + tabela, mesma minimização "Ver mais"), comparando por NE o valor
+    Consolidado (cartão + tabela com rolagem, mesma minimização "Ver mais"), comparando por NE o valor
     empenhado total contra o liquidado (`indice_liquidado_por_ne_curta`, em
     `src/execucao_ne_utils.py`, ou `indice_liquidado_competencia` quando a base de competência
     está disponível — ver LIQUIDADO POR COMPETÊNCIA abaixo), abrangendo todos os contratos
@@ -163,7 +164,14 @@ from src.contratos_aditivos import (
     valor_vigente_em,
     vigencia_efetiva,
 )
-from src.contratos_continuos import com_efeitos_da_suspensao, com_meses_pagos, com_saldo_execucao
+from src.contratos_continuos import (
+    SITUACAO_NECESSITA_REFORCO,
+    SITUACAO_VIGENCIA_ENCERRADA,
+    com_efeitos_da_suspensao,
+    com_meses_pagos,
+    com_saldo_execucao,
+    situacao_contrato,
+)
 from src.contratos_continuos_cadastro import (
     anos_disponiveis,
     atualizar_contrato,
@@ -214,7 +222,17 @@ from src.relatorio_necessidade_empenho import ContextoRelatorioNecessidade
 from src.relatorio_necessidade_empenho import gerar_pdf as gerar_pdf_necessidade
 from src.relatorio_necessidade_empenho import gerar_xlsx as gerar_xlsx_necessidade
 from src.relatorio_necessidade_empenho import montar_relatorio as montar_relatorio_necessidade
-from src.relatorio_necessidade_empenho import mes_referencia_do_exercicio, necessidade_por_ne, valor_estimado_em_previstos
+from src.relatorio_necessidade_empenho import (
+    mes_referencia_do_exercicio,
+    necessidade_por_linha,
+    necessidade_por_ne,
+    valor_estimado_em_previstos,
+)
+from src.relatorio_projecao_execucao import ContextoProjecaoExecucao, ORIGEM_EXECUCAO, ORIGEM_SEM_HISTORICO
+from src.relatorio_projecao_execucao import fatores_por_ne as fatores_projecao_execucao
+from src.relatorio_projecao_execucao import gerar_pdf as gerar_pdf_projecao_execucao
+from src.relatorio_projecao_execucao import gerar_xlsx as gerar_xlsx_projecao_execucao
+from src.relatorio_projecao_execucao import montar_relatorio as montar_relatorio_projecao_execucao
 from src.relatorio_reforco_empenho import CONTRATOS_CONTINUOS as RELATORIO_CONTRATOS_CONTINUOS
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_linha_do_tempo import (
@@ -486,18 +504,13 @@ def _campo_inicio_execucao(col, valor_persistido: object, sugestao_auto: object,
     return None if escolha == "Automático" else _OPCOES_INICIO_EXECUCAO.index(escolha)
 
 
-def _situacao(status_bruto: object, valor_a_empenhar: object) -> tuple[str, str]:
-    """(texto, tom) do chip de situação da linha — a mesma leitura dos antigos emojis do cartão:
-    vencido, suspenso, necessita reforço (ativo com valor a empenhar) ou ativo em dia."""
+def _situacao(status_bruto: object, vigencia_fim_efetiva: object, necessidade: object) -> tuple[str, str]:
+    """(texto, tom) do chip de situação da linha — regra em `src.contratos_continuos.situacao_contrato`
+    (06/10/2026: o reforço passa a vir da Necessidade até dezembro, não do saldo, e entra "Vigência
+    encerrada"). Status fora de `STATUS_OPCOES` conta como ATIVO."""
 
     status = status_bruto if pd.notna(status_bruto) and status_bruto in STATUS_OPCOES else "ATIVO"
-    if status == "VENCIDO":
-        return "Vencido", "bad"
-    if status == "SUSPENSO":
-        return "Suspenso", "neutro"
-    if _ou_zero(valor_a_empenhar) > 0:
-        return "Necessita reforço", "warn"
-    return "Ativo", "ok"
+    return situacao_contrato(status, vigencia_fim_efetiva, necessidade, date.today())
 
 
 @st.dialog("Editar contrato", width="large")
@@ -696,7 +709,6 @@ def _dialogo_editar_contrato(
     texto_meses_pagos = (
         f"{_num(meses_pagos)} · {_fmt_mes(linha['ultimo_mes_pago'])}" if pd.notna(meses_pagos) else "sem dado"
     )
-    rotulo_empenhar = "A empenhar (Execução Mensal)" if via_execucao else "A empenhar (planilha)"
     valor_vigente, definidor_valor = valor_vigente_em(despesa_mensal, aditivos_editados, dia_de_referencia(ano_exercicio))
     texto_valor_vigente = formatar_brl(valor_vigente) if valor_vigente is not None else "sem valor"
     if definidor_valor is not None:
@@ -708,7 +720,9 @@ def _dialogo_editar_contrato(
     with topo:
         st.markdown(
             grade_indicadores([
-                (rotulo_empenhar, formatar_brl(valor_a_empenhar)),
+                # mesma Necessidade até dezembro da coluna "A empenhar" do registro (cadastro gravado); o saldo
+                # em meses, recalculado ao vivo, segue em "Meses de saldo"
+                ("A empenhar (até dezembro)", formatar_brl(linha["necessidade_ate_dezembro"]) if pd.notna(linha["necessidade_ate_dezembro"]) else "sem dado"),
                 ("Despesa anual (empenhado — suspenso)" if status == "SUSPENSO" else "Despesa anual", formatar_brl(despesa_anual)),
                 ("Empenhado (Execução Mensal)", formatar_brl(valor_empenhado_execucao) if pd.notna(valor_empenhado_execucao) else "sem NE"),
                 ("Saldo (Execução Mensal)", formatar_brl(saldo_execucao) if pd.notna(saldo_execucao) else "sem NE"),
@@ -725,7 +739,8 @@ def _dialogo_editar_contrato(
     # contra a SOMA dos itens da NE, não o item desta linha).
     diverge_saldo = pd.notna(saldo_execucao) and abs(saldo_execucao - saldo_planilha) > 0.01
     diverge_valor_empenhado = bool(linha["diverge_valor_empenhado"]) if pd.notna(linha["diverge_valor_empenhado"]) else False
-    texto_situacao, tom_situacao = _situacao(status, valor_a_empenhar)
+    # a necessidade é a do cadastro gravado (Resumo Consolidado); status e vigência, os digitados
+    texto_situacao, tom_situacao = _situacao(status, vigencia_efetiva_data, linha["necessidade_ate_dezembro"])
     if pd.isna(saldo_execucao):
         texto_div, tom_div = "Sem Execução", "bad"
     elif diverge_saldo or diverge_valor_empenhado:
@@ -777,6 +792,7 @@ def _dialogo_editar_contrato(
                 "tem_varios_itens", "inicio_execucao_efetivo", "valor_empenhado_autoritativo",
                 "despesa_anual_contratual", "despesa_anual_base",
                 "vigencia_fim_efetiva", "valor_mensal_vigente", "tem_aditivo_previsto",
+                "necessidade_ate_dezembro", "sem_liquidacao_confirmada",
             ):
                 atualizado.pop(chave_extra, None)
             atualizar_contrato(ano_exercicio, atualizado)
@@ -921,8 +937,8 @@ _CABECALHOS_RESUMO = [
     ("Necessidade até dez.", True), ("Meses liquidados", False), ("Linha do tempo", False),
 ]
 
-#: mesmo padrão de "Ver mais" de um clique só (não incremental) já usado na Carteira de
-#: contratos abaixo — pedido explícito estendido para este card também.
+#: mesmo padrão de "Ver mais" de um clique só (não incremental) do registro de contratos abaixo —
+#: pedido explícito estendido para este card também, com as linhas numa caixa com barra de rolagem.
 QTD_INICIAL_RESUMO = 3
 
 
@@ -985,25 +1001,18 @@ def _render_linhas_resumo(
     liquidacao_competencia_por_mes: pd.DataFrame | None,
     nes_com_tempo: set[str],
     source_key: str,
-    key_prefix: str,
 ) -> tuple[str, pd.DataFrame, str] | None:
-    """Cabeçalho + uma linha por item de `linhas` (mesmas colunas do Resumo Consolidado) —
-    compartilhado entre a visão inline do card (só as `QTD_INICIAL_RESUMO` primeiras) e o
-    pop-up "Ver mais" (`_abrir_resumo_completo`, todas as linhas), pedido explícito posterior,
-    pra não duplicar a lógica de linha clicável/legenda da "Linha do tempo mensal" nos dois
-    lugares. `key_prefix` diferencia as chaves dos botões entre as duas superfícies (a mesma
-    NE pode aparecer nas duas ao mesmo tempo — card por trás, pop-up por cima).
+    """Cabeçalho + uma linha por item de `linhas` (mesmas colunas do Resumo Consolidado). As linhas ficam numa
+    caixa de altura máxima com barra de rolagem (`.st-key-cc_resumo_scroll` em `src/ui_cadastro.py`, pedido
+    explícito — antes "Ver mais" abria um pop-up com a lista completa); o cabeçalho fica fora dela.
 
     Layout de 05/10/2026 (mesmo do registro dos cadastros, `src/ui_cadastro.py`): linha com título/subtítulo,
     valores à direita e, quando a NE tem dado na base mensal, um botão de ÍCONE na última coluna (antes a
-    linha inteira era o botão). As chaves dos botões não mudaram (`{key_prefix}_tempo_{source_key}_{ne}`).
+    linha inteira era o botão). Chaves dos botões: `cc_resumo_tempo_{source_key}_{ne}`.
 
     NÃO abre o pop-up "Linha do tempo mensal" sozinha — devolve `(legenda, tempo_ne, base_liquidado)` quando
-    alguma linha foi clicada nesta execução (`None` caso contrário) e deixa o chamador decidir
-    como abrir: `abrir_linha_do_tempo` direto (pop-up de verdade) quando o chamador está fora
-    de qualquer dialog, ou via `st.session_state` + `st.rerun()` quando o chamador já está
-    dentro de um pop-up aberto — Streamlit não permite dialog dentro de dialog (ver
-    `_abrir_resumo_completo`, que usa a segunda opção)."""
+    alguma linha foi clicada nesta execução (`None` caso contrário) e o chamador chama `abrir_linha_do_tempo`
+    fora do cartão."""
 
     cabecalho = st.columns(_LARGURAS_RESUMO)
     for coluna, (texto, a_direita) in zip(cabecalho, _CABECALHOS_RESUMO):
@@ -1012,50 +1021,50 @@ def _render_linhas_resumo(
         )
 
     clicado: tuple[str, pd.DataFrame, str] | None = None
-    for posicao, (fornecedor, contrato_numero, ne_curta_linha, valor_empenhado, saldo, necessidade, meses_liquidados, ultimo_mes_liquidado) in enumerate(linhas):
-        clicavel = pd.notna(ne_curta_linha) and ne_curta_linha in nes_com_tempo
-        numero = _ou_vazio(contrato_numero)
-        subtitulo = " · ".join(
-            parte for parte in (f"Contrato {numero}" if numero else "", f"NE {ne_curta_linha}" if pd.notna(ne_curta_linha) else "sem NE") if parte
-        )
-        with st.container(key=f"cad_linha_{key_prefix}_{source_key}_{posicao}"):
-            linha = st.columns(_LARGURAS_RESUMO, vertical_alignment="center")
-            linha[0].markdown(
-                celula_principal(_ou_vazio(fornecedor) or "(sem fornecedor)", subtitulo), unsafe_allow_html=True
+    with st.container(key="cc_resumo_scroll"):
+        for posicao, (fornecedor, contrato_numero, ne_curta_linha, valor_empenhado, saldo, necessidade, meses_liquidados, ultimo_mes_liquidado) in enumerate(linhas):
+            clicavel = pd.notna(ne_curta_linha) and ne_curta_linha in nes_com_tempo
+            numero = _ou_vazio(contrato_numero)
+            subtitulo = " · ".join(
+                parte for parte in (f"Contrato {numero}" if numero else "", f"NE {ne_curta_linha}" if pd.notna(ne_curta_linha) else "sem NE") if parte
             )
-            linha[1].markdown(celula_valor(valor_empenhado, vazio="sem NE"), unsafe_allow_html=True)
-            linha[2].markdown(celula_valor(saldo, vazio="sem NE"), unsafe_allow_html=True)
-            linha[3].markdown(
-                celula_valor(necessidade, "warn" if _ou_zero(necessidade) > 0 else None, vazio="sem NE"), unsafe_allow_html=True
-            )
-            linha[4].markdown(
-                celula_suave(_texto_meses_liquidados(meses_liquidados, ultimo_mes_liquidado)), unsafe_allow_html=True
-            )
-            if clicavel and linha[5].button(
-                "", icon=":material/show_chart:", key=f"{key_prefix}_tempo_{source_key}_{ne_curta_linha}",
-                help="Abrir a linha do tempo mensal desta NE", use_container_width=True,
-            ):
-                tempo_ne = tempo_por_ne_curta[tempo_por_ne_curta["ne_curta"] == ne_curta_linha]
-                if liquidacao_competencia_por_mes is not None:
-                    tempo_ne = _tempo_com_liquidacao_por_competencia(
-                        tempo_ne, ne_curta_linha, liquidacao_competencia_por_mes
-                    )
-                    base_liquidado = BASE_LIQUIDADO_COMPETENCIA
-                    legenda = (
-                        f"{_dash(fornecedor)} (NE {ne_curta_linha}) — Empenhado e Pago por mês de "
-                        "lançamento (Execução Mensal); Liquidado por mês de competência (Liquidação "
-                        "por Competência), não por mês de lançamento."
-                    )
-                else:
-                    legenda = f"{_dash(fornecedor)} (NE {ne_curta_linha}) — Execução Mensal (BI CPOC)."
-                    base_liquidado = BASE_LIQUIDADO_EXECUCAO_MENSAL
-                clicado = (legenda, tempo_ne, base_liquidado)
+            with st.container(key=f"cad_linha_cc_resumo_{source_key}_{posicao}"):
+                linha = st.columns(_LARGURAS_RESUMO, vertical_alignment="center")
+                linha[0].markdown(
+                    celula_principal(_ou_vazio(fornecedor) or "(sem fornecedor)", subtitulo), unsafe_allow_html=True
+                )
+                linha[1].markdown(celula_valor(valor_empenhado, vazio="sem NE"), unsafe_allow_html=True)
+                linha[2].markdown(celula_valor(saldo, vazio="sem NE"), unsafe_allow_html=True)
+                linha[3].markdown(
+                    celula_valor(necessidade, "warn" if _ou_zero(necessidade) > 0 else None, vazio="sem NE"), unsafe_allow_html=True
+                )
+                linha[4].markdown(
+                    celula_suave(_texto_meses_liquidados(meses_liquidados, ultimo_mes_liquidado)), unsafe_allow_html=True
+                )
+                if clicavel and linha[5].button(
+                    "", icon=":material/show_chart:", key=f"cc_resumo_tempo_{source_key}_{ne_curta_linha}",
+                    help="Abrir a linha do tempo mensal desta NE", use_container_width=True,
+                ):
+                    tempo_ne = tempo_por_ne_curta[tempo_por_ne_curta["ne_curta"] == ne_curta_linha]
+                    if liquidacao_competencia_por_mes is not None:
+                        tempo_ne = _tempo_com_liquidacao_por_competencia(
+                            tempo_ne, ne_curta_linha, liquidacao_competencia_por_mes
+                        )
+                        base_liquidado = BASE_LIQUIDADO_COMPETENCIA
+                        legenda = (
+                            f"{_dash(fornecedor)} (NE {ne_curta_linha}) — Empenhado e Pago por mês de "
+                            "lançamento (Execução Mensal); Liquidado por mês de competência (Liquidação "
+                            "por Competência), não por mês de lançamento."
+                        )
+                    else:
+                        legenda = f"{_dash(fornecedor)} (NE {ne_curta_linha}) — Execução Mensal (BI CPOC)."
+                        base_liquidado = BASE_LIQUIDADO_EXECUCAO_MENSAL
+                    clicado = (legenda, tempo_ne, base_liquidado)
     return clicado
 
 
 def _render_rodape_resumo(valor_empenhado_total: float, saldo_total: float, necessidade_total: float, key: str) -> None:
-    """Linha de total do Resumo Consolidado (mesmas larguras do cabeçalho/linhas). `key` diferencia o card do
-    pop-up, que mostram o mesmo total ao mesmo tempo."""
+    """Linha de total do Resumo Consolidado (mesmas larguras do cabeçalho/linhas)."""
 
     with st.container(key=f"cad_total_{key}"):
         rodape = st.columns(_LARGURAS_RESUMO)
@@ -1065,42 +1074,6 @@ def _render_rodape_resumo(valor_empenhado_total: float, saldo_total: float, nece
         rodape[3].markdown(
             celula_valor(necessidade_total, "warn" if _ou_zero(necessidade_total) > 0 else None), unsafe_allow_html=True
         )
-
-
-@st.dialog("Resumo Consolidado — todas as NEs/contratos", width="large")
-def _abrir_resumo_completo(
-    linhas: list[tuple],
-    totais: tuple[float, float, float],
-    tempo_por_ne_curta: pd.DataFrame | None,
-    liquidacao_competencia_por_mes: pd.DataFrame | None,
-    nes_com_tempo: set[str],
-    source_key: str,
-) -> None:
-    """Pop-up com TODAS as linhas do Resumo Consolidado (pedido explícito posterior: "Ver
-    mais" deixou de expandir a lista dentro do próprio card — virou este pop-up, mesmo padrão
-    de `abrir_linha_do_tempo`/`src/ui_linha_do_tempo.py`). Reaproveita `_render_linhas_resumo`
-    (mesmas colunas/mesma NE clicável do card) e `_render_rodape_resumo` (mesmos totais do
-    conjunto inteiro, já calculados por `_render_resumo_consolidado`, não recalculados aqui).
-
-    Clicar numa NE aqui NÃO embute a "Linha do tempo mensal" dentro deste mesmo pop-up
-    (Streamlit proíbe abrir um `st.dialog` dentro de outro já aberto —
-    `StreamlitAPIException: Dialogs may not be nested inside other dialogs`; era assim antes,
-    mas o usuário pediu pop-up de verdade, não embutido abaixo do Total). Em vez disso, guarda
-    a seleção em `st.session_state` e fecha este pop-up (`st.rerun()` de dentro de um dialog o
-    fecha); `_render_resumo_consolidado`, fora de qualquer dialog, lê essa seleção pendente no
-    rerun seguinte e chama `abrir_linha_do_tempo` — um pop-up de verdade, substituindo o "Ver
-    mais" em vez de empilhar os dois."""
-
-    valor_empenhado_total, saldo_total, necessidade_total = totais
-    st.caption(f"{len(linhas)} {'NE/contrato' if len(linhas) == 1 else 'NEs/contratos'}")
-    clicado = _render_linhas_resumo(
-        linhas, tempo_por_ne_curta, liquidacao_competencia_por_mes, nes_com_tempo, source_key,
-        key_prefix="cc_resumo_completo",
-    )
-    _render_rodape_resumo(valor_empenhado_total, saldo_total, necessidade_total, key=f"resumo_completo_cc_{source_key}")
-    if clicado is not None:
-        st.session_state[f"cc_resumo_tempo_pendente_{source_key}"] = clicado
-        st.rerun()
 
 
 def _render_resumo_consolidado(
@@ -1147,10 +1120,9 @@ def _render_resumo_consolidado(
     as `QTD_INICIAL_RESUMO` primeiras linhas; os totais do card (cabeçalho e rodapé) somam
     sempre o conjunto inteiro (`por_ne`/`sem_ne` completos), não só o que está à mostra.
 
-    "Ver mais" abre um pop-up com a lista completa (`_abrir_resumo_completo`, pedido explícito
-    posterior — antes expandia a lista dentro do próprio card; virou pop-up para não empurrar
-    o resto da página pra baixo com dezenas de linhas). Card e pop-up reaproveitam a mesma
-    renderização de linha (`_render_linhas_resumo`) e de rodapé (`_render_rodape_resumo`).
+    "Ver mais" (um clique só) mostra a lista completa dentro do próprio card, numa caixa com barra de
+    rolagem (pedido explícito posterior — antes abria um pop-up; a rolagem também evita empurrar o
+    resto da página pra baixo com dezenas de linhas). "Ver menos" volta às primeiras linhas.
 
     Coluna "Meses Liquidados" (pedido explícito posterior — antes "Meses Pagos", vinda da
     planilha separada de Pagamentos): agora vem de `meses_liquidados_por_ne`
@@ -1205,7 +1177,9 @@ def _render_resumo_consolidado(
     aviso_tempo = aviso_linha_do_tempo(por_ne["ne_curta"], nes_com_tempo, tempo_por_ne_curta is not None)
 
     saldo_total = por_ne["saldo_para_necessidade"].sum()
-    visiveis = linhas[:QTD_INICIAL_RESUMO]
+    mostrar_todos_key = f"cc_resumo_mostrar_todos_{source_key}"
+    mostrar_todos = st.session_state.get(mostrar_todos_key, False)
+    visiveis = linhas if mostrar_todos else linhas[:QTD_INICIAL_RESUMO]
 
     with st.container(border=True, key=f"cad_secao_resumo_cc_{source_key}"):
         st.markdown(
@@ -1248,30 +1222,22 @@ def _render_resumo_consolidado(
             st.caption(aviso_tempo)
         clicado = _render_linhas_resumo(
             visiveis, tempo_por_ne_curta, liquidacao_competencia_por_mes, nes_com_tempo, source_key,
-            key_prefix="cc_resumo",
         )
         _render_rodape_resumo(valor_empenhado_total, saldo_total, necessidade_total, key=f"resumo_cc_{source_key}")
 
     if clicado is not None:
         abrir_linha_do_tempo(*clicado)
 
-    if total_linhas > QTD_INICIAL_RESUMO:
+    if not mostrar_todos and total_linhas > QTD_INICIAL_RESUMO:
         st.caption(f"Mostrando {QTD_INICIAL_RESUMO} de {total_linhas} linhas no resumo")
         if st.button("Ver mais", key=f"cc_resumo_ver_mais_{source_key}"):
-            _abrir_resumo_completo(
-                linhas, (valor_empenhado_total, saldo_total, necessidade_total),
-                tempo_por_ne_curta, liquidacao_competencia_por_mes, nes_com_tempo, source_key,
-            )
+            st.session_state[mostrar_todos_key] = True
+            st.rerun()
     elif total_linhas:
         st.caption(f"Mostrando todas as {total_linhas} linhas no resumo")
-
-    # NE clicada dentro do pop-up "Ver mais" (`_abrir_resumo_completo`, fora deste `with`,
-    # já fechado pelo `st.rerun()` de dentro do dialog) — abre a "Linha do tempo mensal" como
-    # pop-up de verdade aqui fora, em vez de embutida abaixo do Total dentro do "Ver mais".
-    pendente_key = f"cc_resumo_tempo_pendente_{source_key}"
-    pendente = st.session_state.pop(pendente_key, None)
-    if pendente is not None:
-        abrir_linha_do_tempo(*pendente)
+        if total_linhas > QTD_INICIAL_RESUMO and st.button("Ver menos", key=f"cc_resumo_ver_menos_{source_key}"):
+            st.session_state[mostrar_todos_key] = False
+            st.rerun()
 
 
 def _render_relatorio_necessidade(
@@ -1348,6 +1314,93 @@ def _render_relatorio_necessidade(
             width="stretch",
             on_click="ignore",
             key=f"cc_necessidade_xlsx_{source_key}",
+        )
+
+
+def _render_relatorio_projecao_execucao(
+    filtrado: pd.DataFrame,
+    liquidacao_competencia_por_mes: pd.DataFrame | None,
+    source_key: str,
+    ano_exercicio: int,
+    manifesto: ManifestoExecucaoMensal,
+    via_competencia: bool,
+) -> None:
+    """Botões PDF/Excel do relatório SEPARADO "Projeção pela Execução" (pedido de 06/10/2026 —
+    `src/relatorio_projecao_execucao.py`): a despesa projetada pelo fator de execução de cada NE, ao
+    lado da projeção pelo valor contratado e da Necessidade até dezembro contratual. Só LÊ o que o
+    resto da página já calcula (`necessidade_por_ne`); nada do que já existe muda. O contrato
+    antecessor (herança do fator para NE sem histórico) é escolhido aqui, a cada emissão, e não é
+    gravado no cadastro."""
+
+    st.markdown('<div class="cad-secao-titulo">Projeção pela execução</div>', unsafe_allow_html=True)
+    if not via_competencia or liquidacao_competencia_por_mes is None:
+        st.caption(
+            "Indisponível: o relatório mede a execução pela Liquidação por Competência "
+            f"('{CAMINHO_LIQUIDACAO_COMPETENCIA}'), que não foi encontrada."
+        )
+        return
+
+    por_ne, sem_ne = necessidade_por_ne(filtrado, None, ano_exercicio)
+    data_extracao = datetime.fromisoformat(manifesto.data_extracao)
+    mes_referencia = mes_referencia_do_exercicio(data_extracao.date(), ano_exercicio)
+    fatores = fatores_projecao_execucao(por_ne, liquidacao_competencia_por_mes, ano_exercicio, mes_referencia)
+    rotulos = {
+        linha["ne_curta"]: f"{linha['ne_curta']} — {_ou_vazio(linha['fornecedor']) or '(sem fornecedor)'}"
+        + (f" — {linha['contrato_numero']}" if _ou_vazio(linha["contrato_numero"]) else "")
+        for _, linha in por_ne.iterrows()
+    }
+    sem_historico = [ne for ne, fator in fatores.items() if fator.origem == ORIGEM_SEM_HISTORICO]
+    candidatas = [ne for ne, fator in fatores.items() if fator.origem == ORIGEM_EXECUCAO]
+
+    antecessores: dict[str, str] = {}
+    if sem_historico and candidatas:
+        with st.expander(f"Contrato antecessor (opcional) — {len(sem_historico)} NE(s) sem histórico de execução"):
+            st.caption(
+                "NE com menos de 3 meses fechados é projetada pelo valor mensal cheio. Se ela substitui um "
+                "contrato anterior do mesmo serviço, escolha a NE dele para herdar o fator de execução. A "
+                "escolha vale só para esta emissão (não é gravada no cadastro)."
+            )
+            for ne in sem_historico:
+                escolha = st.selectbox(
+                    rotulos[ne], ["(nenhum — valor cheio)", *candidatas],
+                    format_func=lambda opcao: rotulos.get(opcao, opcao),
+                    key=f"cc_projexec_antecessor_{source_key}_{ne}",
+                )
+                if escolha in fatores:
+                    antecessores[ne] = escolha
+
+    relatorio = montar_relatorio_projecao_execucao(
+        por_ne, sem_ne, liquidacao_competencia_por_mes, ano_exercicio, mes_referencia, antecessores
+    )
+    modificado = datetime.fromtimestamp(CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime)
+    contexto = ContextoProjecaoExecucao(
+        exercicio=ano_exercicio,
+        data_extracao=data_extracao.strftime("%d/%m/%Y"),
+        hash_manifesto=manifesto.sha256[:8],
+        data_emissao=datetime.now().strftime("%d/%m/%Y %H:%M"),
+        origem_competencia=f"{CAMINHO_LIQUIDACAO_COMPETENCIA.name} · modificado em {modificado:%d/%m/%Y %H:%M}",
+    )
+    st.caption(
+        "Relatório separado: projeta a despesa até dezembro pelo que cada contrato de fato liquida (fator de "
+        "execução sobre o custo contratado, pela execução dos últimos 6 meses fechados), incluindo o restante "
+        "dos meses ainda em aberto, e compara com a projeção pelo valor contratado e com a Necessidade até "
+        f"dezembro contratual. Pela execução: necessidade de {formatar_brl(relatorio.total_necessidade_execucao)} "
+        f"(contratual: {formatar_brl(relatorio.total_necessidade_contratual)}). Respeita a busca."
+    )
+    nome_arquivo = f"projecao_execucao_contratos_continuos_{ano_exercicio}_{datetime.now():%Y-%m-%d}"
+    col_pdf, col_xlsx = st.columns(2)
+    with col_pdf:
+        st.download_button(
+            "Baixar PDF", data=lambda: gerar_pdf_projecao_execucao(relatorio, contexto),
+            file_name=f"{nome_arquivo}.pdf", mime="application/pdf", type="primary", width="stretch",
+            on_click="ignore", key=f"cc_projexec_pdf_{source_key}",
+        )
+    with col_xlsx:
+        st.download_button(
+            "Baixar Excel", data=lambda: gerar_xlsx_projecao_execucao(relatorio, contexto),
+            file_name=f"{nome_arquivo}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch", on_click="ignore", key=f"cc_projexec_xlsx_{source_key}",
         )
 
 
@@ -1438,6 +1491,7 @@ def _render_empenhado_liquidado(
             '<div class="cad-total-rotulo">Total</div>', celula_valor(empenhado_total), celula_valor(liquidado_total),
             celula_valor(saldo_total, tom_total), "",
         ],
+        rolagem=True,  # pedido explícito: barra de rolagem em todo quadro com "Ver mais"
     )
     st.markdown(
         cartao_secao(
@@ -1696,7 +1750,7 @@ dataframe["inicio_execucao_efetivo"] = dataframe["inicio_execucao_mes"].fillna(
     dataframe["ne_curta"].map(sugestao_inicio_por_ne)
 )
 # Contrato SUSPENSO (06/10/2026): Despesa anual/Cobertura por PTRES passam a usar o já empenhado e o
-# "A empenhar (execução)" vira zero — ver `src.contratos_continuos.com_efeitos_da_suspensao`.
+# "Saldo a liquidar (execução)" vira zero — ver `src.contratos_continuos.com_efeitos_da_suspensao`.
 dataframe = com_efeitos_da_suspensao(dataframe)
 
 with col_relatorio:
@@ -1725,6 +1779,9 @@ if filtrado.empty:
 # Necessidade de Empenho até Dezembro — a MESMA conta do "Resumo Consolidado" (`necessidade_por_ne`) —
 # e a grade de indicadores do exercício. Substitui a antiga linha de 4 métricas.
 _por_ne_topo, _sem_ne_topo = necessidade_por_ne(filtrado, meses_liquidados_por_ne, ano_selecionado)
+# "A empenhar" e situação do Registro de contratos (06/10/2026): a mesma Necessidade até dezembro do
+# Resumo Consolidado, por linha (NE compartilhada: o valor da NE em cada linha dela).
+filtrado = filtrado.assign(necessidade_ate_dezembro=necessidade_por_linha(filtrado, _por_ne_topo, _sem_ne_topo))
 _necessidade_topo = float(_por_ne_topo["necessidade"].sum() + _sem_ne_topo["necessidade"].sum())
 _estimado_previstos = valor_estimado_em_previstos(filtrado, meses_liquidados_por_ne, ano_selecionado)
 _empenhado_topo = float(_por_ne_topo["valor_empenhado_exibido"].sum() + _sem_ne_topo["valor_empenhado_exibido"].sum())
@@ -1751,7 +1808,9 @@ st.markdown(
             ("Contratos", str(filtrado["contrato_numero"].nunique())),
             ("Empenhado (por NE)", formatar_brl(_empenhado_topo)),
             ("Saldo (Execução Mensal)", formatar_brl(_somar_unico_por_ne(filtrado, "saldo_execucao"))),
-            ("A empenhar (execução)", formatar_brl(filtrado["valor_a_empenhar"].sum())),
+            # 06/10/2026: era "A empenhar (execução)", mesmo nome da coluna do registro (Necessidade até dezembro)
+            # medindo outra coisa — empenhado − liquidado em meses × despesa mensal, isto é, o saldo
+            ("Saldo a liquidar (execução)", formatar_brl(filtrado["valor_a_empenhar"].sum())),
         ],
     ),
     unsafe_allow_html=True,
@@ -1764,6 +1823,10 @@ _render_resumo_consolidado(
 _render_relatorio_necessidade(
     filtrado, meses_liquidados_por_ne, liquidacao_competencia_por_mes, source_key, ano_selecionado, busca,
     manifesto_execucao_mensal, via_competencia=indice_liquidado_competencia is not None,
+)
+_render_relatorio_projecao_execucao(
+    filtrado, liquidacao_competencia_por_mes, source_key, ano_selecionado, manifesto_execucao_mensal,
+    via_competencia=indice_liquidado_competencia is not None,
 )
 if indice_liquidado_competencia is not None:
     _render_empenhado_liquidado(
@@ -1795,11 +1858,20 @@ st.markdown('<div class="cad-secao-titulo">Registro de contratos</div>', unsafe_
 
 _status_norm = filtrado["status_contrato"].where(filtrado["status_contrato"].isin(STATUS_OPCOES), "ATIVO")
 _ativo = _status_norm.eq("ATIVO").fillna(False).astype(bool)
-_a_empenhar = pd.to_numeric(filtrado["valor_a_empenhar"], errors="coerce").fillna(0.0)
+_situacao_registro = pd.Series(
+    [
+        _situacao(status, vigencia, necessidade)[0]
+        for status, vigencia, necessidade in zip(
+            filtrado["status_contrato"], filtrado["vigencia_fim_efetiva"], filtrado["necessidade_ate_dezembro"]
+        )
+    ],
+    index=filtrado.index, dtype=object,
+)
 _mascaras_abas = {
     "Todos": pd.Series(True, index=filtrado.index),
     "Ativo": _ativo,
-    "Necessita reforço": _ativo & _a_empenhar.gt(0),
+    "Necessita reforço": _situacao_registro.eq(SITUACAO_NECESSITA_REFORCO),
+    "Vigência encerrada": _situacao_registro.eq(SITUACAO_VIGENCIA_ENCERRADA),
     "Vencido": _status_norm.eq("VENCIDO").fillna(False).astype(bool),
     "Suspenso": _status_norm.eq("SUSPENSO").fillna(False).astype(bool),
 }
@@ -1808,7 +1880,7 @@ _contagens_abas = contagens_por_aba(_mascaras_abas)
 _ORDENACOES_REGISTRO = {
     "Fornecedor (A–Z)": ("fornecedor", True),
     "Maior despesa mensal": ("despesa_mensal", False),
-    "Maior valor a empenhar": ("valor_a_empenhar", False),
+    "Maior valor a empenhar": ("necessidade_ate_dezembro", False),
     "Vigência mais próxima": ("vigencia_fim_efetiva", True),
 }
 _PROPORCOES_REGISTRO = [3.0, 1.45, 1.3, 1.3, 1.3, 1.15, 1.85, 0.95]
@@ -1817,7 +1889,6 @@ _CABECALHOS_REGISTRO = [
     ("A empenhar", True), ("Vigência", False), ("Situação", False), ("Ações", False),
 ]
 QTD_INICIAL_REGISTRO = 15
-QTD_INCREMENTO_REGISTRO = 15
 
 with st.container(border=True, key="cad_registro"):
     c_abas, c_categoria, c_ordem = st.columns([3.6, 1.3, 1.3], vertical_alignment="center")
@@ -1845,8 +1916,9 @@ with st.container(border=True, key="cad_registro"):
         unsafe_allow_html=True,
     )
 
-    qtd_registro_key = f"cc_registro_qtd_{source_key}"
-    qtd_registro = st.session_state.get(qtd_registro_key, QTD_INICIAL_REGISTRO)
+    mostrar_todos_key = f"cc_registro_mostrar_todos_{source_key}"
+    mostrar_todos = st.session_state.get(mostrar_todos_key, False)
+    qtd_registro = len(registro) if mostrar_todos else QTD_INICIAL_REGISTRO
 
     if registro.empty:
         st.markdown('<div class="cad-vazio">Nenhum contrato nesta situação/categoria.</div>', unsafe_allow_html=True)
@@ -1857,62 +1929,68 @@ with st.container(border=True, key="cad_registro"):
                 f'<div class="cad-cabecalho{" direita" if a_direita else ""}">{texto}</div>', unsafe_allow_html=True
             )
 
-    for _, linha in registro.iloc[:qtd_registro].iterrows():
-        id_linha = str(linha["id"])
-        with st.container(key=f"cad_linha_{id_linha}"):
-            cel = st.columns(_PROPORCOES_REGISTRO, vertical_alignment="center")
-            numero_linha = _ou_vazio(linha["contrato_numero"])
-            ne_linha = _ou_vazio(linha["ne_curta"])
-            qtd_aditivos = len(linha["aditivos"])
-            subtitulo = " · ".join(
-                parte for parte in (
-                    f"Contrato {numero_linha}" if numero_linha else "", f"NE {ne_linha}" if ne_linha else "",
-                    f"{qtd_aditivos} aditivo(s)" if qtd_aditivos else "",
-                ) if parte
-            )
-            texto_situacao, tom_situacao = _situacao(linha["status_contrato"], linha["valor_a_empenhar"])
-            a_empenhar_linha = _ou_zero(linha["valor_a_empenhar"])
-            cel[0].markdown(celula_principal(linha["fornecedor"] if _ou_vazio(linha["fornecedor"]) else "(sem fornecedor)", subtitulo), unsafe_allow_html=True)
-            cel[1].markdown(celula_categoria(linha["tipo_despesa"]), unsafe_allow_html=True)
-            cel[2].markdown(celula_valor(linha["despesa_mensal"]), unsafe_allow_html=True)
-            cel[3].markdown(celula_valor(linha["saldo_execucao"]), unsafe_allow_html=True)  # sem NE: "—", não zero
-            cel[4].markdown(
-                celula_valor(linha["valor_a_empenhar"], "warn" if tom_situacao == "warn" and a_empenhar_linha > 0 else None),
-                unsafe_allow_html=True,
-            )
-            vigencia_linha = _data_ou_none(linha["vigencia_fim_efetiva"])
-            texto_vigencia = vigencia_linha.strftime("%d/%m/%Y") if vigencia_linha else None
-            if texto_vigencia and _data_ou_none(linha["vigencia_fim_efetiva"]) != _data_ou_none(linha["vigencia_fim"]):
-                texto_vigencia += " · TA"  # a vigência vem de um aditivo, não do contrato original
-            if texto_vigencia and linha["tem_aditivo_previsto"]:
-                texto_vigencia += " · previsto"
-            cel[5].markdown(celula_suave(texto_vigencia), unsafe_allow_html=True)
-            cel[6].markdown(chip(texto_situacao, tom_situacao), unsafe_allow_html=True)
-            with cel[7]:
-                with st.container(key=f"cad_acoes_{id_linha}"):
-                    b_editar, b_remover = st.columns(2)
-                    if b_editar.button("", icon=":material/edit:", key=f"cc_editar_{source_key}_{id_linha}", help="Editar contrato", use_container_width=True):
-                        # os itens de licitação editados vivem em `st.session_state`; ao abrir de novo, parte do registro
-                        st.session_state.pop(f"cc_{source_key}_{id_linha}_itens", None)
-                        st.session_state.pop(f"cc_{source_key}_{id_linha}_aditivos", None)
-                        _dialogo_editar_contrato(
-                            linha, ano_selecionado, source_key,
-                            sugestao_inicio_por_ne.get(linha["ne_curta"]) if pd.notna(linha["ne_curta"]) else None,
-                        )
-                    if b_remover.button("", icon=":material/delete:", key=f"cc_remover_{source_key}_{id_linha}", help="Remover contrato", use_container_width=True):
-                        _dialogo_remover_contrato(
-                            id_linha, f"{_ou_vazio(linha['fornecedor']) or '(sem fornecedor)'} — {numero_linha or 's/ nº'}", ano_selecionado
-                        )
+    # Rolagem (pedido explícito): as linhas ficam numa caixa de altura máxima fixa
+    # (`.st-key-cc_registro_scroll` em `src/ui_cadastro.py`), o cabeçalho fica fora dela.
+    with st.container(key="cc_registro_scroll"):
+        for _, linha in registro.iloc[:qtd_registro].iterrows():
+            id_linha = str(linha["id"])
+            with st.container(key=f"cad_linha_{id_linha}"):
+                cel = st.columns(_PROPORCOES_REGISTRO, vertical_alignment="center")
+                numero_linha = _ou_vazio(linha["contrato_numero"])
+                ne_linha = _ou_vazio(linha["ne_curta"])
+                qtd_aditivos = len(linha["aditivos"])
+                subtitulo = " · ".join(
+                    parte for parte in (
+                        f"Contrato {numero_linha}" if numero_linha else "", f"NE {ne_linha}" if ne_linha else "",
+                        f"{qtd_aditivos} aditivo(s)" if qtd_aditivos else "",
+                    ) if parte
+                )
+                texto_situacao, tom_situacao = _situacao(
+                    linha["status_contrato"], linha["vigencia_fim_efetiva"], linha["necessidade_ate_dezembro"]
+                )
+                a_empenhar_linha = _ou_zero(linha["necessidade_ate_dezembro"])
+                cel[0].markdown(celula_principal(linha["fornecedor"] if _ou_vazio(linha["fornecedor"]) else "(sem fornecedor)", subtitulo), unsafe_allow_html=True)
+                cel[1].markdown(celula_categoria(linha["tipo_despesa"]), unsafe_allow_html=True)
+                cel[2].markdown(celula_valor(linha["despesa_mensal"]), unsafe_allow_html=True)
+                cel[3].markdown(celula_valor(linha["saldo_execucao"]), unsafe_allow_html=True)  # sem NE: "—", não zero
+                cel[4].markdown(
+                    celula_valor(linha["necessidade_ate_dezembro"], "warn" if a_empenhar_linha > 0 else None),
+                    unsafe_allow_html=True,
+                )
+                vigencia_linha = _data_ou_none(linha["vigencia_fim_efetiva"])
+                texto_vigencia = vigencia_linha.strftime("%d/%m/%Y") if vigencia_linha else None
+                if texto_vigencia and _data_ou_none(linha["vigencia_fim_efetiva"]) != _data_ou_none(linha["vigencia_fim"]):
+                    texto_vigencia += " · TA"  # a vigência vem de um aditivo, não do contrato original
+                if texto_vigencia and linha["tem_aditivo_previsto"]:
+                    texto_vigencia += " · previsto"
+                cel[5].markdown(celula_suave(texto_vigencia), unsafe_allow_html=True)
+                cel[6].markdown(chip(texto_situacao, tom_situacao), unsafe_allow_html=True)
+                with cel[7]:
+                    with st.container(key=f"cad_acoes_{id_linha}"):
+                        b_editar, b_remover = st.columns(2)
+                        if b_editar.button("", icon=":material/edit:", key=f"cc_editar_{source_key}_{id_linha}", help="Editar contrato", use_container_width=True):
+                            # os itens de licitação editados vivem em `st.session_state`; ao abrir de novo, parte do registro
+                            st.session_state.pop(f"cc_{source_key}_{id_linha}_itens", None)
+                            st.session_state.pop(f"cc_{source_key}_{id_linha}_aditivos", None)
+                            _dialogo_editar_contrato(
+                                linha, ano_selecionado, source_key,
+                                sugestao_inicio_por_ne.get(linha["ne_curta"]) if pd.notna(linha["ne_curta"]) else None,
+                            )
+                        if b_remover.button("", icon=":material/delete:", key=f"cc_remover_{source_key}_{id_linha}", help="Remover contrato", use_container_width=True):
+                            _dialogo_remover_contrato(
+                                id_linha, f"{_ou_vazio(linha['fornecedor']) or '(sem fornecedor)'} — {numero_linha or 's/ nº'}", ano_selecionado
+                            )
 
-    if qtd_registro < len(registro):
+    # "Ver mais" de um clique só (pedido explícito, antes revelava +15 por clique): mostra tudo.
+    if not mostrar_todos and len(registro) > QTD_INICIAL_REGISTRO:
         c_mais, c_texto = st.columns([1, 3], vertical_alignment="center")
-        c_texto.caption(f"Mostrando {qtd_registro} de {len(registro)} contratos")
-        if c_mais.button("Mostrar mais", key=f"cc_registro_mais_{source_key}"):
-            st.session_state[qtd_registro_key] = qtd_registro + QTD_INCREMENTO_REGISTRO
+        c_texto.caption(f"Mostrando {QTD_INICIAL_REGISTRO} de {len(registro)} contratos")
+        if c_mais.button("Ver mais", key=f"cc_registro_mais_{source_key}"):
+            st.session_state[mostrar_todos_key] = True
             st.rerun()
-    elif len(registro) > QTD_INICIAL_REGISTRO:
-        if st.button("Mostrar menos", key=f"cc_registro_menos_{source_key}"):
-            st.session_state[qtd_registro_key] = QTD_INICIAL_REGISTRO
+    elif mostrar_todos and len(registro) > QTD_INICIAL_REGISTRO:
+        if st.button("Ver menos", key=f"cc_registro_menos_{source_key}"):
+            st.session_state[mostrar_todos_key] = False
             st.rerun()
 
 st.caption(
