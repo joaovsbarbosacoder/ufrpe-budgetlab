@@ -505,10 +505,12 @@ streamlit run app.py
   que o Parquet não devolveria idênticas). Para limpar, basta apagar a pasta. Nos testes o cache fica
   desligado (`tests/conftest.py` define `BUDGETLAB_CACHE_BASES=desligado`): a suíte sempre lê as planilhas
   e não toca na pasta real.
-- **Memória da Consulta de Empenhos**: a cada interação o `st.cache_data` devolve uma cópia da base
-  inteira da Execução Mensal, que ficava presa em referências circulares (a sessão subia de ~1,5 GB para
-  ~7 GB em 30 interações). A página roda `gc.collect()` no início e no fim de cada execução e fica estável
-  em ~1,3–1,7 GB. Os testes de página fazem o mesmo ao fim de cada teste (`tests/conftest.py`).
+- **Memória das páginas com bases grandes**: a cada interação o `st.cache_data` devolve cópias das bases
+  (DataFrames inteiros), que ficavam presas em referências circulares — na Consulta de Empenhos a sessão
+  subia de ~1,5 GB para ~7 GB em 30 interações; em Empenhos com Execução Retardada, Limite de Empenho e
+  Despesas de Pessoal, de ~1,5 GB para 5–8 GB em 20. Essas quatro páginas rodam `gc.collect()` no início e
+  no fim de cada execução e ficam estáveis abaixo de 2 GB. As demais páginas medidas (07/10/2026) não
+  acumulam de forma relevante. Os testes de página fazem o mesmo ao fim de cada teste (`tests/conftest.py`).
 
 ### Atalho de inicialização com atualização automática (um único computador)
 

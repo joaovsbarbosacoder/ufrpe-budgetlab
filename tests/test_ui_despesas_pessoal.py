@@ -245,6 +245,13 @@ class TestAbasFormulasEHistorico(unittest.TestCase):
         # R_mãe = 100 − 10 (31901101 + 31901131); metade na parcela final de novembro.
         self.assertEqual(self._decimo_terceiro(montagens[-1])["meses"][10], 45)
 
+    def test_coleta_lixo_no_inicio_e_no_fim_da_pagina(self):
+        # cópias das bases devolvidas pelo st.cache_data ficavam presas em ciclos (~0,25 GB por interação)
+        with patch("gc.collect", return_value=0) as coleta:
+            at, _ = self._rodar()
+        self.assertEqual(len(at.exception), 0)
+        self.assertEqual(coleta.call_count, 2)
+
     def test_campo_editado_recalcula_o_painel_e_fica_declarado(self):
         at, montagens = self._rodar(lambda at: at.number_input(key="dp_f_fracao_antecipacao").set_value(0.0))
         self.assertEqual(len(at.exception), 0)

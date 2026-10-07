@@ -79,6 +79,7 @@ Contratos/Bolsas, nem a lógica de saldo já validada — só lê e reaproveita.
 from __future__ import annotations
 
 from datetime import datetime
+import gc
 
 import pandas as pd
 import streamlit as st
@@ -288,6 +289,13 @@ def _abrir_detalhe(dataframe: pd.DataFrame, linha: pd.Series) -> None:
 
 
 # ---------------------------------------------------------------------- página
+# Memória (07/10/2026): a cada interação o `st.cache_data` devolve CÓPIAS das bases (DataFrames
+# inteiros), que ficam presas em referências circulares; o coletor do Python dispara pela quantidade de
+# objetos, não pelo tamanho, e a sessão subia ~0,3 GB por interação (1,4 → 7,9 GB em 20). Coleta no
+# início (lixo da interação anterior, em qualquer caminho — inclusive os `st.stop()`) e no fim. Custo
+# ~0,1 s por coleta; nenhum dado é alterado (mesma correção da Consulta de Empenhos).
+gc.collect()
+
 render_page_header(
     "Empenhos com Execução Retardada",
     "Notas de empenho com saldo alto (empenhado ainda não liquidado) — priorização de baixa.",
@@ -619,3 +627,5 @@ if not ordenado.empty:
         )
 
 st.caption(f"Procedência: extração de {data_extracao_texto} · hash {manifesto.sha256[:8]}")
+
+gc.collect()  # ver o comentário no início da página

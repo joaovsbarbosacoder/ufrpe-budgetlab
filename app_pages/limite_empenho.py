@@ -107,6 +107,7 @@ import html as html_lib
 from datetime import datetime
 from decimal import Decimal
 from fractions import Fraction
+import gc
 
 import pandas as pd
 import streamlit as st
@@ -699,6 +700,13 @@ def _render_remanejamentos(
 
 
 # ---------------------------------------------------------------------- página
+# Memória (07/10/2026): a cada interação o `st.cache_data` devolve CÓPIAS das bases (DataFrames
+# inteiros), que ficam presas em referências circulares; o coletor do Python dispara pela quantidade de
+# objetos, não pelo tamanho, e a sessão subia ~0,25 GB por interação (1,5 → 6,3 GB em 20). Coleta no
+# início (lixo da interação anterior, em qualquer caminho — inclusive os `st.stop()`) e no fim. Custo
+# ~0,1 s por coleta; nenhum dado é alterado (mesma correção da Consulta de Empenhos).
+gc.collect()
+
 render_page_header(
     "Limite de Empenho",
     "Cota orçamentária discricionária liberada por período — Dotação Atualizada × fração "
@@ -917,3 +925,5 @@ st.caption(
     f"Execução Mensal: extração de {data_extracao_execucao}, hash {manifesto_execucao_mensal.sha256[:8]}. "
     "Fração liberada informada manualmente, não deduzida do calendário."
 )
+
+gc.collect()  # ver o comentário no início da página
