@@ -3,6 +3,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from src import cache_bases
 from src.ui_theme import apply_theme
 
 _LOGO_B64 = base64.b64encode(Path("assets/ufrpe_logo.png").read_bytes()).decode()
@@ -14,6 +15,9 @@ st.set_page_config(
 )
 
 apply_theme()
+# Bases já lidas guardadas em Parquet (data/processed/cache_bases/), chaveadas pelo conteúdo do arquivo e
+# pelo código do leitor — ver src/cache_bases.py. Sem pyarrow, segue lendo as planilhas normalmente.
+cache_bases.ativar()
 
 st.sidebar.markdown(
     f'<div class="ufrpe-sidebar-brand">'

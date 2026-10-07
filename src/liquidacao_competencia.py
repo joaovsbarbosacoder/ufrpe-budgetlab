@@ -38,6 +38,9 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.cache_bases import em_cache
+from src.leitura_excel import motor_excel
+
 # --------------------------------------------------------------------------------------
 # 1. Contrato do arquivo de origem
 # --------------------------------------------------------------------------------------
@@ -84,7 +87,7 @@ def _rotulo_mes(texto: object) -> tuple[int, int]:
 
 
 def _validar_assinatura(caminho: Path) -> None:
-    cabecalho = pd.read_excel(caminho, header=None, nrows=1, dtype=str).iloc[0].tolist()
+    cabecalho = pd.read_excel(caminho, header=None, nrows=1, dtype=str, engine=motor_excel()).iloc[0].tolist()
     for posicao, esperado in enumerate(CABECALHO_ESPERADO):
         obtido = str(cabecalho[posicao] or "").strip()
         if obtido != esperado:
@@ -109,6 +112,7 @@ def _para_numero(serie: pd.Series) -> pd.Series:
     return original.where(original.notna(), convertido)
 
 
+@em_cache
 def ler_liquidacao_competencia(caminho: str | Path) -> pd.DataFrame:
     """Lê a base bruta e devolve o DataFrame normalizado — uma linha por (NE, Documento
     Hábil, Doc. Contábil, Ano Referência, Mês Referência), com `mes_referencia`/
@@ -121,7 +125,7 @@ def ler_liquidacao_competencia(caminho: str | Path) -> pd.DataFrame:
 
     _validar_assinatura(caminho)
 
-    bruto = pd.read_excel(caminho, header=0, dtype=str)
+    bruto = pd.read_excel(caminho, header=0, dtype=str, engine=motor_excel())
     if bruto.shape[1] != len(COLUNAS):
         raise ErroLayoutBase(f"Esperado {len(COLUNAS)} colunas, obtido {bruto.shape[1]}.")
     bruto.columns = COLUNAS

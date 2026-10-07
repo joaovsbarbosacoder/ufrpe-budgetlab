@@ -43,6 +43,9 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.cache_bases import em_cache
+from src.leitura_excel import motor_excel
+
 NOME_ABA = "BASE_CONTRATOS"
 _EPOCA_EXCEL = datetime(1899, 12, 30)
 
@@ -138,6 +141,7 @@ def classificar_criticidade(dias: int | None) -> str:
     return "No prazo"
 
 
+@em_cache
 def ler_contratos_vigencia(caminho: str | Path) -> pd.DataFrame:
     """Lê a aba "BASE_CONTRATOS" e devolve o DataFrame normalizado, uma linha por termo/evento
     contratual — não por contrato (ver `consolidar_por_contrato`)."""
@@ -146,7 +150,7 @@ def ler_contratos_vigencia(caminho: str | Path) -> pd.DataFrame:
     if not caminho.exists():
         raise FileNotFoundError(caminho)
 
-    bruto = pd.read_excel(caminho, sheet_name=NOME_ABA, header=0, dtype=object)
+    bruto = pd.read_excel(caminho, sheet_name=NOME_ABA, header=0, dtype=object, engine=motor_excel())
 
     normalizados = {coluna: _normalizar(coluna) for coluna in bruto.columns}
     faltando = set(COLUNAS_ORIGEM) - set(normalizados.values())

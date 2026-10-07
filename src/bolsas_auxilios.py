@@ -39,6 +39,9 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.cache_bases import em_cache
+from src.leitura_excel import motor_excel
+
 from src.execucao_ne_utils import (
     indice_liquidado_por_ne_curta,
     indice_saldo_por_ne_curta,
@@ -105,6 +108,7 @@ _COLUNAS_NUMERICAS = {
 }
 
 
+@em_cache
 def ler_bolsas_auxilios(caminho: str | Path) -> pd.DataFrame:
     """Lê a aba "Bolsas e auxílios" e devolve o DataFrame normalizado, com as colunas
     derivadas `meses_a_empenhar`/`valor_a_empenhar` (ver docstring do módulo). Não liga com a
@@ -114,7 +118,7 @@ def ler_bolsas_auxilios(caminho: str | Path) -> pd.DataFrame:
     if not caminho.exists():
         raise FileNotFoundError(caminho)
 
-    bruto = pd.read_excel(caminho, sheet_name=NOME_ABA, header=LINHA_CABECALHO, dtype=object)
+    bruto = pd.read_excel(caminho, sheet_name=NOME_ABA, header=LINHA_CABECALHO, dtype=object, engine=motor_excel())
 
     normalizados = {coluna: _normalizar(coluna) for coluna in bruto.columns}
     faltando = set(COLUNAS_ORIGEM) - set(normalizados.values())

@@ -61,6 +61,9 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.cache_bases import em_cache
+from src.leitura_excel import motor_excel
+
 # --------------------------------------------------------------------------------------
 # 1. Contrato do arquivo de origem
 # --------------------------------------------------------------------------------------
@@ -301,6 +304,7 @@ def _ler_aba(xls: pd.ExcelFile, nome_arquivo: str, sheet_name: str) -> pd.DataFr
     return pd.concat(partes, ignore_index=True)
 
 
+@em_cache
 def ler_execucao_mensal(caminho: str | Path) -> pd.DataFrame:
     """Lê a base bruta e devolve o DataFrame normalizado em formato longo — uma linha por
     (linha original da planilha × mês do bloco correspondente), com `mes`/`ano_mes` derivados
@@ -312,7 +316,7 @@ def ler_execucao_mensal(caminho: str | Path) -> pd.DataFrame:
     if not caminho.exists():
         raise FileNotFoundError(caminho)
 
-    with pd.ExcelFile(caminho) as xls:
+    with pd.ExcelFile(caminho, engine=motor_excel()) as xls:
         abas = xls.sheet_names
         if not abas:
             raise ErroLayoutBase("Planilha sem nenhuma aba.")
