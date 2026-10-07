@@ -4,8 +4,9 @@ Usa uma fixture congelada em `tests/fixtures/` (não a planilha de trabalho em `
 que é substituída a cada atualização) — pulado se o arquivo não existir. Os casos de
 divergência de saldo (`2026NE000350`, `2026NE000094`) foram originalmente confirmados
 manualmente contra a Execução Anual ativa em 13/08/2026, mesma data da fixture (ver histórico
-da conversa) — `TestSaldoViaExecucaoMensal` recalibrou em 22/09/2026 contra a Execução
-Mensal, a fonte usada pela página real desde então (ver docstring daquela classe). Valor
+da conversa) — `TestSaldoViaExecucaoMensal` confere contra a Execução Mensal (a fonte usada
+pela página real), lida de uma fixture congelada (`CAMINHO_EXECUCAO_MENSAL`), não da
+importação atual em `data/manifestos/` (ver docstring daquela classe). Valor
 empenhado (`valor_empenhado_execucao`, comparado contra a soma por NE — ver docstring de
 `com_saldo_execucao`) tem casos isolados na mesma fixture (`2026NE000148`, diferença pequena
 de arredondamento; `2026NE000178`, planilha zerada mas com valor real na Execução).
@@ -24,13 +25,25 @@ from pathlib import Path
 import openpyxl
 import pandas as pd
 
-from src.contratos_continuos import ErroLayoutBase, NOME_ABA, com_meses_pagos, com_saldo_execucao, ler_contratos_continuos
+from src.contratos_continuos import (
+    DESPESA_CONTRATUAL,
+    DESPESA_EMPENHADO_SUSPENSO,
+    ErroLayoutBase,
+    NOME_ABA,
+    com_efeitos_da_suspensao,
+    com_meses_pagos,
+    com_saldo_execucao,
+    ler_contratos_continuos,
+)
 from src.execucao_ne_utils import saldo_por_ne
-from src.importacao_execucao_mensal import carregar_atual
 from src.necessidade_empenho import calcular_necessidade_empenho
-from src.tesouro_execucao_mensal import agregar_por_ne
+from src.tesouro_execucao_mensal import agregar_por_ne, ler_execucao_mensal
 
 CAMINHO_BASE = Path("tests/fixtures/contratos_continuos_2026-08-13.xlsm")
+#: Execução Mensal congelada (a mesma de tests/test_bolsas_auxilios.py e
+#: tests/test_consulta_empenhos_page.py) — valores esperados de `TestSaldoViaExecucaoMensal`
+#: conferidos à mão contra ela.
+CAMINHO_EXECUCAO_MENSAL = Path("tests/fixtures/execucao_mensal_2026-09-22.xlsx")
 
 
 def _variante_com_coluna_renomeada(caminho: Path, tmp_dir: Path) -> Path:
@@ -111,8 +124,8 @@ class TestLeituraContratosContinuos(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    CAMINHO_BASE.exists() and Path("data/manifestos/execucao_mensal_atual.json").exists(),
-    "Planilha de Contratos Contínuos ou manifesto de Execução Mensal ausente",
+    CAMINHO_BASE.exists() and CAMINHO_EXECUCAO_MENSAL.exists(),
+    "Fixture de Contratos Contínuos ou de Execução Mensal ausente",
 )
 class TestSaldoViaExecucaoMensal(unittest.TestCase):
     """Confere `saldo_execucao`/`diverge_saldo` contra os casos já levantados manualmente.
@@ -125,14 +138,20 @@ class TestSaldoViaExecucaoMensal(unittest.TestCase):
     Execução Anual em 26/08 — só a CONTAGEM total de divergências mudou (31, não mais 32,
     pra saldo; 31, não mais 30, pra valor empenhado), porque outros NEs da fixture (fora do
     conjunto usado como exemplo nomeado) têm movimento mais recente que diverge entre as
-    duas fontes. NE 2026NE000082 continua batendo exatamente nas duas comparações."""
+    duas fontes. NE 2026NE000082 continua batendo exatamente nas duas comparações.
+
+    DESACOPLADO DA IMPORTAÇÃO ATUAL (30/09/2026, mesma correção de test_bolsas_auxilios.py):
+    a Execução Mensal era lida ao vivo (`carregar_atual()`), e qualquer importação nova que
+    mexesse nestas NEs quebraria o teste sem regressão real. Agora vem da fixture congelada
+    `CAMINHO_EXECUCAO_MENSAL` (extração de 22/09). Todos os valores abaixo continuaram
+    idênticos contra ela; conferidos à mão: NE 350 empenhado 3.112.763,78 − liquidado
+    1.033.302,92 = 2.079.460,86; NE 094 162.070,80 − 101.325,90 = 60.744,90."""
 
     @classmethod
     def setUpClass(cls):
-        # `carregar_atual` da Execução MENSAL — mesmo carregador que a página usa de verdade,
-        # não a leitura de um único arquivo: assim o teste nunca fica desalinhado do que a
-        # Execução Mensal "atual" realmente é depois de uma importação nova.
-        df_execucao = carregar_atual()
+        # mesmo leitor/agregação que a página usa (`agregar_por_ne` da Execução MENSAL), só que
+        # sobre a fixture congelada em vez da importação atual.
+        df_execucao = ler_execucao_mensal(CAMINHO_EXECUCAO_MENSAL)
         cls.por_ne = saldo_por_ne(agregar_por_ne(df_execucao))
         cls.df = com_saldo_execucao(ler_contratos_continuos(CAMINHO_BASE), cls.por_ne)
 
@@ -404,6 +423,58 @@ class TestComMesesPagos(unittest.TestCase):
         vazio = pd.DataFrame(columns=["contrato_normalizado", "meses_pagos", "ultimo_mes_pago"])
         df = com_meses_pagos(self._contratos(["23/2025"]), vazio)
         self.assertTrue(pd.isna(df.loc[0, "meses_pagos"]))
+
+
+class TestEfeitosDaSuspensao(unittest.TestCase):
+    """Contrato SUSPENSO só produz efeito pelo já empenhado/liquidado (pedido explícito, 06/10/2026):
+    Despesa anual (e Cobertura por PTRES) = empenhado; "Saldo a liquidar (execução)" = 0. Valores à mão."""
+
+    @staticmethod
+    def _df() -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "ne_curta": ["2026NE000001", "2026NE000002", "2026NE000003", None],
+                "status_contrato": ["ATIVO", "suspenso", "SUSPENSO", "SUSPENSO"],
+                "despesa_anual": [12_000.0, 24_000.0, 6_000.0, 3_600.0],
+                "valor_empenhado": [5_000.0, 9_000.0, 1_500.0, float("nan")],
+                "valor_empenhado_execucao": [7_000.0, 10_000.0, float("nan"), float("nan")],
+                "meses_a_empenhar": [2.0, 3.0, 1.0, 1.0],
+                "valor_a_empenhar": [2_000.0, 6_000.0, 500.0, 300.0],
+                "saldo_execucao": [1_000.0, 4_000.0, float("nan"), float("nan")],
+            }
+        )
+
+    def test_ativo_nao_muda(self):
+        resultado = com_efeitos_da_suspensao(self._df())
+        self.assertEqual(resultado.loc[0, "despesa_anual"], 12_000.0)
+        self.assertEqual(resultado.loc[0, "valor_a_empenhar"], 2_000.0)
+        self.assertEqual(resultado.loc[0, "despesa_anual_base"], DESPESA_CONTRATUAL)
+
+    def test_suspenso_usa_o_empenhado_da_execucao_e_zera_o_a_empenhar(self):
+        resultado = com_efeitos_da_suspensao(self._df())
+        self.assertEqual(resultado.loc[1, "despesa_anual"], 10_000.0)  # Execução, não os 24.000 do contrato
+        self.assertEqual(resultado.loc[1, "despesa_anual_contratual"], 24_000.0)  # original preservado
+        self.assertEqual(resultado.loc[1, "despesa_anual_base"], DESPESA_EMPENHADO_SUSPENSO)
+        self.assertEqual((resultado.loc[1, "meses_a_empenhar"], resultado.loc[1, "valor_a_empenhar"]), (0.0, 0.0))
+        self.assertEqual(resultado.loc[1, "saldo_execucao"], 4_000.0)  # saldo não muda
+
+    def test_sem_execucao_usa_o_empenhado_do_cadastro_e_nulo_continua_nulo(self):
+        resultado = com_efeitos_da_suspensao(self._df())
+        self.assertEqual(resultado.loc[2, "despesa_anual"], 1_500.0)
+        self.assertTrue(pd.isna(resultado.loc[3, "despesa_anual"]))  # sem empenho conhecido: nulo, não zero
+
+    def test_ne_compartilhada_nao_repete_o_empenho_da_ne_inteira(self):
+        df = self._df()
+        df.loc[2, "ne_curta"] = "2026NE000002"  # duas linhas na mesma NE (empenho da NE = 10.000)
+        df.loc[2, "valor_empenhado_execucao"] = 10_000.0
+        resultado = com_efeitos_da_suspensao(df)
+        self.assertEqual((resultado.loc[1, "despesa_anual"], resultado.loc[2, "despesa_anual"]), (9_000.0, 1_500.0))
+
+    def test_nao_altera_a_entrada(self):
+        df = self._df()
+        com_efeitos_da_suspensao(df)
+        self.assertEqual(df.loc[1, "despesa_anual"], 24_000.0)
+        self.assertNotIn("despesa_anual_base", df.columns)
 
 
 if __name__ == "__main__":

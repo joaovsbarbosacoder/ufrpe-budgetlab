@@ -78,6 +78,18 @@ class LimiteEmpenhoRemanejamentoPageTests(unittest.TestCase):
         self.assertFalse(app.exception, [e.value for e in app.exception])
         return app
 
+    def test_fracao_salva_em_disco_e_carregada_sem_aviso_de_session_state(self):
+        # o campo de fração não pode receber `value=` fixo junto com a chave semeada do disco:
+        # o Streamlit registrava "created with a default value but also had its value set via
+        # the Session State API" a cada abertura da página (28/09/2026).
+        with patch("src.limite_empenho_preferencias.carregar_fracao_liberada", return_value=(9, 12)):
+            with self.assertNoLogs("streamlit.elements.lib.policies", level="WARNING"):
+                app = self._app()
+        numerador = app.number_input(key="limite_empenho_numerador")
+        denominador = app.number_input(key="limite_empenho_denominador")
+        self.assertEqual((numerador.value, denominador.value), (9, 12))
+        self.assertIsInstance(numerador.value, int)
+
     def test_sem_remanejamento_resumo_mostra_limite_original(self):
         app = self._app()
         texto = _textos(app)

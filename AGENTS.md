@@ -26,6 +26,17 @@ esses artefatos.
    - verifique a consistência dos dados e das regras de negócio;
    - informe os arquivos criados e alterados;
    - informe os testes executados e seus resultados.
+
+   Para executar os testes, dê sempre preferência às ferramentas de
+   `requirements-dev.txt` que agilizam a suíte, em vez de
+   `python -m unittest`:
+   - rodadas intermediárias: `python -m pytest tests --testmon -n auto`
+     (só os testes afetados pelo código alterado, em paralelo);
+   - suíte completa (ao concluir a tarefa, ou se mudou fixture, planilha ou
+     base, que o testmon não acompanha): `python -m pytest tests -n auto`.
+   Se essas ferramentas não estiverem instaladas, instale-as com
+   `python -m pip install -r requirements-dev.txt` antes de recorrer ao
+   `unittest`.
 5. Ao detectar um erro dentro do escopo já aprovado, corrija-o e teste
    novamente.
 6. Não amplie o escopo funcional sem autorização explícita.

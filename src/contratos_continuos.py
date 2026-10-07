@@ -28,15 +28,21 @@ Contrato público:
     ler_contratos_continuos(caminho) -> pd.DataFrame
     com_saldo_execucao(df, por_ne_execucao, indice_liquidado_competencia=None) -> pd.DataFrame
     com_meses_pagos(df, meses_pagos) -> pd.DataFrame
+    com_efeitos_da_suspensao(df) -> pd.DataFrame
+    situacao_contrato(status, vigencia_fim_efetiva, necessidade, hoje) -> (texto, tom)
 """
 
 from __future__ import annotations
 
 import re
 import unicodedata
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
+
+from src.cache_bases import em_cache
+from src.leitura_excel import motor_excel
 
 from src.contratos_pagamentos import normalizar_numero_contrato
 from src.execucao_ne_utils import (
@@ -44,7 +50,7 @@ from src.execucao_ne_utils import (
     indice_saldo_por_ne_curta,
     indice_valor_empenhado_por_ne_curta,
 )
-from src.necessidade_empenho import calcular_necessidade_empenho
+from src.necessidade_empenho import STATUS_SUSPENSO, STATUS_VENCIDO, calcular_necessidade_empenho
 
 NOME_ABA = "Planilha atualizada"
 
@@ -114,6 +120,7 @@ _COLUNAS_NUMERICAS = {
 }
 
 
+@em_cache
 def ler_contratos_continuos(caminho: str | Path) -> pd.DataFrame:
     """Lê a aba "Planilha atualizada" e devolve o DataFrame normalizado, com as colunas
     derivadas `meses_a_empenhar`/`valor_a_empenhar` (ver docstring do módulo). Não liga com a
@@ -123,7 +130,7 @@ def ler_contratos_continuos(caminho: str | Path) -> pd.DataFrame:
     if not caminho.exists():
         raise FileNotFoundError(caminho)
 
-    bruto = pd.read_excel(caminho, sheet_name=NOME_ABA, header=0, dtype=object)
+    bruto = pd.read_excel(caminho, sheet_name=NOME_ABA, header=0, dtype=object, engine=motor_excel())
 
     normalizados = {coluna: _normalizar(coluna) for coluna in bruto.columns}
     faltando = set(COLUNAS_ORIGEM) - set(normalizados.values())
@@ -216,7 +223,9 @@ def com_saldo_execucao(
     incorrido". NE sem nenhuma linha de competência fica nula em `valor_liquidado_execucao`
     (mesmo tratamento de "sem correspondência" de sempre — cai em `tem_base_para_calculo`
     abaixo, volta pros campos manuais da planilha, nunca usa o valor de lançamento como
-    substituto silencioso). `None` (arquivo de competência indisponível) preserva o
+    substituto silencioso) — EXCETO quando a Execução Mensal também não tem nenhuma liquidação
+    para a NE (06/10/2026): aí as duas bases confirmam liquidado 0,00, gravado como zero e
+    sinalizado em `sem_liquidacao_confirmada`. `None` (arquivo de competência indisponível) preserva o
     comportamento anterior a este pedido (Execução Mensal). `liquidado_via_competencia` (novo
     campo, booleano constante no resultado) sinaliza qual fonte foi usada, para a interface
     ajustar o rótulo mostrado.
@@ -231,10 +240,23 @@ def com_saldo_execucao(
     resultado["valor_empenhado_execucao"] = resultado["ne_curta"].map(indice_valor_empenhado)
 
     resultado["liquidado_via_competencia"] = indice_liquidado_competencia is not None
+    indice_liquidado = indice_liquidado_por_ne_curta(por_ne_execucao)
+    resultado["sem_liquidacao_confirmada"] = False
     if indice_liquidado_competencia is not None:
         resultado["valor_liquidado_execucao"] = resultado["ne_curta"].map(indice_liquidado_competencia)
+        # NE na Execução sem NENHUMA liquidação lá (nula ou zero) e sem linha de competência: as duas
+        # bases confirmam que nada foi liquidado — liquidado = 0,00 declarado (pedido de 06/10/2026: NE
+        # recém-empenhada caía nos campos manuais e zerava a necessidade). Se a Execução tem liquidação e a
+        # competência não, continua nulo (sem substituto silencioso pelo valor de lançamento).
+        liquidado_lancamento = pd.to_numeric(resultado["ne_curta"].map(indice_liquidado), errors="coerce")
+        sem_liquidacao = (
+            resultado["valor_liquidado_execucao"].isna()
+            & resultado["ne_curta"].map(indice_valor_empenhado).notna()
+            & (liquidado_lancamento.isna() | (liquidado_lancamento.abs() < 0.005))
+        )
+        resultado.loc[sem_liquidacao, "valor_liquidado_execucao"] = 0.0
+        resultado["sem_liquidacao_confirmada"] = sem_liquidacao.astype(bool)
     else:
-        indice_liquidado = indice_liquidado_por_ne_curta(por_ne_execucao)
         resultado["valor_liquidado_execucao"] = resultado["ne_curta"].map(indice_liquidado)
 
     soma_planilha_por_ne = resultado.dropna(subset=["ne_curta"]).groupby("ne_curta")["valor_empenhado"].sum()
@@ -288,3 +310,75 @@ def com_meses_pagos(df: pd.DataFrame, meses_pagos: pd.DataFrame) -> pd.DataFrame
     resultado["meses_pagos"] = resultado["contrato_normalizado"].map(indexado["meses_pagos"])
     resultado["ultimo_mes_pago"] = resultado["contrato_normalizado"].map(indexado["ultimo_mes_pago"])
     return resultado
+
+
+#: origem da `despesa_anual` de cada linha depois de `com_efeitos_da_suspensao`.
+DESPESA_CONTRATUAL = "Contratual (despesa mensal × meses no ano)"
+DESPESA_EMPENHADO_SUSPENSO = "Empenhado (contrato suspenso)"
+
+
+def com_efeitos_da_suspensao(df: pd.DataFrame) -> pd.DataFrame:
+    """Contrato SUSPENSO só produz efeito pelo que já foi empenhado e liquidado (pedido explícito,
+    06/10/2026: "os contratos suspensos parem de fazer efeito após a suspensão. Só devem fazer efeito
+    os valores de empenho e liquidação já computados"). Para essas linhas:
+
+      * `despesa_anual` (Despesa anual e Cobertura Orçamentária por PTRES) passa a ser o valor JÁ
+        EMPENHADO — o da Execução Mensal (`valor_empenhado_execucao`) quando a NE foi encontrada nela,
+        senão o `valor_empenhado` do cadastro (decisão do usuário, 06/10/2026). NE compartilhada por
+        mais de uma linha usa o valor do cadastro, para não contar o empenho da NE inteira em cada
+        linha (nenhum rateio é presumido). Empenhado nulo continua nulo, nunca vira zero.
+      * `meses_a_empenhar`/`valor_a_empenhar` ("Saldo a liquidar (execução)" no cartão-resumo) viram zero declarado: não se
+        pede reforço para contrato parado. Saldo, empenhado e liquidado não mudam.
+
+    A despesa contratual original fica em `despesa_anual_contratual` e a origem do valor em
+    `despesa_anual_base`, para reconciliação. Precisa de `com_saldo_execucao` antes (usa
+    `valor_empenhado_execucao`); sem essa coluna, usa só o cadastro. Não altera a entrada."""
+
+    resultado = df.copy()
+    status = resultado["status_contrato"].astype("string").str.strip().str.upper()
+    suspenso = status.eq(STATUS_SUSPENSO).fillna(False).astype(bool)
+
+    ne = resultado["ne_curta"]
+    compartilhada = (ne.notna() & ne.duplicated(keep=False)).astype(bool)
+    if "valor_empenhado_execucao" in resultado.columns:
+        execucao = pd.to_numeric(resultado["valor_empenhado_execucao"], errors="coerce").where(~compartilhada)
+    else:
+        execucao = pd.Series(float("nan"), index=resultado.index)
+    empenhado = execucao.fillna(pd.to_numeric(resultado["valor_empenhado"], errors="coerce"))
+
+    resultado["despesa_anual_contratual"] = resultado["despesa_anual"]
+    resultado["despesa_anual"] = resultado["despesa_anual"].where(~suspenso, empenhado)
+    resultado["despesa_anual_base"] = pd.Series(DESPESA_CONTRATUAL, index=resultado.index).where(
+        ~suspenso, DESPESA_EMPENHADO_SUSPENSO
+    )
+    resultado["meses_a_empenhar"] = resultado["meses_a_empenhar"].where(~suspenso, 0.0)
+    resultado["valor_a_empenhar"] = resultado["valor_a_empenhar"].where(~suspenso, 0.0)
+    return resultado
+
+
+SITUACAO_VENCIDO = "Vencido"
+SITUACAO_SUSPENSO = "Suspenso"
+SITUACAO_VIGENCIA_ENCERRADA = "Vigência encerrada"
+SITUACAO_NECESSITA_REFORCO = "Necessita reforço"
+SITUACAO_ATIVO = "Ativo"
+
+
+def situacao_contrato(status: object, vigencia_fim_efetiva: object, necessidade: object, hoje: date) -> tuple[str, str]:
+    """(texto, tom) da situação no Registro de contratos (06/10/2026), nesta ordem: status VENCIDO ou
+    SUSPENSO do cadastro; vigência efetiva (com aditivos) já encerrada em `hoje` com outro status →
+    "Vigência encerrada" (a data é do próprio cadastro; o status não é alterado); Necessidade até
+    dezembro (`necessidade_por_linha`) > 0 → "Necessita reforço"; senão "Ativo". Antes o reforço era
+    lido do saldo (empenhado − liquidado), o que marcava contrato com saldo e escondia o sem saldo.
+    Status fora da lista conta como ATIVO; necessidade nula não pede reforço (sem dado)."""
+
+    status_texto = None if status is None or pd.isna(status) else str(status).strip().upper()
+    if status_texto == STATUS_VENCIDO:
+        return SITUACAO_VENCIDO, "bad"
+    if status_texto == STATUS_SUSPENSO:
+        return SITUACAO_SUSPENSO, "neutro"
+    if vigencia_fim_efetiva is not None and not pd.isna(vigencia_fim_efetiva):
+        if pd.Timestamp(vigencia_fim_efetiva).date() < hoje:
+            return SITUACAO_VIGENCIA_ENCERRADA, "bad"
+    if necessidade is not None and not pd.isna(necessidade) and float(necessidade) > 0.005:
+        return SITUACAO_NECESSITA_REFORCO, "warn"
+    return SITUACAO_ATIVO, "ok"

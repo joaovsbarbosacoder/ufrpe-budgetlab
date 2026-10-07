@@ -60,8 +60,14 @@ from src.necessidade_empenho import calcular_necessidade_empenho
 DIRETORIO_PADRAO = Path("data/bolsas_auxilios")
 
 #: copiados ao duplicar um exercício — classificação/identidade do programa, não execução.
+#: `processo` é o PROCESSO DE EMPENHO (rótulo "Processo de empenho" na tela): conferido em
+#: 06/10/2026 contra a aba "Base TG" da planilha de origem — nas 17 NEs presentes nas duas abas,
+#: bate com "NE CCor - Núm. Processo" (a menos do prefixo "23082."). Nome da chave mantido para
+#: não migrar os registros gravados nem o Relatório de Reforço, que agrupa por ela.
+#: `processo_contratacao` (pedido explícito, 06/10/2026) não existe na planilha de origem: fica
+#: nulo nos registros antigos/migrados até ser digitado — nunca copiado do processo de empenho.
 CAMPOS_IDENTIDADE = [
-    "processo", "programa_bolsa", "unidade_cod", "acao_cod", "ptres", "fonte_cod",
+    "processo", "processo_contratacao", "programa_bolsa", "unidade_cod", "acao_cod", "ptres", "fonte_cod",
     "natureza_despesa_cod", "ugr_cod", "pi_cod", "meses_no_ano", "qtd_inicial",
     "qtd_efetiva", "valor_unitario", "valor_mensal_excepcional",
 ]
@@ -83,7 +89,7 @@ CAMPOS_EXECUCAO_PADRAO = {
 }
 
 _COLUNAS_TEXTO = [
-    "processo", "programa_bolsa", "unidade_cod", "acao_cod", "ptres", "fonte_cod",
+    "processo", "processo_contratacao", "programa_bolsa", "unidade_cod", "acao_cod", "ptres", "fonte_cod",
     "natureza_despesa_cod", "ugr_cod", "pi_cod", "ne_curta", "situacao_tg",
 ]
 _COLUNAS_NUMERICAS = [

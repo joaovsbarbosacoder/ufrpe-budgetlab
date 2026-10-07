@@ -1,0 +1,2466 @@
+{
+ "entradas": [
+  {
+   "id": "03902270-6b7d-4089-ae27-fbcd7354bb49",
+   "ne_curta": "2026NE000350",
+   "contrato_numero": "10/2026",
+   "fornecedor": "Serval Serviços e Limpeza Ltda (apoio adm.) - Emergencial",
+   "processo_empenho": "013683/2026-45",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2026-12-17T00:00:00",
+   "inicio_execucao_data": "2026-06-17T00:00:00",
+   "inicio_execucao_mes": 6,
+   "data_suspensao": null,
+   "meses_no_ano": 12,
+   "despesa_mensal": 783156.16,
+   "valor_empenhado": 1516940.26,
+   "saldo_colado_planilha": 1516940.26,
+   "meses_empenhados": 1.901137865,
+   "meses_liquidados": 0.0,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339037",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "05c272dc-5263-4f7e-bd50-8ecfdf46d8db",
+   "ne_curta": "2026NE000425",
+   "contrato_numero": "11/2026",
+   "fornecedor": "Sercoserv Serviços Terceirizados LTDA ",
+   "processo_empenho": "030744/2025-58",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2027-07-29T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": 8,
+   "data_suspensao": null,
+   "meses_no_ano": 12,
+   "despesa_mensal": 792141.84,
+   "valor_empenhado": 792141.84,
+   "saldo_colado_planilha": 792141.84,
+   "meses_empenhados": 0.9756118781,
+   "meses_liquidados": 0.0,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339037",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "1d3cf190-2c37-40e2-9ec9-7e217d30273a",
+   "ne_curta": "2026NE000094",
+   "contrato_numero": "29/2024",
+   "fornecedor": "Brascon Gestão Ambiental Ltda",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2026-08-23T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 20258.85,
+   "valor_empenhado": 121553.1,
+   "saldo_colado_planilha": 39221.85,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 4.063964638,
+   "itens": [
+    {
+     "numero": 2,
+     "percentual": 87.3633
+    },
+    {
+     "numero": 1,
+     "percentual": 12.6367
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "20a17bd5-98d1-4571-a4cf-a97f8dc86f3d",
+   "ne_curta": "2026NE000115",
+   "contrato_numero": "23/2024",
+   "fornecedor": "Lavebrás Gestão de Texteis S/A",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2027-06-20T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 7859.041667,
+   "valor_empenhado": 47154.25,
+   "saldo_colado_planilha": 7057.53,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 5.101985929,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "HVU",
+   "acao_cod": "20RK",
+   "ptres": "230398",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "157978",
+   "pi_cod": "M20RKG71SCN"
+  },
+  {
+   "id": "20ccb805-1469-42b9-9fdd-9aa7daa74410",
+   "ne_curta": "2026NE000097",
+   "contrato_numero": "10/2025",
+   "fornecedor": "Serval Serviços e Limpeza Ltda (agrárias)",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2027-05-07T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 301810.32,
+   "valor_empenhado": 1810861.92,
+   "saldo_colado_planilha": 216529.02,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 5.282565884,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339037",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "48894788-26c2-44fe-b2c9-7c8799e11571",
+   "ne_curta": "2026NE000087",
+   "contrato_numero": "10/2022",
+   "fornecedor": "Claro S/A",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2026-07-31T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": 12,
+   "despesa_mensal": 2112.4,
+   "valor_empenhado": 12704.16,
+   "saldo_colado_planilha": 467.36,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 5.779272301,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "4ad004a1-784a-4a65-98ad-2ec42e805d34",
+   "ne_curta": "2026NE000116",
+   "contrato_numero": "23/2023",
+   "fornecedor": "Maxifrota Serviços de Manutenção de Frota Ltda",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2026-10-30T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 110906.66600000003,
+   "valor_empenhado": 665440.01003,
+   "saldo_colado_planilha": 104356.56,
+   "meses_empenhados": 5.999728141,
+   "meses_liquidados": 5.058830419,
+   "itens": [
+    {
+     "numero": 3,
+     "percentual": 72.09
+    },
+    {
+     "numero": 1,
+     "percentual": 24.64
+    },
+    {
+     "numero": 6,
+     "percentual": 1.87
+    },
+    {
+     "numero": 4,
+     "percentual": 0.53
+    },
+    {
+     "numero": 2,
+     "percentual": 0.45
+    },
+    {
+     "numero": 5,
+     "percentual": 0.42
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339030",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "4f16e5b5-2dbb-4db1-8224-4670bf93afed",
+   "ne_curta": "2026NE000099",
+   "contrato_numero": "14/2025",
+   "fornecedor": "Serval Serviços e Limpeza Ltda (limpeza)",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "VENCIDO",
+   "vigencia_fim": "2026-08-01T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": 12,
+   "despesa_mensal": 824630.41,
+   "valor_empenhado": 4947782.46,
+   "saldo_colado_planilha": 445078.5,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 5.460269116,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339037",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "5dc1a3e3-c45c-41ba-88de-fb305f4b7a08",
+   "ne_curta": "2026NE000176",
+   "contrato_numero": "CODAI",
+   "fornecedor": "Companhia Pernambucana de Saneamento",
+   "processo_empenho": "002117/2026-16",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": null,
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": 12,
+   "despesa_mensal": 2600.0,
+   "valor_empenhado": 15600.0,
+   "saldo_colado_planilha": 12032.07,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 1.372280769,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "CODAI",
+   "acao_cod": "20RL",
+   "ptres": "230386",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "151928",
+   "pi_cod": "L20RLP01SCN"
+  },
+  {
+   "id": "5fd1b7ad-6fa1-4189-9372-0d5abe83339f",
+   "ne_curta": "2026NE000003",
+   "contrato_numero": "02/2026",
+   "fornecedor": "SOLL - Serviços, Obras e Locações Ltda",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2027-01-21T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 351687.19,
+   "valor_empenhado": 2110123.14,
+   "saldo_colado_planilha": 113283.94,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 5.677884372,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339037",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "64a0d3fa-3acc-4f0f-b805-0548fa9c8521",
+   "ne_curta": "2026NE000082",
+   "contrato_numero": "14/2020",
+   "fornecedor": "Prime Consultoria e Assessoria Empresarial Ltda",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "VENCIDO",
+   "vigencia_fim": "2026-07-09T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 96842.82,
+   "valor_empenhado": 581056.92,
+   "saldo_colado_planilha": 140160.23,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 4.552703959,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "68394dc3-ce97-453b-8ba3-a32ff9a9445e",
+   "ne_curta": "2026NE000130",
+   "contrato_numero": "07/2026",
+   "fornecedor": "TARGET ENGENHARIA E CONSULTORIA LTDA",
+   "processo_empenho": "027455/2025-71",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2027-02-20T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": null,
+   "valor_empenhado": 9222.0,
+   "saldo_colado_planilha": 0.0,
+   "meses_empenhados": null,
+   "meses_liquidados": null,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SIB",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339040",
+   "ugr_cod": "157842",
+   "pi_cod": "M20RKG35SCN"
+  },
+  {
+   "id": "6c2034da-5acf-4217-ac67-a4c3e426b6fd",
+   "ne_curta": "2026NE000131",
+   "contrato_numero": "25/2025",
+   "fornecedor": "DSA - Consultoria Ltda",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2026-11-18T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 458.3333333,
+   "valor_empenhado": 2750.0,
+   "saldo_colado_planilha": 1450.0,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 2.836363636,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "PROPLAD",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "157742",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "7a2209ca-3013-4b65-88b7-8b61d92e272e",
+   "ne_curta": "2026NE000148",
+   "contrato_numero": "05/2026",
+   "fornecedor": "Oi S/A - Em Recuperação Judicial",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2027-02-20T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 5699.0,
+   "valor_empenhado": 22209.557200000003,
+   "saldo_colado_planilha": 19687.42,
+   "meses_empenhados": 3.897648414,
+   "meses_liquidados": 0.4433114491,
+   "itens": [
+    {
+     "numero": 5,
+     "percentual": 42.04
+    },
+    {
+     "numero": 2,
+     "percentual": 12.63
+    },
+    {
+     "numero": 4,
+     "percentual": 1.68
+    },
+    {
+     "numero": 1,
+     "percentual": 1.4
+    },
+    {
+     "numero": 3,
+     "percentual": 0.19
+    },
+    {
+     "numero": 6,
+     "percentual": 42.04
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "7f8c3704-8ad1-418f-b11b-a65bd7db35a1",
+   "ne_curta": "2026NE000089",
+   "contrato_numero": "03/2023",
+   "fornecedor": "Elétrica Montagens & Manutenção Ltda",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2027-02-16T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 45250.13,
+   "valor_empenhado": 271500.78,
+   "saldo_colado_planilha": 92304.46,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 3.960128291,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339037",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "83535af0-f138-41d2-90c9-06df5c3fc8c6",
+   "ne_curta": "2026NE000185",
+   "contrato_numero": "SEDE",
+   "fornecedor": "Companhia Energética de Pernambuco - Tributos",
+   "processo_empenho": "000214/2026-66",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": null,
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": 12,
+   "despesa_mensal": 2500.0,
+   "valor_empenhado": 15000.0,
+   "saldo_colado_planilha": 2247.32,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 5.101072,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339047",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01TXN"
+  },
+  {
+   "id": "848f6c5d-4dae-40f8-8d11-6664c6e6e5e2",
+   "ne_curta": "2026NE000186",
+   "contrato_numero": "CODAI",
+   "fornecedor": "Companhia Energética de Pernambuco - Tributos",
+   "processo_empenho": "000214/2026-66",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": null,
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": 12,
+   "despesa_mensal": 500.0,
+   "valor_empenhado": 3000.0,
+   "saldo_colado_planilha": 290.26,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 5.41948,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "CODAI",
+   "acao_cod": "20RL",
+   "ptres": "230386",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339047",
+   "ugr_cod": "151928",
+   "pi_cod": "L20RLP01TXN"
+  },
+  {
+   "id": "904ffbd2-e1e5-45bd-9b47-bc50727f689a",
+   "ne_curta": "2026NE000092",
+   "contrato_numero": "22/2023",
+   "fornecedor": "Carvalho e Suassuna Ltda",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2026-10-03T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 7008.66,
+   "valor_empenhado": 42051.96,
+   "saldo_colado_planilha": 17658.16,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 3.480522668,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "PRPG",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "157658",
+   "pi_cod": "M20RKO94SCN"
+  },
+  {
+   "id": "9a3443ed-9e39-4217-8acf-68f05fba0269",
+   "ne_curta": "2026NE000100",
+   "contrato_numero": "23/2025",
+   "fornecedor": "Associação Paranaense de Cultura - APC",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2026-12-03T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 2560.24,
+   "valor_empenhado": 15361.439999999999,
+   "saldo_colado_planilha": 0.0,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 6.0,
+   "itens": [
+    {
+     "numero": 3,
+     "percentual": 51.1765
+    },
+    {
+     "numero": 2,
+     "percentual": 48.8235
+    }
+   ],
+   "unidade_cod": "SIB",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339040",
+   "ugr_cod": "157842",
+   "pi_cod": "M20RKG35SCN"
+  },
+  {
+   "id": "9bcc6ef7-c840-450d-be54-fb23135ab3f4",
+   "ne_curta": "2026NE000183",
+   "contrato_numero": "SEDE",
+   "fornecedor": "Companhia Energética de Pernambuco - Principal",
+   "processo_empenho": "000214/2026-66",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": null,
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": 12,
+   "despesa_mensal": 750000.0,
+   "valor_empenhado": 4500000.0,
+   "saldo_colado_planilha": 1007981.13,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 4.65602516,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "a6a4baf8-b052-4819-a9f9-859091a88f23",
+   "ne_curta": "2026NE000098",
+   "contrato_numero": "12/2025",
+   "fornecedor": "Nobre Sabor Refeições Ltda",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "VENCIDO",
+   "vigencia_fim": "2026-08-01T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 88062.69,
+   "valor_empenhado": 528376.14,
+   "saldo_colado_planilha": 146289.24,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 4.338805685,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "PRPG",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "157658",
+   "pi_cod": "M20RKO94SCN"
+  },
+  {
+   "id": "a86c469b-34cd-45c2-9206-850aeb3a0a25",
+   "ne_curta": "2026NE000091",
+   "contrato_numero": "08/2023",
+   "fornecedor": "Empresa Brasileira de Correios e Telégrafos",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2026-09-11T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 750.0,
+   "valor_empenhado": 4500.0,
+   "saldo_colado_planilha": 1796.52,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 3.60464,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "PROPLAD",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "157742",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "bf51b871-bea8-4b8b-9932-b2c6db1f4868",
+   "ne_curta": "2026NE000095",
+   "contrato_numero": "35/2024",
+   "fornecedor": "Serval Serviços e Limpeza Ltda (apoio adm.)",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "VENCIDO",
+   "vigencia_fim": "2026-06-16T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": 12,
+   "despesa_mensal": 640882.48,
+   "valor_empenhado": 3845294.88,
+   "saldo_colado_planilha": 2088333.56,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 2.741471915,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339037",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "c5331def-bd66-464e-a191-efcccf9b7620",
+   "ne_curta": "2026NE000084",
+   "contrato_numero": "29/2021",
+   "fornecedor": "Tekis Tecnologias Avançadas Ltda",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2026-10-17T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 7776.28,
+   "valor_empenhado": 46657.68,
+   "saldo_colado_planilha": 3.78,
+   "meses_empenhados": 5.999995591,
+   "meses_liquidados": 5.999509498,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 70.0
+    },
+    {
+     "numero": 2,
+     "percentual": 30.0
+    }
+   ],
+   "unidade_cod": "PRPG",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339040",
+   "ugr_cod": "157658",
+   "pi_cod": "M20RKO35SCN"
+  },
+  {
+   "id": "c68fa0db-6a67-4467-b8f1-d4b34e1d0576",
+   "ne_curta": "2026NE000083",
+   "contrato_numero": "28/2021",
+   "fornecedor": "Sim Gestão Ambiental Serviços Ltda",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2026-09-30T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 5540.096,
+   "valor_empenhado": 33240.58,
+   "saldo_colado_planilha": 1008.22,
+   "meses_empenhados": 6.000000722,
+   "meses_liquidados": 5.818014706,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "c7a4085f-bf07-42e4-b3e0-24567a0b64ff",
+   "ne_curta": null,
+   "contrato_numero": "05/2025",
+   "fornecedor": "Ecos Turismo Ltda",
+   "processo_empenho": "000220/2026-13",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2027-01-17T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 0.0,
+   "valor_empenhado": 0.0,
+   "saldo_colado_planilha": null,
+   "meses_empenhados": null,
+   "meses_liquidados": null,
+   "itens": [
+    {
+     "numero": 3,
+     "percentual": 50.0
+    },
+    {
+     "numero": 4,
+     "percentual": 50.0
+    }
+   ],
+   "unidade_cod": "PROPLAD",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339033",
+   "ugr_cod": "157742",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "c822a572-08c0-425e-9cf5-edaa17245f8a",
+   "ne_curta": "2026NE000088",
+   "contrato_numero": "14/2022",
+   "fornecedor": "Inteligência Segurança Privada Ltda",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2026-09-01T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 927298.47,
+   "valor_empenhado": 5563790.82,
+   "saldo_colado_planilha": 18961.96,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 5.979551395,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339037",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "caf41269-e7a8-4462-a11c-2a7327a904e3",
+   "ne_curta": "2026NE000007",
+   "contrato_numero": "05/2025",
+   "fornecedor": "Ecos Turismo Ltda",
+   "processo_empenho": "000220/2026-13",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2027-01-17T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 26047.8,
+   "valor_empenhado": 178144.89,
+   "saldo_colado_planilha": 64115.65,
+   "meses_empenhados": 6.839153019,
+   "meses_liquidados": 4.377691782,
+   "itens": [
+    {
+     "numero": 2,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "PROPLAD",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339033",
+   "ugr_cod": "157742",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "d3c4b63f-f228-4000-8710-bcb0d21cd9c3",
+   "ne_curta": "2026NE000096",
+   "contrato_numero": "36/2024",
+   "fornecedor": "Serviço Federal de Processamento de Dados",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2029-10-16T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 167.8125,
+   "valor_empenhado": 1006.87,
+   "saldo_colado_planilha": 209.83,
+   "meses_empenhados": 5.999970205,
+   "meses_liquidados": 4.749586592,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 78.3613
+    },
+    {
+     "numero": 2,
+     "percentual": 21.6387
+    }
+   ],
+   "unidade_cod": "PROPLAD",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339040",
+   "ugr_cod": "157742",
+   "pi_cod": "M20RKG35SCN"
+  },
+  {
+   "id": "d6d30b51-aeec-4f08-8633-442b22db93a0",
+   "ne_curta": "2026NE000085",
+   "contrato_numero": "34/2021",
+   "fornecedor": "MBM Seguradora SA",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2026-12-21T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 612.5,
+   "valor_empenhado": 4287.5,
+   "saldo_colado_planilha": 351.4,
+   "meses_empenhados": 7.0,
+   "meses_liquidados": 6.426285714,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "PREG",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "157684",
+   "pi_cod": "M20RKG19SCN"
+  },
+  {
+   "id": "d8e8cf19-44a1-4a9f-98a6-fc59152e869a",
+   "ne_curta": null,
+   "contrato_numero": "07/2022",
+   "fornecedor": "Oi S/A - Em Recuperação Judicial",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "VENCIDO",
+   "vigencia_fim": "2026-04-29T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 145.34666667,
+   "valor_empenhado": 581.3866667,
+   "saldo_colado_planilha": null,
+   "meses_empenhados": 4.0,
+   "meses_liquidados": 4.0,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 53.1603
+    },
+    {
+     "numero": 2,
+     "percentual": 46.8397
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "e1dc2fa3-0e07-439a-8ca5-8d225665a202",
+   "ne_curta": "2026NE000167",
+   "contrato_numero": "42/2024",
+   "fornecedor": "Rede Nacional de Ensino e Pesquisa - RNP",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2027-12-31T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": null,
+   "valor_empenhado": 12600.0,
+   "saldo_colado_planilha": 12600.0,
+   "meses_empenhados": null,
+   "meses_liquidados": null,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "STD",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339040",
+   "ugr_cod": "157883",
+   "pi_cod": "M20RKG35SCN"
+  },
+  {
+   "id": "e36d2886-466f-407c-b146-3915ed083b06",
+   "ne_curta": "2026NE000184",
+   "contrato_numero": "CODAI",
+   "fornecedor": "Companhia Energética de Pernambuco - Principal",
+   "processo_empenho": "000214/2026-66",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": null,
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": 12,
+   "despesa_mensal": 18000.0,
+   "valor_empenhado": 108000.0,
+   "saldo_colado_planilha": 20107.03,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 4.882942778,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "CODAI",
+   "acao_cod": "20RL",
+   "ptres": "230386",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "151928",
+   "pi_cod": "L20RLP01SCN"
+  },
+  {
+   "id": "e8fbace4-8463-4652-bf1c-b1186d703eae",
+   "ne_curta": "2026NE000081",
+   "contrato_numero": "21/2017",
+   "fornecedor": "Rio Ave Imóveis Ltda",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2027-05-28T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 348940.08,
+   "valor_empenhado": 2093640.48,
+   "saldo_colado_planilha": 600.77,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 5.9982783,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "UACSA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "158647",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "ea15524b-4387-414e-9f97-5272e9783912",
+   "ne_curta": "2026NE000090",
+   "contrato_numero": "03/2023",
+   "fornecedor": "Elétrica Montagens & Manutenção Ltda",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2027-02-16T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 24185.53,
+   "valor_empenhado": 145113.18,
+   "saldo_colado_planilha": 123167.52,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 0.9073880126,
+   "itens": [
+    {
+     "numero": 2,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "f2019b1f-2f5c-451d-a44b-5e8e51a696a3",
+   "ne_curta": "2026NE000178",
+   "contrato_numero": "08/2026",
+   "fornecedor": "SOLUCOES  SERVICOS DE LOCACAO DE MAQUINAS E EQUIPAMENTO",
+   "processo_empenho": "19387/2024-96",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2027-03-11T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 9610.0,
+   "valor_empenhado": 0.0,
+   "saldo_colado_planilha": 9610.0,
+   "meses_empenhados": 0.0,
+   "meses_liquidados": -1.873294347,
+   "itens": [
+    {
+     "numero": 2,
+     "percentual": 53.3819
+    },
+    {
+     "numero": 1,
+     "percentual": 36.4204
+    },
+    {
+     "numero": 4,
+     "percentual": 6.0354
+    },
+    {
+     "numero": 3,
+     "percentual": 4.1623
+    }
+   ],
+   "unidade_cod": "EDITORA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339040",
+   "ugr_cod": "157908",
+   "pi_cod": "M20RKG35SCN"
+  },
+  {
+   "id": "f8af7465-95b1-4075-a248-bf28c00fd843",
+   "ne_curta": null,
+   "contrato_numero": "20/2019",
+   "fornecedor": "Luiz Barbosa Maciel (aguardando invenariante)",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2026-12-05T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 38794.38,
+   "valor_empenhado": 0.0,
+   "saldo_colado_planilha": null,
+   "meses_empenhados": null,
+   "meses_liquidados": null,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "UABJ",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339036",
+   "ugr_cod": "156789",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "f9bdbbef-9f8a-41ff-b08f-3910148704ef",
+   "ne_curta": "2026NE000175",
+   "contrato_numero": "SEDE",
+   "fornecedor": "Companhia Pernambucana de Saneamento",
+   "processo_empenho": "002117/2026-16",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": null,
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": 12,
+   "despesa_mensal": 45000.0,
+   "valor_empenhado": 270000.0,
+   "saldo_colado_planilha": 11048.64,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 5.754474667,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SINFRA",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339039",
+   "ugr_cod": "157909",
+   "pi_cod": "M20RKG01SCN"
+  },
+  {
+   "id": "fd716559-3374-4d5d-a14b-843bb5946a52",
+   "ne_curta": "2026NE000114",
+   "contrato_numero": "22/2021",
+   "fornecedor": "Digital Tecnologia & Telecomunicação Ltda",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2026-08-24T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 1250.0,
+   "valor_empenhado": 7500.0,
+   "saldo_colado_planilha": 208.34,
+   "meses_empenhados": 6.0,
+   "meses_liquidados": 5.833328,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "UABJ",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339040",
+   "ugr_cod": "156789",
+   "pi_cod": "M20RKG35SCN"
+  },
+  {
+   "id": "fd9cf374-ecdd-410f-8a89-ae951291ec8c",
+   "ne_curta": null,
+   "contrato_numero": "19/2025",
+   "fornecedor": "Minha Biblioteca Ltda",
+   "processo_empenho": "001370/2026-44",
+   "status_contrato": "ATIVO",
+   "vigencia_fim": "2026-09-28T00:00:00",
+   "inicio_execucao_data": null,
+   "inicio_execucao_mes": null,
+   "data_suspensao": null,
+   "meses_no_ano": null,
+   "despesa_mensal": 31200.0,
+   "valor_empenhado": 0.0,
+   "saldo_colado_planilha": null,
+   "meses_empenhados": null,
+   "meses_liquidados": null,
+   "itens": [
+    {
+     "numero": 1,
+     "percentual": 100.0
+    }
+   ],
+   "unidade_cod": "SIB",
+   "acao_cod": "20RK",
+   "ptres": "230390",
+   "fonte_cod": "1000",
+   "natureza_despesa_cod": "339040",
+   "ugr_cod": "157842",
+   "pi_cod": "M20RKG35SCN"
+  }
+ ],
+ "esperado": {
+  "necessidade_por_ne": {
+   "2026NE000350": [
+    3193786.147569893,
+    4.07809618399719,
+    6.015053763440861
+   ],
+   "2026NE000425": [
+    3168567.36,
+    4.0,
+    5.0
+   ],
+   "2026NE000094": [
+    35289.609677419336,
+    1.741935483870967,
+    7.741935483870968
+   ],
+   "2026NE000115": [
+    47154.25000400001,
+    6.000000000254484,
+    null
+   ],
+   "2026NE000097": [
+    1810861.92,
+    6.0,
+    null
+   ],
+   "2026NE000087": [
+    2082.6400000000012,
+    0.9859117591365276,
+    7.0
+   ],
+   "2026NE000116": [
+    440049.0155829036,
+    3.967741808981107,
+    9.967741935483872
+   ],
+   "2026NE000099": [
+    851231.390967742,
+    1.032258064516129,
+    7.032258064516129
+   ],
+   "2026NE000176": [
+    15600.0,
+    6.0,
+    null
+   ],
+   "2026NE000003": [
+    2110123.14,
+    6.0,
+    null
+   ],
+   "2026NE000082": [
+    28115.657419354815,
+    0.29032258064516103,
+    6.290322580645161
+   ],
+   "2026NE000130": [
+    0.0,
+    12.0,
+    null
+   ],
+   "2026NE000131": [
+    2108.33333298,
+    4.599999999563636,
+    10.6
+   ],
+   "2026NE000148": [
+    46178.4428,
+    8.102902754869275,
+    null
+   ],
+   "2026NE000089": [
+    271500.77999999997,
+    5.999999999999999,
+    null
+   ],
+   "2026NE000185": [
+    15000.0,
+    6.0,
+    null
+   ],
+   "2026NE000186": [
+    3000.0,
+    6.0,
+    null
+   ],
+   "2026NE000092": [
+    21704.237419354842,
+    3.096774193548388,
+    9.096774193548388
+   ],
+   "2026NE000100": [
+    13048.965161290324,
+    5.096774193548388,
+    11.096774193548388
+   ],
+   "2026NE000183": [
+    4500000.0,
+    6.0,
+    null
+   ],
+   "2026NE000098": [
+    90903.42193548387,
+    1.032258064516129,
+    7.032258064516129
+   ],
+   "2026NE000091": [
+    1775.0000000000005,
+    2.366666666666667,
+    8.366666666666667
+   ],
+   "2026NE000095": [
+    0.0,
+    0.0,
+    5.533333333333333
+   ],
+   "2026NE000084": [
+    27593.251612903226,
+    3.548387096774194,
+    9.548387096774194
+   ],
+   "2026NE000083": [
+    16620.283999999992,
+    2.9999992779908498,
+    9.0
+   ],
+   "2026NE000088": [
+    1885506.888999999,
+    2.0333333333333323,
+    8.033333333333333
+   ],
+   "2026NE000007": [
+    134428.70999999996,
+    5.160846981318959,
+    null
+   ],
+   "2026NE000096": [
+    1006.8799999999999,
+    6.000029795158286,
+    null
+   ],
+   "2026NE000085": [
+    2864.9193548387098,
+    4.67741935483871,
+    11.67741935483871
+   ],
+   "2026NE000167": [
+    0.0,
+    12.0,
+    null
+   ],
+   "2026NE000184": [
+    108000.0,
+    6.0,
+    null
+   ],
+   "2026NE000081": [
+    2093640.48,
+    6.0,
+    null
+   ],
+   "2026NE000090": [
+    145113.18,
+    6.0,
+    null
+   ],
+   "2026NE000178": [
+    115320.0,
+    12.0,
+    null
+   ],
+   "2026NE000175": [
+    270000.0,
+    6.0,
+    null
+   ],
+   "2026NE000114": [
+    2217.741935483871,
+    1.774193548387097,
+    7.774193548387097
+   ]
+  },
+  "sem_ne": {
+   "05/2025#0": [
+    0.0,
+    12.0,
+    null
+   ],
+   "07/2022#1": [
+    0.0,
+    0.0,
+    3.966666666666667
+   ],
+   "20/2019#2": [
+    432995.33806451614,
+    11.161290322580646,
+    11.161290322580646
+   ],
+   "19/2025#3": [
+    278720.0,
+    8.933333333333334,
+    8.933333333333334
+   ]
+  },
+  "projecao": {
+   "2026NE000183": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "2026NE000350": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    24686.030000000028,
+    783156.16,
+    429472.7329032257
+   ],
+   "2026NE000425": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    396070.92,
+    792141.8400000001,
+    792141.8400000001
+   ],
+   "2026NE000003": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "2026NE000081": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "2026NE000088": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "2026NE000097": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "2026NE000099": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "2026NE000116": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    null,
+    null
+   ],
+   "2026NE000089": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "2026NE000175": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "2026NE000090": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "2026NE000007": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "2026NE000178": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    9610.0,
+    9610.0,
+    9610.0
+   ],
+   "2026NE000184": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "2026NE000098": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "2026NE000115": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    1.0000003385357559e-06
+   ],
+   "2026NE000148": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    293.22139999999854,
+    5699.0
+   ],
+   "2026NE000094": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "2026NE000082": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "2026NE000084": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    null,
+    null
+   ],
+   "2026NE000092": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    null,
+    null
+   ],
+   "2026NE000083": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "2026NE000176": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "2026NE000185": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "2026NE000100": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "2026NE000186": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "2026NE000085": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "2026NE000114": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "2026NE000131": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    null
+   ],
+   "2026NE000087": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "2026NE000091": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "2026NE000096": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0024999999999977263
+   ],
+   "2026NE000095": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "2026NE000167": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "2026NE000130": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "20/2019": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    38794.38,
+    38794.38,
+    6257.15806451613
+   ],
+   "19/2025": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "05/2025": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    0.0,
+    0.0,
+    0.0
+   ],
+   "07/2022": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  "despesa_anual": {
+   "03902270-6b7d-4089-ae27-fbcd7354bb49": 9397873.92,
+   "05c272dc-5263-4f7e-bd50-8ecfdf46d8db": 9505702.08,
+   "1d3cf190-2c37-40e2-9ec9-7e217d30273a": 243106.19999999998,
+   "20a17bd5-98d1-4571-a4cf-a97f8dc86f3d": 94308.500004,
+   "20ccb805-1469-42b9-9fdd-9aa7daa74410": 3621723.84,
+   "48894788-26c2-44fe-b2c9-7c8799e11571": 25348.800000000003,
+   "4ad004a1-784a-4a65-98ad-2ec42e805d34": 1330879.9920000003,
+   "4f16e5b5-2dbb-4db1-8224-4670bf93afed": 9895564.92,
+   "5dc1a3e3-c45c-41ba-88de-fb305f4b7a08": 31200.0,
+   "5fd1b7ad-6fa1-4189-9372-0d5abe83339f": 4220246.28,
+   "64a0d3fa-3acc-4f0f-b805-0548fa9c8521": 1162113.84,
+   "68394dc3-ce97-453b-8ba3-a32ff9a9445e": null,
+   "6c2034da-5acf-4217-ac67-a4c3e426b6fd": 5499.9999996,
+   "7a2209ca-3013-4b65-88b7-8b61d92e272e": 68388.0,
+   "7f8c3704-8ad1-418f-b11b-a65bd7db35a1": 543001.5599999999,
+   "83535af0-f138-41d2-90c9-06df5c3fc8c6": 30000.0,
+   "848f6c5d-4dae-40f8-8d11-6664c6e6e5e2": 6000.0,
+   "904ffbd2-e1e5-45bd-9b47-bc50727f689a": 84103.92,
+   "9a3443ed-9e39-4217-8acf-68f05fba0269": 30722.879999999997,
+   "9bcc6ef7-c840-450d-be54-fb23135ab3f4": 9000000.0,
+   "a6a4baf8-b052-4819-a9f9-859091a88f23": 1056752.28,
+   "a86c469b-34cd-45c2-9206-850aeb3a0a25": 9000.0,
+   "bf51b871-bea8-4b8b-9932-b2c6db1f4868": 7690589.76,
+   "c5331def-bd66-464e-a191-efcccf9b7620": 93315.36,
+   "c68fa0db-6a67-4467-b8f1-d4b34e1d0576": 66481.152,
+   "c7a4085f-bf07-42e4-b3e0-24567a0b64ff": 0.0,
+   "c822a572-08c0-425e-9cf5-edaa17245f8a": 11127581.64,
+   "caf41269-e7a8-4462-a11c-2a7327a904e3": 312573.6,
+   "d3c4b63f-f228-4000-8710-bcb0d21cd9c3": 2013.75,
+   "d6d30b51-aeec-4f08-8633-442b22db93a0": 7350.0,
+   "d8e8cf19-44a1-4a9f-98a6-fc59152e869a": 1744.1600000399999,
+   "e1dc2fa3-0e07-439a-8ca5-8d225665a202": null,
+   "e36d2886-466f-407c-b146-3915ed083b06": 216000.0,
+   "e8fbace4-8463-4652-bf1c-b1186d703eae": 4187280.96,
+   "ea15524b-4387-414e-9f97-5272e9783912": 290226.36,
+   "f2019b1f-2f5c-451d-a44b-5e8e51a696a3": 115320.0,
+   "f8af7465-95b1-4075-a248-bf28c00fd843": 465532.55999999994,
+   "f9bdbbef-9f8a-41ff-b08f-3910148704ef": 540000.0,
+   "fd716559-3374-4d5d-a14b-843bb5946a52": 15000.0,
+   "fd9cf374-ecdd-410f-8a89-ae951291ec8c": 374400.0
+  },
+  "reforco": {
+   "001370/2026-44": [
+    [
+     "2026NE000094",
+     "Brascon Gestão Ambiental Ltda — Item 2",
+     17698.799902049996,
+     1.741935483870967
+    ],
+    [
+     "2026NE000094",
+     "Brascon Gestão Ambiental Ltda — Item 1",
+     2560.05009795,
+     1.741935483870968
+    ],
+    [
+     "2026NE000115",
+     "Lavebrás Gestão de Texteis S/A",
+     7859.041667,
+     0.8980140710000004
+    ],
+    [
+     "2026NE000097",
+     "Serval Serviços e Limpeza Ltda (agrárias)",
+     301810.32,
+     0.7174341159999997
+    ],
+    [
+     "2026NE000087",
+     "Claro S/A",
+     2112.4,
+     0.22072769900000022
+    ],
+    [
+     "2026NE000116",
+     "Maxifrota Serviços de Manutenção de Frota Ltda — Item 3",
+     79952.61551940003,
+     0.9408977219999999
+    ],
+    [
+     "2026NE000116",
+     "Maxifrota Serviços de Manutenção de Frota Ltda — Item 1",
+     27327.402502400008,
+     0.9408977219999999
+    ],
+    [
+     "2026NE000116",
+     "Maxifrota Serviços de Manutenção de Frota Ltda — Item 6",
+     2073.9546542000007,
+     0.9408977219999999
+    ],
+    [
+     "2026NE000116",
+     "Maxifrota Serviços de Manutenção de Frota Ltda — Item 4",
+     587.8053298000002,
+     0.9408977219999999
+    ],
+    [
+     "2026NE000116",
+     "Maxifrota Serviços de Manutenção de Frota Ltda — Item 2",
+     499.07999700000016,
+     0.9408977219999999
+    ],
+    [
+     "2026NE000116",
+     "Maxifrota Serviços de Manutenção de Frota Ltda — Item 5",
+     465.8079972000001,
+     0.9408977219999999
+    ],
+    [
+     "2026NE000099",
+     "Serval Serviços e Limpeza Ltda (limpeza)",
+     824630.41,
+     0.5397308839999999
+    ],
+    [
+     "2026NE000003",
+     "SOLL - Serviços, Obras e Locações Ltda",
+     351687.19,
+     0.3221156279999997
+    ],
+    [
+     "2026NE000082",
+     "Prime Consultoria e Assessoria Empresarial Ltda",
+     96842.82,
+     0.29032258064516103
+    ],
+    [
+     "2026NE000131",
+     "DSA - Consultoria Ltda",
+     458.3333333,
+     3.163636364
+    ],
+    [
+     "2026NE000148",
+     "Oi S/A - Em Recuperação Judicial — Item 5",
+     2395.8596,
+     3.4543369649
+    ],
+    [
+     "2026NE000148",
+     "Oi S/A - Em Recuperação Judicial — Item 2",
+     719.7837000000001,
+     3.4543369649
+    ],
+    [
+     "2026NE000148",
+     "Oi S/A - Em Recuperação Judicial — Item 4",
+     95.7432,
+     3.4543369649
+    ],
+    [
+     "2026NE000148",
+     "Oi S/A - Em Recuperação Judicial — Item 1",
+     79.786,
+     3.4543369649
+    ],
+    [
+     "2026NE000148",
+     "Oi S/A - Em Recuperação Judicial — Item 3",
+     10.8281,
+     3.4543369649
+    ],
+    [
+     "2026NE000148",
+     "Oi S/A - Em Recuperação Judicial — Item 6",
+     2395.8596,
+     3.4543369649
+    ],
+    [
+     "2026NE000089",
+     "Elétrica Montagens & Manutenção Ltda",
+     45250.13,
+     2.039871709
+    ],
+    [
+     "2026NE000092",
+     "Carvalho e Suassuna Ltda",
+     7008.66,
+     2.519477332
+    ],
+    [
+     "2026NE000100",
+     "Associação Paranaense de Cultura - APC — Item 3",
+     1310.2412235999998,
+     0.0
+    ],
+    [
+     "2026NE000100",
+     "Associação Paranaense de Cultura - APC — Item 2",
+     1249.9987764,
+     0.0
+    ],
+    [
+     "2026NE000098",
+     "Nobre Sabor Refeições Ltda",
+     88062.69,
+     1.032258064516129
+    ],
+    [
+     "2026NE000091",
+     "Empresa Brasileira de Correios e Telégrafos",
+     750.0,
+     2.366666666666667
+    ],
+    [
+     "2026NE000095",
+     "Serval Serviços e Limpeza Ltda (apoio adm.)",
+     640882.48,
+     0.0
+    ],
+    [
+     "2026NE000084",
+     "Tekis Tecnologias Avançadas Ltda — Item 1",
+     5443.396,
+     0.0004860930000001318
+    ],
+    [
+     "2026NE000084",
+     "Tekis Tecnologias Avançadas Ltda — Item 2",
+     2332.884,
+     0.0004860930000001318
+    ],
+    [
+     "2026NE000083",
+     "Sim Gestão Ambiental Serviços Ltda",
+     5540.096,
+     0.18198601600000064
+    ],
+    [
+     "2026NE000088",
+     "Inteligência Segurança Privada Ltda",
+     927298.47,
+     0.02044860500000034
+    ],
+    [
+     "2026NE000096",
+     "Serviço Federal de Processamento de Dados — Item 1",
+     131.5000565625,
+     1.2503836130000003
+    ],
+    [
+     "2026NE000096",
+     "Serviço Federal de Processamento de Dados — Item 2",
+     36.3124434375,
+     1.2503836130000003
+    ],
+    [
+     "2026NE000085",
+     "MBM Seguradora SA",
+     612.5,
+     0.5737142860000004
+    ],
+    [
+     "2026NE000167",
+     "Rede Nacional de Ensino e Pesquisa - RNP",
+     null,
+     null
+    ],
+    [
+     "2026NE000081",
+     "Rio Ave Imóveis Ltda",
+     348940.08,
+     0.0017217000000000482
+    ],
+    [
+     "2026NE000090",
+     "Elétrica Montagens & Manutenção Ltda",
+     24185.53,
+     5.0926119874
+    ],
+    [
+     "2026NE000114",
+     "Digital Tecnologia & Telecomunicação Ltda",
+     1250.0,
+     0.16667200000000015
+    ]
+   ],
+   "000214/2026-66": [
+    [
+     "2026NE000185",
+     "Companhia Energética de Pernambuco - Tributos",
+     2500.0,
+     0.8989279999999997
+    ],
+    [
+     "2026NE000186",
+     "Companhia Energética de Pernambuco - Tributos",
+     500.0,
+     0.5805199999999999
+    ],
+    [
+     "2026NE000183",
+     "Companhia Energética de Pernambuco - Principal",
+     750000.0,
+     1.3439748399999996
+    ],
+    [
+     "2026NE000184",
+     "Companhia Energética de Pernambuco - Principal",
+     18000.0,
+     1.1170572219999997
+    ]
+   ],
+   "002117/2026-16": [
+    [
+     "2026NE000176",
+     "Companhia Pernambucana de Saneamento",
+     2600.0,
+     4.627719231
+    ],
+    [
+     "2026NE000175",
+     "Companhia Pernambucana de Saneamento",
+     45000.0,
+     0.2455253329999998
+    ]
+   ],
+   "013683/2026-45": [
+    [
+     "2026NE000350",
+     "Serval Serviços e Limpeza Ltda (apoio adm.) - Emergencial",
+     783156.16,
+     2.5297090872229964
+    ]
+   ],
+   "030744/2025-58": [
+    [
+     "2026NE000425",
+     "Sercoserv Serviços Terceirizados LTDA ",
+     792141.84,
+     2.0
+    ]
+   ],
+   "027455/2025-71": [
+    [
+     "2026NE000130",
+     "TARGET ENGENHARIA E CONSULTORIA LTDA",
+     null,
+     null
+    ]
+   ],
+   "000220/2026-13": [
+    [
+     "2026NE000007",
+     "Ecos Turismo Ltda",
+     26047.8,
+     2.461461237
+    ]
+   ],
+   "19387/2024-96": [
+    [
+     "2026NE000178",
+     "SOLUCOES  SERVICOS DE LOCACAO DE MAQUINAS E EQUIPAMENTO — Item 2",
+     5130.00059,
+     1.873294347
+    ],
+    [
+     "2026NE000178",
+     "SOLUCOES  SERVICOS DE LOCACAO DE MAQUINAS E EQUIPAMENTO — Item 1",
+     3500.00044,
+     1.873294347
+    ],
+    [
+     "2026NE000178",
+     "SOLUCOES  SERVICOS DE LOCACAO DE MAQUINAS E EQUIPAMENTO — Item 4",
+     580.00194,
+     1.873294347
+    ],
+    [
+     "2026NE000178",
+     "SOLUCOES  SERVICOS DE LOCACAO DE MAQUINAS E EQUIPAMENTO — Item 3",
+     399.99703,
+     1.873294347
+    ]
+   ]
+  }
+ }
+}

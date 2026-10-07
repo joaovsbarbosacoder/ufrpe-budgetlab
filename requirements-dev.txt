@@ -1,0 +1,6 @@
+# Ferramentas de desenvolvimento (não precisam estar no computador que só usa o sistema).
+# Instalar com: python -m pip install -r requirements-dev.txt
+-r requirements.txt
+pytest==9.1.1
+pytest-xdist==3.8.0
+pytest-testmon==2.2.0

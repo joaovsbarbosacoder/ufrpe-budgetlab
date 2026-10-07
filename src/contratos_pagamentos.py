@@ -63,6 +63,9 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.cache_bases import em_cache
+from src.leitura_excel import motor_excel
+
 MESES_ORDEM = [
     "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
     "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
@@ -280,6 +283,7 @@ def _ler_aba(workbook: pd.ExcelFile, mes: str, ano: int) -> pd.DataFrame | None:
     return df
 
 
+@em_cache
 def ler_pagamentos(caminho: str | Path, ano: int = 2026) -> pd.DataFrame:
     """Lê todas as abas "{Mês} - Planilha - {ano}" encontradas (meses futuros do exercício
     corrente legitimamente não existem ainda — não é erro) e consolida numa única tabela, uma
@@ -292,7 +296,7 @@ def ler_pagamentos(caminho: str | Path, ano: int = 2026) -> pd.DataFrame:
     # `with` fecha o handle do arquivo explicitamente — sem isso, o Windows mantém o arquivo
     # travado depois da leitura (percebido nos testes: um arquivo temporário não conseguia
     # ser apagado logo em seguida por "já estar sendo usado por outro processo").
-    with pd.ExcelFile(caminho) as workbook:
+    with pd.ExcelFile(caminho, engine=motor_excel()) as workbook:
         partes = [parte for mes in MESES_ORDEM if (parte := _ler_aba(workbook, mes, ano)) is not None]
     if not partes:
         raise ErroLayoutBase(f"Nenhuma aba '<Mês> - Planilha - {ano}' encontrada em {caminho.name}.")

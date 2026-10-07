@@ -7,6 +7,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
+.testmondata*
 .coverage
 htmlcov/
 
@@ -34,6 +35,11 @@ data/processed/*
 # versionado — ver data/referencia/ para as listas de apoio, essas sim versionadas)
 data/demandas/*
 !data/demandas/.gitkeep
+
+# Banco SQLite da Captacao de Demandas (dado real de producao, gerado pelo app — ver
+# src/captacao/schema.py), nao versionado.
+data/captacao/*
+!data/captacao/.gitkeep
 
 # Emendas parlamentares cadastradas pelo app (mesmo motivo de data/demandas/ acima)
 data/emendas/*
@@ -70,6 +76,10 @@ data/glossario/*
 # ultima sincronizacao (segredo local, nunca versionado) - ver src/google_agenda.py.
 data/google_agenda/*
 !data/google_agenda/.gitkeep
+
+# Copias dos arquivos substituidos por uma restauracao de backup — ver src/backup_dados.py.
+data/_backup_restauracao/
+data/.restauracao-*/
 
 # Sistema operacional
 .DS_Store

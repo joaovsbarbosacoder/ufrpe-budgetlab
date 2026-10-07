@@ -75,5 +75,37 @@ class TestValorMensalExcepcional(unittest.TestCase):
         )
 
 
+class TestProcessos(unittest.TestCase):
+    """`processo` (processo de empenho) e `processo_contratacao` (campo novo, 06/10/2026)."""
+
+    def test_ida_e_volta_preserva_os_dois_processos_como_texto(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, patch.object(cadastro, "DIRETORIO_PADRAO", Path(tmp)):
+            registro = cadastro.novo_programa(
+                processo="001167/2026-78", processo_contratacao="000123/2025-01", programa_bolsa="PIBIC",
+            )
+            cadastro.salvar_programa(2026, registro)
+            lido = cadastro.como_dataframe(cadastro.carregar_programas(2026))
+        self.assertEqual(lido.loc[0, "processo"], "001167/2026-78")
+        self.assertEqual(lido.loc[0, "processo_contratacao"], "000123/2025-01")
+
+    def test_registro_anterior_sem_o_campo_fica_nulo_e_nao_copia_o_de_empenho(self) -> None:
+        # registros já gravados (migrados da planilha, que não tem essa coluna) não têm a chave
+        legado = cadastro.novo_programa(processo="001167/2026-78", programa_bolsa="PIBIC")
+        legado.pop("processo_contratacao")
+        lido = cadastro.como_dataframe([legado])
+        self.assertTrue(pd.isna(lido.loc[0, "processo_contratacao"]))
+        self.assertEqual(lido.loc[0, "processo"], "001167/2026-78")
+
+    def test_migracao_deixa_processo_da_contratacao_nulo(self) -> None:
+        origem = pd.DataFrame([{"processo": "001", "programa_bolsa": "X", "qtd_efetiva": 1, "valor_unitario": 1.0}])
+        with tempfile.TemporaryDirectory() as tmp, patch.object(cadastro, "ler_bolsas_auxilios", return_value=origem):
+            criados = cadastro.migrar_de_planilha("origem.xlsx", 2026, diretorio_base=tmp)
+        self.assertIsNone(criados[0]["processo_contratacao"])
+        self.assertEqual(criados[0]["processo"], "001")
+
+    def test_processo_da_contratacao_e_copiado_ao_duplicar_identidade(self) -> None:
+        self.assertIn("processo_contratacao", cadastro.CAMPOS_IDENTIDADE)
+
+
 if __name__ == "__main__":
     unittest.main()

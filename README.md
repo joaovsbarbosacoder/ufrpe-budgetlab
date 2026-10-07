@@ -92,6 +92,177 @@ Nota de Empenho, exibindo as linhas de origem (`linha_origem`).
 Layout de origem, regras de reconciliação e decisões de arquitetura estão
 em `docs/base_execucao_anual.md`.
 
+### Consulta de Empenhos — relatório de liquidação do grupo
+
+Na página **Consulta de Empenhos** (Execução Mensal), as NEs marcadas na
+lista podem ser extraídas em PDF e Excel (`src/relatorio_liquidacao_empenhos.py`):
+Liquidado mês a mês, uma linha por NE e ano. Cada NE usa uma única base,
+indicada na coluna "Base": **Competência** (mês de referência, base
+Liquidação por Competência) quando a NE tem registro nela; caso contrário,
+**Data de liquidação** (mês de lançamento, Execução Mensal), com aviso. O
+resumo por NE reconcilia o total da série com o liquidado total da NE na
+Execução Mensal e sinaliza competência parcial ou defasada (no Excel); o PDF
+traz, em vez dele, a Consolidação Orçamentária do Grupo da tela (também presente
+no Excel, aba "Consolidação"). As NEs saem
+em ordem do número do empenho. Um quadro "Comparativo por
+exercício" (PDF e aba "Por exercício" do Excel) soma as NEs por ano do mês,
+informando quantas NEs de cada base compõem cada ano. O seletor "Base do
+relatório" permite gerar tudo "Somente por data de liquidação", para comparar
+exercícios no mesmo critério quando a base de competência não cobre os anos
+anteriores; o modo aparece no título, nos parâmetros e no nome do arquivo.
+
+### Contratos Contínuos
+
+A página **Contratos Contínuos** trabalha sobre um cadastro nativo, multi-exercício, em
+`data/contratos_continuos/<ano>/` (`src/contratos_continuos_cadastro.py`; a migração a partir
+da planilha de trabalho está em "Migração dos cadastros nativos"). Cada contrato tem despesa
+mensal, itens de licitação com rateio percentual, NE, classificação orçamentária e os campos de
+período descritos abaixo. O saldo e o Empenhado vêm da Execução Mensal, cruzados por NE; o
+Liquidado vem da base Liquidação por Competência quando ela está disponível
+(`data/raw/Liquidação por Competência.xlsx`), senão do mês de lançamento. Quando uma NE não
+tem correspondência, os campos de comparação ficam nulos, nunca zero.
+
+**Campos de período (sempre do cadastro).** Status (`ATIVO`, `VENCIDO` ou `SUSPENSO`), Vigência
+(fim), Início da Execução (por data ou pelo botão de mês), Data da Suspensão e Meses no Ano. Não há cruzamento com a
+base "Contratos — Vigência". A regra comum (`src/necessidade_empenho.py::meses_vigentes_no_exercicio`):
+
+- `SUSPENSO` **com Data da Suspensão** vale até a véspera dela, como um fim de vigência (mês final
+  proporcional); a partir da data, nada de necessidade, projeção ou sugestão de reforço. `SUSPENSO`
+  **sem data** não gera nada no exercício inteiro, mesmo vigente. A data da suspensão só tem efeito
+  com o status `SUSPENSO`;
+- com data, **a data manda sobre o status**: fim anterior ao exercício ou início posterior a ele
+  zeram; sem data de fim, `VENCIDO` zera e os demais seguem até dezembro;
+- o mês de início e o mês de fim são **proporcionais aos dias** (fim em 15/11 conta 15/30 de
+  novembro; início em 16/07 conta 16/31 de julho);
+- só o início **informado** (data ou botão de mês) corta meses; o mês detectado
+  automaticamente pelo primeiro empenho não corta nada, e a data vale mais que o mês.
+
+**Contrato suspenso só conta o que já foi empenhado e liquidado** (06/10/2026,
+`src/contratos_continuos.py::com_efeitos_da_suspensao`). Para contrato `SUSPENSO`, a **Despesa anual**
+(cartão-resumo e Cobertura Orçamentária por PTRES) passa a ser o valor já empenhado (Execução Mensal;
+sem a NE na Execução, o empenhado do cadastro; NE compartilhada por mais de um contrato usa o do
+cadastro), e o **Saldo a liquidar (execução)** do cartão-resumo fica zero. Saldo, empenhado, liquidado e despesa mensal não
+mudam; a despesa contratual original fica preservada em `despesa_anual_contratual`.
+
+**Aditivos (06/10/2026, `src/contratos_aditivos.py`; aba "Aditivos" na janela de edição).** Quando um
+contrato é prorrogado o valor mensal costuma ser reajustado, e um único valor para o exercício inteiro
+distorcia a projeção. O contrato guarda uma lista de aditivos; cada um tem nº do termo (texto), tipo
+(Reajuste, Repactuação, Prorrogação, Acréscimo/supressão, Outro), situação (**Assinado** ou **Previsto** —
+valor estimado, ainda não assinado), data de início (pode ser passada), data de assinatura (opcional) e,
+opcionalmente, novo valor mensal, nova vigência e novo rateio dos itens (campo vazio = mantém o anterior,
+nunca zero). "Despesa mensal" e "Vigência (fim)" do contrato continuam sendo os **originais**; o valor, a
+vigência e o rateio em vigor em cada data são derivados dos aditivos. Todas as contas passam a somar, mês a
+mês e dia a dia, o valor em vigor (reajuste no meio do mês é proporcional aos dias):
+
+- **Necessidade até dezembro** = custo do exercício − empenhado (nunca negativa); a diferença **retroativa**
+  dos reajustes entra sozinha. **Projeção mensal**: cada mês projetado usa o custo do mês; o retroativo
+  (reajuste assinado depois do início, nos meses já realizados entre as duas datas) entra no primeiro mês
+  projetado, em coluna própria. **Sugestão do Reforço**: alvo = custo de janeiro ao mês vigente − empenhado,
+  em meses do valor vigente; valor mensal e itens da linha são os vigentes. **Despesa anual** e Cobertura por
+  PTRES: soma da série.
+- **Previsto** entra nas contas, destacado (laranja) no Excel/PDF, na faixa do topo e nos avisos. Sem aditivo
+  previsto, a projeção **para no vencimento** e o relatório avisa "Renovação não cadastrada".
+- O Excel do relatório de Necessidade ganha a aba **Aditivos** (um aditivo por linha: valor anterior → novo,
+  datas, retroativo) e colunas no Resumo por NE; contrato **sem aditivo** calcula exatamente o mesmo que antes
+  (teste de não regressão `tests/test_retrato_contratos.py`, com retrato congelado dos contratos reais).
+- Limites: a aba de aditivos edita só os itens de licitação já existentes no contrato; a janela "Novo
+  contrato" não tem aditivos (cadastrados depois, ao editar). Para um contrato que **já teve o reajuste
+  digitado por cima** de "Despesa mensal", volte o campo ao valor antigo e lance o aditivo com o novo — o
+  sistema não faz essa troca sozinho.
+
+**Necessidade de Empenho até Dezembro (card "Resumo Consolidado").** É o que falta empenhar
+para cobrir os meses do exercício: despesa mensal × meses restantes, nunca negativa, em que
+meses restantes = menor entre os meses no ano e os meses em execução (regra acima) − empenhado ÷
+despesa mensal. O saldo (empenhado − liquidado) **não** entra nessa conta, porque já está dentro do
+empenhado; ele é exibido e abate a projeção mensal, abaixo. Contrato sem NE entra à parte, sem
+saldo. A conta vive em `src/relatorio_necessidade_empenho.py::necessidade_por_ne` e é usada
+pela tela e pelos relatórios, para não divergirem. **Bolsas e Auxílios** usa a mesma regra no Resumo
+Consolidado e no cartão-resumo (`necessidade_ate_dezembro`, em `src/necessidade_empenho.py`): valor
+mensal × meses restantes, sem subtrair o saldo — corrigido em 05/10/2026, quando também lá o saldo era
+descontado duas vezes.
+
+**Registro de contratos (06/10/2026).** A coluna **A empenhar** e a **Situação** usam a mesma
+Necessidade até dezembro do card (`necessidade_por_linha`; NE compartilhada mostra o valor da NE em cada
+linha), não mais o saldo — antes, contrato com saldo aparecia como "Necessita reforço" e o sem saldo não.
+Situação, nesta ordem (`src/contratos_continuos.py::situacao_contrato`): Vencido e Suspenso (status do
+cadastro); **Vigência encerrada** (vigência efetiva, com aditivos, anterior a hoje, com outro status — o
+status não é alterado); Necessita reforço (necessidade > 0); Ativo. O saldo (empenhado − liquidado)
+segue na coluna Saldo, em "Meses de saldo" da janela de edição e em **Saldo a liquidar (execução)** no
+cartão-resumo. NE que está na Execução Mensal e não tem nenhuma liquidação, nem lá nem na competência,
+tem liquidado **0,00** (as duas bases confirmam) e é calculada pela Execução; se a Execução tem liquidação e
+a competência não, o liquidado continua nulo e valem os campos manuais do cadastro.
+
+**Relatório de Necessidade de Empenho (PDF e Excel).** Dois botões (PDF e Excel) abaixo do card. Uma linha por NE
+na grade Jan–Dez do exercício: os meses com Liquidação por Competência aparecem como
+**realizado**; do primeiro mês sem liquidação até dezembro aparece a **projeção** (sombreada e
+em itálico), por despesa mensal fixa — o primeiro mês projetado é despesa mensal − saldo atual
+do empenho e os seguintes a despesa mensal cheia (saldo maior que a despesa mensal é abatido
+nos meses seguintes). A projeção respeita o período de execução acima e os meses no ano. NE sem
+nenhuma competência e contrato sem NE projetam a partir do mês seguinte ao da extração da
+Execução Mensal — salvo a NE **sem nenhuma liquidação** também na Execução Mensal (liquidado
+0,00 confirmado pelas duas bases, base "Sem liquidação (Execução e Competência)"), que projeta desde o
+início da execução, para concordar com o card. Nenhuma média nem tendência: só a despesa mensal cadastrada. O PDF traz a
+grade, o total mensal e o resumo por NE; o Excel, as abas Projeção mensal, Detalhe mensal (com o
+tipo de cada mês), Total mensal, Resumo por NE e Parâmetros (totais, regra e avisos). Mês sem dado
+fica vazio (nulo), distinto de zero. Os avisos listam contratos suspensos, vencidos ou com
+vigência encerrada, sem data de vigência, NEs sem saldo ou sem competência, e NEs com primeiro
+empenho depois de janeiro e sem início definido.
+
+**Projeção pela execução (06/10/2026, relatório separado; `src/relatorio_projecao_execucao.py`).** Seção
+própria abaixo do relatório de Necessidade, com botões PDF e Excel; não altera nenhum outro quadro ou
+relatório. Projeta a despesa até dezembro pelo que cada NE de fato liquida: **fator de execução** = 1 +
+(execução observada − 1) × peso, em que a execução observada é o liquidado por competência ÷ custo
+contratado acumulados nos últimos 6 meses fechados (os dois meses anteriores ao da extração ainda estão em
+aberto) e o peso (de 0 a 1) cresce com o número de meses e cai com a oscilação mensal (prudência alta,
+τ² = 0,01). Menos de 3 meses: valor mensal cheio, ou o fator de um **contrato antecessor** escolhido na
+própria seção (a escolha não é gravada no cadastro). Meses em aberto com menos de 50% do esperado (ou sem
+registro) projetam o restante. Mostra, por NE, a despesa projetada pela execução e pelo valor contratado, a
+**necessidade pela execução** (projetada − saldo do empenho) e a Necessidade até dezembro contratual, e avisa
+liquidação muito abaixo do cadastrado (fator < 0,5) ou acima do contrato (execução > 1,03). A diferença para o
+contratado é tratada como execução abaixo do contratado (decisão do usuário). Contrato sem NE fica de fora.
+
+A necessidade do card (por empenho) e a projeção da grade (por calendário, a partir do gasto)
+são **métodos diferentes** e seus totais não coincidem por definição; o Resumo por NE traz as
+duas colunas e o relatório avisa a diferença.
+
+**Relatório de Reforço de Empenho.** O botão de relatórios da página também emite Reforço e
+Anulação de Saldo de Empenho (PDF nos modelos detalhado e resumido, `src/relatorio_reforco_empenho.py`).
+A sugestão inicial de cada linha respeita status, vigência e início da execução (data, com mês
+inicial proporcional): contrato suspenso sem data, vencido ou com vigência encerrada começa com sugestão
+zero, e a vigência (ou a véspera da suspensão) limita os meses sugeridos. A edição por linha continua livre; a Anulação
+nunca tem sugestão automática.
+
+**Layout dos cadastros.** Contratos Contínuos e Bolsas e Auxílios compartilham o mesmo desenho
+(`src/ui_cadastro.py`): um cartão-resumo no topo (faixa "Necessidade de empenho até dezembro" e grade
+de indicadores) e um **Registro** em tabela — abas de situação com contagem, filtro de categoria (ou
+ação, em Bolsas), ordenação, linhas com título e subtítulo, situação em chip e ações por ícone. As linhas
+ficam numa caixa com barra de rolagem; o registro abre com 15 linhas e "Ver mais" mostra todas num clique
+só ("Ver menos" volta às 15). Os quadros "Necessidade de Empenho por NE" e "Empenhado × Liquidado" de
+Contratos Contínuos seguem o mesmo padrão (3 linhas; "Ver mais" expande no próprio quadro, com rolagem,
+em vez de abrir uma janela). "Editar"
+abre uma janela com os campos em seções e só grava ao clicar em "Salvar"; "Remover" pede confirmação;
+"Novo contrato"/"Novo programa" abre o formulário em janela. Os dados e as regras de negócio não
+mudaram, mas a antiga edição ao vivo na sessão (os quadros refletindo o que estava digitado antes de
+salvar) deixou de existir: os quadros sempre refletem o cadastro gravado.
+
+**Processos nos cadastros.** As janelas de edição e de cadastro novo das duas telas trazem, em
+Identificação, o **Processo da contratação** e o **Processo de empenho** (texto, zeros à esquerda
+preservados; copiados ao duplicar o exercício). Em Contratos os dois já vinham da planilha. Em Bolsas, o
+antigo campo "Processo" é o processo de empenho (bate com o processo das NEs na aba "Base TG" da
+planilha) e passou a se chamar assim; o processo da contratação é campo novo, vazio nos registros
+existentes até ser digitado. O Relatório de Reforço/Anulação continua agrupando pelo processo de empenho.
+
+As seções analíticas das duas telas — **Resumo Consolidado**, **Empenhado × Liquidado** (só em
+Contratos Contínuos) e **Cobertura Orçamentária por PTRES** — seguem o mesmo desenho: cartão com
+kicker, título e destaque à direita, e linhas/tabelas com valores à direita. No Resumo Consolidado a
+linha da NE com dado mensal tem um botão de ícone para a linha do tempo mensal. Apenas a
+apresentação mudou; dados, totais e regras são os mesmos.
+
+Limites conhecidos: contrato prorrogado com a data de fim desatualizada no cadastro aparece sem
+projeção até a data ser corrigida no card; a competência dos últimos meses costuma estar
+defasada, o que afeta o saldo e o realizado desses meses; a data de início só é considerada
+quando informada.
+
 ### Emendas Parlamentares
 
 O relatório **Emendas — Acompanhamento** possui leitor específico em
@@ -316,6 +487,52 @@ python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
+### Desempenho na leitura das bases (07/10/2026)
+
+- **Leitor de Excel rápido** (`src/leitura_excel.py`): os leitores que passam por `pandas.read_excel`
+  (Execução Mensal e Anual, Liquidação por Competência, Contratos Contínuos, Bolsas, Vigência e Pagamentos)
+  usam o `python-calamine` quando instalado — de 3 a 6 vezes mais rápido que o openpyxl nas planilhas reais.
+  Sem ele, voltam ao motor padrão do pandas. A paridade é testada sobre as fixtures
+  (`tests/test_leitura_excel.py`); a única diferença conhecida é a favor do dado: célula marcada como data
+  com número fora do intervalo de datas é descartada pelo openpyxl e preservada pelo calamine na coluna
+  bruta. Dotação Anual, Emendas e Captação seguem no openpyxl (leem célula a célula).
+- **Cache das bases lidas** (`src/cache_bases.py`, ligado em `app.py`): o DataFrame devolvido por esses
+  leitores fica gravado em Parquet em `data/processed/cache_bases/` (fora do Git) e é reaproveitado
+  enquanto o conteúdo do arquivo, o caminho dele e o código do leitor não mudarem (a chave inclui o
+  SHA-256 dos bytes e o caminho — arquivos de mesmo conteúdo e nomes diferentes não compartilham a cópia,
+  porque os leitores gravam o nome em `arquivo_origem`). Só é gravado o que volta idêntico na releitura; qualquer falha do cache cai na leitura normal, e
+  a planilha original nunca é alterada. Vigência e Pagamentos ficam sem cache (têm colunas de tipo misto
+  que o Parquet não devolveria idênticas). Para limpar, basta apagar a pasta. Nos testes o cache fica
+  desligado (`tests/conftest.py` define `BUDGETLAB_CACHE_BASES=desligado`): a suíte sempre lê as planilhas
+  e não toca na pasta real.
+
+### Atalho de inicialização com atualização automática (um único computador)
+
+`Iniciar BudgetLab.bat`, na raiz do projeto, abre o sistema com dois cliques
+(chama `scripts/atualizar_e_iniciar.ps1`):
+
+1. atualiza o código pelo GitHub (`git pull --ff-only` no branch atual);
+2. cria o `.venv` na primeira execução e reinstala as dependências somente quando o
+   `requirements.txt` mudou;
+3. inicia o sistema e abre o navegador em `http://localhost:8501`. Se ele já estiver
+   aberto, apenas abre o navegador. A janela do atalho precisa ficar aberta, porque
+   fechá-la encerra o sistema.
+
+Sem internet, ou quando o Git recusa a atualização (alterações locais conflitantes,
+histórico divergente), o atalho mostra o motivo e abre a versão já instalada. Ele nunca
+descarta alterações: não usa `reset`, `stash` nem `checkout`. Os dados locais de
+`data/` que não são versionados (cadastros, bancos SQLite, planilhas importadas) não são
+tocados. A exceção é `data/manifestos/`, que é versionado: uma importação local
+altera esses arquivos e pode fazer o Git recusar a próxima atualização até que as
+alterações sejam enviadas (commit/push) ou resolvidas manualmente.
+
+Para criar o atalho na área de trabalho: clique com o botão direito em
+`Iniciar BudgetLab.bat` > *Enviar para* > *Área de trabalho (criar atalho)*.
+
+O atalho foi pensado para **um único usuário**. Os dados ficam no computador onde o
+sistema roda: cópias em outras máquinas não compartilham cadastros nem importações.
+Requisitos na primeira execução: Python 3.10+, Git e internet.
+
 ### Migração dos cadastros nativos
 
 Bolsas e Auxílios e Contratos Contínuos usam cadastros JSON locais, separados das planilhas
@@ -337,6 +554,28 @@ O comando nunca sobrescreve um exercício existente. Caminhos e exercício podem
 explicitamente com `--bolsas`, `--contratos`, `--ano`, `--diretorio-bolsas` e
 `--diretorio-contratos`. As planilhas de origem são somente lidas e seus hashes são conferidos
 novamente antes de qualquer gravação.
+
+### Backup dos dados (Administração → Backup dos dados)
+
+`data/raw/`, os cadastros nativos e os bancos SQLite não vão para o git. Para levar o sistema a
+outra máquina, a página gera um `.zip` com as pastas escolhidas de `data/` e restaura um `.zip`
+no destino (`src/backup_dados.py`).
+
+- O `.zip` traz um `MANIFESTO_BACKUP.json` com tamanho e SHA-256 de cada arquivo. Exportar só lê
+  `data/`; bancos SQLite são copiados pela API de backup do SQLite.
+- Segredos: o `token.json` do Google Agenda nunca entra (fica fora de `data/`; na outra máquina,
+  reconecte). `credentials.json` só entra com a caixa marcada. `.env` e
+  `.streamlit/secrets.toml` não são incluídos — copie à mão se existirem.
+- Senha opcional (mín. 8 caracteres): cifra o arquivo inteiro com AES-256-GCM (chave por scrypt) e
+  gera `.zip.enc`; conteúdo, nomes e manifesto ficam ilegíveis. Senha errada ou arquivo adulterado
+  são recusados sem gravar nada. A senha não é recuperável. Sem senha, o `.zip` é comum e legível
+  (a página avisa quando o `credentials.json` vai incluído sem senha). Dependência: `cryptography`.
+- Restaurar confere o pacote inteiro antes de gravar; pacote adulterado, com caminho fora das
+  pastas conhecidas ou fora do manifesto é recusado sem gravar nada.
+- Arquivo existente e diferente nunca é sobrescrito em silêncio: a prévia lista as diferenças e,
+  ao substituir, a cópia atual vai para `data/_backup_restauracao/<carimbo>/`. A gravação é
+  tudo-ou-nada.
+- Limite de upload do Streamlit: 200 MB por padrão (`server.maxUploadSize`).
 
 ## Estrutura do projeto
 
@@ -381,6 +620,20 @@ de procedência de cada base, não dado bruto.
 ```powershell
 python -m unittest discover -s tests -v
 ```
+
+Forma preferencial — com as ferramentas de desenvolvimento
+(`python -m pip install -r requirements-dev.txt`), que agilizam a suíte; o `unittest` acima fica só
+como alternativa quando elas não estiverem disponíveis:
+
+```powershell
+python -m pytest tests -n auto        # suíte completa em paralelo (pytest-xdist, um processo por núcleo)
+python -m pytest tests --testmon      # só os testes afetados pelo código alterado desde a última rodada
+```
+
+O `--testmon` (pytest-testmon) serve para as rodadas intermediárias e pode ser combinado com `-n auto`.
+Ele acompanha o código Python, não as planilhas: mudou uma fixture ou base, rode a suíte completa. A
+primeira rodada com `--testmon` executa tudo (monta o mapa em `.testmondata`, fora do Git). Antes de
+concluir uma tarefa, rode a suíte completa com `-n auto`.
 
 ## Evolução prevista
 

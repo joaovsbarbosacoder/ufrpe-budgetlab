@@ -1,0 +1,73 @@
+{
+  "base": "dotacao_anual",
+  "arquivo": "BI CPOC - DOTAÇÃO - Por Ano (3).xlsx",
+  "sha256": "cfaba084baa83cc4c1d1432f1f5ce150d6799a7b4e14da65c846564b57db451f",
+  "data_extracao": "2026-09-30T12:43:42",
+  "importado_em": "2026-09-30T12:43:43-03:00",
+  "anos": [
+    2020,
+    2021,
+    2022,
+    2023,
+    2024,
+    2025,
+    2026
+  ],
+  "totais": {
+    "dotacao_inicial": 5035354458.0,
+    "dotacao_suplementar": 707146019.0,
+    "dotacao_atualizada": 5228246848.0,
+    "dotacao_cancelada_remanejada": -514260629.0
+  },
+  "totais_por_ano": {
+    "2020": {
+      "dotacao_inicial": 647253612.0,
+      "dotacao_suplementar": 121222424.0,
+      "dotacao_atualizada": 661615140.0,
+      "dotacao_cancelada_remanejada": -106860896.0
+    },
+    "2021": {
+      "dotacao_inicial": 694272633.0,
+      "dotacao_suplementar": 316835167.0,
+      "dotacao_atualizada": 654455308.0,
+      "dotacao_cancelada_remanejada": -356652492.0
+    },
+    "2022": {
+      "dotacao_inicial": 649073904.0,
+      "dotacao_suplementar": 16883209.0,
+      "dotacao_atualizada": 656031880.0,
+      "dotacao_cancelada_remanejada": -9932233.0
+    },
+    "2023": {
+      "dotacao_inicial": 652529348.0,
+      "dotacao_suplementar": 89357403.0,
+      "dotacao_atualizada": 734927983.0,
+      "dotacao_cancelada_remanejada": -6958768.0
+    },
+    "2024": {
+      "dotacao_inicial": 736741668.0,
+      "dotacao_suplementar": 40985352.0,
+      "dotacao_atualizada": 747154183.0,
+      "dotacao_cancelada_remanejada": -30572837.0
+    },
+    "2025": {
+      "dotacao_inicial": 747163606.0,
+      "dotacao_suplementar": 106379332.0,
+      "dotacao_atualizada": 851526938.0,
+      "dotacao_cancelada_remanejada": -2016000.0
+    },
+    "2026": {
+      "dotacao_inicial": 908319687.0,
+      "dotacao_suplementar": 15483132.0,
+      "dotacao_atualizada": 922535416.0,
+      "dotacao_cancelada_remanejada": -1267403.0
+    }
+  },
+  "contagens": {
+    "abas_reconhecidas": 1,
+    "linhas_normalizadas": 7952,
+    "nulos": 6404,
+    "zeros": 335,
+    "negativos": 224
+  }
+}

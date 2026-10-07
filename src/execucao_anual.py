@@ -22,6 +22,9 @@ from typing import Iterable
 
 import pandas as pd
 
+from src.cache_bases import em_cache
+from src.leitura_excel import motor_excel
+
 # --------------------------------------------------------------------------------------
 # 1. Contrato do arquivo de origem
 # --------------------------------------------------------------------------------------
@@ -87,7 +90,7 @@ class ErroLayoutBase(ValueError):
 # --------------------------------------------------------------------------------------
 
 def _validar_assinatura(caminho: Path) -> None:
-    cabecalho = pd.read_excel(caminho, header=None, nrows=1, dtype=str).iloc[0].tolist()
+    cabecalho = pd.read_excel(caminho, header=None, nrows=1, dtype=str, engine=motor_excel()).iloc[0].tolist()
     if len(cabecalho) != len(COLUNAS):
         raise ErroLayoutBase(
             f"Esperadas {len(COLUNAS)} colunas, encontradas {len(cabecalho)}. "
@@ -117,6 +120,7 @@ def _para_numero(serie: pd.Series) -> pd.Series:
     return original.where(original.notna(), convertido)
 
 
+@em_cache
 def ler_execucao_anual(caminho: str | Path) -> pd.DataFrame:
     """Lê a base bruta e devolve o DataFrame normalizado, sem agregar nada."""
     caminho = Path(caminho)
@@ -125,7 +129,7 @@ def ler_execucao_anual(caminho: str | Path) -> pd.DataFrame:
 
     _validar_assinatura(caminho)
 
-    df = pd.read_excel(caminho, header=None, skiprows=LINHAS_CABECALHO, dtype=str)
+    df = pd.read_excel(caminho, header=None, skiprows=LINHAS_CABECALHO, dtype=str, engine=motor_excel())
     df.columns = COLUNAS
 
     # Rastreabilidade: linha exata na planilha de origem.

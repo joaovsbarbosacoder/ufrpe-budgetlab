@@ -7,9 +7,11 @@ Dados sintéticos — a lógica é pura reorganização de colunas já validadas
 from __future__ import annotations
 
 import unittest
+from datetime import date
 
 import pandas as pd
 
+from src.necessidade_empenho import descricao_vigencia
 from src.relatorio_reforco_empenho import (
     BOLSAS_AUXILIOS,
     CONTRATOS_CONTINUOS,
@@ -340,6 +342,298 @@ class TestGerarPdfResumido(unittest.TestCase):
 
         pdf_bytes = gerar_pdf_resumido(BOLSAS_AUXILIOS, TIPO_ANULACAO, "001167/2026-78", linhas)
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
+
+class TestSugestaoRespeitaVigenciaEStatusContinuos(unittest.TestCase):
+    """Pedido explícito (02/10/2026): contrato SUSPENSO, vencido ou com vigência encerrada começa
+    com sugestão zerada; a vigência limita os meses sugeridos (mês final proporcional). Usa
+    `meses_a_empenhar` como sugestão base (sem mês de início, o calendário não entra) para os
+    valores serem determinísticos. Só a sugestão inicial muda."""
+
+    PROCESSO_APC = "001370/2026-44"  # APC (3,0 mil/mês, sug. 1,5), Brascon (2,0 mil, 0,0), Tekis (2 itens)
+    PROCESSO_CELPE = "000214/2026-66"  # CELPE (5,0 mil/mês, sug. 3,0)
+
+    @staticmethod
+    def _df(ajustes: dict[str, dict] | None = None) -> pd.DataFrame:
+        df = _continuos_sintetico()
+        df["status_contrato"] = "ATIVO"
+        df["vigencia_fim"] = pd.NaT
+        for ne, campos in (ajustes or {}).items():
+            for campo, valor in campos.items():
+                df.loc[df["ne_curta"] == ne, campo] = valor
+        return df
+
+    def _linhas(self, processo: str, ajustes: dict[str, dict] | None = None):
+        return linhas_para_processo(self._df(ajustes), CONTRATOS_CONTINUOS, processo, 2026)
+
+    def test_sem_restricao_nada_muda_e_nao_ha_situacao(self):
+        linhas = self._linhas(self.PROCESSO_APC)
+        apc = linhas[linhas["ne_curta"] == "2026NE000100"].iloc[0]
+        self.assertEqual(apc["meses_sugeridos"], 1.5)
+        self.assertTrue(linhas["situacao_vigencia"].isna().all())
+
+    def test_suspenso_zera_a_sugestao(self):
+        linhas = self._linhas(self.PROCESSO_APC, {"2026NE000100": {"status_contrato": "SUSPENSO"}})
+        apc = linhas[linhas["ne_curta"] == "2026NE000100"].iloc[0]
+        self.assertEqual(apc["meses_sugeridos"], 0.0)  # era 1,5
+        self.assertEqual(apc["situacao_vigencia"], "Suspenso")
+        tekis = linhas[linhas["ne_curta"] == "2026NE000084"]
+        self.assertTrue((tekis["meses_sugeridos"] == 0.000648).all())  # os outros contratos não mudam
+
+    def test_suspenso_com_varios_itens_zera_todas_as_linhas_do_contrato(self):
+        linhas = self._linhas(self.PROCESSO_APC, {"2026NE000084": {"status_contrato": "SUSPENSO"}})
+        tekis = linhas[linhas["ne_curta"] == "2026NE000084"]
+        self.assertEqual(len(tekis), 2)
+        self.assertTrue((tekis["meses_sugeridos"] == 0.0).all())
+
+    def test_vencido_sem_data_zera(self):
+        linhas = self._linhas(self.PROCESSO_CELPE, {"2026NE000102": {"status_contrato": "VENCIDO"}})
+        self.assertEqual(linhas.iloc[0]["meses_sugeridos"], 0.0)  # era 3,0
+        self.assertEqual(linhas.iloc[0]["situacao_vigencia"], "Vencido, sem data de vigência")
+
+    def test_vencido_com_vigencia_futura_segue_a_data(self):
+        linhas = self._linhas(
+            self.PROCESSO_CELPE,
+            {"2026NE000102": {"status_contrato": "VENCIDO", "vigencia_fim": pd.Timestamp("2027-03-01")}},
+        )
+        self.assertEqual(linhas.iloc[0]["meses_sugeridos"], 3.0)  # a data manda: inalterado
+        self.assertTrue(pd.isna(linhas.iloc[0]["situacao_vigencia"]))
+
+    def test_vigencia_encerrada_antes_do_exercicio_zera(self):
+        linhas = self._linhas(self.PROCESSO_CELPE, {"2026NE000102": {"vigencia_fim": pd.Timestamp("2025-12-31")}})
+        self.assertEqual(linhas.iloc[0]["meses_sugeridos"], 0.0)
+        self.assertEqual(linhas.iloc[0]["situacao_vigencia"], "Vigência encerrada em 31/12/2025")
+
+    def test_vigencia_no_exercicio_limita_os_meses_com_mes_final_proporcional(self):
+        # fim 15/03: vigente 2 + 15/31 = 2,48 meses; sem empenho considerado, teto 2,48 < 3,0.
+        linhas = self._linhas(self.PROCESSO_CELPE, {"2026NE000102": {"vigencia_fim": pd.Timestamp("2026-03-15")}})
+        self.assertAlmostEqual(linhas.iloc[0]["meses_sugeridos"], 2 + 15 / 31)
+        self.assertEqual(linhas.iloc[0]["situacao_vigencia"], "Vigência até 15/03/2026")
+
+    def test_sugestao_menor_que_o_teto_nao_e_aumentada(self):
+        # fim 30/06 (6 meses vigentes) > sugestão 3,0: o teto nunca puxa a sugestão para cima.
+        linhas = self._linhas(self.PROCESSO_CELPE, {"2026NE000102": {"vigencia_fim": pd.Timestamp("2026-06-30")}})
+        self.assertEqual(linhas.iloc[0]["meses_sugeridos"], 3.0)
+
+    def test_teto_desconta_o_que_ja_foi_empenhado(self):
+        # CELPE já empenhou 10.000 (2 meses de 5.000); vigência até 15/03 (2 + 15/31 meses, março
+        # tem 31 dias) => teto = 15/31.
+        df = self._df({"2026NE000102": {"vigencia_fim": pd.Timestamp("2026-03-15")}})
+        df["valor_empenhado_autoritativo"] = [3000.0, 2000.0, 10_000.0, 10_000.0]
+        linhas = linhas_para_processo(df, CONTRATOS_CONTINUOS, self.PROCESSO_CELPE, 2026)
+        self.assertAlmostEqual(linhas.iloc[0]["meses_sugeridos"], 15 / 31)
+
+    def test_vigencia_ja_coberta_pelo_empenho_zera_o_teto(self):
+        # vigência até 28/02 (2 meses) e 2 meses já empenhados => nada a sugerir (zero, não nulo).
+        df = self._df({"2026NE000102": {"vigencia_fim": pd.Timestamp("2026-02-28")}})
+        df["valor_empenhado_autoritativo"] = [3000.0, 2000.0, 10_000.0, 10_000.0]
+        linhas = linhas_para_processo(df, CONTRATOS_CONTINUOS, self.PROCESSO_CELPE, 2026)
+        self.assertEqual(linhas.iloc[0]["meses_sugeridos"], 0.0)
+
+    def test_sugestao_nula_continua_nula_salvo_contrato_nao_vigente(self):
+        df = self._df({"2026NE000102": {"vigencia_fim": pd.Timestamp("2026-06-30")}})
+        df.loc[df["ne_curta"] == "2026NE000102", "meses_a_empenhar"] = float("nan")
+        linhas = linhas_para_processo(df, CONTRATOS_CONTINUOS, self.PROCESSO_CELPE, 2026)
+        self.assertTrue(pd.isna(linhas.iloc[0]["meses_sugeridos"]))
+        df.loc[df["ne_curta"] == "2026NE000102", "status_contrato"] = "SUSPENSO"
+        linhas = linhas_para_processo(df, CONTRATOS_CONTINUOS, self.PROCESSO_CELPE, 2026)
+        self.assertEqual(linhas.iloc[0]["meses_sugeridos"], 0.0)
+
+    def test_suspenso_com_data_limita_ate_a_vespera_da_suspensao(self):
+        # 06/10/2026: suspensão em 16/03 → véspera 15/03 → teto 2 + 15/31 meses (< sugestão 3,0)
+        ne = "2026NE000102"
+        linhas = self._linhas(
+            self.PROCESSO_CELPE, {ne: {"status_contrato": "SUSPENSO", "data_suspensao": pd.Timestamp("2026-03-16")}}
+        )
+        self.assertAlmostEqual(linhas.iloc[0]["meses_sugeridos"], 2 + 15 / 31)
+        self.assertEqual(linhas.iloc[0]["situacao_vigencia"], "Suspenso em 16/03/2026")
+
+    def test_suspenso_com_data_nunca_aumenta_a_sugestao(self):
+        # suspensão em 01/07 (6 meses vigentes) > sugestão 3,0: inalterada
+        linhas = self._linhas(
+            self.PROCESSO_CELPE,
+            {"2026NE000102": {"status_contrato": "SUSPENSO", "data_suspensao": pd.Timestamp("2026-07-01")}},
+        )
+        self.assertEqual(linhas.iloc[0]["meses_sugeridos"], 3.0)
+
+    def test_data_da_suspensao_sem_status_suspenso_nao_tem_efeito(self):
+        linhas = self._linhas(self.PROCESSO_CELPE, {"2026NE000102": {"data_suspensao": pd.Timestamp("2026-01-01")}})
+        self.assertEqual(linhas.iloc[0]["meses_sugeridos"], 3.0)
+        self.assertTrue(pd.isna(linhas.iloc[0]["situacao_vigencia"]))
+
+    def test_base_sem_colunas_de_vigencia_nao_muda(self):
+        linhas = linhas_para_processo(_continuos_sintetico(), CONTRATOS_CONTINUOS, self.PROCESSO_APC, 2026)
+        apc = linhas[linhas["ne_curta"] == "2026NE000100"].iloc[0]
+        self.assertEqual(apc["meses_sugeridos"], 1.5)
+        self.assertTrue(linhas["situacao_vigencia"].isna().all())
+
+    def test_bolsas_nao_sao_afetadas(self):
+        bolsas = _bolsas_sintetico()
+        processo = bolsas["processo"].iloc[0]
+        linhas = linhas_para_processo(bolsas, BOLSAS_AUXILIOS, processo, 2026)
+        self.assertTrue(linhas["situacao_vigencia"].isna().all())
+        self.assertFalse(linhas.columns.str.startswith("_").any())  # intermediárias nunca vazam
+
+
+class TestDescricaoVigencia(unittest.TestCase):
+    def test_descricoes(self):
+        self.assertEqual(descricao_vigencia("SUSPENSO", pd.NaT, 2026), "Suspenso")
+        self.assertEqual(
+            descricao_vigencia("SUSPENSO", pd.Timestamp("2026-11-30"), 2026, None, pd.Timestamp("2026-08-01")),
+            "Suspenso em 01/08/2026 · Vigência até 30/11/2026",
+        )
+        self.assertEqual(descricao_vigencia("VENCIDO", pd.NaT, 2026), "Vencido, sem data de vigência")
+        self.assertEqual(descricao_vigencia("ATIVO", pd.Timestamp("2026-03-15"), 2026), "Vigência até 15/03/2026")
+        self.assertEqual(descricao_vigencia("ATIVO", pd.Timestamp("2025-12-31"), 2026), "Vigência encerrada em 31/12/2025")
+        self.assertIsNone(descricao_vigencia("ATIVO", pd.NaT, 2026))
+        self.assertIsNone(descricao_vigencia("ATIVO", pd.Timestamp("2027-06-01"), 2026))
+
+
+class TestInicioDaExecucaoPorDataNoReforco(unittest.TestCase):
+    """Início por data (02/10/2026) na sugestão "por calendário" de Contratos Contínuos. Exercício
+    de 2020 (passado): o mês vigente é sempre dezembro, então não depende da data de hoje. CELPE:
+    despesa 5.000, empenhado 5.000 (1 mês), 12 meses no ano."""
+
+    PROCESSO_CELPE = "000214/2026-66"
+    ANO = 2020
+
+    def _celpe(self, **campos):
+        df = _continuos_com_calendario_sintetico()
+        df["inicio_execucao_data"] = pd.NaT
+        for campo, valor in campos.items():
+            df.loc[df["ne_curta"] == "2026NE000102", campo] = valor
+        linhas = linhas_para_processo(df, CONTRATOS_CONTINUOS, self.PROCESSO_CELPE, self.ANO)
+        return linhas.iloc[0]
+
+    def test_sem_data_nada_muda(self):
+        # início em janeiro (mês 1): 12 meses decorridos − 1 empenhado = 11
+        self.assertAlmostEqual(self._celpe()["meses_sugeridos"], 11.0)
+
+    def test_data_no_exercicio_proporcionaliza_o_primeiro_mes(self):
+        # 16/07/2020: jul–dez = 6 meses, menos 15/31 do mês não executado, menos 1 empenhado
+        linha = self._celpe(inicio_execucao_data=pd.Timestamp("2020-07-16"))
+        self.assertAlmostEqual(linha["meses_sugeridos"], 5 - 15 / 31)
+        self.assertEqual(linha["situacao_vigencia"], "Início da execução em 16/07/2020")
+
+    def test_data_manda_sobre_o_mes_de_inicio(self):
+        # mês de início 3 (auto/manual), mas a data diz julho: vale a data
+        linha = self._celpe(inicio_execucao_efetivo=3, inicio_execucao_data=pd.Timestamp("2020-07-16"))
+        self.assertAlmostEqual(linha["meses_sugeridos"], 5 - 15 / 31)
+
+    def test_data_em_ano_anterior_equivale_a_janeiro_cheio(self):
+        linha = self._celpe(inicio_execucao_data=pd.Timestamp("2019-05-10"))
+        self.assertAlmostEqual(linha["meses_sugeridos"], 11.0)
+        self.assertTrue(pd.isna(linha["situacao_vigencia"]))  # início anterior ao exercício não limita
+
+    def test_data_em_ano_posterior_nao_sugere_nada(self):
+        linha = self._celpe(inicio_execucao_data=pd.Timestamp("2021-02-01"))
+        self.assertEqual(linha["meses_sugeridos"], 0.0)
+        self.assertEqual(linha["situacao_vigencia"], "Início da execução em 01/02/2021")
+
+    def test_contrato_sem_data_no_mesmo_relatorio_nao_e_afetado(self):
+        df = _continuos_com_calendario_sintetico()
+        df["inicio_execucao_data"] = pd.NaT
+        df.loc[df["ne_curta"] == "2026NE000102", "inicio_execucao_data"] = pd.Timestamp("2020-07-16")
+        linhas = linhas_para_processo(df, CONTRATOS_CONTINUOS, "001370/2026-44", self.ANO)
+        brascon = linhas[linhas["ne_curta"] == "2026NE000101"].iloc[0]
+        self.assertAlmostEqual(brascon["meses_sugeridos"], 11.0)  # 12 meses − 1 empenhado, como sempre
+
+    def test_bolsas_ignoram_o_campo(self):
+        bolsas = _bolsas_com_calendario_sintetico()
+        processo = bolsas["processo"].iloc[0]
+        sem = linhas_para_processo(bolsas, BOLSAS_AUXILIOS, processo, 2020)["meses_sugeridos"].tolist()
+        bolsas["inicio_execucao_data"] = pd.Timestamp("2020-07-16")
+        com = linhas_para_processo(bolsas, BOLSAS_AUXILIOS, processo, 2020)["meses_sugeridos"].tolist()
+        self.assertEqual(sem, com)  # Bolsas não tem `coluna_inicio_data`: nada muda
+
+
+def _ta_reforco(numero, inicio, valor, itens=None, situacao="ASSINADO"):
+    return {
+        "numero": numero, "tipo": "REAJUSTE", "situacao": situacao, "data_inicio": inicio, "data_assinatura": None,
+        "valor_mensal": valor, "vigencia_fim": None, "itens": itens,
+    }
+
+
+class TestReforcoComAditivos(unittest.TestCase):
+    """Sugestão "por calendário" e valor/rateio vigentes com aditivos (06/10/2026). "Hoje" = 06/10/2026:
+    janeiro a outubro decorridos. Valores à mão."""
+
+    HOJE = date(2026, 10, 6)
+    PROCESSO_APC = "001370/2026-44"  # APC (3.000/mês, NE ...100), Brascon, Tekis (10.000/mês, itens 70/30)
+
+    @staticmethod
+    def _df(aditivos_por_ne: dict | None = None, empenhado: dict | None = None) -> pd.DataFrame:
+        df = _continuos_sintetico()
+        df["status_contrato"] = "ATIVO"
+        df["vigencia_fim"] = pd.NaT
+        df["inicio_execucao_efetivo"] = 1
+        df["valor_empenhado_autoritativo"] = 0.0
+        df["aditivos"] = None
+        df["aditivos"] = df["aditivos"].astype(object)
+        for ne, aditivos in (aditivos_por_ne or {}).items():
+            df.at[df.index[df["ne_curta"] == ne][0], "aditivos"] = aditivos
+        for ne, valor in (empenhado or {}).items():
+            df.loc[df["ne_curta"] == ne, "valor_empenhado_autoritativo"] = valor
+        return df
+
+    def _linhas(self, df, processo=None):
+        return linhas_para_processo(df, CONTRATOS_CONTINUOS, processo or self.PROCESSO_APC, 2026, hoje=self.HOJE)
+
+    def test_sugestao_percorre_o_custo_ate_o_mes_vigente(self):
+        # APC: 3.000 até junho e 3.300 a partir de 01/07; alvo jan–out = 6×3.000 + 4×3.300 = 31.200;
+        # empenhado 18.000 → faltam 13.200 = 4,0 meses do valor vigente (3.300)
+        df = self._df({"2026NE000100": [_ta_reforco("1º TA", "2026-07-01", 3_300.0)]}, {"2026NE000100": 18_000.0})
+        apc = self._linhas(df).query("ne_curta == '2026NE000100'").iloc[0]
+        self.assertEqual(apc["valor_mensal"], 3_300.0)
+        self.assertAlmostEqual(apc["meses_sugeridos"], 4.0)
+        self.assertEqual(apc["situacao_vigencia"], "1º TA desde 01/07/2026")
+
+    def test_rateio_vigente_define_os_itens_e_seus_valores(self):
+        # Tekis: 10.000 → 11.000 e rateio 70/30 → 60/40 em 01/07: itens a 6.600 e 4.400
+        ta = _ta_reforco(
+            "1º TA", "2026-07-01", 11_000.0, itens=[{"numero": 1, "percentual": 60.0}, {"numero": 2, "percentual": 40.0}]
+        )
+        tekis = self._linhas(self._df({"2026NE000084": [ta]})).query("ne_curta == '2026NE000084'")
+        self.assertEqual(sorted(tekis["valor_mensal"]), [4_400.0, 6_600.0])
+        self.assertEqual(list(tekis["item_licitacao"]), [1, 2])
+
+    def test_valor_vigente_zero_nao_gera_sugestao(self):
+        # Review Focus 5: valor vigente 0 → sem divisão por zero, sugestão nula
+        df = self._df({"2026NE000100": [_ta_reforco("1º TA", "2026-07-01", 0.0)]}, {"2026NE000100": 1_000.0})
+        df.loc[df["ne_curta"] == "2026NE000100", "meses_a_empenhar"] = float("nan")  # sem reserva por execução
+        apc = self._linhas(df).query("ne_curta == '2026NE000100'").iloc[0]
+        self.assertEqual(apc["valor_mensal"], 0.0)
+        self.assertTrue(pd.isna(apc["meses_sugeridos"]))
+
+    def test_aditivo_previsto_aparece_na_situacao(self):
+        df = self._df({"2026NE000100": [_ta_reforco("2º TA", "2026-07-01", 3_300.0, situacao="PREVISTO")]})
+        apc = self._linhas(df).query("ne_curta == '2026NE000100'").iloc[0]
+        self.assertEqual(apc["situacao_vigencia"], "2º TA desde 01/07/2026 (previsto)")
+
+    def test_sem_aditivo_a_linha_e_igual_a_de_sempre(self):
+        base = self._df()
+        sem_coluna = base.drop(columns=["aditivos"])
+        pd.testing.assert_frame_equal(self._linhas(base), self._linhas(sem_coluna))
+        vazio = self._df({"2026NE000100": []})
+        pd.testing.assert_frame_equal(self._linhas(base), self._linhas(vazio))
+        apc = self._linhas(base).query("ne_curta == '2026NE000100'").iloc[0]
+        self.assertAlmostEqual(apc["meses_sugeridos"], 10.0)  # jan–out a 3.000, nada empenhado
+
+    def test_pdfs_saem_com_aditivos(self):
+        df = self._df({"2026NE000100": [_ta_reforco("1º TA", "2026-07-01", 3_300.0)]}, {"2026NE000100": 18_000.0})
+        linhas = self._linhas(df)
+        linhas = linhas.assign(empenhar=linhas["meses_sugeridos"] * linhas["valor_mensal"])
+        self.assertTrue(gerar_pdf_detalhado(CONTRATOS_CONTINUOS, TIPO_REFORCO, self.PROCESSO_APC, linhas).startswith(b"%PDF"))
+        self.assertTrue(gerar_pdf_resumido(CONTRATOS_CONTINUOS, TIPO_REFORCO, self.PROCESSO_APC, linhas).startswith(b"%PDF"))
+
+    def test_vigencia_efetiva_do_aditivo_limita_os_meses(self):
+        # vigência original 2025-12-31 (encerrada); o TA prorroga até 31/03/2026 e reajusta para 3.300 em 01/01:
+        # teto = (3 × 3.300 − 0) ÷ 3.300 = 3 meses
+        ta = {**_ta_reforco("1º TA", "2026-01-01", 3_300.0), "vigencia_fim": "2026-03-31"}
+        df = self._df({"2026NE000100": [ta]})
+        df.loc[df["ne_curta"] == "2026NE000100", "vigencia_fim"] = pd.Timestamp("2025-12-31")
+        apc = self._linhas(df).query("ne_curta == '2026NE000100'").iloc[0]
+        self.assertAlmostEqual(apc["meses_sugeridos"], 3.0)
 
 
 if __name__ == "__main__":

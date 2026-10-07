@@ -3,6 +3,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from src import cache_bases
 from src.ui_theme import apply_theme
 
 _LOGO_B64 = base64.b64encode(Path("assets/ufrpe_logo.png").read_bytes()).decode()
@@ -14,6 +15,9 @@ st.set_page_config(
 )
 
 apply_theme()
+# Bases já lidas guardadas em Parquet (data/processed/cache_bases/), chaveadas pelo conteúdo do arquivo e
+# pelo código do leitor — ver src/cache_bases.py. Sem pyarrow, segue lendo as planilhas normalmente.
+cache_bases.ativar_no_app()
 
 st.sidebar.markdown(
     f'<div class="ufrpe-sidebar-brand">'
@@ -146,6 +150,24 @@ page = st.navigation(
         # "Administração" — "Administração" precisa continuar por último (ver comentário
         # abaixo), então a nova seção entra antes dela, não depois.
         "Demandas Orçamentárias": [
+            # Novo modelo de captação (src/captacao/, SQLite) — substitui as duas páginas
+            # abaixo, que saem quando "Minhas demandas" e "Consolidação" novas existirem
+            # (etapas 5/6 e 9 do plano); até lá ficam para não deixar o setor sem formulário.
+            st.Page(
+                "app_pages/captacao_ciclo.py",
+                title="Ciclo de Captação",
+                icon="🗓️",
+            ),
+            st.Page(
+                "app_pages/captacao_unidades.py",
+                title="Unidades da Captação",
+                icon="🏛️",
+            ),
+            st.Page(
+                "app_pages/captacao_planos.py",
+                title="Planos de Referência",
+                icon="🎯",
+            ),
             st.Page(
                 "app_pages/demandas_minhas.py",
                 title="Minhas Demandas",
@@ -165,6 +187,11 @@ page = st.navigation(
                 "app_pages/atualizar_planilhas.py",
                 title="Atualizar Planilhas",
                 icon="📤",
+            ),
+            st.Page(
+                "app_pages/backup_dados.py",
+                title="Backup dos dados",
+                icon="💾",
             ),
         ],
     },

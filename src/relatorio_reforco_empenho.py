@@ -71,7 +71,18 @@ from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 
-from src.necessidade_empenho import necessidade_ate_mes_vigente
+from datetime import date
+
+from src.contratos_aditivos import (
+    aditivos_do_registro,
+    custo_mensal,
+    dia_de_referencia,
+    rateio_vigente_em,
+    serie_valor_mensal,
+    valor_vigente_em,
+    vigencia_efetiva,
+)
+from src.necessidade_empenho import descricao_vigencia, meses_vigentes_no_exercicio, necessidade_ate_mes_vigente
 
 
 @dataclass(frozen=True)
@@ -123,6 +134,23 @@ class EspecificacaoRelatorio:
     #: passado vários meses desde o início da execução — ver
     #: `necessidade_ate_mes_vigente`/`_com_sugestao_por_calendario`).
     coluna_meses_no_ano: str | None = None
+    #: colunas opcionais de status do contrato e fim da vigência (Contratos Contínuos; ausentes em
+    #: Bolsas e Auxílios) — pedido explícito, 02/10/2026: contrato SUSPENSO, vencido ou com a
+    #: vigência encerrada começa com sugestão zerada, e a vigência limita os meses sugeridos
+    #: (`_com_limite_de_vigencia`). Só a sugestão inicial muda; a edição por linha segue livre.
+    coluna_status: str | None = None
+    coluna_vigencia_fim: str | None = None
+    #: coluna opcional com o início da execução por DATA (Contratos Contínuos; pedido explícito,
+    #: 02/10/2026): o mês inicial da sugestão "por calendário" passa a ser proporcional aos dias, e
+    #: a data manda sobre o mês de início (`coluna_inicio_execucao`).
+    coluna_inicio_data: str | None = None
+    #: coluna opcional com a data da suspensão (Contratos Contínuos; pedido explícito, 06/10/2026):
+    #: contrato SUSPENSO com data conta só até a véspera dela; sem data, sugestão zerada como antes.
+    coluna_data_suspensao: str | None = None
+    #: coluna opcional com a lista de aditivos do contrato (Contratos Contínuos; 06/10/2026): o valor
+    #: mensal da linha passa a ser o VIGENTE e o rateio dos itens o vigente; a sugestão "por calendário"
+    #: percorre o custo mês a mês (`_pesos`) em vez de multiplicar um valor único.
+    coluna_aditivos: str | None = None
 
 
 BOLSAS_AUXILIOS = EspecificacaoRelatorio(
@@ -148,6 +176,11 @@ CONTRATOS_CONTINUOS = EspecificacaoRelatorio(
     coluna_inicio_execucao="inicio_execucao_efetivo",
     coluna_saldo="saldo_autoritativo",
     coluna_meses_no_ano="meses_no_ano",
+    coluna_status="status_contrato",
+    coluna_vigencia_fim="vigencia_fim",
+    coluna_inicio_data="inicio_execucao_data",
+    coluna_data_suspensao="data_suspensao",
+    coluna_aditivos="aditivos",
 )
 
 @dataclass(frozen=True)
@@ -229,7 +262,10 @@ _COLUNAS_LINHAS = [
 
 #: colunas intermediárias, usadas só por `_com_sugestao_por_calendario` — descartadas do
 #: resultado final de `linhas_para_processo` (ver docstring de `coluna_valor_empenhado`).
-_COLUNAS_CALENDARIO = ["_valor_empenhado_item", "_inicio_execucao_mes", "_meses_no_ano"]
+_COLUNAS_CALENDARIO = [
+    "_valor_empenhado_item", "_inicio_execucao_mes", "_meses_no_ano", "_status_contrato", "_vigencia_fim",
+    "_inicio_execucao_data", "_data_suspensao", "_pesos", "_custo_item", "_situacao_aditivo",
+]
 
 
 def _linha_base(linha: pd.Series, spec: EspecificacaoRelatorio) -> dict:
@@ -265,10 +301,19 @@ def _linha_base(linha: pd.Series, spec: EspecificacaoRelatorio) -> dict:
         # meses_no_ano, como saldo/meses_sugeridos acima, nunca é rateado por item — é o total
         # de meses que o CONTRATO/NE inteiro é pago no exercício, não do item de licitação.
         "_meses_no_ano": linha.get(spec.coluna_meses_no_ano) if spec.coluna_meses_no_ano else None,
+        "_status_contrato": linha.get(spec.coluna_status) if spec.coluna_status else None,
+        "_vigencia_fim": linha.get(spec.coluna_vigencia_fim) if spec.coluna_vigencia_fim else None,
+        "_inicio_execucao_data": linha.get(spec.coluna_inicio_data) if spec.coluna_inicio_data else None,
+        "_data_suspensao": linha.get(spec.coluna_data_suspensao) if spec.coluna_data_suspensao else None,
+        "_pesos": None,
+        "_custo_item": None,
+        "_situacao_aditivo": None,
     }
 
 
-def _linhas_expandidas_por_item(filtrado: pd.DataFrame, spec: EspecificacaoRelatorio) -> list[dict]:
+def _linhas_expandidas_por_item(
+    filtrado: pd.DataFrame, spec: EspecificacaoRelatorio, ano_referencia: int, hoje: date | None = None,
+) -> list[dict]:
     """Uma linha por item de licitação do contrato — o item não existe como registro próprio
     no cadastro (`spec.coluna_itens`, lista de `{"numero","percentual"}` dentro do registro do
     contrato/NE), só aqui na hora do relatório: `valor_mensal` do item é o valor mensal do
@@ -285,6 +330,10 @@ def _linhas_expandidas_por_item(filtrado: pd.DataFrame, spec: EspecificacaoRelat
             itens = [{"numero": 1, "percentual": 100.0}]
         rotulo_base = str(linha[spec.coluna_item_despesa])
         valor_mensal_total = linha[spec.coluna_valor_mensal]
+        aditivos = aditivos_do_registro(linha.get(spec.coluna_aditivos)) if spec.coluna_aditivos else []
+        if aditivos:
+            linhas.extend(_linhas_do_contrato_com_aditivos(linha, spec, itens, aditivos, ano_referencia, hoje))
+            continue
         varios = len(itens) > 1
         for item in itens:
             percentual = float(item.get("percentual", 100.0))
@@ -305,7 +354,91 @@ def _linhas_expandidas_por_item(filtrado: pd.DataFrame, spec: EspecificacaoRelat
     return linhas
 
 
-def _com_sugestao_por_calendario(resultado: pd.DataFrame, ano_referencia: int) -> pd.DataFrame:
+def _linhas_do_contrato_com_aditivos(
+    linha: pd.Series, spec: EspecificacaoRelatorio, itens_base: list[dict], aditivos: list,
+    ano_referencia: int, hoje: date | None,
+) -> list[dict]:
+    """Linhas de um contrato COM aditivos (06/10/2026): uma por item do rateio vigente no dia de referência
+    (hoje limitado ao exercício); `valor_mensal` = valor vigente do contrato × percentual vigente do item;
+    `_pesos` = série mensal do item ÷ valor vigente do item (NaN se o vigente é nulo ou zero);
+    `_custo_item` = custo do exercício do item (`custo_mensal`, com a vigência efetiva); `_vigencia_fim` =
+    vigência efetiva; `_situacao_aditivo` = "<nº> desde <data>" (+ " (previsto)") do aditivo que define o valor."""
+
+    dia_ref = dia_de_referencia(ano_referencia, hoje)
+    despesa_total = linha[spec.coluna_valor_mensal]
+    valor_vigente, definidor = valor_vigente_em(despesa_total, aditivos, dia_ref)
+    rateio = rateio_vigente_em(itens_base, aditivos, dia_ref)
+    varios = len(rateio) > 1
+    rotulo_base = str(linha[spec.coluna_item_despesa])
+    vigencia_ef = vigencia_efetiva(linha.get(spec.coluna_vigencia_fim), aditivos)[0]
+    situacao = None
+    if definidor is not None:
+        situacao = f"{definidor.numero} desde {definidor.data_inicio:%d/%m/%Y}" + (" (previsto)" if definidor.previsto else "")
+
+    linhas = []
+    for item in rateio:
+        percentual = float(item["percentual"])
+        numero = int(item["numero"])
+        valor_item = float("nan") if valor_vigente is None else valor_vigente * percentual / 100
+        serie = serie_valor_mensal(despesa_total, aditivos, ano_referencia, numero_item=numero, itens_base=itens_base)
+        usa_pesos = not pd.isna(valor_item) and valor_item != 0
+        pesos = [(valor / valor_item) if usa_pesos else float("nan") for valor in serie]
+        custo = custo_mensal(
+            despesa_total, aditivos, ano_referencia,
+            status=linha.get(spec.coluna_status) if spec.coluna_status else None,
+            vigencia_fim=linha.get(spec.coluna_vigencia_fim) if spec.coluna_vigencia_fim else None,
+            inicio=linha.get(spec.coluna_inicio_data) if spec.coluna_inicio_data else None,
+            data_suspensao=linha.get(spec.coluna_data_suspensao) if spec.coluna_data_suspensao else None,
+            meses_no_ano=linha.get(spec.coluna_meses_no_ano) if spec.coluna_meses_no_ano else None,
+            numero_item=numero, itens_base=itens_base,
+        )
+        base = _linha_base(linha, spec)
+        base["item_despesa"] = f"{rotulo_base} — Item {numero}" if varios else rotulo_base
+        base["item_despesa_base"] = rotulo_base
+        base["item_licitacao"] = numero
+        base["valor_mensal"] = valor_item
+        valor_empenhado_total = base["_valor_empenhado_item"]
+        base["_valor_empenhado_item"] = (
+            float(valor_empenhado_total) * percentual / 100
+            if valor_empenhado_total is not None and pd.notna(valor_empenhado_total) else None
+        )
+        base["_vigencia_fim"] = vigencia_ef
+        base["_pesos"] = pesos
+        base["_custo_item"] = float("nan") if any(pd.isna(v) for v in custo) else float(sum(custo))
+        base["_situacao_aditivo"] = situacao
+        linhas.append(base)
+    return linhas
+
+
+def _inicio_efetivo_por_data(resultado: pd.DataFrame, ano_referencia: int) -> tuple[pd.Series, pd.Series | None]:
+    """(mês de início, fração do primeiro mês) da sugestão "por calendário". O início por DATA
+    (`_inicio_execucao_data`, informado pelo usuário) manda sobre o mês (`_inicio_execucao_mes`,
+    manual ou auto-detectado): no exercício → mês da data e fração = dias de execução ÷ dias do
+    mês; em ano anterior → janeiro, mês cheio; em ano posterior → nada decorrido (mês 13). Sem a
+    coluna ou sem data em nenhuma linha, devolve o mês de sempre e `None` (mês inicial cheio)."""
+
+    meses = resultado["_inicio_execucao_mes"]
+    if "_inicio_execucao_data" not in resultado.columns:
+        return meses, None
+    datas = pd.to_datetime(resultado["_inicio_execucao_data"], errors="coerce")
+    tem_data = datas.notna()
+    if not tem_data.any():
+        return meses, None
+
+    mes_da_data = pd.Series(float("nan"), index=resultado.index)
+    fracao = pd.Series(1.0, index=resultado.index)
+    no_exercicio = tem_data & (datas.dt.year == ano_referencia)
+    mes_da_data[no_exercicio] = datas[no_exercicio].dt.month
+    dias_do_mes = datas[no_exercicio].dt.days_in_month
+    fracao[no_exercicio] = (dias_do_mes - datas[no_exercicio].dt.day + 1) / dias_do_mes
+    mes_da_data[tem_data & (datas.dt.year < ano_referencia)] = 1.0
+    mes_da_data[tem_data & (datas.dt.year > ano_referencia)] = 13.0
+    return mes_da_data.where(tem_data, pd.to_numeric(meses, errors="coerce")), fracao
+
+
+def _com_sugestao_por_calendario(
+    resultado: pd.DataFrame, ano_referencia: int, descartar_intermediarias: bool = True, hoje: date | None = None,
+) -> pd.DataFrame:
     """Substitui `meses_sugeridos` pela sugestão "por calendário" (pedido explícito: "fique
     pronto para empenhar o que falta para o mês vigente" — ver
     `necessidade_ate_mes_vigente`) em toda linha com mês de início conhecido; linha sem
@@ -322,18 +455,73 @@ def _com_sugestao_por_calendario(resultado: pd.DataFrame, ano_referencia: int) -
     (NaN no limite = sem limite), então o comportamento de lá não muda."""
 
     if resultado.empty or "_inicio_execucao_mes" not in resultado.columns:
-        return resultado.drop(columns=_COLUNAS_CALENDARIO, errors="ignore")
+        return resultado.drop(columns=_COLUNAS_CALENDARIO, errors="ignore") if descartar_intermediarias else resultado
 
+    inicio_mes, fracao_primeiro_mes = _inicio_efetivo_por_data(resultado, ano_referencia)
     meses_calendario, _ = necessidade_ate_mes_vigente(
-        resultado["valor_mensal"], resultado["_valor_empenhado_item"], resultado["_inicio_execucao_mes"],
-        ano_referencia, meses_no_ano=resultado["_meses_no_ano"],
+        resultado["valor_mensal"], resultado["_valor_empenhado_item"], inicio_mes,
+        ano_referencia, hoje=hoje, meses_no_ano=resultado["_meses_no_ano"], fracao_primeiro_mes=fracao_primeiro_mes,
+        pesos_mensais=resultado["_pesos"] if "_pesos" in resultado.columns else None,
     )
     resultado["meses_sugeridos"] = meses_calendario.where(meses_calendario.notna(), resultado["meses_sugeridos"])
-    return resultado.drop(columns=_COLUNAS_CALENDARIO, errors="ignore")
+    return resultado.drop(columns=_COLUNAS_CALENDARIO, errors="ignore") if descartar_intermediarias else resultado
+
+
+def _com_limite_de_vigencia(resultado: pd.DataFrame, ano_referencia: int) -> pd.DataFrame:
+    """Limita `meses_sugeridos` pela vigência/status do contrato (pedido explícito, 02/10/2026) e
+    acrescenta `situacao_vigencia` (texto para a tela; nulo quando nada limita). Mesma regra da
+    Necessidade de Empenho (`meses_vigentes_no_exercicio`): SUSPENSO sem data de suspensão, VENCIDO
+    sem data, ou vigência encerrada antes do exercício → sugestão 0 (zero declarado, não nulo);
+    SUSPENSO com data → limitado até a véspera da suspensão (06/10/2026); vigência que acaba no
+    exercício → a sugestão não passa de (meses vigentes − meses já empenhados), o mês final
+    proporcional. Sugestão nula continua nula (sem dado), salvo quando o contrato não está vigente.
+    Sem as colunas de status/vigência (Bolsas e Auxílios) nada muda. Só a sugestão inicial é
+    afetada: a edição por linha na tela segue livre."""
+
+    resultado["situacao_vigencia"] = pd.Series(dtype=object)
+    if resultado.empty or "_status_contrato" not in resultado.columns:
+        return resultado
+
+    inicios = (
+        resultado["_inicio_execucao_data"] if "_inicio_execucao_data" in resultado.columns
+        else pd.Series(pd.NaT, index=resultado.index)
+    )
+    suspensoes = (
+        resultado["_data_suspensao"] if "_data_suspensao" in resultado.columns
+        else pd.Series(pd.NaT, index=resultado.index)
+    )
+    quadras = list(zip(resultado["_status_contrato"], resultado["_vigencia_fim"], inicios, suspensoes))
+    vigentes = pd.Series(
+        [meses_vigentes_no_exercicio(status, fim, ano_referencia, inicio, suspensao) for status, fim, inicio, suspensao in quadras],
+        index=resultado.index, dtype="float64",
+    )
+    situacoes_aditivo = (
+        resultado["_situacao_aditivo"] if "_situacao_aditivo" in resultado.columns
+        else pd.Series(None, index=resultado.index, dtype=object)
+    )
+    resultado["situacao_vigencia"] = pd.Series(
+        [
+            " · ".join(parte for parte in (descricao_vigencia(status, fim, ano_referencia, inicio, suspensao), aditivo) if isinstance(parte, str)) or None
+            for (status, fim, inicio, suspensao), aditivo in zip(quadras, situacoes_aditivo)
+        ],
+        index=resultado.index, dtype=object,
+    )
+    valor_mensal = pd.to_numeric(resultado["valor_mensal"], errors="coerce").replace(0, float("nan"))
+    ja_empenhados = (pd.to_numeric(resultado["_valor_empenhado_item"], errors="coerce") / valor_mensal).fillna(0.0)
+    teto = (vigentes - ja_empenhados).clip(lower=0)
+    if "_custo_item" in resultado.columns:  # com aditivos: o teto sai do custo do item, em meses do valor vigente
+        custo_item = pd.to_numeric(resultado["_custo_item"], errors="coerce")
+        empenhado_item = pd.to_numeric(resultado["_valor_empenhado_item"], errors="coerce").fillna(0.0)
+        teto_aditivo = ((custo_item - empenhado_item) / valor_mensal).clip(lower=0)
+        teto = teto.where(custo_item.isna(), teto_aditivo)
+    sugerido = pd.to_numeric(resultado["meses_sugeridos"], errors="coerce")
+    limitado = pd.concat([sugerido, teto], axis=1).min(axis=1).where(sugerido.notna())
+    resultado["meses_sugeridos"] = sugerido.where(vigentes.isna(), limitado).where(vigentes != 0, 0.0)
+    return resultado
 
 
 def linhas_para_processo(
-    df: pd.DataFrame, spec: EspecificacaoRelatorio, processo: str, ano_referencia: int
+    df: pd.DataFrame, spec: EspecificacaoRelatorio, processo: str, ano_referencia: int, hoje: date | None = None,
 ) -> pd.DataFrame:
     """Linhas do processo escolhido, no esquema comum do relatório (independente da base de
     origem) — `meses_sugeridos` vem de `meses_a_empenhar` (já calculado na leitura da base),
@@ -358,7 +546,7 @@ def linhas_para_processo(
 
     if spec.coluna_itens and spec.coluna_itens in filtrado.columns:
         resultado = pd.DataFrame(
-            _linhas_expandidas_por_item(filtrado, spec), columns=[*_COLUNAS_LINHAS, *_COLUNAS_CALENDARIO]
+            _linhas_expandidas_por_item(filtrado, spec, ano_referencia, hoje), columns=[*_COLUNAS_LINHAS, *_COLUNAS_CALENDARIO]
         )
     else:
         resultado = pd.DataFrame(
@@ -398,10 +586,27 @@ def linhas_para_processo(
                     filtrado[spec.coluna_meses_no_ano]
                     if spec.coluna_meses_no_ano and spec.coluna_meses_no_ano in filtrado.columns else pd.NA
                 ),
+                "_status_contrato": (
+                    filtrado[spec.coluna_status]
+                    if spec.coluna_status and spec.coluna_status in filtrado.columns else pd.NA
+                ),
+                "_vigencia_fim": (
+                    filtrado[spec.coluna_vigencia_fim]
+                    if spec.coluna_vigencia_fim and spec.coluna_vigencia_fim in filtrado.columns else pd.NA
+                ),
+                "_inicio_execucao_data": (
+                    filtrado[spec.coluna_inicio_data]
+                    if spec.coluna_inicio_data and spec.coluna_inicio_data in filtrado.columns else pd.NA
+                ),
+                "_data_suspensao": (
+                    filtrado[spec.coluna_data_suspensao]
+                    if spec.coluna_data_suspensao and spec.coluna_data_suspensao in filtrado.columns else pd.NA
+                ),
             }
         )
-    resultado = _com_sugestao_por_calendario(resultado, ano_referencia)
-    return resultado.reset_index(drop=True)
+    resultado = _com_sugestao_por_calendario(resultado, ano_referencia, descartar_intermediarias=False, hoje=hoje)
+    resultado = _com_limite_de_vigencia(resultado, ano_referencia)
+    return resultado.drop(columns=_COLUNAS_CALENDARIO, errors="ignore").reset_index(drop=True)
 
 
 def excluir_linhas_zeradas(linhas: pd.DataFrame) -> pd.DataFrame:

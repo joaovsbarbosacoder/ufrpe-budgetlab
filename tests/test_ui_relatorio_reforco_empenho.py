@@ -46,7 +46,7 @@ from pathlib import Path
 import pandas as pd
 from streamlit.testing.v1 import AppTest
 
-from tests._apptest import TEMPO_LIMITE_APPTEST
+from tests._apptest import TEMPO_LIMITE_APPTEST, aquecer_pagina
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DIRETORIO_BOLSAS = Path("data/bolsas_auxilios")
@@ -96,6 +96,13 @@ class TestBotaoRelatorioEmBolsasAuxilios(unittest.TestCase):
     f"Base ausente em {DIRETORIO_CONTINUOS} ou manifesto em {MANIFESTO_EXECUCAO}",
 )
 class TestBotaoRelatorioEmContratosContinuos(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        # a 1ª carga da página lê os .xlsx reais (~55 s a frio) e estourava o limite de 60 s por
+        # poucos segundos, de vez em quando: o cache é aquecido uma vez, fora do teste cronometrado
+        # (ver `tests/_apptest.py::aquecer_pagina`)
+        aquecer_pagina(str(PROJECT_ROOT / "app_pages" / "contratos_continuos.py"))
+
     def test_clicar_no_botao_abre_a_escolha_de_relatorio_sem_erro(self) -> None:
         app = _abrir_pagina_e_clicar("app_pages/contratos_continuos.py", "cc")
 

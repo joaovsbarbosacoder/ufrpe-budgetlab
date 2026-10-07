@@ -13,6 +13,7 @@ essa mesma conta como `meses_a_empenhar`, para não depender do campo manual da 
 
 from __future__ import annotations
 
+import calendar
 from datetime import date
 
 import pandas as pd
@@ -37,6 +38,8 @@ def necessidade_ate_mes_vigente(
     ano_referencia: int,
     hoje: date | None = None,
     meses_no_ano: pd.Series | None = None,
+    fracao_primeiro_mes: pd.Series | None = None,
+    pesos_mensais: pd.Series | None = None,
 ) -> tuple[pd.Series, pd.Series]:
     """Quanto falta empenhar para acompanhar o calendário até o mês vigente — métrica
     diferente de `calcular_necessidade_empenho` (que compara empenhado × liquidado, execução
@@ -78,15 +81,202 @@ def necessidade_ate_mes_vigente(
     nenhum pagamento programado pra eles (bug real reportado pelo usuário, caso concreto:
     AUXÍLIO BEXT — Parcela Única, `meses_no_ano=1`, sugeria 6 meses de reforço já tendo pago o
     único mês devido).
+
+    `fracao_primeiro_mes` (opcional, pedido explícito 02/10/2026 — início da execução por DATA):
+    fração (0-1] do primeiro mês efetivamente em execução (dias de execução ÷ dias do mês). O
+    mês de início deixa de contar inteiro: desconta-se `1 − fração` dos meses decorridos (só
+    quando já decorreu ao menos um mês). Sem ela (`None`) o mês de início conta cheio, como
+    sempre.
+
+    `pesos_mensais` (opcional, aditivos 06/10/2026): por linha, uma lista de 12 pesos — o valor da série
+    mensal do mês ÷ o valor mensal vigente. Os meses decorridos viram a soma dos pesos do mês de início
+    ao mês vigente (o primeiro mês: `1 − fração` do seu peso é descontado), de modo que `meses_sugeridos`
+    = (custo até o mês vigente − empenhado) ÷ valor vigente. Linha sem lista (`None`) mantém a conta de
+    sempre; peso nulo dentro do intervalo gera sugestão nula.
     """
     hoje = hoje or date.today()
     mes_vigente = 12 if hoje.year > ano_referencia else max(0, min(hoje.month, 12))
     if hoje.year < ano_referencia:
         mes_vigente = 0
     meses_decorridos = (mes_vigente - inicio_execucao_mes + 1).clip(lower=0)
+    if fracao_primeiro_mes is not None:
+        meses_decorridos = (meses_decorridos - (1 - fracao_primeiro_mes)).where(meses_decorridos > 0, 0).clip(lower=0)
+    if pesos_mensais is not None:
+        meses_decorridos = meses_decorridos.astype("float64")
+        for posicao, pesos in enumerate(pesos_mensais):
+            inicio = inicio_execucao_mes.iloc[posicao]
+            if not isinstance(pesos, (list, tuple)) or pd.isna(inicio):
+                continue
+            primeiro = max(int(inicio), 1)
+            faixa = [pesos[mes - 1] for mes in range(primeiro, mes_vigente + 1)]
+            soma = float("nan") if any(pd.isna(peso) for peso in faixa) else float(sum(faixa))
+            if soma > 0 and fracao_primeiro_mes is not None:
+                soma -= (1 - fracao_primeiro_mes.iloc[posicao]) * pesos[primeiro - 1]
+            meses_decorridos.iloc[posicao] = soma if pd.isna(soma) else max(0.0, soma)
     if meses_no_ano is not None:
         meses_decorridos = meses_decorridos.clip(upper=meses_no_ano)
     meses_empenhados_equivalente = valor_empenhado / valor_mensal.replace(0, pd.NA)
     meses_sugeridos = (meses_decorridos - meses_empenhados_equivalente).clip(lower=0)
     valor_sugerido = meses_sugeridos * valor_mensal
     return meses_sugeridos, valor_sugerido
+
+
+STATUS_ATIVO = "ATIVO"
+STATUS_VENCIDO = "VENCIDO"
+STATUS_SUSPENSO = "SUSPENSO"
+
+
+def _status_normalizado(status: object) -> str | None:
+    return None if status is None or pd.isna(status) else str(status).strip().upper()
+
+
+def _posicao_em_meses(data: pd.Timestamp, fim_do_dia: bool) -> float:
+    """Posição da data dentro do ano, em meses (0 a 12): o mês é proporcional aos dias. Início do
+    dia para a data de INÍCIO (dia 1 → mês cheio), fim do dia para a de FIM (último dia → mês
+    cheio)."""
+
+    dias_do_mes = calendar.monthrange(data.year, data.month)[1]
+    dias_decorridos = data.day if fim_do_dia else data.day - 1
+    return (data.month - 1) + dias_decorridos / dias_do_mes
+
+
+def _tem_data(valor: object) -> bool:
+    return valor is not None and not pd.isna(valor)
+
+
+def fim_ate_a_suspensao(vigencia_fim: object, data_suspensao: object) -> pd.Timestamp:
+    """Último dia de execução de um contrato SUSPENSO com data de suspensão: a véspera da
+    suspensão (a partir da data, nada mais conta), ou o fim da vigência, se vier antes."""
+
+    vespera = pd.Timestamp(data_suspensao) - pd.Timedelta(days=1)
+    if _tem_data(vigencia_fim):
+        return min(vespera, pd.Timestamp(vigencia_fim))
+    return vespera
+
+
+def _janela_com_limite(
+    status: object, vigencia_fim: object, exercicio: int, inicio: object, data_suspensao: object,
+) -> tuple[pd.Timestamp, pd.Timestamp, bool] | None:
+    """(primeiro dia, último dia, limitada) em que o contrato está em execução no `exercicio`;
+    `None` = nenhum dia. `limitada` é True quando um início depois de 1º de janeiro ou um fim DENTRO
+    do exercício (mesmo 31/12) restringe a janela — o que distingue "12 meses declarados" de "nada
+    limita" em `meses_vigentes_no_exercicio`."""
+
+    status_texto = _status_normalizado(status)
+    if status_texto == STATUS_SUSPENSO:
+        if not _tem_data(data_suspensao):
+            return None
+        vigencia_fim = fim_ate_a_suspensao(vigencia_fim, data_suspensao)
+        status_texto = None
+    tem_fim = _tem_data(vigencia_fim)
+    if not tem_fim and status_texto == STATUS_VENCIDO:
+        return None
+
+    primeiro, ultimo = pd.Timestamp(year=exercicio, month=1, day=1), pd.Timestamp(year=exercicio, month=12, day=31)
+    limitada = False
+    if _tem_data(inicio):
+        data_inicio = pd.Timestamp(inicio).normalize()
+        if data_inicio.year > exercicio:
+            return None
+        if data_inicio.year == exercicio:
+            primeiro = data_inicio
+            limitada = limitada or data_inicio != pd.Timestamp(year=exercicio, month=1, day=1)
+    if tem_fim:
+        data_fim = pd.Timestamp(vigencia_fim).normalize()
+        if data_fim.year < exercicio:
+            return None
+        if data_fim.year == exercicio:
+            ultimo = data_fim
+            limitada = True
+    if primeiro > ultimo:
+        return None
+    return primeiro, ultimo, limitada
+
+
+def janela_de_execucao(
+    status: object, vigencia_fim: object, exercicio: int, inicio: object = None, data_suspensao: object = None,
+) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    """Primeiro e último dia (inclusive) em que o contrato está em execução no `exercicio`, ou
+    `None` quando não há nenhum dia (06/10/2026 — base da série mensal dos aditivos). Regras: do
+    início da execução informado (1º de janeiro se não informado) até o fim da vigência (31 de
+    dezembro se não informado); SUSPENSO sem `data_suspensao` e VENCIDO sem data de fim: nenhum dia;
+    SUSPENSO com data vale até a véspera dela (`fim_ate_a_suspensao`); fim em ano anterior ao
+    exercício, ou início em ano posterior: nenhum dia; a data manda sobre o status (VENCIDO com
+    vigência futura segue a data). `data_suspensao` só é considerada com o status SUSPENSO."""
+
+    janela = _janela_com_limite(status, vigencia_fim, exercicio, inicio, data_suspensao)
+    return None if janela is None else (janela[0], janela[1])
+
+
+def meses_vigentes_no_exercicio(
+    status: object, vigencia_fim: object, exercicio: int, inicio: object = None, data_suspensao: object = None,
+) -> float | None:
+    """Quantos meses do `exercicio` o contrato está em execução (fração: o mês inicial e o final
+    proporcionais aos dias), a partir de `janela_de_execucao` — `None` quando nada limita (sem fim
+    dentro do exercício e sem início depois de 1º de janeiro); 0 quando a janela é vazia. Pedido
+    explícito, 02/10/2026 — usada pela Necessidade de Empenho (Resumo Consolidado/relatório) e pela
+    sugestão do Relatório de Reforço de Contratos Contínuos. `inicio` é a data de início da execução
+    informada pelo usuário (nunca presumida); SUSPENSO com `data_suspensao` (06/10/2026) vale até a
+    véspera dela."""
+
+    janela = _janela_com_limite(status, vigencia_fim, exercicio, inicio, data_suspensao)
+    if janela is None:
+        return 0.0
+    primeiro, ultimo, limitada = janela
+    if not limitada:
+        return None  # nada limita: o contrato cobre o exercício inteiro
+    posicao_inicio = _posicao_em_meses(primeiro, fim_do_dia=False)
+    posicao_fim = _posicao_em_meses(ultimo, fim_do_dia=True)
+    return max(0.0, posicao_fim - posicao_inicio)
+
+
+def descricao_vigencia(
+    status: object, vigencia_fim: object, exercicio: int, inicio: object = None, data_suspensao: object = None,
+) -> str | None:
+    """Texto curto do que a vigência/status e o início da execução fazem com o contrato no
+    `exercicio` (para a tela do Relatório de Reforço) — `None` quando nada limita (mesmo critério
+    de `meses_vigentes_no_exercicio`)."""
+
+    status_texto = _status_normalizado(status)
+    if status_texto == STATUS_SUSPENSO:
+        if not _tem_data(data_suspensao):
+            return "Suspenso"
+        partes_suspenso = [f"Suspenso em {pd.Timestamp(data_suspensao):%d/%m/%Y}"]
+        complemento = descricao_vigencia(None, vigencia_fim, exercicio, inicio)
+        if complemento:
+            partes_suspenso.append(complemento)
+        return " · ".join(partes_suspenso)
+    partes = []
+    if inicio is not None and not pd.isna(inicio):
+        data_inicio = pd.Timestamp(inicio)
+        if data_inicio.year >= exercicio:
+            partes.append(f"Início da execução em {data_inicio:%d/%m/%Y}")
+    if vigencia_fim is None or pd.isna(vigencia_fim):
+        if status_texto == STATUS_VENCIDO:
+            partes.append("Vencido, sem data de vigência")
+    else:
+        fim = pd.Timestamp(vigencia_fim)
+        if fim.year < exercicio:
+            partes.append(f"Vigência encerrada em {fim:%d/%m/%Y}")
+        elif fim.year == exercicio:
+            partes.append(f"Vigência até {fim:%d/%m/%Y}")
+    return " · ".join(partes) if partes else None
+
+
+def necessidade_ate_dezembro(
+    valor_mensal: pd.Series, valor_empenhado: pd.Series, meses_no_ano: pd.Series
+) -> tuple[pd.Series, pd.Series]:
+    """Necessidade de Empenho até Dezembro de cada programa/bolsa: o que falta EMPENHAR para cobrir os
+    meses do exercício, `valor_mensal × meses restantes`, nunca negativa. Meses restantes =
+    `meses_no_ano` (12 se não cadastrado) − `valor_empenhado ÷ valor_mensal` (0 se o valor mensal é 0;
+    empenhado nulo conta como nada empenhado), nunca negativo. Devolve `(meses_restantes, necessidade)`.
+
+    O saldo (empenhado − liquidado) NÃO entra nesta conta: ele já está dentro do empenhado, e subtraí-lo
+    de novo descontava o mesmo valor duas vezes (correção de 05/10/2026 em Bolsas e Auxílios, igual à
+    feita em Contratos Contínuos em 02/10/2026 — ver `src/relatorio_necessidade_empenho.py`). Não altera
+    as entradas."""
+
+    meses_ja_empenhados = (valor_empenhado / valor_mensal.replace(0.0, pd.NA)).fillna(0.0)
+    meses_restantes = (meses_no_ano.fillna(12) - meses_ja_empenhados).clip(lower=0)
+    necessidade = (valor_mensal * meses_restantes).clip(lower=0)
+    return meses_restantes, necessidade

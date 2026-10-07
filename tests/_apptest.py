@@ -12,3 +12,24 @@ O limite é finito de propósito: uma página que realmente trave ou fique muito
 """
 
 TEMPO_LIMITE_APPTEST = 60
+
+#: Limite só do AQUECIMENTO de uma página (`aquecer_pagina`), nunca das interações do teste.
+TEMPO_LIMITE_AQUECIMENTO_APPTEST = 300
+
+
+def aquecer_pagina(caminho_da_pagina: str) -> None:
+    """Executa a página uma vez, com `TEMPO_LIMITE_AQUECIMENTO_APPTEST`, para preencher os
+    `st.cache_data` do processo antes do teste cronometrado.
+
+    Por que existe: a primeira execução de uma página que lê as planilhas reais (Execução Mensal,
+    Pagamentos, Liquidação por Competência) leva ~55 s neste ambiente — leitura de `.xlsx` numa
+    pasta sincronizada com o Google Drive — e a segunda, ~1 s (cache em memória, compartilhado
+    entre os `AppTest` do mesmo processo). Com `TEMPO_LIMITE_APPTEST` em 60 s, o primeiro teste a
+    tocar a página passava ou estourava por poucos segundos, sem haver regressão. O aquecimento
+    absorve esse custo único com um limite maior; o teste em si continua sob
+    `TEMPO_LIMITE_APPTEST`, então uma página que fique lenta de verdade (renderização, não carga de
+    dado) ainda falha."""
+
+    from streamlit.testing.v1 import AppTest
+
+    AppTest.from_file(str(caminho_da_pagina), default_timeout=TEMPO_LIMITE_AQUECIMENTO_APPTEST).run()
