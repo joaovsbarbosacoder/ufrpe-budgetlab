@@ -268,3 +268,11 @@ def test_celulas_da_dotacao_e_empenhado_por_ne():
     assert linha["empenhada"] == 400.0
     assert linha["natureza_detalhada_desc"] == "SERV"
     assert linha["ne_favorecido"] == "FAV"
+
+
+def test_empenhado_nulo_em_celula_marcada_incompleto():
+    emp = _empenhado([("N1", A, 400.0), ("N3", A, None)])
+    r = _calc(empenhado=emp)
+    assert r.resultado is None
+    assert r.incompleto is True
+    assert any("nulo" in a and "N3" in a for a in r.avisos)

@@ -286,6 +286,15 @@ def calcular_resultado(
             avisos.append(f"NE {ne} compartilhada por mais de um contrato; empenho contado uma única vez.")
 
     selecionados = por_ne.loc[por_ne["celula_selecionada"]]
+    # Correção (08/10/2026, revisão da Task 4): empenhado nulo em célula marcada não pode virar
+    # zero na soma. Avisa, nomeando as NEs, e deixa o resultado incompleto.
+    nes_empenho_nulo = selecionados.loc[selecionados["empenhada"].isna(), "ne_curta"].tolist()
+    if nes_empenho_nulo:
+        avisos.append(
+            "Empenhado nulo (não informado) em célula marcada para a(s) NE: "
+            + ", ".join(nes_empenho_nulo)
+            + ". Resultado incompleto."
+        )
     empenhado_por_origem = {
         origem: float(selecionados.loc[selecionados["origem"] == origem, "empenhada"].sum())
         for origem in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS, ORIGEM_OUTROS)
@@ -315,7 +324,7 @@ def calcular_resultado(
 
     # --- Resultado --------------------------------------------------------------------------
     resultado: float | None = None
-    if dotacao is not None and all(v is not None for v in necessidade.values()):
+    if dotacao is not None and not nes_empenho_nulo and all(v is not None for v in necessidade.values()):
         resultado = dotacao - empenhado_total - float(sum(necessidade.values()))
     incompleto = bool(selecionadas) and resultado is None
 
