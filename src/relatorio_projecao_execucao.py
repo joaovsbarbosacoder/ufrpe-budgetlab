@@ -228,6 +228,62 @@ NOTA_REGRA = (
 
 
 @dataclass(frozen=True)
+class RotulosProjecao:
+    """Textos que mudam conforme a base do relatório (pedido de 07/10/2026: o mesmo relatório em Bolsas e
+    Auxílios). A regra do fator e da projeção é a mesma; só os nomes exibidos mudam. As colunas de
+    `linhas` continuam com os nomes de contrato (`fornecedor`, `contrato_numero`, `status_contrato`) —
+    quem monta a entrada de outra base preenche nelas o equivalente (ex.: programa, processo, situação)."""
+
+    titulo: str
+    nome: str
+    sem_nome: str
+    documento: str
+    status: str
+    valor_referencia: str
+    necessidade_referencia: str
+    sem_ne: str
+    onde_ver_sem_ne: str
+    acima_do_cadastro: str
+    nota_regra: str
+
+
+CONTRATOS = RotulosProjecao(
+    titulo=TITULO,
+    nome="Fornecedor",
+    sem_nome="(sem fornecedor)",
+    documento="Contrato",
+    status="Status",
+    valor_referencia="valor contratado",
+    necessidade_referencia="contratual",
+    sem_ne="item(ns) de contrato sem NE",
+    onde_ver_sem_ne="o relatório de Necessidade de Empenho",
+    acima_do_cadastro="Liquida acima do contratado — provável reajuste/aditivo não cadastrado",
+    nota_regra=NOTA_REGRA,
+)
+
+BOLSAS_AUXILIOS = RotulosProjecao(
+    titulo="PROJEÇÃO DA DESPESA PELA EXECUÇÃO — BOLSAS E AUXÍLIOS",
+    nome="Programa",
+    sem_nome="(sem programa)",
+    documento="Processo",
+    status="Situação",
+    valor_referencia="valor cadastrado",
+    necessidade_referencia="Resumo Consolidado",
+    sem_ne="programa(s) sem NE",
+    onde_ver_sem_ne="o Resumo Consolidado",
+    acima_do_cadastro="Liquida acima do cadastrado — conferir quantidade e valor unitário do cadastro",
+    nota_regra=(
+        NOTA_REGRA.replace("custo contratado", "custo cadastrado").replace("valor contratado", "valor cadastrado")
+        .replace("do contratado (decisão de 06/10/2026)", "do cadastrado (mesma decisão de 06/10/2026 dos contratos)")
+        + " Custo cadastrado da bolsa: quantidade efetiva × valor unitário em cada um dos meses do ano "
+        "cadastrados, contados a partir do início da execução, até dezembro. Início, nesta ordem: o informado "
+        "no cadastro; o primeiro mês do exercício com liquidação positiva por competência da NE; o mês do "
+        "primeiro empenho; janeiro (decisão de 07/10/2026)."
+    ),
+)
+
+
+@dataclass(frozen=True)
 class ContextoProjecaoExecucao:
     exercicio: int
     data_extracao: str
@@ -247,6 +303,7 @@ class RelatorioProjecaoExecucao:
     ultimo_fechado: int
     qtd_sem_ne: int
     avisos: list[str] = field(default_factory=list)
+    rotulos: RotulosProjecao = CONTRATOS
 
     def _soma(self, coluna: str) -> float:
         return float(self.linhas[coluna].sum(min_count=1)) if not self.linhas.empty else 0.0
@@ -301,15 +358,24 @@ def _custo_da_ne(linha: pd.Series, exercicio: int) -> list[float]:
     )
 
 
+def _custo(linha: pd.Series, exercicio: int, custos: dict[str, list[float]] | None) -> list[float]:
+    """Custo da NE: o informado em `custos` (base com regra própria de custo, ex.: Bolsas e Auxílios) ou,
+    sem ele, o de contrato (`_custo_da_ne`)."""
+
+    return _custo_da_ne(linha, exercicio) if custos is None else custos[linha["ne_curta"]]
+
+
 def fatores_por_ne(
     por_ne: pd.DataFrame, liquidacao_mensal: pd.DataFrame | None, exercicio: int, mes_referencia: int,
+    custos: dict[str, list[float]] | None = None,
 ) -> dict[str, object]:
-    """Fator próprio de cada NE (sem herança) — a tela usa para listar quem pode ser antecessor."""
+    """Fator próprio de cada NE (sem herança) — a tela usa para listar quem pode ser antecessor.
+    `custos` (opcional): NE → 12 custos do mês, no lugar do custo de contrato."""
 
     realizados = _realizado_por_ne(liquidacao_mensal, exercicio)
     fechado = ultimo_mes_fechado(mes_referencia)
     return {
-        linha["ne_curta"]: fator_de_execucao(realizados.get(linha["ne_curta"], {}), _custo_da_ne(linha, exercicio), fechado)
+        linha["ne_curta"]: fator_de_execucao(realizados.get(linha["ne_curta"], {}), _custo(linha, exercicio, custos), fechado)
         for _, linha in por_ne.iterrows()
     }
 
@@ -321,21 +387,26 @@ def montar_relatorio(
     exercicio: int,
     mes_referencia: int,
     antecessores: dict[str, str] | None = None,
+    *,
+    custos: dict[str, list[float]] | None = None,
+    rotulos: RotulosProjecao = CONTRATOS,
 ) -> RelatorioProjecaoExecucao:
     """`por_ne`/`sem_ne`: saída de `necessidade_por_ne(..., exercicio)`. `liquidacao_mensal`:
     `ne_curta`, `ano_mes`, `valor` (Liquidação por Competência). `antecessores`: NE sem histórico →
-    NE cujo fator ela herda. Não altera as entradas."""
+    NE cujo fator ela herda. `custos`/`rotulos`: para outra base que não Contratos Contínuos (ex.:
+    `src.projecao_execucao_bolsas`) — o custo do mês de cada NE já calculado pela regra da base e os
+    textos exibidos; sem eles, custo e textos de contrato. Não altera as entradas."""
 
     antecessores = antecessores or {}
     realizados = _realizado_por_ne(liquidacao_mensal, exercicio)
     fechado = ultimo_mes_fechado(mes_referencia)
-    proprios = fatores_por_ne(por_ne, liquidacao_mensal, exercicio, mes_referencia)
+    proprios = fatores_por_ne(por_ne, liquidacao_mensal, exercicio, mes_referencia, custos)
 
     registros, mensais = [], []
     avisos_antecessor = []
     for _, linha in por_ne.iterrows():
         ne = linha["ne_curta"]
-        custo = _custo_da_ne(linha, exercicio)
+        custo = _custo(linha, exercicio, custos)
         fator = proprios[ne]
         ne_ant = antecessores.get(ne)
         if ne_ant:
@@ -394,19 +465,20 @@ def montar_relatorio(
 
     relatorio = RelatorioProjecaoExecucao(
         linhas=linhas, mensal=mensal, exercicio=exercicio, mes_referencia=mes_referencia,
-        ultimo_fechado=fechado, qtd_sem_ne=len(sem_ne),
+        ultimo_fechado=fechado, qtd_sem_ne=len(sem_ne), rotulos=rotulos,
     )
     relatorio.avisos.extend(_avisos(relatorio) + avisos_antecessor)
     return relatorio
 
 
-def _rotulo_ne(linha: pd.Series) -> str:
-    contrato = linha["contrato_numero"]
-    return f"{linha['ne_curta']}" + (f" (contrato {contrato})" if pd.notna(contrato) else "")
-
-
 def _avisos(relatorio: RelatorioProjecaoExecucao) -> list[str]:
     linhas = relatorio.linhas
+    rotulos = relatorio.rotulos
+
+    def _rotulo_ne(linha: pd.Series) -> str:
+        documento = linha["contrato_numero"]
+        return f"{linha['ne_curta']}" + (f" ({rotulos.documento.lower()} {documento})" if pd.notna(documento) else "")
+
     avisos = []
     if relatorio.mes_referencia >= 12:
         avisos.append("Extração em dezembro ou depois: exercício encerrado, nada é projetado.")
@@ -422,7 +494,7 @@ def _avisos(relatorio: RelatorioProjecaoExecucao) -> list[str]:
     acima = linhas[(linhas["origem_fator"] == ORIGEM_EXECUCAO) & (linhas["execucao_observada"] > LIMIAR_ACIMA_DO_CONTRATO)]
     if not acima.empty:
         avisos.append(
-            "Liquida acima do contratado — provável reajuste/aditivo não cadastrado: "
+            f"{rotulos.acima_do_cadastro}: "
             + ", ".join(f"{_rotulo_ne(l)} execução {l['execucao_observada']:.2f}" for _, l in acima.iterrows()) + "."
         )
     herdados = linhas[linhas["origem_fator"] == ORIGEM_HERDADO]
@@ -449,8 +521,8 @@ def _avisos(relatorio: RelatorioProjecaoExecucao) -> list[str]:
         )
     if relatorio.qtd_sem_ne:
         avisos.append(
-            f"{relatorio.qtd_sem_ne} item(ns) de contrato sem NE fora deste relatório (sem execução para medir) — "
-            "ver o relatório de Necessidade de Empenho."
+            f"{relatorio.qtd_sem_ne} {rotulos.sem_ne} fora deste relatório (sem execução para medir) — "
+            f"ver {rotulos.onde_ver_sem_ne}."
         )
     return avisos
 
@@ -473,6 +545,7 @@ def _texto(valor: object) -> str:
 
 def linhas_parametros(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoExecucao) -> list[tuple[str, str]]:
     fechado = relatorio.ultimo_fechado
+    rotulos = relatorio.rotulos
     return [
         ("Exercício", str(contexto.exercicio)),
         ("Extração da Execução Mensal", f"{contexto.data_extracao} (manifesto {contexto.hash_manifesto})"),
@@ -483,21 +556,22 @@ def linhas_parametros(relatorio: RelatorioProjecaoExecucao, contexto: ContextoPr
         ("Saldo dos empenhos (R$)", _formatar_brl(relatorio.total_saldo)),
         ("Despesa projetada pela execução (R$)", _formatar_brl(relatorio.total_projetado_execucao)),
         ("  dos quais restante de meses em aberto (R$)", _formatar_brl(relatorio.total_restante_em_aberto)),
-        ("Despesa projetada pelo valor contratado (R$)", _formatar_brl(relatorio.total_projetado_valor_cheio)),
+        (f"Despesa projetada pelo {rotulos.valor_referencia} (R$)", _formatar_brl(relatorio.total_projetado_valor_cheio)),
         ("Necessidade pela execução (R$)", _formatar_brl(relatorio.total_necessidade_execucao)),
-        ("Necessidade até dezembro — contratual (R$)", _formatar_brl(relatorio.total_necessidade_contratual)),
-        ("Regra", NOTA_REGRA),
+        (f"Necessidade até dezembro — {rotulos.necessidade_referencia} (R$)", _formatar_brl(relatorio.total_necessidade_contratual)),
+        ("Regra", rotulos.nota_regra),
     ]
 
 
 def _resumo(relatorio: RelatorioProjecaoExecucao) -> pd.DataFrame:
     linhas = relatorio.linhas
+    rotulos = relatorio.rotulos
     return pd.DataFrame(
         {
             "NE": linhas["ne_curta"].map(_texto).astype(object),
-            "Fornecedor": linhas["fornecedor"].map(_texto).astype(object),
-            "Contrato": linhas["contrato_numero"].map(_texto).astype(object),
-            "Status": linhas["status_contrato"].map(_texto).astype(object),
+            rotulos.nome: linhas["fornecedor"].map(_texto).astype(object),
+            rotulos.documento: linhas["contrato_numero"].map(_texto).astype(object),
+            rotulos.status: linhas["status_contrato"].map(_texto).astype(object),
             "Despesa mensal": linhas["despesa_mensal"],
             "Empenhado": linhas["valor_empenhado"],
             "Saldo do empenho": linhas["saldo"],
@@ -509,26 +583,27 @@ def _resumo(relatorio: RelatorioProjecaoExecucao) -> pd.DataFrame:
             "Fator de execução": linhas["fator"],
             "Restante de meses em aberto": linhas["restante_em_aberto"],
             "Despesa projetada (execução)": linhas["projetado_execucao"],
-            "Despesa projetada (valor contratado)": linhas["projetado_valor_cheio"],
+            f"Despesa projetada ({rotulos.valor_referencia})": linhas["projetado_valor_cheio"],
             "Necessidade pela execução": linhas["necessidade_execucao"],
-            "Necessidade até dezembro (contratual)": linhas["necessidade_contratual"],
+            f"Necessidade até dezembro ({rotulos.necessidade_referencia})": linhas["necessidade_contratual"],
         }
     )
 
 
 _COLUNAS_FATOR_XLSX = {"Execução observada", "Peso da execução", "Fator de execução"}
-_COLUNAS_TEXTO_XLSX = {"NE", "Fornecedor", "Contrato", "Status", "Origem do fator", "NE antecessora", "Meses usados", "Tipo"}
+_COLUNAS_TEXTO_XLSX = {"NE", "Origem do fator", "NE antecessora", "Meses usados", "Tipo"}
 _PREENCHIMENTO_PROJETADO = "DCE6F2"
 _PREENCHIMENTO_ABERTO = "FCE4C4"
 
 
-def _formatar_aba(planilha, dados: pd.DataFrame) -> None:
+def _formatar_aba(planilha, dados: pd.DataFrame, rotulos: RotulosProjecao) -> None:
+    colunas_texto = _COLUNAS_TEXTO_XLSX | {rotulos.nome, rotulos.documento, rotulos.status}
     for indice, cabecalho in enumerate(dados.columns, start=1):
         letra = planilha.cell(row=1, column=indice).column_letter
-        formato = "@" if cabecalho in _COLUNAS_TEXTO_XLSX else ("0.00" if cabecalho in _COLUNAS_FATOR_XLSX else "#,##0.00")
+        formato = "@" if cabecalho in colunas_texto else ("0.00" if cabecalho in _COLUNAS_FATOR_XLSX else "#,##0.00")
         for celula in planilha[letra][1:]:
             celula.number_format = formato
-        planilha.column_dimensions[letra].width = 45 if cabecalho == "Fornecedor" else min(max(len(cabecalho), 12) + 2, 34)
+        planilha.column_dimensions[letra].width = 45 if cabecalho == rotulos.nome else min(max(len(cabecalho), 12) + 2, 34)
     planilha.freeze_panes = "B2"
 
 
@@ -539,6 +614,7 @@ def gerar_xlsx(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoE
 
     from openpyxl.styles import Font, PatternFill
 
+    rotulos = relatorio.rotulos
     resumo = _resumo(relatorio)
     grade_linhas, marcas, detalhe = [], [], []
     for indice, linha in relatorio.linhas.iterrows():
@@ -555,27 +631,27 @@ def gerar_xlsx(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoE
             if tipo is not None:
                 detalhe.append(
                     {
-                        "NE": linha["ne_curta"], "Fornecedor": _texto(linha["fornecedor"]), "Nº do mês": mes,
+                        "NE": linha["ne_curta"], rotulos.nome: _texto(linha["fornecedor"]), "Nº do mês": mes,
                         "Mês": MESES[mes - 1], "Tipo": tipo,
                         "Realizado": None if pd.isna(realizado) else realizado,
                         "Projetado": None if projetado is None or pd.isna(projetado) else projetado,
                     }
                 )
-        grade_linhas.append({"NE": linha["ne_curta"], "Fornecedor": _texto(linha["fornecedor"]), "Fator de execução": linha["fator"], **valores,
+        grade_linhas.append({"NE": linha["ne_curta"], rotulos.nome: _texto(linha["fornecedor"]), "Fator de execução": linha["fator"], **valores,
                              "Despesa projetada (execução)": linha["projetado_execucao"]})
         marcas.append(tipos)
-    grade = pd.DataFrame(grade_linhas, columns=["NE", "Fornecedor", "Fator de execução", *MESES, "Despesa projetada (execução)"])
-    detalhe_df = pd.DataFrame(detalhe, columns=["NE", "Fornecedor", "Nº do mês", "Mês", "Tipo", "Realizado", "Projetado"])
+    grade = pd.DataFrame(grade_linhas, columns=["NE", rotulos.nome, "Fator de execução", *MESES, "Despesa projetada (execução)"])
+    detalhe_df = pd.DataFrame(detalhe, columns=["NE", rotulos.nome, "Nº do mês", "Mês", "Tipo", "Realizado", "Projetado"])
     parametros = [("Avisos", aviso) for aviso in relatorio.avisos] + linhas_parametros(relatorio, contexto)
     coluna_jan = list(grade.columns).index(MESES[0]) + 1
 
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         resumo.to_excel(writer, sheet_name="Resumo por NE", index=False)
-        _formatar_aba(writer.sheets["Resumo por NE"], resumo)
+        _formatar_aba(writer.sheets["Resumo por NE"], resumo, rotulos)
         grade.to_excel(writer, sheet_name="Grade mensal", index=False)
         planilha = writer.sheets["Grade mensal"]
-        _formatar_aba(planilha, grade)
+        _formatar_aba(planilha, grade, rotulos)
         for numero_linha, tipos in enumerate(marcas, start=2):
             for mes, tipo in enumerate(tipos):
                 if tipo in (TIPO_PROJETADO, TIPO_RESTANTE_ABERTO):
@@ -584,7 +660,7 @@ def gerar_xlsx(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoE
                     celula.fill = PatternFill("solid", fgColor=cor)
                     celula.font = Font(italic=True)
         detalhe_df.to_excel(writer, sheet_name="Detalhe mensal", index=False)
-        _formatar_aba(writer.sheets["Detalhe mensal"], detalhe_df)
+        _formatar_aba(writer.sheets["Detalhe mensal"], detalhe_df, rotulos)
         writer.sheets["Detalhe mensal"].column_dimensions["C"].width = 10
         for celula in writer.sheets["Detalhe mensal"]["C"][1:]:
             celula.number_format = "0"
@@ -598,8 +674,8 @@ def gerar_xlsx(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoE
 _CABECALHO_GRADE_PDF = ["NE", "FATOR", *[m.upper() for m in MESES], "PROJETADO"]
 _LARGURAS_GRADE_PDF = [62, 36] + [48] * 12 + [66]
 _CABECALHO_RESUMO_PDF = [
-    "NE", "FORNECEDOR / CONTRATO", "ORIGEM DO FATOR", "EXEC. OBS.", "PESO", "FATOR", "SALDO (R$)",
-    "PROJ. EXECUÇÃO (R$)", "PROJ. CONTRATADO (R$)", "NEC. EXECUÇÃO (R$)", "NEC. CONTRATUAL (R$)",
+    "NE", "{nome} / {documento}", "ORIGEM DO FATOR", "EXEC. OBS.", "PESO", "FATOR", "SALDO (R$)",
+    "PROJ. EXECUÇÃO (R$)", "PROJ. {valor} (R$)", "NEC. EXECUÇÃO (R$)", "NEC. {necessidade} (R$)",
 ]
 _LARGURAS_RESUMO_PDF = [58, 170, 78, 38, 32, 34, 66, 72, 72, 72, 72]
 _COR_TITULO_NE = colors.HexColor("#E8EEF7")
@@ -617,12 +693,23 @@ def _estilo_base() -> list[tuple]:
     ]
 
 
+def _cabecalho_resumo_pdf(rotulos: RotulosProjecao) -> list[str]:
+    referencia = rotulos.valor_referencia.split()[-1]  # "contratado" / "cadastrado"
+    necessidade = "CONTRATUAL" if rotulos.necessidade_referencia == "contratual" else "RESUMO"
+    return [
+        celula.format(nome=rotulos.nome.upper(), documento=rotulos.documento.upper(), valor=referencia.upper(),
+                      necessidade=necessidade)
+        for celula in _CABECALHO_RESUMO_PDF
+    ]
+
+
 def gerar_pdf(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoExecucao) -> bytes:
+    rotulos = relatorio.rotulos
     buffer = BytesIO()
     documento = SimpleDocTemplate(
         buffer, pagesize=landscape(A4),
         leftMargin=10 * mm, rightMargin=10 * mm, topMargin=10 * mm, bottomMargin=10 * mm,
-        title=f"{TITULO} — {contexto.exercicio}",
+        title=f"{rotulos.titulo} — {contexto.exercicio}",
     )
     estilos = getSampleStyleSheet()
     estilo_parametro = estilos["Normal"].clone("parametro_projecao")
@@ -635,7 +722,7 @@ def gerar_pdf(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoEx
     estilo_celula.leading = 7.5
     estilo_secao = estilos["Heading4"]
 
-    elementos: list = [Paragraph(escape(f"{TITULO} — EXERCÍCIO {contexto.exercicio}"), estilos["Heading3"])]
+    elementos: list = [Paragraph(escape(f"{rotulos.titulo} — EXERCÍCIO {contexto.exercicio}"), estilos["Heading3"])]
     for aviso in relatorio.avisos:
         elementos.append(Paragraph(f"<b>ATENÇÃO:</b> {escape(aviso)}", estilo_aviso))
     for rotulo, valor in linhas_parametros(relatorio, contexto):
@@ -643,13 +730,13 @@ def gerar_pdf(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoEx
     elementos.append(Spacer(1, 8))
 
     # ---- resumo por NE
-    dados = [_CABECALHO_RESUMO_PDF]
+    dados = [_cabecalho_resumo_pdf(rotulos)]
     for _, linha in relatorio.linhas.iterrows():
         origem = linha["origem_fator"] + (f" ({linha['ne_antecessora']})" if pd.notna(linha["ne_antecessora"]) and linha["ne_antecessora"] else "")
         dados.append(
             [
                 linha["ne_curta"],
-                Paragraph(f"{escape(_texto(linha['fornecedor']) or '(sem fornecedor)')}<br/>Contrato {escape(_texto(linha['contrato_numero']) or '—')}", estilo_celula),
+                Paragraph(f"{escape(_texto(linha['fornecedor']) or rotulos.sem_nome)}<br/>{rotulos.documento} {escape(_texto(linha['contrato_numero']) or '—')}", estilo_celula),
                 Paragraph(escape(origem), estilo_celula),
                 _formatar_fator(linha["execucao_observada"]), _formatar_fator(linha["peso"]), _formatar_fator(linha["fator"]),
                 _formatar_brl(linha["saldo"]), _formatar_brl(linha["projetado_execucao"]),
@@ -680,8 +767,8 @@ def gerar_pdf(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoEx
     for indice, linha in relatorio.linhas.iterrows():
         posicao = len(dados)
         titulo = (
-            f"<b>{escape(linha['ne_curta'])}</b> — {escape(_texto(linha['fornecedor']) or '(sem fornecedor)')}"
-            f" — Contrato {escape(_texto(linha['contrato_numero']) or '—')} — {escape(linha['origem_fator'])}"
+            f"<b>{escape(linha['ne_curta'])}</b> — {escape(_texto(linha['fornecedor']) or rotulos.sem_nome)}"
+            f" — {rotulos.documento} {escape(_texto(linha['contrato_numero']) or '—')} — {escape(linha['origem_fator'])}"
             f" — Meses usados: {escape(_texto(linha['meses_usados']) or '—')}"
         )
         dados.append([Paragraph(titulo, estilo_celula)] + [""] * (len(_CABECALHO_GRADE_PDF) - 1))

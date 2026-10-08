@@ -221,6 +221,17 @@ registro) projetam o restante. Mostra, por NE, a despesa projetada pela execuç�
 liquidação muito abaixo do cadastrado (fator < 0,5) ou acima do contrato (execução > 1,03). A diferença para o
 contratado é tratada como execução abaixo do contratado (decisão do usuário). Contrato sem NE fica de fora.
 
+**Projeção pela execução em Bolsas e Auxílios (07/10/2026).** O mesmo relatório (mesma regra do fator e da
+projeção, PDF e Excel) tem seção própria na página de Bolsas, abaixo do Resumo Consolidado, com os rótulos da
+base (Programa, Processo, Situação). Só o custo do mês tem regra própria, em `src/projecao_execucao_bolsas.py`:
+valor mensal do cadastro em `meses_no_ano` meses seguidos a partir do **início da execução**, até dezembro.
+Início, nesta ordem: o informado no cadastro; o primeiro mês do exercício com liquidação positiva por
+competência da NE (o empenho costuma sair em janeiro, mas a bolsa pode começar a pagar depois); o mês do
+primeiro empenho; janeiro. O Relatório de Reforço continua usando o início pelo primeiro empenho. Saldo e
+empenhado vêm da Execução Mensal, com os da planilha como reserva; a necessidade comparada é a do Resumo
+Consolidado. Programas que dividem uma NE somam numa linha. Sem a escolha de contrato antecessor. Programa
+sem NE fica de fora (contado nos avisos).
+
 A necessidade do card (por empenho) e a projeção da grade (por calendário, a partir do gasto)
 são **métodos diferentes** e seus totais não coincidem por definição; o Resumo por NE traz as
 duas colunas e o relatório avisa a diferença.
