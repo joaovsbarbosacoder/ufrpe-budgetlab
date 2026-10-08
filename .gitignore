@@ -93,3 +93,9 @@ Thumbs.db
 
 # Screenshots soltos na raiz sem relacao clara com o codigo atual
 inbox_*.png
+
+# Selecao de celulas e despesas manuais do Resultado Orcamentario, persistidas em disco com
+# aprovacao do usuario em 08/10/2026 (mesmo motivo de data/demandas/ acima) — ver
+# src/resultado_orcamentario_cadastro.py.
+data/resultado_orcamentario/*
+!data/resultado_orcamentario/.gitkeep
