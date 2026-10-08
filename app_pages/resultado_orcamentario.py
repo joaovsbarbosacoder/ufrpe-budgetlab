@@ -70,6 +70,14 @@ from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, p
 from src.ui_cadastro import formatar_brl
 from src.ui_theme import currency_column, render_metric_grid, render_page_header
 
+
+def _sem_latex(texto: str) -> str:
+    """Escapa o "$" de "R$" (08/10/2026): o Markdown do Streamlit lê o trecho entre dois "$" como fórmula
+    LaTeX e some com o cifrão quando um texto tem dois valores em reais (visto nos avisos da projeção)."""
+
+    return texto.replace("$", "\\$")
+
+
 #: mesmo arquivo de `app_pages/contratos_continuos.py` e `app_pages/bolsas_auxilios.py`.
 CAMINHO_LIQUIDACAO_COMPETENCIA = Path("data/raw") / "Liquidação por Competência.xlsx"
 
@@ -356,7 +364,7 @@ def _render_composicao(
                     )
             # Correção (08/10/2026, revisão final): mostra os avisos do próprio relatório de projeção.
             for aviso_projecao in avisos_projecao.get(origem, []):
-                st.warning(aviso_projecao)
+                st.warning(_sem_latex(aviso_projecao))
             if origem == ORIGEM_CONTRATOS:
                 st.caption(
                     "Projeção pela execução SEM contrato antecessor: NE com menos de 3 meses fechados é "
@@ -541,11 +549,11 @@ ausentes_da_base = [chave for chave in selecao_salva if chave not in _conjunto_c
 selecao_atual: list[CelulaChave] = [*ausentes_da_base, *marcadas]
 
 totais = editado.loc[editado["Selecionar"], ["Dotação Atualizada", "Empenhado", "Saldo"]]
-st.caption(
+st.caption(_sem_latex(
     f"Total selecionado: Dotação {formatar_brl(soma_ou_nulo(totais['Dotação Atualizada']))}"
     f" · Empenhado {formatar_brl(soma_ou_nulo(totais['Empenhado']))}"
     f" · Saldo {formatar_brl(soma_ou_nulo(totais['Saldo']))}"
-)
+))
 
 col_salvar, col_estado = st.columns([1, 5], vertical_alignment="center")
 with col_salvar:
@@ -665,9 +673,9 @@ with area_composicao:
 st.subheader("Avisos")
 for aviso in [*resultado.avisos, *avisos_extras]:
     if aviso.startswith("Nenhuma célula selecionada"):
-        st.info(aviso)
+        st.info(_sem_latex(aviso))
     else:
-        st.warning(aviso)
+        st.warning(_sem_latex(aviso))
 for origem, sem_ne in ((ORIGEM_CONTRATOS, sem_ne_contratos), (ORIGEM_BOLSAS, sem_ne_bolsas)):
     if sem_ne is not None and len(sem_ne):
         colunas = [

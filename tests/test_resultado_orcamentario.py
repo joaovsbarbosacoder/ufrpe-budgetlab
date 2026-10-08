@@ -163,6 +163,16 @@ def test_necessidade_indisponivel_deixa_resultado_incompleto():
     assert r.incompleto is True
 
 
+def test_necessidade_nula_de_uma_ne_deixa_resultado_incompleto():
+    # NE sem valor mensal: o relatório de projeção traz necessidade nula — não pode virar zero aqui.
+    nec = pd.DataFrame({"ne_curta": ["N1", "N9"], "necessidade_execucao": [150.0, float("nan")]})
+    r = _calc(necessidade_contratos=nec)
+    assert r.necessidade[ORIGEM_CONTRATOS] is None
+    assert r.resultado is None
+    assert r.incompleto is True
+    assert any("N9" in a and "não calculada" in a for a in r.avisos)
+
+
 def test_cadastro_vazio_necessidade_zero():
     r = _calc(necessidade_bolsas=pd.DataFrame({"ne_curta": [], "necessidade_execucao": []}))
     assert r.necessidade[ORIGEM_BOLSAS] == 0.0

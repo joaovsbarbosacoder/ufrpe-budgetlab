@@ -164,7 +164,9 @@ def _soma_necessidade(relatorio: pd.DataFrame | None) -> float | None:
         return None
     if relatorio.empty:
         return 0.0
-    return float(pd.to_numeric(relatorio["necessidade_execucao"], errors="coerce").sum())
+    # NE sem valor mensal traz necessidade nula do relatório de projeção (08/10/2026): a soma da
+    # origem fica indisponível, nunca parcial.
+    return soma_ou_nulo(pd.to_numeric(relatorio["necessidade_execucao"], errors="coerce"))
 
 
 def _por_ne(cadastro: pd.DataFrame, colunas: list[str]) -> dict[str, dict]:
@@ -333,9 +335,17 @@ def calcular_resultado(
         ORIGEM_BOLSAS: _soma_necessidade(necessidade_bolsas),
         OUTRAS_DESPESAS: float(sum(d.valor for d in despesas_manuais)),
     }
-    for origem in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS):
+    for origem, relatorio in ((ORIGEM_CONTRATOS, necessidade_contratos), (ORIGEM_BOLSAS, necessidade_bolsas)):
         if necessidade[origem] is None:
             avisos.append(f"Necessidade de {origem} indisponível: resultado incompleto.")
+            if relatorio is not None:
+                sem_valor = relatorio.loc[
+                    pd.to_numeric(relatorio["necessidade_execucao"], errors="coerce").isna(), "ne_curta"
+                ]
+                avisos.append(
+                    f"Necessidade de {origem} não calculada para NE sem valor mensal cadastrado: "
+                    + ", ".join(str(ne) for ne in sem_valor) + "."
+                )
 
     for aviso in (
         _aviso_sem_ne(sem_ne_contratos, "contrato", "contratos"),

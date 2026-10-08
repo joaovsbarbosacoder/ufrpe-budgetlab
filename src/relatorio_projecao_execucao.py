@@ -422,6 +422,15 @@ def montar_relatorio(
         saldo = linha["saldo_para_necessidade"]
         saldo_num = 0.0 if pd.isna(saldo) else float(saldo)
         restante = sum(v for _, v in projecao.restante_em_aberto())
+        projetado_execucao = projecao.total_projetado
+        projetado_valor_cheio = projecao.total_valor_cheio
+        necessidade_execucao = max(0.0, projecao.total_projetado - saldo_num)
+        # Valor mensal desconhecido (08/10/2026, pedido do usuário): as regras de custo devolvem os 12
+        # meses nulos (`custo_mensal`, `custo_mensal_bolsa`) e nenhum mês era projetado — a necessidade
+        # saía 0 e o Resultado Orçamentário herdava esse zero. Agora fica nula ("—"), fora dos totais e
+        # avisada; valor mensal zero continua zero. Exercício encerrado não projeta nada de qualquer forma.
+        if mes_referencia < 12 and all(_numero(valor) is None for valor in custo):
+            restante = projetado_execucao = projetado_valor_cheio = necessidade_execucao = None
         registros.append(
             {
                 "ne_curta": ne,
@@ -439,9 +448,9 @@ def montar_relatorio(
                 "fator": fator.fator,
                 "meses_usados": ", ".join(MESES[m - 1] for m in fator.meses_usados),
                 "restante_em_aberto": restante,
-                "projetado_execucao": projecao.total_projetado,
-                "projetado_valor_cheio": projecao.total_valor_cheio,
-                "necessidade_execucao": max(0.0, projecao.total_projetado - saldo_num),
+                "projetado_execucao": projetado_execucao,
+                "projetado_valor_cheio": projetado_valor_cheio,
+                "necessidade_execucao": necessidade_execucao,
                 "necessidade_contratual": linha["necessidade"],
             }
         )
@@ -484,7 +493,13 @@ def _avisos(relatorio: RelatorioProjecaoExecucao) -> list[str]:
         avisos.append("Extração em dezembro ou depois: exercício encerrado, nada é projetado.")
     if linhas.empty:
         return avisos
-    abaixo = linhas[(linhas["origem_fator"] == ORIGEM_EXECUCAO) & (linhas["fator"] < LIMIAR_ABAIXO_DO_CADASTRO)]
+    sem_valor = linhas[linhas["necessidade_execucao"].isna()]
+    if not sem_valor.empty:
+        avisos.append(
+            "Sem valor mensal cadastrado — necessidade pela execução não calculada (—) e fora dos totais: "
+            + ", ".join(_rotulo_ne(l) for _, l in sem_valor.iterrows()) + "."
+        )
+    abaixo =linhas[(linhas["origem_fator"] == ORIGEM_EXECUCAO) & (linhas["fator"] < LIMIAR_ABAIXO_DO_CADASTRO)]
     if not abaixo.empty:
         avisos.append(
             "Liquidação muito abaixo do cadastrado (fator < "

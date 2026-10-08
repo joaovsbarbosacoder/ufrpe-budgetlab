@@ -380,6 +380,11 @@ marcado como incompleto.
 Se o exercício não tem arquivo de cadastro de Contratos/Bolsas (`anos_disponiveis()`), a necessidade dessa
 base aparece como indisponível e o resultado fica incompleto: arquivo ausente não é tratado como lista
 vazia (decisão 08/10/2026).
+Item sem valor mensal cadastrado (custo nulo nos 12 meses, como em uma bolsa sem valor): o relatório
+Projeção pela Execução mostra a necessidade dessa NE como "—" (não 0), fora dos totais e com aviso, e aqui a
+necessidade da base fica indisponível, com o resultado incompleto (08/10/2026). Em Contratos Contínuos a
+despesa mensal nula ainda vira 0 antes do relatório (soma dos itens em `necessidade_por_ne`), então esse
+caso ainda não é sinalizado para contratos.
 
 **Contratos e bolsas sem NE** ficam **fora da conta** e aparecem só nos avisos (quantidade e valor
 contratual, como informação). Entram sozinhos quando a NE for incluída no cadastro ou o status do contrato
