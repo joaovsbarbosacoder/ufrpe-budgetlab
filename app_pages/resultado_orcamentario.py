@@ -56,6 +56,7 @@ from src.resultado_orcamentario import (
     ORIGEM_BOLSAS,
     ORIGEM_CONTRATOS,
     ORIGEM_OUTROS,
+    ORIGENS_EMPENHADO,
     OUTRAS_DESPESAS,
     TOLERANCIA_CONFERENCIA,
     ResultadoOrcamentario,
@@ -320,8 +321,8 @@ def _render_composicao(
         diferenca = round(res.diferenca_conferencia, 2) + 0.0
         fecha = abs(res.diferenca_conferencia) < TOLERANCIA_CONFERENCIA
         rodape = (
-            "✓ Contratos + Bolsas + Outros = empenhado total das células" if fecha
-            else "✗ Contratos + Bolsas + Outros não fecha com o empenhado total das células"
+            "✓ Soma das linhas = empenhado total das células" if fecha
+            else "✗ Soma das linhas não fecha com o empenhado total das células"
         ) + f" · diferença {formatar_brl(diferenca)}"
         st.html(
             html_bloco(
@@ -331,7 +332,7 @@ def _render_composicao(
                         origem, res.empenhado[origem], _tabela_empenhado(res.empenhado_por_ne, origem),
                         ("Empenhado",), "Nenhuma NE desta origem nas células selecionadas.",
                     )
-                    for origem in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS, ORIGEM_OUTROS)
+                    for origem in ORIGENS_EMPENHADO
                 ],
                 res.empenhado_total, "Total empenhado", rodape, "ok" if fecha else "erro",
             )

@@ -30,7 +30,14 @@ from src.tesouro_execucao_mensal import valor_empenhado_por_bloco
 
 ORIGEM_CONTRATOS = "Contratos Contínuos"
 ORIGEM_BOLSAS = "Bolsas e Auxílios"
+ORIGEM_DEA = "Despesas de Exercícios Anteriores (elemento 92)"
+ORIGEM_MATERIAL_CONSUMO = "Material de Consumo (elemento 30)"
 ORIGEM_OUTROS = "Outros empenhos"
+#: Ordem de exibição do empenhado. Pedido do usuário (08/10/2026): o que não é Contrato nem Bolsa
+#: é segmentado pelo elemento de despesa — 92 e 30 em linhas próprias, o restante em "Outros".
+#: Contrato e Bolsa têm prioridade: NE cadastrada fica na sua origem qualquer que seja o elemento.
+ORIGENS_EMPENHADO = (ORIGEM_CONTRATOS, ORIGEM_BOLSAS, ORIGEM_DEA, ORIGEM_MATERIAL_CONSUMO, ORIGEM_OUTROS)
+_ORIGEM_POR_ELEMENTO = {"92": ORIGEM_DEA, "30": ORIGEM_MATERIAL_CONSUMO}
 OUTRAS_DESPESAS = "Outras despesas previstas"
 
 TOLERANCIA_CONFERENCIA = 0.01
@@ -48,7 +55,7 @@ _COLUNAS_CHAVE_EXECUCAO: tuple[str, ...] = (
 )
 
 _COLUNAS_EMPENHADO_POR_NE = [
-    "ne_curta", "origem", "empenhada", "contrato_numero", "fornecedor", "programa_bolsa",
+    "ne_curta", "origem", "elemento_cod", "empenhada", "contrato_numero", "fornecedor", "programa_bolsa",
     "natureza_detalhada_desc", "ne_favorecido", "celula_selecionada",
 ]
 
@@ -123,7 +130,7 @@ def empenhado_por_ne_e_celula(execucao_mensal: pd.DataFrame, exercicio: int) -> 
 
     bruto = execucao_mensal.loc[execucao_mensal["ano"] == exercicio]
     blocos = valor_empenhado_por_bloco(bruto)
-    colunas = ["ne_curta", "chave", "empenhada", "natureza_detalhada_desc", "ne_favorecido"]
+    colunas = ["ne_curta", "chave", "elemento_cod", "empenhada", "natureza_detalhada_desc", "ne_favorecido"]
     if blocos.empty:
         return pd.DataFrame(columns=colunas)
 
@@ -137,9 +144,11 @@ def empenhado_por_ne_e_celula(execucao_mensal: pd.DataFrame, exercicio: int) -> 
     for coluna in _COLUNAS_CHAVE_EXECUCAO:
         blocos[coluna] = blocos[coluna].astype("string")
     blocos["ne_favorecido"] = blocos["ne_ccor"].map(favorecidos)
+    # elemento por linha (08/10/2026): uma NE com mais de um elemento se divide entre as linhas do empenhado
+    blocos["elemento_cod"] = blocos["elemento_cod"].astype("string") if "elemento_cod" in blocos else pd.NA
 
     agrupado = (
-        blocos.groupby(["ne_curta", *_COLUNAS_CHAVE_EXECUCAO], dropna=False)
+        blocos.groupby(["ne_curta", *_COLUNAS_CHAVE_EXECUCAO, "elemento_cod"], dropna=False)
         .agg(
             empenhada=("empenhada", lambda s: s.sum(min_count=1)),
             natureza_detalhada_desc=(
@@ -254,7 +263,7 @@ def calcular_resultado(
 
     # --- Empenhado e origem -----------------------------------------------------------------
     emp = empenhado.copy() if empenhado is not None else pd.DataFrame()
-    for coluna in ("ne_curta", "chave", "empenhada", "natureza_detalhada_desc", "ne_favorecido"):
+    for coluna in ("ne_curta", "chave", "elemento_cod", "empenhada", "natureza_detalhada_desc", "ne_favorecido"):
         if coluna not in emp.columns:
             emp[coluna] = pd.Series(dtype="object")
     emp["empenhada"] = pd.to_numeric(emp["empenhada"], errors="coerce")
@@ -271,15 +280,15 @@ def calcular_resultado(
     info_contratos = _por_ne(cadastro_contratos, ["contrato_numero", "fornecedor"])
     info_bolsas = _por_ne(cadastro_bolsas, ["programa_bolsa"])
 
-    def _origem(ne: str) -> str:
+    def _origem(ne: str, elemento: object) -> str:
         if ne in info_contratos:
             return ORIGEM_CONTRATOS
         if ne in info_bolsas:
             return ORIGEM_BOLSAS
-        return ORIGEM_OUTROS
+        return _ORIGEM_POR_ELEMENTO.get(None if pd.isna(elemento) else str(elemento), ORIGEM_OUTROS)
 
     por_ne = (
-        emp.groupby(["ne_curta", "celula_selecionada"], dropna=False)
+        emp.groupby(["ne_curta", "celula_selecionada", "elemento_cod"], dropna=False)
         .agg(
             empenhada=("empenhada", lambda s: s.sum(min_count=1)),
             natureza_detalhada_desc=("natureza_detalhada_desc", "first"),
@@ -287,16 +296,19 @@ def calcular_resultado(
         )
         .reset_index()
         if len(emp)
-        else pd.DataFrame(columns=["ne_curta", "celula_selecionada", "empenhada", "natureza_detalhada_desc", "ne_favorecido"])
+        else pd.DataFrame(
+            columns=["ne_curta", "celula_selecionada", "elemento_cod", "empenhada", "natureza_detalhada_desc", "ne_favorecido"]
+        )
     )
     por_ne["ne_curta"] = por_ne["ne_curta"].astype(str)
-    por_ne["origem"] = por_ne["ne_curta"].map(_origem)
+    por_ne["origem"] = [_origem(ne, el) for ne, el in zip(por_ne["ne_curta"], por_ne["elemento_cod"])]
     por_ne["contrato_numero"] = por_ne["ne_curta"].map(lambda n: "; ".join(info_contratos.get(n, {}).get("contrato_numero", [])) or None)
     por_ne["fornecedor"] = por_ne["ne_curta"].map(lambda n: "; ".join(info_contratos.get(n, {}).get("fornecedor", [])) or None)
     por_ne["programa_bolsa"] = por_ne["ne_curta"].map(lambda n: "; ".join(info_bolsas.get(n, {}).get("programa_bolsa", [])) or None)
     por_ne = por_ne[_COLUNAS_EMPENHADO_POR_NE].reset_index(drop=True)
 
-    nes_selecionadas = por_ne.loc[por_ne["celula_selecionada"], "ne_curta"].tolist()
+    # uma NE pode ter várias linhas (uma por elemento): avisa uma vez só
+    nes_selecionadas = list(dict.fromkeys(por_ne.loc[por_ne["celula_selecionada"], "ne_curta"]))
     for ne in nes_selecionadas:
         if ne in info_contratos and ne in info_bolsas:
             avisos.append(f"NE {ne} em Contratos e em Bolsas — conferir.")
@@ -306,7 +318,7 @@ def calcular_resultado(
     selecionados = por_ne.loc[por_ne["celula_selecionada"]]
     # Correção (08/10/2026, revisão da Task 4): empenhado nulo em célula marcada não pode virar
     # zero na soma. Avisa, nomeando as NEs, e deixa o resultado incompleto.
-    nes_empenho_nulo = selecionados.loc[selecionados["empenhada"].isna(), "ne_curta"].tolist()
+    nes_empenho_nulo = list(dict.fromkeys(selecionados.loc[selecionados["empenhada"].isna(), "ne_curta"]))
     if nes_empenho_nulo:
         avisos.append(
             "Empenhado nulo (não informado) em célula marcada para a(s) NE: "
@@ -317,14 +329,14 @@ def calcular_resultado(
     # None quando alguma linha selecionada é nula (soma_ou_nulo), em vez de ignorar o nulo (null != zero).
     empenhado_por_origem = {
         origem: soma_ou_nulo(selecionados.loc[selecionados["origem"] == origem, "empenhada"])
-        for origem in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS, ORIGEM_OUTROS)
+        for origem in ORIGENS_EMPENHADO
     }
     # Conferência independente da classificação: soma direta das linhas das células marcadas.
     empenhado_total = soma_ou_nulo(emp.loc[emp["celula_selecionada"], "empenhada"])
     # A diferença da conferência usa somas que ignoram nulos (nulo contribui igualmente aos dois lados).
     diferenca = float(emp.loc[emp["celula_selecionada"], "empenhada"].sum()) - float(
         sum(selecionados.loc[selecionados["origem"] == o, "empenhada"].sum()
-            for o in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS, ORIGEM_OUTROS))
+            for o in ORIGENS_EMPENHADO)
     )
     if abs(diferenca) >= TOLERANCIA_CONFERENCIA:
         avisos.append(f"Conferência do empenhado não fecha: diferença de {_brl(diferenca)}.")

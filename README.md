@@ -361,11 +361,14 @@ Fonte Detalhada (7 códigos). Os códigos são texto, com zeros à esquerda pres
 (mesmo formato de 10 dígitos); por isso `valor_empenhado_por_bloco` passou a carregar essa dimensão
 (mudança aditiva, nenhum valor muda).
 
-**Empenhado em três linhas.** O empenhado das células marcadas vem da Execução Mensal, por célula, e é
+**Empenhado em cinco linhas.** O empenhado das células marcadas vem da Execução Mensal, por célula, e é
 dividido por origem, cada NE contada uma única vez: **Contratos Contínuos** (NE no cadastro de contratos),
-**Bolsas e Auxílios** (NE no cadastro de bolsas) e **Outros empenhos** (todo o resto). Se a NE está nos dois
+**Bolsas e Auxílios** (NE no cadastro de bolsas) e, para o resto, pelo elemento de despesa (pedido de
+08/10/2026): **Despesas de Exercícios Anteriores (elemento 92)**, **Material de Consumo (elemento 30)** e
+**Outros empenhos** (os demais elementos). Contrato e Bolsa têm prioridade sobre o elemento; uma NE com mais
+de um elemento se divide entre as linhas pelo valor de cada elemento. Se a NE está nos dois
 cadastros, fica em Contratos e gera o aviso "NE em Contratos e em Bolsas — conferir". Cada linha expande em
-uma tabela por NE. A **conferência** `Contratos + Bolsas + Outros = Empenhado total das células` aparece
+uma tabela por NE. A **conferência** `soma das linhas = Empenhado total das células` aparece
 sempre, e a diferença é exibida quando a diferença é de R$ 0,01 ou mais. NE de contrato ou bolsa em célula não marcada não
 entra no empenhado (a necessidade dela continua entrando).
 

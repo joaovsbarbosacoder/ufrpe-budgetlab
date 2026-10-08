@@ -12,6 +12,8 @@ from src.resultado_orcamentario import (
     soma_ou_nulo,
     ORIGEM_BOLSAS,
     ORIGEM_CONTRATOS,
+    ORIGEM_DEA,
+    ORIGEM_MATERIAL_CONSUMO,
     ORIGEM_OUTROS,
     calcular_resultado,
     celulas_da_dotacao,
@@ -34,17 +36,19 @@ def _celulas(dot_a=1000.0, dot_b=500.0, dot_c=300.0) -> pd.DataFrame:
     )
 
 
-def _empenhado(linhas: list[tuple[str, tuple, float]]) -> pd.DataFrame:
+def _empenhado(linhas: list[tuple]) -> pd.DataFrame:
+    """Cada linha: (ne, chave, valor) ou (ne, chave, valor, elemento)."""
     return pd.DataFrame(
         [
             {
-                "ne_curta": ne,
-                "chave": chave,
-                "empenhada": valor,
+                "ne_curta": linha[0],
+                "chave": linha[1],
+                "empenhada": linha[2],
+                "elemento_cod": linha[3] if len(linha) > 3 else "39",
                 "natureza_detalhada_desc": "NAT",
                 "ne_favorecido": "FAV",
             }
-            for ne, chave, valor in linhas
+            for linha in linhas
         ]
     )
 
@@ -101,7 +105,10 @@ def _calc(**kw):
 def test_resultado_conta_a_mao():
     r = _calc()
     assert r.dotacao == 1500
-    assert r.empenhado == {ORIGEM_CONTRATOS: 400, ORIGEM_BOLSAS: 200, ORIGEM_OUTROS: 100}
+    assert r.empenhado == {
+        ORIGEM_CONTRATOS: 400, ORIGEM_BOLSAS: 200, ORIGEM_DEA: 0.0, ORIGEM_MATERIAL_CONSUMO: 0.0,
+        ORIGEM_OUTROS: 100,
+    }
     assert r.empenhado_total == 700
     assert r.necessidade == {ORIGEM_CONTRATOS: 230, ORIGEM_BOLSAS: 60, OUTRAS: 40}
     assert sum(r.necessidade.values()) == 330  # N9 (celula nao selecionada) entra
@@ -314,3 +321,39 @@ def test_soma_ou_nulo_nao_trata_nulo_como_zero():
     assert soma_ou_nulo(pd.Series([100.0, float("nan")])) is None
     assert soma_ou_nulo(pd.Series([100.0, -30.0, 0.0], dtype="Float64")) == 70.0
     assert soma_ou_nulo(pd.Series([], dtype="Float64")) == 0.0
+
+
+def test_outros_segmentado_por_elemento_92_e_30():
+    # N3 (elemento 92), N4 (elemento 30) e N5 (39) não estão nos cadastros: saem de "Outros" por elemento.
+    emp = _empenhado([
+        ("N1", A, 400.0, "37"), ("N2", B, 200.0, "18"),
+        ("N3", A, 70.0, "92"), ("N4", A, 20.0, "30"), ("N5", A, 10.0, "39"),
+    ])
+    r = _calc(empenhado=emp)
+    assert r.empenhado[ORIGEM_DEA] == 70.0
+    assert r.empenhado[ORIGEM_MATERIAL_CONSUMO] == 20.0
+    assert r.empenhado[ORIGEM_OUTROS] == 10.0
+    assert r.empenhado_total == 700.0
+    assert abs(r.diferenca_conferencia) < 0.01
+    origens = r.empenhado_por_ne.set_index("ne_curta")["origem"]
+    assert origens["N3"] == ORIGEM_DEA and origens["N4"] == ORIGEM_MATERIAL_CONSUMO and origens["N5"] == ORIGEM_OUTROS
+
+
+def test_contrato_e_bolsa_tem_prioridade_sobre_o_elemento():
+    emp = _empenhado([("N1", A, 400.0, "30"), ("N2", B, 200.0, "92")])
+    r = _calc(empenhado=emp)
+    assert r.empenhado[ORIGEM_CONTRATOS] == 400.0 and r.empenhado[ORIGEM_BOLSAS] == 200.0
+    assert r.empenhado[ORIGEM_DEA] == 0.0 and r.empenhado[ORIGEM_MATERIAL_CONSUMO] == 0.0
+
+
+def test_ne_com_dois_elementos_divide_o_valor():
+    emp = _empenhado([("N7", A, 50.0, "30"), ("N7", A, 30.0, "39")])
+    r = _calc(empenhado=emp)
+    assert r.empenhado[ORIGEM_MATERIAL_CONSUMO] == 50.0
+    assert r.empenhado[ORIGEM_OUTROS] == 30.0
+
+
+def test_sem_elemento_fica_em_outros():
+    emp = _empenhado([("N8", A, 15.0, None)])
+    r = _calc(empenhado=emp)
+    assert r.empenhado[ORIGEM_OUTROS] == 15.0
