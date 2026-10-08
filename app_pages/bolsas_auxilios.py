@@ -142,7 +142,6 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from src.bolsas_auxilios import com_saldo_execucao
 from src.bolsas_auxilios_cadastro import (
     anos_disponiveis,
     atualizar_programa,
@@ -183,14 +182,12 @@ from src.importacao_execucao_mensal import NOME_PONTEIRO as NOME_PONTEIRO_EXECUC
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
 from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne_e_mes
 from src.necessidade_empenho import calcular_necessidade_empenho, necessidade_ate_dezembro
-from src.projecao_execucao_bolsas import entrada_relatorio as entrada_projecao_execucao
 from src.relatorio_necessidade_empenho import mes_referencia_do_exercicio
-from src.relatorio_projecao_execucao import BOLSAS_AUXILIOS as ROTULOS_PROJECAO_BOLSAS
 from src.relatorio_projecao_execucao import ContextoProjecaoExecucao
 from src.relatorio_projecao_execucao import gerar_pdf as gerar_pdf_projecao_execucao
 from src.relatorio_projecao_execucao import gerar_xlsx as gerar_xlsx_projecao_execucao
-from src.relatorio_projecao_execucao import montar_relatorio as montar_relatorio_projecao_execucao
 from src.relatorio_reforco_empenho import BOLSAS_AUXILIOS as RELATORIO_BOLSAS_AUXILIOS
+from src.resultado_orcamentario_fontes import projecao_bolsas, tabela_bolsas
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_cadastro import (
     aviso_linha_do_tempo,
@@ -824,12 +821,9 @@ def _render_relatorio_projecao_execucao(
         st.caption(f"Indisponível: não foi possível ler a Liquidação por Competência ({erro}).")
         return
 
-    por_ne, sem_ne, custos = entrada_projecao_execucao(filtrado, competencia, ano_exercicio)
     data_extracao = datetime.fromisoformat(manifesto.data_extracao)
     mes_referencia = mes_referencia_do_exercicio(data_extracao.date(), ano_exercicio)
-    relatorio = montar_relatorio_projecao_execucao(
-        por_ne, sem_ne, competencia, ano_exercicio, mes_referencia, custos=custos, rotulos=ROTULOS_PROJECAO_BOLSAS,
-    )
+    relatorio, _ = projecao_bolsas(filtrado, competencia, ano_exercicio, mes_referencia)
     contexto = ContextoProjecaoExecucao(
         exercicio=ano_exercicio,
         data_extracao=data_extracao.strftime("%d/%m/%Y"),
@@ -1037,25 +1031,14 @@ if manifesto_dotacao is not None:
     except Exception:
         dotacao_dimensoes = None
 
-dataframe = com_saldo_execucao(dataframe, por_ne_execucao)
-
-# "Início da Execução" (mês do primeiro empenho de cada NE, auto-detectado da base mensal) e
-# valor empenhado autoritativo — só para a sugestão inicial "por calendário" do Relatório de
-# Reforço (pedido explícito, ver `src.necessidade_empenho.necessidade_ate_mes_vigente`) e, o início,
-# também como reserva para situar os meses de cada bolsa no relatório "Projeção pela execução"
-# (07/10/2026; lá o automático prefere o primeiro mês com liquidação por competência).
 if tempo_por_ne_curta is not None:
     sugestao_inicio_por_ne = primeiro_mes_com_empenho_por_ne(tempo_por_ne_curta)
 else:
     sugestao_inicio_por_ne = pd.Series(dtype="Int64")
-dataframe["valor_empenhado_autoritativo"] = dataframe["valor_empenhado_execucao"].fillna(dataframe["valor_empenhado_tg"])
-# mesmo padrão de fallback do Resumo Consolidado (`_render_resumo_consolidado`) — autoritativo
-# (Execução Mensal) com o valor colado na planilha como reserva. Usado só para evidenciar o
-# saldo na tela do Relatório de Reforço/Anulação (pedido explícito), nenhum outro quadro usa.
-dataframe["saldo_autoritativo"] = dataframe["saldo_execucao"].fillna(dataframe["saldo_colado_planilha"])
-dataframe["inicio_execucao_efetivo"] = dataframe["inicio_execucao_mes"].fillna(
-    dataframe["ne_curta"].map(sugestao_inicio_por_ne)
-)
+# Colunas derivadas (saldo via Execução, autoritativos, início efetivo): montagem compartilhada com o
+# Resultado Orçamentário em `src/resultado_orcamentario_fontes.py` (08/10/2026); os comentários de decisão
+# foram junto.
+dataframe = tabela_bolsas(dataframe, por_ne_execucao, sugestao_inicio_por_ne)
 
 with col_relatorio:
     st.write("")

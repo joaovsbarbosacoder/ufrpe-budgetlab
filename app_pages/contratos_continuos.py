@@ -167,9 +167,6 @@ from src.contratos_aditivos import (
 from src.contratos_continuos import (
     SITUACAO_NECESSITA_REFORCO,
     SITUACAO_VIGENCIA_ENCERRADA,
-    com_efeitos_da_suspensao,
-    com_meses_pagos,
-    com_saldo_execucao,
     situacao_contrato,
 )
 from src.contratos_continuos_cadastro import (
@@ -232,7 +229,7 @@ from src.relatorio_projecao_execucao import ContextoProjecaoExecucao, ORIGEM_EXE
 from src.relatorio_projecao_execucao import fatores_por_ne as fatores_projecao_execucao
 from src.relatorio_projecao_execucao import gerar_pdf as gerar_pdf_projecao_execucao
 from src.relatorio_projecao_execucao import gerar_xlsx as gerar_xlsx_projecao_execucao
-from src.relatorio_projecao_execucao import montar_relatorio as montar_relatorio_projecao_execucao
+from src.resultado_orcamentario_fontes import projecao_contratos, tabela_contratos
 from src.relatorio_reforco_empenho import CONTRATOS_CONTINUOS as RELATORIO_CONTRATOS_CONTINUOS
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_linha_do_tempo import (
@@ -1340,7 +1337,7 @@ def _render_relatorio_projecao_execucao(
         )
         return
 
-    por_ne, sem_ne = necessidade_por_ne(filtrado, None, ano_exercicio)
+    por_ne, _ = necessidade_por_ne(filtrado, None, ano_exercicio)
     data_extracao = datetime.fromisoformat(manifesto.data_extracao)
     mes_referencia = mes_referencia_do_exercicio(data_extracao.date(), ano_exercicio)
     fatores = fatores_projecao_execucao(por_ne, liquidacao_competencia_por_mes, ano_exercicio, mes_referencia)
@@ -1369,8 +1366,8 @@ def _render_relatorio_projecao_execucao(
                 if escolha in fatores:
                     antecessores[ne] = escolha
 
-    relatorio = montar_relatorio_projecao_execucao(
-        por_ne, sem_ne, liquidacao_competencia_por_mes, ano_exercicio, mes_referencia, antecessores
+    relatorio, _ = projecao_contratos(
+        filtrado, liquidacao_competencia_por_mes, ano_exercicio, mes_referencia, antecessores
     )
     modificado = datetime.fromtimestamp(CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime)
     contexto = ContextoProjecaoExecucao(
@@ -1730,28 +1727,17 @@ else:
         columns=["contrato_normalizado", "meses_pagos", "ultimo_mes_pago"]
     )
 
-dataframe = com_saldo_execucao(dataframe, por_ne_execucao, indice_liquidado_competencia)
-dataframe = com_meses_pagos(dataframe, meses_pagos_por_contrato_df)
-
-# "Início da Execução" (mês do primeiro empenho de cada NE, auto-detectado da base mensal) e
-# valor empenhado autoritativo — só para a sugestão inicial "por calendário" do Relatório de
-# Reforço (pedido explícito, ver `src.necessidade_empenho.necessidade_ate_mes_vigente`);
-# nenhum outro quadro da página usa essas duas colunas.
 if tempo_por_ne_curta is not None:
     sugestao_inicio_por_ne = primeiro_mes_com_empenho_por_ne(tempo_por_ne_curta)
 else:
     sugestao_inicio_por_ne = pd.Series(dtype="Int64")
-dataframe["valor_empenhado_autoritativo"] = dataframe["valor_empenhado_execucao"].fillna(dataframe["valor_empenhado"])
-# mesmo padrão de fallback usado no resto da página (ex. linha 1193, divergência de saldo) —
-# autoritativo (Execução Mensal) com o valor colado na planilha como reserva. Usado só para
-# evidenciar o saldo na tela do Relatório de Reforço/Anulação (pedido explícito).
-dataframe["saldo_autoritativo"] = dataframe["saldo_execucao"].fillna(dataframe["saldo_colado_planilha"])
-dataframe["inicio_execucao_efetivo"] = dataframe["inicio_execucao_mes"].fillna(
-    dataframe["ne_curta"].map(sugestao_inicio_por_ne)
+# Colunas derivadas (saldo via Execução, autoritativos, início efetivo, efeitos da suspensão): montagem
+# compartilhada com o Resultado Orçamentário em `src/resultado_orcamentario_fontes.py` (08/10/2026);
+# os comentários de decisão foram junto.
+dataframe = tabela_contratos(
+    dataframe, por_ne_execucao, indice_liquidado_competencia, sugestao_inicio_por_ne,
+    meses_pagos=meses_pagos_por_contrato_df,
 )
-# Contrato SUSPENSO (06/10/2026): Despesa anual/Cobertura por PTRES passam a usar o já empenhado e o
-# "Saldo a liquidar (execução)" vira zero — ver `src.contratos_continuos.com_efeitos_da_suspensao`.
-dataframe = com_efeitos_da_suspensao(dataframe)
 
 with col_relatorio:
     st.write("")
