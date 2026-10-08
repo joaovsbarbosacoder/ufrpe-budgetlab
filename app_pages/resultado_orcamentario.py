@@ -39,7 +39,6 @@ import streamlit as st
 
 from src import bolsas_auxilios_cadastro as cadastro_bolsas
 from src import contratos_continuos_cadastro as cadastro_contratos
-from src import design_tokens as dt
 from src import resultado_orcamentario_cadastro as cadastro
 from src.execucao_ne_utils import ne_curta as _ne_curta_execucao, saldo_por_ne
 from src.importacao_dotacao import DIRETORIO_MANIFESTOS_PADRAO as DIR_MANIFESTOS_DOTACAO
@@ -68,7 +67,8 @@ from src.resultado_orcamentario_cadastro import ArquivoCorrompido, CelulaChave, 
 from src.resultado_orcamentario_fontes import projecao_bolsas, projecao_contratos, tabela_bolsas, tabela_contratos
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_cadastro import formatar_brl
-from src.ui_theme import currency_column, render_metric_grid, render_page_header
+from src.ui_resultado_orcamentario import LinhaComposicao, html_bloco, html_cartoes
+from src.ui_theme import currency_column, render_page_header
 
 
 def _sem_latex(texto: str) -> str:
@@ -244,37 +244,19 @@ def _dialogo_excluir(exercicio: int, despesa: DespesaManual) -> None:
 
 # ------------------------------------------------------------------- seções
 def _render_cartoes(res: ResultadoOrcamentario, qtd_selecionadas: int, qtd_celulas: int) -> None:
+    """Cartões no desenho do protótipo (08/10/2026): o do Resultado com borda, fundo e selo pela situação."""
+
     necessidades = list(res.necessidade.values())
     necessidade_total = None if any(v is None for v in necessidades) else float(sum(necessidades))
     if res.resultado is None:
-        rotulo, icone, tom = "Resultado", "!", dt.WARNING
         rodape = "Nenhuma célula selecionada" if not qtd_selecionadas else "Resultado incompleto — ver Avisos"
     else:
-        if res.resultado > 0:
-            rotulo, icone, tom = "Resultado — Superávit", "✓", dt.POSITIVE
-        elif res.resultado < 0:
-            rotulo, icone, tom = "Resultado — Déficit", "!", dt.NEGATIVE
-        else:
-            rotulo, icone, tom = "Resultado — Equilíbrio", "=", dt.ACCENT
         rodape = f"{_pct(res.resultado, res.dotacao)} da dotação selecionada"
-    render_metric_grid(
-        [
-            {
-                "label": "Dotação Atualizada", "value": formatar_brl(res.dotacao),
-                "subtitle": f"{qtd_selecionadas} de {qtd_celulas} células selecionadas",
-                "icon": "▥", "tone": dt.ACCENT,
-            },
-            {
-                "label": "(−) Empenhado nas células", "value": formatar_brl(res.empenhado_total),
-                "subtitle": "Execução Mensal, todo empenho das células", "icon": "!", "tone": dt.WARNING,
-            },
-            {
-                "label": "(−) Necessidade até dezembro", "value": formatar_brl(necessidade_total),
-                "subtitle": "Contratos + Bolsas + outras previstas", "icon": "!", "tone": dt.WARNING,
-            },
-            {"label": rotulo, "value": formatar_brl(res.resultado), "subtitle": rodape, "icon": icone, "tone": tom},
-        ],
-        columns=4,
+    st.html(
+        html_cartoes(
+            res.dotacao, f"{qtd_selecionadas} de {qtd_celulas} células selecionadas",
+            res.empenhado_total, necessidade_total, res.resultado, rodape,
+        )
     )
 
 
@@ -317,71 +299,57 @@ def _render_composicao(
     linhas_contratos: pd.DataFrame | None,
     linhas_bolsas: pd.DataFrame | None,
     despesas: list[DespesaManual],
-    avisos_projecao: dict[str, list[str]],
 ) -> None:
-    moeda = {"Empenhado": currency_column("Empenhado"), "Necessidade": currency_column("Necessidade")}
-    col_empenhado, col_necessidade = st.columns(2)
-    with col_empenhado, st.container(border=True):
-        st.markdown("**Empenhado nas células selecionadas**")
-        for origem in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS, ORIGEM_OUTROS):
-            valor = res.empenhado[origem]
-            with st.expander(f"{origem} — {formatar_brl(valor)} ({_pct(valor, res.empenhado_total)})"):
-                tabela = _tabela_empenhado(res.empenhado_por_ne, origem)
-                if tabela.empty:
-                    st.caption("Nenhuma NE desta origem nas células selecionadas.")
-                else:
-                    st.dataframe(tabela, hide_index=True, width="stretch", column_config=moeda)
-        st.markdown(f"**Total empenhado: {formatar_brl(res.empenhado_total)}**")
-        if abs(res.diferenca_conferencia) < TOLERANCIA_CONFERENCIA:
-            st.caption(
-                "✓ Contratos + Bolsas + Outros = empenhado total das células · diferença "
-                f"{formatar_brl(res.diferenca_conferencia)}"
-            )
-        else:
-            st.caption(
-                "✗ Contratos + Bolsas + Outros não fecha com o empenhado total das células · diferença "
-                f"{formatar_brl(res.diferenca_conferencia)}"
-            )
+    """Composição no desenho do protótipo (08/10/2026): linhas compactas com % e valor à direita, barra
+    de proporção e o detalhe por NE (ou por despesa) ao abrir a linha. Os avisos da projeção ficam na
+    seção Avisos."""
 
-    with col_necessidade, st.container(border=True):
-        st.markdown("**Necessidade de empenho até dezembro**")
-        necessidade_total = sum(v for v in res.necessidade.values() if v is not None)
-        # Correção (08/10/2026, revisão final): com qualquer origem nula, o total é parcial e nenhuma
-        # porcentagem é mostrada (null != zero).
-        total_parcial = any(v is None for v in res.necessidade.values())
-        necessidade_pct_base = None if total_parcial else necessidade_total
-        for origem, linhas in ((ORIGEM_CONTRATOS, linhas_contratos), (ORIGEM_BOLSAS, linhas_bolsas)):
-            valor = res.necessidade[origem]
-            with st.expander(f"{origem} — {formatar_brl(valor)} ({_pct(valor, necessidade_pct_base)})"):
-                if linhas is None:
-                    st.caption("Indisponível — ver Avisos.")
-                elif linhas.empty:
-                    st.caption("Nenhuma NE com necessidade.")
-                else:
-                    st.dataframe(
-                        _tabela_necessidade(linhas, res.empenhado_por_ne, origem),
-                        hide_index=True, width="stretch", column_config=moeda,
+    col_empenhado, col_necessidade = st.columns(2)
+    with col_empenhado:
+        # -0,00 (resíduo de ponto flutuante) aparece como 0,00
+        diferenca = round(res.diferenca_conferencia, 2) + 0.0
+        fecha = abs(res.diferenca_conferencia) < TOLERANCIA_CONFERENCIA
+        rodape = (
+            "✓ Contratos + Bolsas + Outros = empenhado total das células" if fecha
+            else "✗ Contratos + Bolsas + Outros não fecha com o empenhado total das células"
+        ) + f" · diferença {formatar_brl(diferenca)}"
+        st.html(
+            html_bloco(
+                "Empenhado nas células selecionadas",
+                [
+                    LinhaComposicao(
+                        origem, res.empenhado[origem], _tabela_empenhado(res.empenhado_por_ne, origem),
+                        ("Empenhado",), "Nenhuma NE desta origem nas células selecionadas.",
                     )
-            # Correção (08/10/2026, revisão final): mostra os avisos do próprio relatório de projeção.
-            for aviso_projecao in avisos_projecao.get(origem, []):
-                st.warning(_sem_latex(aviso_projecao))
-            if origem == ORIGEM_CONTRATOS:
-                st.caption(
-                    "Projeção pela execução SEM contrato antecessor: NE com menos de 3 meses fechados é "
-                    "projetada pelo valor mensal cheio (fator 1). A escolha de antecessor feita na página de "
-                    "Contratos Contínuos não é gravada e, por isso, não entra aqui."
-                )
-        valor = res.necessidade[OUTRAS_DESPESAS]
-        with st.expander(f"{OUTRAS_DESPESAS} — {formatar_brl(valor)} ({_pct(valor, necessidade_pct_base)})"):
-            if despesas:
-                st.dataframe(
-                    pd.DataFrame({"Descrição": [d.descricao for d in despesas], "Valor": [d.valor for d in despesas]}),
-                    hide_index=True, width="stretch", column_config={"Valor": currency_column("Valor")},
-                )
-            st.caption("Lista e cadastro na seção Outras despesas previstas.")
-        total = None if any(v is None for v in res.necessidade.values()) else necessidade_total
-        st.markdown(f"**Total da necessidade: {formatar_brl(total)}**")
-        st.caption("A necessidade vale para todas as NEs, inclusive as de células não selecionadas.")
+                    for origem in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS, ORIGEM_OUTROS)
+                ],
+                res.empenhado_total, "Total empenhado", rodape, "ok" if fecha else "erro",
+            )
+        )
+
+    with col_necessidade:
+        total = None if any(v is None for v in res.necessidade.values()) else float(sum(res.necessidade.values()))
+        linhas_bloco = []
+        for origem, linhas in ((ORIGEM_CONTRATOS, linhas_contratos), (ORIGEM_BOLSAS, linhas_bolsas)):
+            if linhas is None:
+                detalhe, vazio = None, "Indisponível — ver Avisos."
+            else:
+                detalhe, vazio = _tabela_necessidade(linhas, res.empenhado_por_ne, origem), "Nenhuma NE com necessidade."
+            linhas_bloco.append(LinhaComposicao(origem, res.necessidade[origem], detalhe, ("Necessidade",), vazio))
+        manual = pd.DataFrame({"Descrição": [d.descricao for d in despesas], "Valor": [d.valor for d in despesas]})
+        linhas_bloco.append(
+            LinhaComposicao(
+                OUTRAS_DESPESAS, res.necessidade[OUTRAS_DESPESAS], manual, ("Valor",),
+                "Nenhuma despesa cadastrada — ver a seção Outras despesas previstas.",
+            )
+        )
+        st.html(
+            html_bloco(
+                "Necessidade de empenho até dezembro", linhas_bloco, total, "Total da necessidade",
+                "Vale para todas as NEs, inclusive as de células não selecionadas. Projeção sem contrato "
+                "antecessor: NE com menos de 3 meses fechados é projetada pelo valor mensal cheio.",
+            )
+        )
 
 
 def _tabela_celulas(celulas: pd.DataFrame, empenhado: pd.DataFrame, selecao: set) -> pd.DataFrame:
@@ -517,12 +485,12 @@ except ArquivoCorrompido as erro:
 # Cartões e Composição ficam no topo, mas dependem da seleção em edição (tabela mais abaixo):
 # containers reservados aqui e preenchidos no fim.
 area_cartoes = st.container()
-st.subheader("Composição")
-st.caption("Abra uma linha para ver o detalhe por NE ou por despesa.")
+st.subheader("2. Composição")
+st.caption("Clique em uma linha para ver o detalhe por NE ou por despesa.")
 area_composicao = st.container()
 
 # --------------------------------------------------------------- Células
-st.subheader("Células que fazem frente às despesas")
+st.subheader("3. Células que fazem frente às despesas")
 st.caption(
     "Marque as células da Dotação Anual que entram como recurso. A seleção fica gravada por exercício "
     '("Salvar seleção"). Célula sem nenhum empenho registrado no exercício mostra Empenhado R$ 0,00.'
@@ -575,7 +543,7 @@ with col_estado:
             st.caption("Nenhuma seleção gravada para este exercício.")
 
 # --------------------------------------------------------------- Outras despesas previstas
-st.subheader(OUTRAS_DESPESAS)
+st.subheader(f"4. {OUTRAS_DESPESAS}")
 st.caption(
     "Despesas que não estão em Contratos nem em Bolsas e ainda vão ser empenhadas no exercício. "
     "A célula é só informativa: não muda a conta."
@@ -584,33 +552,25 @@ if _CHAVE_FLASH in st.session_state:
     st.success(st.session_state.pop(_CHAVE_FLASH))
 
 if despesas:
-    st.dataframe(
-        pd.DataFrame(
-            {
-                "Descrição": [d.descricao for d in despesas],
-                "Observação": [d.observacao or "—" for d in despesas],
-                "Célula (informativa)": [_rotulo_celula(d.celula) for d in despesas],
-                "Valor a empenhar": [d.valor for d in despesas],
-            }
-        ),
-        hide_index=True,
-        width="stretch",
-        column_config={"Valor a empenhar": currency_column("Valor a empenhar")},
-    )
-    st.caption(f"Total: {formatar_brl(sum(d.valor for d in despesas))}")
-    por_id = {d.id: d for d in despesas}
-    col_escolha, col_editar, col_excluir = st.columns([4, 1, 1], vertical_alignment="bottom")
-    with col_escolha:
-        escolhida = st.selectbox(
-            "Despesa", list(por_id), key="ro_despesa_escolhida",
-            format_func=lambda id_: f"{por_id[id_].descricao} — {formatar_brl(por_id[id_].valor)}",
+    # Editar/Excluir em cada linha, como no protótipo (08/10/2026); antes era um seletor separado.
+    larguras = [3, 2.2, 2.4, 1.4, 0.8, 0.8]
+    for coluna, titulo in zip(st.columns(larguras), ("Descrição", "Observação", "Célula (informativa)", "Valor a empenhar")):
+        coluna.caption(f"**{titulo}**")
+    for despesa in despesas:
+        col_desc, col_obs, col_cel, col_valor, col_editar, col_excluir = st.columns(
+            larguras, vertical_alignment="center"
         )
-    with col_editar:
-        if st.button("Editar", key="ro_editar_despesa", disabled=not despesas_legiveis, width="stretch"):
-            _dialogo_editar(exercicio, por_id[escolhida], chaves_celulas)
-    with col_excluir:
-        if st.button("Excluir", key="ro_excluir_despesa", disabled=not despesas_legiveis, width="stretch"):
-            _dialogo_excluir(exercicio, por_id[escolhida])
+        col_desc.markdown(_sem_latex(despesa.descricao))
+        col_obs.markdown(_sem_latex(despesa.observacao or "—"))
+        col_cel.caption(_rotulo_celula(despesa.celula))
+        col_valor.markdown(_sem_latex(formatar_brl(despesa.valor)))
+        with col_editar:
+            if st.button("Editar", key=f"ro_editar_{despesa.id}", disabled=not despesas_legiveis, type="tertiary"):
+                _dialogo_editar(exercicio, despesa, chaves_celulas)
+        with col_excluir:
+            if st.button("Excluir", key=f"ro_excluir_{despesa.id}", disabled=not despesas_legiveis, type="tertiary"):
+                _dialogo_excluir(exercicio, despesa)
+    st.caption(_sem_latex(f"Total: {formatar_brl(sum(d.valor for d in despesas))}"))
 elif despesas_legiveis:
     st.caption("Nenhuma despesa prevista cadastrada para este exercício.")
 
@@ -664,14 +624,17 @@ if not despesas_legiveis:
 with area_cartoes:
     _render_cartoes(resultado, len(marcadas), len(celulas))
 with area_composicao:
-    _render_composicao(
-        resultado, linhas_contratos, linhas_bolsas, despesas,
-        {ORIGEM_CONTRATOS: avisos_projecao_contratos, ORIGEM_BOLSAS: avisos_projecao_bolsas},
-    )
+    _render_composicao(resultado, linhas_contratos, linhas_bolsas, despesas)
 
 # --------------------------------------------------------------- Avisos
-st.subheader("Avisos")
-for aviso in [*resultado.avisos, *avisos_extras]:
+st.subheader("5. Avisos")
+# Avisos da projeção (fator baixo, meses em aberto…) ficam aqui, como no protótipo (08/10/2026).
+avisos_projecao = [
+    f"Projeção de {origem}: {aviso}"
+    for origem, lista in ((ORIGEM_CONTRATOS, avisos_projecao_contratos), (ORIGEM_BOLSAS, avisos_projecao_bolsas))
+    for aviso in lista
+]
+for aviso in [*resultado.avisos, *avisos_extras, *avisos_projecao]:
     if aviso.startswith("Nenhuma célula selecionada"):
         st.info(_sem_latex(aviso))
     else:

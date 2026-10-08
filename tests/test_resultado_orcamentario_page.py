@@ -107,9 +107,10 @@ def test_incluir_despesa_manual(diretorio: Path) -> None:
     assert despesas[0]["descricao"] == "Teste"
     assert despesas[0]["valor"] == 100.0
 
-    # `st.dataframe` sem seleção não expõe a `key` no `AppTest`: localiza a lista pelas colunas
-    tabela = next(d.value for d in app.dataframe if "Célula (informativa)" in d.value.columns)
-    assert "Teste" in tabela["Descrição"].tolist()
+    # lista em linhas, com Editar/Excluir por despesa (layout do protótipo, 08/10/2026)
+    assert any(bloco.value == "Teste" for bloco in app.markdown)
+    assert app.button(key=f"ro_editar_{despesas[0]['id']}") is not None
+    assert app.button(key=f"ro_excluir_{despesas[0]['id']}") is not None
 
 
 def test_menu_tem_pagina(diretorio: Path) -> None:
