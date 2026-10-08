@@ -13,6 +13,13 @@ grandes quase não o acionam —, então a memória subia ~0,5 GB por teste: `te
 chegava a ~8 GB num processo, e com `-n auto` a soma passava de 29 GB numa máquina de 15 GB (processos
 caíam com "node down"/MemoryError). Um `gc.collect()` ao fim de cada teste de página (~0,1 s) mantém o
 processo estável em ~1,5 GB.
+
+Uma suíte `-n auto` por vez (08/10/2026): mesmo com a coleta, a suíte usa quase toda a memória da
+máquina. Duas suítes simultâneas, ou a suíte junto com um script/`AppTest` que abre uma página com as
+planilhas reais de `data/raw/`, esgotam a memória: processos caem com "node down"/MemoryError (até no
+`import pandas`) ou um teste de página estoura o `TEMPO_LIMITE_APPTEST` (caso visto:
+`test_consulta_empenhos_page.py::test_clicar_no_cartao_troca_a_ne_selecionada`, que passa sozinho).
+Falha isolada desse tipo: confira se não havia outra execução em paralelo antes de investigar o teste.
 """
 
 import gc
