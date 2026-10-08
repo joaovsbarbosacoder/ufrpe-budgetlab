@@ -1,5 +1,5 @@
 """Testes de `reavaliar_alertas` (`src/teds_lotes.py`): roda as verificações de alerta sobre dados já
-importados, sem reimportar. Só cria alertas ausentes, é idempotente, não altera dado importado e
+importados, sem reimportar. Cria alertas ausentes e fecha os obsoletos dos tipos de regra revista, é idempotente, não altera dado importado e
 deixa registro na trilha de auditoria. Banco em memória — nunca `data/teds/teds.db`.
 """
 
@@ -127,7 +127,7 @@ class ReavaliarAlertasTests(unittest.TestCase):
         ).fetchone()
 
     def test_fecha_obsoleto_com_justificativa_e_auditoria(self):
-        # TED_B não tem NC; um PF fora do consolidado deixa de ser divergência: tira os PF => "sem base".
+        # Removemos os PF do TED_B: sem documento no extrato ele passa a ser "sem base", e o alerta antigo é obsoleto.
         self.conn.execute("DELETE FROM documento_pf WHERE chave_ted = ?", (TED_B,))
         self.conn.commit()
         alerta_id = self._alerta(TIPO_PF_DIVERGE_CONSOLIDADO, TED_B, chave=TED_B)

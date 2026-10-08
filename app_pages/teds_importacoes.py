@@ -138,8 +138,9 @@ else:
 st.markdown("#### Alertas")
 st.caption(
     "Cada importação só gera os alertas que existiam quando ela rodou. Reavaliar aplica todas as verificações aos "
-    "dados já importados, sem reimportar nada: só cria alertas que faltam — não fecha nem altera os existentes "
-    "nem os dados importados."
+    "dados já importados, sem reimportar nada: cria os alertas que faltam e fecha, como 'sistema' e com auditoria, "
+    "os alertas abertos das regras revistas em 08/10/2026 que não se sustentam mais; não altera outros tipos, "
+    "os resolvidos nem os dados importados."
 )
 if st.button("Reavaliar alertas", key="imp_reavaliar_alertas"):
     try:

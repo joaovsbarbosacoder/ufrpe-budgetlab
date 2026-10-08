@@ -893,7 +893,7 @@ def fechar_alertas_obsoletos(
     `(tipo, documento)` não está em `candidatos_atuais`. Decisão de 08/10/2026 (spec §4): as regras foram
     revistas e os alertas gerados pelas regras antigas não se sustentam; deixar para análise manual
     arrastaria falsos positivos. Cada fechamento grava `alerta_status_alterado` na MESMA transação
-    (ou status e trilha persistem juntos, ou nenhum). Resolvido manualmente nunca é tocado; tipo não
+    (ou status e trilha persistem juntos, ou nenhum). Alertas `em_analise` dos tipos revistos também são fechados. Resolvido manualmente nunca é tocado; tipo não
     revisto nunca é fechado. Devolve a contagem por tipo."""
 
     tipos = sorted(TIPOS_REVISTOS_08_10_2026)
