@@ -59,6 +59,9 @@ _DIMENSOES_EXECUCAO_PADRAO = dict(
     elemento_cod="39", elemento_desc="OUTROS SERVICOS", natureza_detalhada_desc="X",
     ugr_cod="15239", ugr_desc="UFRPE",
     fonte_cod="000", fonte_desc="RECURSOS LIVRES DA UNIAO",
+    # incluídas em 08/10/2026: `valor_empenhado_por_bloco` passou a carregar a Fonte Detalhada
+    # (ver src/tesouro_execucao_mensal.py); sem elas o bloco de empenho falha por coluna ausente.
+    fonte_recursos_detalhada_cod="1000000000", fonte_recursos_detalhada_desc="RECURSOS LIVRES DA UNIAO",
 )
 
 

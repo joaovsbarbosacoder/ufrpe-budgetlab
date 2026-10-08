@@ -33,9 +33,11 @@ import unittest
 from pathlib import Path
 
 import openpyxl
+import pandas as pd
 
 from src.tesouro_execucao_mensal import (
     COLUNAS_DIMENSAO,
+    _DIMENSOES_EXTRA_BLOCO,
     ErroLayoutBase,
     _blocos_mensais,
     _rotulo_mes,
@@ -295,6 +297,32 @@ class TestValorEmpenhadoPorBloco(unittest.TestCase):
         valor_correto = self._bloco("153165152392026NE000036", "43", 202601)["empenhada"]
         self.assertGreater(soma_ingenua, valor_correto)
         self.assertAlmostEqual(soma_ingenua, valor_correto * 17, places=2)
+
+
+class TestFonteDetalhadaNoBloco(unittest.TestCase):
+    """Fonte Recursos Detalhada no bloco de empenho (08/10/2026): a fonte é constante por NE,
+    então `first` no bloco não mistura dado — permite cruzar empenhos com a Dotação Anual no
+    nível da fonte detalhada. Sem fixture: DataFrame mínimo montado em memória."""
+
+    def test_valor_empenhado_por_bloco_inclui_fonte_detalhada(self):
+        base = {coluna: "x" for coluna in _DIMENSOES_EXTRA_BLOCO.values()}
+        base.update({
+            "tipo_linha": "empenho", "ne_ccor": "NE1", "natureza_detalhada_cod": "339030",
+            "subitem_cod": "07", "ano_mes": 202601, "empenhada": 100.0,
+            "fonte_recursos_detalhada_cod": "1000000000",
+            "fonte_recursos_detalhada_desc": "Recursos ordinarios",
+        })
+        df = pd.DataFrame([
+            {**base, "ne_item_cod": "1"},
+            {**base, "ne_item_cod": "2"},
+        ])
+
+        resultado = valor_empenhado_por_bloco(df)
+
+        self.assertEqual(resultado["fonte_recursos_detalhada_cod"].iloc[0], "1000000000")
+        self.assertEqual(resultado["fonte_recursos_detalhada_desc"].iloc[0], "Recursos ordinarios")
+        self.assertEqual(len(resultado), 1)
+        self.assertEqual(resultado["empenhada"].iloc[0], df["empenhada"].iloc[0])
 
 
 @unittest.skipUnless(CAMINHO_BASE.exists(), f"Planilha ausente em {CAMINHO_BASE}")
