@@ -107,4 +107,7 @@ def projecao_bolsas(
     relatorio = montar_relatorio(
         por_ne, sem_ne, competencia, exercicio, mes_referencia, custos=custos, rotulos=BOLSAS_AUXILIOS,
     )
-    return relatorio, sem_ne
+    # Correção (08/10/2026, revisão final): em Bolsas o valor da necessidade dos itens sem NE vive na coluna
+    # privada `_necessidade`; renomeia para `necessidade` (contrato do aviso e da tela). A página de Bolsas
+    # não usa este quadro, só o Resultado Orçamentário.
+    return relatorio, sem_ne.rename(columns={"_necessidade": "necessidade"})

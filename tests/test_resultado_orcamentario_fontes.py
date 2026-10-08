@@ -160,7 +160,10 @@ class TestBolsas(_Base):
         pd.testing.assert_frame_equal(novo.mensal, antigo.mensal)
         self.assertEqual(novo.total_necessidade_execucao, antigo.total_necessidade_execucao)
         self.assertFalse(antigo.linhas.empty)
-        pd.testing.assert_frame_equal(sem_ne, sem_ne_antigo)
+        # Correção (08/10/2026): a coluna privada `_necessidade` sai renomeada como `necessidade`.
+        pd.testing.assert_frame_equal(sem_ne, sem_ne_antigo.rename(columns={"_necessidade": "necessidade"}))
+        self.assertIn("necessidade", sem_ne.columns)
+        self.assertNotIn("_necessidade", sem_ne.columns)
 
     def test_sem_ne_devolvido(self):
         relatorio, sem_ne = projecao_bolsas(self._tabela_antiga(), self.competencia, EXERCICIO, MES_REFERENCIA)

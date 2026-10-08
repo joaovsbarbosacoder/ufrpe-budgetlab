@@ -366,7 +366,7 @@ dividido por origem, cada NE contada uma única vez: **Contratos Contínuos** (N
 **Bolsas e Auxílios** (NE no cadastro de bolsas) e **Outros empenhos** (todo o resto). Se a NE está nos dois
 cadastros, fica em Contratos e gera o aviso "NE em Contratos e em Bolsas — conferir". Cada linha expande em
 uma tabela por NE. A **conferência** `Contratos + Bolsas + Outros = Empenhado total das células` aparece
-sempre, e a diferença é exibida quando passa de R$ 0,01. NE de contrato ou bolsa em célula não marcada não
+sempre, e a diferença é exibida quando a diferença é de R$ 0,01 ou mais. NE de contrato ou bolsa em célula não marcada não
 entra no empenhado (a necessidade dela continua entrando).
 
 **Necessidade de empenho.** Contratos e Bolsas usam a **projeção pela execução**
@@ -377,6 +377,9 @@ emissão e não é gravado, então aqui uma NE sem histórico tem fator 1 (valor
 aparece em uma nota na página. Se `data/raw/Liquidação por Competência.xlsx` não existir, a projeção não
 pode ser calculada: a necessidade de Contratos e Bolsas fica **indisponível** (não zero) e o resultado é
 marcado como incompleto.
+Se o exercício não tem arquivo de cadastro de Contratos/Bolsas (`anos_disponiveis()`), a necessidade dessa
+base aparece como indisponível e o resultado fica incompleto: arquivo ausente não é tratado como lista
+vazia (decisão 08/10/2026).
 
 **Contratos e bolsas sem NE** ficam **fora da conta** e aparecem só nos avisos (quantidade e valor
 contratual, como informação). Entram sozinhos quando a NE for incluída no cadastro ou o status do contrato

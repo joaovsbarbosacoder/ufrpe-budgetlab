@@ -277,6 +277,25 @@ def test_empenhado_nulo_em_celula_marcada_incompleto():
     assert r.resultado is None
     assert r.incompleto is True
     assert any("nulo" in a and "N3" in a for a in r.avisos)
+    # Correção (08/10/2026): totais exibidos de empenhado ficam None (a página mostra "—"), não ignoram o nulo.
+    assert r.empenhado_total is None
+    assert r.empenhado[ORIGEM_CONTRATOS] == 400.0
+    assert any(v is None for v in r.empenhado.values())
+
+
+def test_aviso_sem_ne_bolsas_usa_necessidade_renomeada():
+    # Forma real vinda de `projecao_bolsas`: a coluna privada `_necessidade` já renomeada.
+    sem = pd.DataFrame({"fornecedor": ["Programa X"], "_necessidade": [17500.0]}).rename(columns={"_necessidade": "necessidade"})
+    r = _calc(sem_ne_bolsas=sem)
+    assert any("1 bolsa" in a and "17.500,00" in a for a in r.avisos)
+
+
+def test_aviso_sem_ne_com_valor_nulo_diz_nao_calculado():
+    sem = pd.DataFrame({"programa_bolsa": ["A", "B"], "necessidade": [100.0, None]})
+    r = _calc(sem_ne_bolsas=sem)
+    assert any("2 bolsas" in a and "valor não calculado" in a for a in r.avisos)
+    sem_coluna = pd.DataFrame({"programa_bolsa": ["A"]})
+    assert any("valor não calculado" in a for a in _calc(sem_ne_bolsas=sem_coluna).avisos)
 
 
 def test_soma_ou_nulo_nao_trata_nulo_como_zero():

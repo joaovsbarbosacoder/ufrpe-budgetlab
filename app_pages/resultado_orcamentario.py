@@ -156,8 +156,9 @@ def _necessidade(
     indice_competencia: pd.Series | None,
     competencia: pd.DataFrame | None,
     mes_referencia: int,
-) -> tuple[pd.DataFrame, pd.DataFrame | None, pd.DataFrame, str | None]:
-    """`(cadastro com colunas derivadas, linhas da projeção ou None, sem_ne, motivo da indisponibilidade)`.
+) -> tuple[pd.DataFrame, pd.DataFrame | None, pd.DataFrame, str | None, list[str]]:
+    """`(cadastro com colunas derivadas, linhas da projeção ou None, sem_ne, motivo da indisponibilidade,
+    avisos do relatório de projeção)`.
 
     Exercício sem cadastro ou Liquidação por Competência indisponível: linhas `None` (necessidade
     indisponível, não zero) e um motivo para o aviso."""
@@ -165,7 +166,7 @@ def _necessidade(
     vazio = pd.DataFrame(columns=["ne_curta"])
     modulo = cadastro_contratos if origem == ORIGEM_CONTRATOS else cadastro_bolsas
     if exercicio not in modulo.anos_disponiveis():
-        return vazio, None, vazio, f"não há cadastro de {origem} para o exercício {exercicio}"
+        return vazio, None, vazio, f"não há cadastro de {origem} para o exercício {exercicio}", []
     if origem == ORIGEM_CONTRATOS:
         dados = cadastro_contratos.como_dataframe(cadastro_contratos.carregar_contratos(exercicio), exercicio)
         tabela = tabela_contratos(dados, por_ne_execucao, indice_competencia, sugestao_inicio)
@@ -173,13 +174,13 @@ def _necessidade(
         dados = cadastro_bolsas.como_dataframe(cadastro_bolsas.carregar_programas(exercicio))
         tabela = tabela_bolsas(dados, por_ne_execucao, sugestao_inicio)
     if competencia is None:
-        return tabela, None, vazio, "a Liquidação por Competência não está disponível"
+        return tabela, None, vazio, "a Liquidação por Competência não está disponível", []
     if origem == ORIGEM_CONTRATOS:
         # Sem `antecessores` de propósito (spec §10a): NE sem histórico = fator 1, valor mensal cheio.
         relatorio, sem_ne = projecao_contratos(tabela, competencia, exercicio, mes_referencia)
     else:
         relatorio, sem_ne = projecao_bolsas(tabela, competencia, exercicio, mes_referencia)
-    return tabela, relatorio.linhas, sem_ne, None
+    return tabela, relatorio.linhas, sem_ne, None, relatorio.avisos
 
 
 # ------------------------------------------------------------------- diálogos
@@ -308,6 +309,7 @@ def _render_composicao(
     linhas_contratos: pd.DataFrame | None,
     linhas_bolsas: pd.DataFrame | None,
     despesas: list[DespesaManual],
+    avisos_projecao: dict[str, list[str]],
 ) -> None:
     moeda = {"Empenhado": currency_column("Empenhado"), "Necessidade": currency_column("Necessidade")}
     col_empenhado, col_necessidade = st.columns(2)
@@ -336,9 +338,13 @@ def _render_composicao(
     with col_necessidade, st.container(border=True):
         st.markdown("**Necessidade de empenho até dezembro**")
         necessidade_total = sum(v for v in res.necessidade.values() if v is not None)
+        # Correção (08/10/2026, revisão final): com qualquer origem nula, o total é parcial e nenhuma
+        # porcentagem é mostrada (null != zero).
+        total_parcial = any(v is None for v in res.necessidade.values())
+        necessidade_pct_base = None if total_parcial else necessidade_total
         for origem, linhas in ((ORIGEM_CONTRATOS, linhas_contratos), (ORIGEM_BOLSAS, linhas_bolsas)):
             valor = res.necessidade[origem]
-            with st.expander(f"{origem} — {formatar_brl(valor)} ({_pct(valor, necessidade_total)})"):
+            with st.expander(f"{origem} — {formatar_brl(valor)} ({_pct(valor, necessidade_pct_base)})"):
                 if linhas is None:
                     st.caption("Indisponível — ver Avisos.")
                 elif linhas.empty:
@@ -348,6 +354,9 @@ def _render_composicao(
                         _tabela_necessidade(linhas, res.empenhado_por_ne, origem),
                         hide_index=True, width="stretch", column_config=moeda,
                     )
+            # Correção (08/10/2026, revisão final): mostra os avisos do próprio relatório de projeção.
+            for aviso_projecao in avisos_projecao.get(origem, []):
+                st.warning(aviso_projecao)
             if origem == ORIGEM_CONTRATOS:
                 st.caption(
                     "Projeção pela execução SEM contrato antecessor: NE com menos de 3 meses fechados é "
@@ -355,7 +364,7 @@ def _render_composicao(
                     "Contratos Contínuos não é gravada e, por isso, não entra aqui."
                 )
         valor = res.necessidade[OUTRAS_DESPESAS]
-        with st.expander(f"{OUTRAS_DESPESAS} — {formatar_brl(valor)} ({_pct(valor, necessidade_total)})"):
+        with st.expander(f"{OUTRAS_DESPESAS} — {formatar_brl(valor)} ({_pct(valor, necessidade_pct_base)})"):
             if despesas:
                 st.dataframe(
                     pd.DataFrame({"Descrição": [d.descricao for d in despesas], "Valor": [d.valor for d in despesas]}),
@@ -469,17 +478,19 @@ else:
     avisos_extras.append(f"Liquidação por Competência não encontrada ('{CAMINHO_LIQUIDACAO_COMPETENCIA}').")
 
 mes_referencia = mes_referencia_do_exercicio(data_execucao.date(), exercicio)
-fontes: dict[str, tuple[pd.DataFrame, pd.DataFrame | None, pd.DataFrame]] = {}
+fontes: dict[str, tuple[pd.DataFrame, pd.DataFrame | None, pd.DataFrame, list[str]]] = {}
 for origem in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS):
     try:
-        tabela, linhas, sem_ne, motivo = _necessidade(
+        tabela, linhas, sem_ne, motivo, avisos_projecao = _necessidade(
             origem, exercicio, por_ne_execucao, sugestao_inicio, indice_competencia, competencia, mes_referencia,
         )
     except Exception as erro:
-        tabela, linhas, sem_ne, motivo = pd.DataFrame(columns=["ne_curta"]), None, pd.DataFrame(), f"erro de leitura ({erro})"
+        tabela, linhas, sem_ne, motivo, avisos_projecao = (
+            pd.DataFrame(columns=["ne_curta"]), None, pd.DataFrame(), f"erro de leitura ({erro})", [],
+        )
     if motivo:
         avisos_extras.append(f"Necessidade de {origem} indisponível: {motivo}.")
-    fontes[origem] = (tabela, linhas, sem_ne)
+    fontes[origem] = (tabela, linhas, sem_ne, avisos_projecao)
 
 try:
     selecao_salva = cadastro.carregar_selecao(exercicio, diretorio=cadastro.DIRETORIO_PADRAO)
@@ -615,16 +626,20 @@ if incluir:
     for erro in erros:
         st.error(erro)
     if not erros:
-        cadastro.incluir_despesa(
-            exercicio, nova_descricao, novo_valor, (nova_observacao or "").strip() or None, nova_celula,
-            diretorio=cadastro.DIRETORIO_PADRAO,
-        )
-        _mensagem(f'Despesa "{nova_descricao.strip()}" incluída.')
-        st.rerun()
+        try:
+            cadastro.incluir_despesa(
+                exercicio, nova_descricao, novo_valor, (nova_observacao or "").strip() or None, nova_celula,
+                diretorio=cadastro.DIRETORIO_PADRAO,
+            )
+        except ArquivoCorrompido as erro:
+            st.error(f"{erro} — nada foi gravado.")
+        else:
+            _mensagem(f'Despesa "{nova_descricao.strip()}" incluída.')
+            st.rerun()
 
 # --------------------------------------------------------------- conta e topo
-tabela_contratos_df, linhas_contratos, sem_ne_contratos = fontes[ORIGEM_CONTRATOS]
-tabela_bolsas_df, linhas_bolsas, sem_ne_bolsas = fontes[ORIGEM_BOLSAS]
+tabela_contratos_df, linhas_contratos, sem_ne_contratos, avisos_projecao_contratos = fontes[ORIGEM_CONTRATOS]
+tabela_bolsas_df, linhas_bolsas, sem_ne_bolsas, avisos_projecao_bolsas = fontes[ORIGEM_BOLSAS]
 resultado = calcular_resultado(
     celulas, empenhado, selecao_atual, tabela_contratos_df, tabela_bolsas_df,
     linhas_contratos, linhas_bolsas, sem_ne_contratos, sem_ne_bolsas, despesas,
@@ -641,7 +656,10 @@ if not despesas_legiveis:
 with area_cartoes:
     _render_cartoes(resultado, len(marcadas), len(celulas))
 with area_composicao:
-    _render_composicao(resultado, linhas_contratos, linhas_bolsas, despesas)
+    _render_composicao(
+        resultado, linhas_contratos, linhas_bolsas, despesas,
+        {ORIGEM_CONTRATOS: avisos_projecao_contratos, ORIGEM_BOLSAS: avisos_projecao_bolsas},
+    )
 
 # --------------------------------------------------------------- Avisos
 st.subheader("Avisos")
@@ -657,7 +675,12 @@ for origem, sem_ne in ((ORIGEM_CONTRATOS, sem_ne_contratos), (ORIGEM_BOLSAS, sem
             if c in sem_ne.columns
         ]
         with st.expander(f"Ver {origem} sem NE ({len(sem_ne)})"):
-            st.dataframe(sem_ne[colunas], hide_index=True, width="stretch")
+            st.dataframe(
+                sem_ne[colunas], hide_index=True, width="stretch",
+                column_config={
+                    c: currency_column(c) for c in ("valor_mensal", "necessidade") if c in colunas
+                },
+            )
 st.info(
     "As extrações de Dotação Anual e de Execução Mensal são independentes: Dotação de "
     f"{data_dotacao:%d/%m/%Y} (hash {manifesto_dotacao.sha256[:8]}) e Execução Mensal de "

@@ -56,8 +56,8 @@ _COLUNAS_EMPENHADO_POR_NE = [
 @dataclass
 class ResultadoOrcamentario:
     dotacao: float | None
-    empenhado: dict[str, float]
-    empenhado_total: float
+    empenhado: dict[str, float | None]
+    empenhado_total: float | None
     diferenca_conferencia: float
     necessidade: dict[str, float | None]
     resultado: float | None
@@ -188,10 +188,13 @@ def _aviso_sem_ne(sem_ne: pd.DataFrame, singular: str, plural: str) -> str | Non
     if sem_ne is None or sem_ne.empty:
         return None
     quantidade = len(sem_ne)
-    soma = float(pd.to_numeric(sem_ne["necessidade"], errors="coerce").sum()) if "necessidade" in sem_ne else 0.0
+    # Correção (08/10/2026, revisão final): coluna ausente ou qualquer valor nulo = "valor não calculado";
+    # antes a coluna ausente virava R$ 0,00 e o nulo era somado como zero (null != zero).
+    soma = soma_ou_nulo(pd.to_numeric(sem_ne["necessidade"], errors="coerce")) if "necessidade" in sem_ne else None
+    valor = "valor não calculado" if soma is None else _brl(soma)
     nome = singular if quantidade == 1 else plural
     return (
-        f"{quantidade} {nome} sem NE vinculada: necessidade de {_brl(soma)} informativa, "
+        f"{quantidade} {nome} sem NE vinculada: necessidade de {valor} informativa, "
         "fora da conta do resultado."
     )
 
@@ -308,13 +311,19 @@ def calcular_resultado(
             + ", ".join(nes_empenho_nulo)
             + ". Resultado incompleto."
         )
+    # Correção (08/10/2026, revisão final): os totais exibidos de empenhado (por origem e geral) ficam
+    # None quando alguma linha selecionada é nula (soma_ou_nulo), em vez de ignorar o nulo (null != zero).
     empenhado_por_origem = {
-        origem: float(selecionados.loc[selecionados["origem"] == origem, "empenhada"].sum())
+        origem: soma_ou_nulo(selecionados.loc[selecionados["origem"] == origem, "empenhada"])
         for origem in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS, ORIGEM_OUTROS)
     }
     # Conferência independente da classificação: soma direta das linhas das células marcadas.
-    empenhado_total = float(emp.loc[emp["celula_selecionada"], "empenhada"].sum())
-    diferenca = empenhado_total - sum(empenhado_por_origem.values())
+    empenhado_total = soma_ou_nulo(emp.loc[emp["celula_selecionada"], "empenhada"])
+    # A diferença da conferência usa somas que ignoram nulos (nulo contribui igualmente aos dois lados).
+    diferenca = float(emp.loc[emp["celula_selecionada"], "empenhada"].sum()) - float(
+        sum(selecionados.loc[selecionados["origem"] == o, "empenhada"].sum()
+            for o in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS, ORIGEM_OUTROS))
+    )
     if abs(diferenca) >= TOLERANCIA_CONFERENCIA:
         avisos.append(f"Conferência do empenhado não fecha: diferença de {_brl(diferenca)}.")
 
@@ -337,7 +346,10 @@ def calcular_resultado(
 
     # --- Resultado --------------------------------------------------------------------------
     resultado: float | None = None
-    if dotacao is not None and not nes_empenho_nulo and all(v is not None for v in necessidade.values()):
+    if (
+        dotacao is not None and empenhado_total is not None and not nes_empenho_nulo
+        and all(v is not None for v in necessidade.values())
+    ):
         resultado = dotacao - empenhado_total - float(sum(necessidade.values()))
     incompleto = bool(selecionadas) and resultado is None
 
