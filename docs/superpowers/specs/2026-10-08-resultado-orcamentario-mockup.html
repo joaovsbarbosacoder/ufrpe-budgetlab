@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resultado Orçamentário — protótipo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* Tokens de src/design_tokens.py */
+  :root{
+    --bg:#F5F8FC; --surface:#FFFFFF; --surface-alt:#F0F5FA; --border:#D3DFEC;
+    --text:#07133D; --muted:#526584; --faint:#7C8DA8;
+    --accent:#0969DA; --accent-strong:#0757B8;
+    --pos:#0A8F3D; --neg:#D20A16; --warn:#C96A00;
+    --side:#0B3557; --side-top:#0D4268; --side-bottom:#082B49;
+    --side-text:#EAF3FA; --side-muted:#94B7D4; --side-active:#166FCA;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 "Inter","Segoe UI",system-ui,sans-serif}
+  .num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+  .app{display:grid;grid-template-columns:250px 1fr;min-height:100vh}
+
+  /* Lateral */
+  aside{background:linear-gradient(180deg,var(--side-top),var(--side-bottom));color:var(--side-text);padding:20px 12px}
+  aside .brand{font-weight:700;font-size:17px;padding:0 10px 18px}
+  aside .sec{color:var(--side-muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin:16px 10px 6px}
+  aside a{display:block;color:var(--side-text);text-decoration:none;padding:7px 10px;border-radius:8px;font-size:14px}
+  aside a.active{background:var(--side-active);box-shadow:inset 3px 0 0 #8CC7FF}
+  aside a.new::after{content:"novo";font-size:10px;background:#8CC7FF;color:var(--side);border-radius:6px;padding:1px 6px;margin-left:8px;font-weight:600}
+
+  main{padding:28px 36px 60px;max-width:1240px}
+  .proto{background:#FFF7E6;border:1px dashed var(--warn);color:#7A4300;border-radius:10px;padding:8px 14px;font-size:13px;margin-bottom:18px}
+  h1{font-size:30px;margin:0 0 4px;font-weight:600}
+  .sub{color:var(--muted);margin:0 0 20px}
+  h2{font-size:20px;font-weight:600;margin:34px 0 4px}
+  .hint{color:var(--muted);font-size:13px;margin:0 0 12px}
+
+  .toolbar{display:flex;gap:14px;align-items:end;flex-wrap:wrap;margin-bottom:22px}
+  label.fld{display:flex;flex-direction:column;font-size:13px;color:var(--muted);gap:4px}
+  select,input[type=text],input[type=number]{font:inherit;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;background:var(--surface)}
+  .pill{font-size:12px;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:6px 12px}
+
+  /* Cartões */
+  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 18px}
+  .card .lbl{font-size:13px;color:var(--muted)}
+  .card .val{font-size:24px;font-weight:600;margin-top:6px}
+  .card .foot{font-size:12px;color:var(--faint);margin-top:4px}
+  .card.result{border-width:2px}
+  .card.result.pos{border-color:var(--pos);background:#F1FAF4}
+  .card.result.neg{border-color:var(--neg);background:#FDF2F2}
+  .card.result .val{font-size:26px}
+  .pos-t{color:var(--pos)} .neg-t{color:var(--neg)}
+  .badge{display:inline-block;font-size:12px;font-weight:600;border-radius:6px;padding:2px 8px;margin-left:6px;vertical-align:middle}
+  .badge.pos{background:var(--pos);color:#fff} .badge.neg{background:var(--neg);color:#fff}
+
+  /* Composição */
+  .comp{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:14px}
+  .box{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:6px 0 4px;overflow:hidden}
+  .box h3{font-size:15px;margin:10px 18px 8px;font-weight:600}
+  details{border-top:1px solid var(--border)}
+  summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:18px 1fr auto auto;gap:10px;align-items:center;padding:10px 18px}
+  summary::-webkit-details-marker{display:none}
+  summary .chev{color:var(--faint);transition:transform .15s}
+  details[open] summary .chev{transform:rotate(90deg)}
+  summary:hover{background:var(--surface-alt)}
+  .share{font-size:12px;color:var(--faint);width:44px;text-align:right}
+  .bar{height:4px;background:var(--surface-alt);margin:0 18px 0 46px;border-radius:2px;overflow:hidden}
+  .bar>i{display:block;height:100%;background:var(--accent)}
+  .total-row{display:flex;justify-content:space-between;padding:10px 18px;border-top:2px solid var(--border);font-weight:600}
+  .check-row{display:flex;justify-content:space-between;padding:6px 18px 10px;font-size:12px;color:var(--pos)}
+  .inner{padding:4px 18px 14px 46px}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{font-weight:600;color:var(--muted);text-align:left;border-bottom:1px solid var(--border);padding:6px 8px;background:var(--surface-alt)}
+  td{border-bottom:1px solid #E7EEF6;padding:6px 8px}
+  tr.more td{color:var(--faint);font-style:italic}
+  .code{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+
+  .tablewrap{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:auto}
+  .tablewrap table{font-size:13.5px}
+  .tablewrap tr.off td{color:var(--faint)}
+  .tablewrap tfoot td{font-weight:600;background:var(--surface-alt);border-top:2px solid var(--border)}
+  .actions{display:flex;gap:10px;align-items:center;margin-top:12px}
+  button{font:inherit;font-size:14px;border-radius:8px;padding:7px 14px;cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--text)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.primary:hover{background:var(--accent-strong)}
+  button.link{border:none;background:none;color:var(--accent);padding:2px 6px}
+  .saved{font-size:12px;color:var(--muted)}
+
+  .form{display:grid;grid-template-columns:2fr 1fr 2fr 1.4fr auto;gap:10px;align-items:end;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px;margin-top:12px}
+
+  .alerts{display:flex;flex-direction:column;gap:8px}
+  .alert{border-left:4px solid var(--warn);background:#FFF8EE;border-radius:8px;padding:10px 14px;font-size:13.5px}
+  .alert.info{border-color:var(--accent);background:#EEF5FD}
+  .alert b{font-weight:600}
+  .alert details{border:none;margin-top:6px}
+  .alert summary{display:inline;padding:0;color:var(--accent);font-size:12.5px}
+  .alert summary:hover{background:none}
+
+  .annot{font-size:11.5px;color:var(--warn);font-weight:600;letter-spacing:.02em;margin-left:8px}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="brand">UFRPE BudgetLab</div>
+    <a href="#">🏠 Início</a>
+    <a href="#">Dotação Orçamentária</a>
+    <a href="#">Painel por Ação</a>
+    <a href="#">Limite de Empenho</a>
+    <a href="#" class="active new">Resultado Orçamentário</a>
+    <a href="#">Consulta de Empenhos</a>
+    <a href="#">Bolsas e Auxílios</a>
+    <a href="#">Despesas de Pessoal</a>
+    <div class="sec">Contratos</div>
+    <a href="#">Contratos Contínuos</a>
+    <a href="#">Contratos — Vigência</a>
+    <div class="sec">Administração</div>
+    <a href="#">Atualizar Planilhas</a>
+  </aside>
+
+  <main>
+    <div class="proto">Protótipo de layout. Os valores são fictícios e servem só para ilustrar. Marque e desmarque células na seção 3 para ver a conta recalcular.</div>
+
+    <h1>Resultado Orçamentário</h1>
+    <p class="sub">A dotação das células selecionadas cobre o que ainda falta empenhar até dezembro?</p>
+
+    <div class="toolbar">
+      <label class="fld">Exercício
+        <select><option>2026 ⏳</option><option>2025</option></select>
+      </label>
+      <span class="pill">Dotação Anual · extração de 07/10/2026</span>
+      <span class="pill">Execução Mensal · extração de 07/10/2026</span>
+      <span class="pill">Necessidade: projeção pela execução</span>
+    </div>
+
+    <!-- 1. Cartões -->
+    <div class="cards">
+      <div class="card">
+        <div class="lbl">Dotação Atualizada</div>
+        <div class="val num" id="c-dot" style="text-align:left"></div>
+        <div class="foot" id="c-dot-foot"></div>
+      </div>
+      <div class="card">
+        <div class="lbl">(−) Empenhado nas células</div>
+        <div class="val num" id="c-emp" style="text-align:left"></div>
+        <div class="foot">Execução Mensal, todo empenho das células</div>
+      </div>
+      <div class="card">
+        <div class="lbl">(−) Necessidade até dezembro</div>
+        <div class="val num" id="c-nec" style="text-align:left"></div>
+        <div class="foot">Contratos + Bolsas + outras previstas</div>
+      </div>
+      <div class="card result" id="c-res-card">
+        <div class="lbl">Resultado <span class="badge" id="c-res-badge"></span></div>
+        <div class="val num" id="c-res" style="text-align:left"></div>
+        <div class="foot" id="c-res-foot"></div>
+      </div>
+    </div>
+
+    <!-- 2. Composição -->
+    <h2>2. Composição</h2>
+    <p class="hint">Clique em uma linha para ver o detalhe por NE ou por despesa.</p>
+    <div class="comp">
+      <div class="box">
+        <h3>Empenhado nas células selecionadas</h3>
+
+        <details>
+          <summary><span class="chev">▶</span><span>Contratos Contínuos</span><span class="share" id="s-ec"></span><span class="num" id="v-ec"></span></summary>
+          <div class="inner">
+            <table>
+              <thead><tr><th>NE</th><th>Contrato</th><th>Fornecedor</th><th class="num">Empenhado</th></tr></thead>
+              <tbody>
+                <tr><td class="code">2026NE000031</td><td>12/2024</td><td>Limpa Bem Serviços Ltda.</td><td class="num">R$ 6.480.000,00</td></tr>
+                <tr><td class="code">2026NE000047</td><td>03/2025</td><td>Vigilância Recife S.A.</td><td class="num">R$ 5.912.400,00</td></tr>
+                <tr><td class="code">2026NE000154</td><td>08/2023 · 09/2023 <span class="annot">NE COMPARTILHADA</span></td><td>Energia Prime Ltda.</td><td class="num">R$ 2.140.000,00</td></tr>
+                <tr class="more"><td colspan="4">… mais 41 NEs</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
+        <div class="bar"><i id="b-ec"></i></div>
+
+        <details>
+          <summary><span class="chev">▶</span><span>Bolsas e Auxílios</span><span class="share" id="s-eb"></span><span class="num" id="v-eb"></span></summary>
+          <div class="inner">
+            <table>
+              <thead><tr><th>NE</th><th>Programa</th><th class="num">Empenhado</th></tr></thead>
+              <tbody>
+                <tr><td class="code">2026NE000022</td><td>Auxílio Permanência</td><td class="num">R$ 3.250.000,00</td></tr>
+                <tr><td class="code">2026NE000025</td><td>PIBIC — bolsas de iniciação</td><td class="num">R$ 1.780.000,00</td></tr>
+                <tr class="more"><td colspan="3">… mais 12 NEs</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
+        <div class="bar"><i id="b-eb"></i></div>
+
+        <details>
+          <summary><span class="chev">▶</span><span>Outros empenhos</span><span class="share" id="s-eo"></span><span class="num" id="v-eo"></span></summary>
+          <div class="inner">
+            <table>
+              <thead><tr><th>NE</th><th>Natureza</th><th>Favorecido</th><th class="num">Empenhado</th></tr></thead>
+              <tbody>
+                <tr><td class="code">2026NE000310</td><td>339030 · Material de consumo</td><td>Diversos</td><td class="num">R$ 1.420.000,00</td></tr>
+                <tr><td class="code">2026NE000288</td><td>339014 · Diárias</td><td>Diversos</td><td class="num">R$ 615.300,00</td></tr>
+                <tr class="more"><td colspan="4">… mais 206 NEs</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
+        <div class="bar"><i id="b-eo"></i></div>
+
+        <div class="total-row"><span>Total empenhado</span><span class="num" id="v-et"></span></div>
+        <div class="check-row"><span>✓ Contratos + Bolsas + Outros = empenhado total das células</span><span>diferença R$ 0,00</span></div>
+      </div>
+
+      <div class="box">
+        <h3>Necessidade de empenho até dezembro</h3>
+
+        <details>
+          <summary><span class="chev">▶</span><span>Contratos Contínuos</span><span class="share" id="s-nc"></span><span class="num" id="v-nc"></span></summary>
+          <div class="inner">
+            <table>
+              <thead><tr><th>NE</th><th>Contrato</th><th class="num">Fator</th><th class="num">Necessidade</th></tr></thead>
+              <tbody>
+                <tr><td class="code">2026NE000047</td><td>03/2025 · Vigilância</td><td class="num">0,97</td><td class="num">R$ 2.310.000,00</td></tr>
+                <tr><td class="code">2026NE000031</td><td>12/2024 · Limpeza</td><td class="num">0,92</td><td class="num">R$ 1.985.000,00</td></tr>
+                <tr><td class="code">2026NE000512</td><td>22/2026 · Manutenção predial <span class="annot">CÉLULA NÃO SELECIONADA</span></td><td class="num">1,00</td><td class="num">R$ 340.000,00</td></tr>
+                <tr class="more"><td colspan="4">… mais 38 NEs</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
+        <div class="bar"><i id="b-nc"></i></div>
+
+        <details>
+          <summary><span class="chev">▶</span><span>Bolsas e Auxílios</span><span class="share" id="s-nb"></span><span class="num" id="v-nb"></span></summary>
+          <div class="inner">
+            <table>
+              <thead><tr><th>NE</th><th>Programa</th><th class="num">Fator</th><th class="num">Necessidade</th></tr></thead>
+              <tbody>
+                <tr><td class="code">2026NE000022</td><td>Auxílio Permanência</td><td class="num">1,00</td><td class="num">R$ 1.120.000,00</td></tr>
+                <tr class="more"><td colspan="4">… mais 11 NEs</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
+        <div class="bar"><i id="b-nb"></i></div>
+
+        <details>
+          <summary><span class="chev">▶</span><span>Outras despesas previstas</span><span class="share" id="s-nm"></span><span class="num" id="v-nm"></span></summary>
+          <div class="inner"><p class="hint" style="margin:6px 0 0">Ver a lista e o cadastro na seção 4.</p></div>
+        </details>
+        <div class="bar"><i id="b-nm"></i></div>
+
+        <div class="total-row"><span>Total da necessidade</span><span class="num" id="v-nt"></span></div>
+        <div class="check-row" style="color:var(--faint)"><span>Necessidade vale para todas as NEs, inclusive em células não selecionadas</span><span></span></div>
+      </div>
+    </div>
+
+    <!-- 3. Células -->
+    <h2>3. Células que fazem frente às despesas</h2>
+    <p class="hint">Marque as células da Dotação Anual que entram como recurso. A seleção fica gravada por exercício.</p>
+    <div class="tablewrap">
+      <table id="cells">
+        <thead>
+          <tr>
+            <th></th><th>Iduso</th><th>RP</th><th>Ação</th><th>PTRES</th><th>PO</th><th>GND</th><th>Fonte detalhada</th>
+            <th class="num">Dotação Atualizada</th><th class="num">Empenhado</th><th class="num">Saldo</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+        <tfoot>
+          <tr><td></td><td colspan="7">Total selecionado</td><td class="num" id="t-dot"></td><td class="num" id="t-emp"></td><td class="num" id="t-sal"></td></tr>
+        </tfoot>
+      </table>
+    </div>
+    <div class="actions">
+      <button class="primary" onclick="document.getElementById('saved').textContent='✓ Seleção gravada agora'">Salvar seleção</button>
+      <span class="saved" id="saved">Última gravação: 08/10/2026 09:14</span>
+    </div>
+
+    <!-- 4. Despesas manuais -->
+    <h2>4. Outras despesas previstas</h2>
+    <p class="hint">Despesas que não estão em Contratos nem em Bolsas e ainda vão ser empenhadas no exercício. A célula é só informativa.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Descrição</th><th>Observação</th><th>Célula (informativa)</th><th class="num">Valor a empenhar</th><th></th></tr></thead>
+        <tbody>
+          <tr><td>Material de laboratório (PE 12/2026)</td><td>Homologação prevista em novembro</td><td class="code">20RK · 230987 · GND 3</td><td class="num">R$ 620.000,00</td><td><button class="link">Editar</button><button class="link">Excluir</button></td></tr>
+          <tr><td>Diárias e passagens, eventos do 4º trimestre</td><td>—</td><td>—</td><td class="num">R$ 310.000,00</td><td><button class="link">Editar</button><button class="link">Excluir</button></td></tr>
+          <tr><td>Manutenção predial emergencial, Campus Dois Irmãos</td><td>Laudo da Defesa Civil</td><td class="code">20RK · 230987 · GND 3</td><td class="num">R$ 220.000,00</td><td><button class="link">Editar</button><button class="link">Excluir</button></td></tr>
+        </tbody>
+        <tfoot><tr><td colspan="3">Total</td><td class="num">R$ 1.150.000,00</td><td></td></tr></tfoot>
+      </table>
+    </div>
+    <div class="form">
+      <label class="fld">Descrição<input type="text" placeholder="Ex.: Aquisição de reagentes"></label>
+      <label class="fld">Valor a empenhar (R$)<input type="number" placeholder="0,00"></label>
+      <label class="fld">Observação<input type="text" placeholder="Opcional"></label>
+      <label class="fld">Célula (opcional)<select><option>—</option><option>20RK · 230987 · GND 3</option><option>4002 · 230990 · GND 3</option></select></label>
+      <button class="primary">Incluir</button>
+    </div>
+
+    <!-- 5. Avisos -->
+    <h2>5. Avisos</h2>
+    <div class="alerts" style="margin-top:10px">
+      <div class="alert"><b>3 contratos sem NE ficaram fora da conta.</b> O valor contratual somado é R$ 412.300,00 e aparece aqui só como informação. Eles entram sozinhos quando a NE for incluída no cadastro ou o status mudar.
+        <details><summary>ver contratos</summary>
+          <table style="margin-top:6px"><tr><td>31/2026 · Jardinagem</td><td>Previsto</td><td class="num">R$ 198.000,00</td></tr><tr><td>33/2026 · Copa</td><td>Previsto</td><td class="num">R$ 126.300,00</td></tr><tr><td>35/2026 · Elevadores</td><td>Em contratação</td><td class="num">R$ 88.000,00</td></tr></table>
+        </details>
+      </div>
+      <div class="alert"><b>1 bolsa sem NE ficou fora da conta:</b> Monitoria 2026.2, valor previsto R$ 96.000,00.</div>
+      <div class="alert"><b>NE compartilhada:</b> a 2026NE000154 está ligada aos contratos 08/2023 e 09/2023. O empenhado foi contado uma vez só.</div>
+      <div class="alert info">As extrações de Dotação Anual e de Execução Mensal são independentes. Confira as datas no topo da página antes de usar o resultado.</div>
+    </div>
+  </main>
+</div>
+
+<script>
+  // Células fictícias: empenhado já quebrado por origem (contratos, bolsas, outros)
+  const CELLS = [
+    {sel:true,  iduso:"0", rp:"2", acao:"20RK", ptres:"230987", po:"0000", gnd:"3", fonte:"1000000000", dot:48500000, c:29800000, b:0,       o:9400000},
+    {sel:true,  iduso:"0", rp:"2", acao:"20RK", ptres:"230987", po:"0000", gnd:"4", fonte:"1000000000", dot:6200000,  c:1600000,  b:0,       o:500000},
+    {sel:true,  iduso:"0", rp:"2", acao:"4002", ptres:"230990", po:"0000", gnd:"3", fonte:"1000000000", dot:9800000,  c:0,        b:8600000, o:300000},
+    {sel:false, iduso:"0", rp:"2", acao:"20RK", ptres:"230987", po:"000A", gnd:"3", fonte:"1050000000", dot:3100000,  c:400000,   b:0,       o:1000000},
+    {sel:false, iduso:"0", rp:"2", acao:"20GK", ptres:"230995", po:"0000", gnd:"3", fonte:"1000000000", dot:1200000,  c:0,        b:0,       o:650000},
+  ];
+  const NEC = {c:9850000, b:2310000, m:1150000};
+
+  const brl = v => (v<0?"−":"") + "R$ " + Math.abs(v).toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});
+  const pct = (p,t) => t ? Math.round(p/t*100)+"%" : "—";
+  const $ = id => document.getElementById(id);
+
+  function renderCells(){
+    const tb = document.querySelector("#cells tbody");
+    tb.innerHTML = "";
+    CELLS.forEach((r,i)=>{
+      const emp = r.c+r.b+r.o;
+      const tr = document.createElement("tr");
+      if(!r.sel) tr.className = "off";
+      tr.innerHTML = `<td><input type="checkbox" ${r.sel?"checked":""} data-i="${i}"></td>
+        <td class="code">${r.iduso}</td><td class="code">${r.rp}</td><td class="code">${r.acao}</td><td class="code">${r.ptres}</td>
+        <td class="code">${r.po}</td><td class="code">${r.gnd}</td><td class="code">${r.fonte}</td>
+        <td class="num">${brl(r.dot)}</td><td class="num">${brl(emp)}</td><td class="num">${brl(r.dot-emp)}</td>`;
+      tb.appendChild(tr);
+    });
+    tb.querySelectorAll("input").forEach(cb=>cb.addEventListener("change",e=>{
+      CELLS[+e.target.dataset.i].sel = e.target.checked;
+      $("saved").textContent = "Alterações não salvas";
+      renderCells(); recompute();
+    }));
+  }
+
+  function recompute(){
+    const s = CELLS.filter(r=>r.sel);
+    const dot = s.reduce((a,r)=>a+r.dot,0);
+    const ec = s.reduce((a,r)=>a+r.c,0), eb = s.reduce((a,r)=>a+r.b,0), eo = s.reduce((a,r)=>a+r.o,0);
+    const emp = ec+eb+eo, nec = NEC.c+NEC.b+NEC.m, res = dot-emp-nec;
+
+    $("c-dot").textContent = brl(dot);
+    $("c-dot-foot").textContent = `${s.length} de ${CELLS.length} células selecionadas`;
+    $("c-emp").textContent = brl(emp);
+    $("c-nec").textContent = brl(nec);
+    $("c-res").textContent = brl(res);
+    const card = $("c-res-card"), badge = $("c-res-badge");
+    card.classList.toggle("pos", res>=0); card.classList.toggle("neg", res<0);
+    badge.className = "badge " + (res>=0?"pos":"neg");
+    badge.textContent = res>=0 ? "Superávit" : "Déficit";
+    $("c-res").className = "val num " + (res>=0?"pos-t":"neg-t");
+    $("c-res-foot").textContent = dot ? `${(res/dot*100).toLocaleString("pt-BR",{maximumFractionDigits:1})}% da dotação selecionada` : "Nenhuma célula selecionada";
+
+    [["ec",ec,emp],["eb",eb,emp],["eo",eo,emp],["nc",NEC.c,nec],["nb",NEC.b,nec],["nm",NEC.m,nec]].forEach(([k,v,t])=>{
+      $("v-"+k).textContent = brl(v); $("s-"+k).textContent = pct(v,t);
+      $("b-"+k).style.width = t ? (v/t*100)+"%" : "0";
+    });
+    $("v-et").textContent = brl(emp); $("v-nt").textContent = brl(nec);
+    $("t-dot").textContent = brl(dot); $("t-emp").textContent = brl(emp); $("t-sal").textContent = brl(dot-emp);
+  }
+  renderCells(); recompute();
+</script>
+</body>
+</html>
