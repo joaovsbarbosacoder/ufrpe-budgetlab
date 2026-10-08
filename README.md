@@ -337,6 +337,77 @@ isoladamente. Valor nulo (célula ausente na origem) aparece como "—"; valor
 zero aparece como `0` — os dois estados nunca são confundidos. O seletor de
 Ano marca o exercício em andamento com "⏳".
 
+### Resultado Orçamentário
+
+A página **Resultado Orçamentário** (menu, logo depois de "Limite de Empenho") responde se a dotação
+das células orçamentárias escolhidas pelo usuário **cobre** o que ainda falta empenhar no exercício. Ela
+só **lê** as contas existentes (Necessidade, Projeção pela Execução, Limite de Empenho); nada é alterado.
+Bases: Dotação Anual, Execução Mensal, Contratos Contínuos e Bolsas e Auxílios. Despesas de Pessoal fica
+fora por enquanto.
+
+**Fórmula (bolsão).** A soma das células marcadas é confrontada com a soma das despesas; não há
+confronto célula a célula:
+
+```text
+Resultado = Dotação Atualizada (células) − Empenhado nas células (Execução Mensal) − Necessidade de empenho
+```
+
+O sinal dá o rótulo: positivo é **Superávit**, negativo é **Déficit**.
+
+**Célula orçamentária.** Mesma granularidade do Limite de Empenho, com a Fonte de Recursos Detalhada
+acrescentada: Iduso, Resultado Primário, Ação de Governo, PTRES, Plano Orçamentário, Grupo de Despesa e
+Fonte Detalhada (7 códigos). Os códigos são texto, com zeros à esquerda preservados. A Fonte Detalhada é
+`fonte_recursos_detalhada_codigo` na Dotação Anual e `fonte_recursos_detalhada_cod` na Execução Mensal
+(mesmo formato de 10 dígitos); por isso `valor_empenhado_por_bloco` passou a carregar essa dimensão
+(mudança aditiva, nenhum valor muda).
+
+**Empenhado em três linhas.** O empenhado das células marcadas vem da Execução Mensal, por célula, e é
+dividido por origem, cada NE contada uma única vez: **Contratos Contínuos** (NE no cadastro de contratos),
+**Bolsas e Auxílios** (NE no cadastro de bolsas) e **Outros empenhos** (todo o resto). Se a NE está nos dois
+cadastros, fica em Contratos e gera o aviso "NE em Contratos e em Bolsas — conferir". Cada linha expande em
+uma tabela por NE. A **conferência** `Contratos + Bolsas + Outros = Empenhado total das células` aparece
+sempre, e a diferença é exibida quando passa de R$ 0,01. NE de contrato ou bolsa em célula não marcada não
+entra no empenhado (a necessidade dela continua entrando).
+
+**Necessidade de empenho.** Contratos e Bolsas usam a **projeção pela execução**
+(`necessidade_execucao` de `src/relatorio_projecao_execucao.py`), somando **todas** as NEs do relatório,
+mesmo as de células não marcadas, porque no bolsão a necessidade precisa ser coberta pelos recursos
+escolhidos. A projeção é **sem contrato antecessor**: na página de Contratos o antecessor é escolhido a cada
+emissão e não é gravado, então aqui uma NE sem histórico tem fator 1 (valor mensal cheio). A diferença
+aparece em uma nota na página. Se `data/raw/Liquidação por Competência.xlsx` não existir, a projeção não
+pode ser calculada: a necessidade de Contratos e Bolsas fica **indisponível** (não zero) e o resultado é
+marcado como incompleto.
+
+**Contratos e bolsas sem NE** ficam **fora da conta** e aparecem só nos avisos (quantidade e valor
+contratual, como informação). Entram sozinhos quando a NE for incluída no cadastro ou o status do contrato
+mudar.
+
+**Outras despesas previstas.** Cadastro manual (incluir, editar, excluir) para despesas que não são de
+Contratos nem de Bolsas, com **um valor a empenhar por despesa**, sem distribuição mensal. O valor é
+obrigatório e maior que zero; a célula informada é só informativa e não muda o cálculo.
+
+**Persistência.** Aprovada em 08/10/2026: arquivos JSON por exercício em
+`data/resultado_orcamentario/<exercício>/` (`celulas.json` e `despesas_manuais.json`), fora do git
+(`.gitignore`, com `.gitkeep`), gravados de forma atômica. A seleção de células e as despesas sobrevivem a
+atualizar a página e a reiniciar o app. Uma célula gravada que sumiu da Dotação (por exemplo, após
+reimportação) é mantida no arquivo e avisada como "célula selecionada ausente da base". Arquivo ausente
+equivale a nada marcado; arquivo corrompido gera erro visível e a página não grava por cima.
+
+**Nulo não é zero.** Célula marcada sem Dotação Atualizada aparece como "—" e com aviso; não vira zero na
+soma e o resultado é marcado como **incompleto**. O mesmo vale para empenhado nulo em célula marcada.
+Dotação zero ou negativa e empenhado negativo (estorno líquido) entram como estão.
+
+**Avisos e datas.** A página lista contratos e bolsas sem NE, NE compartilhada, NE nos dois cadastros,
+célula ausente, célula sem dotação, diferença na conferência e as datas de extração da Dotação e da
+Execução Mensal, que são independentes.
+
+**Código.** A regra pura está em `src/resultado_orcamentario.py`; a persistência em
+`src/resultado_orcamentario_cadastro.py`; a página em `app_pages/resultado_orcamentario.py`. A montagem
+dos relatórios de projeção de Contratos e Bolsas vive agora em `src/resultado_orcamentario_fontes.py`,
+compartilhada pelas páginas de Contratos Contínuos, de Bolsas e Auxílios e pelo Resultado Orçamentário,
+sem mudar o resultado delas. A especificação completa está em
+`docs/superpowers/specs/2026-10-08-resultado-orcamentario-design.md`.
+
 ### Despesas de Pessoal
 
 A página **Despesas de Pessoal** usa a estrutura do HTML
