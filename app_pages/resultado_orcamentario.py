@@ -62,6 +62,7 @@ from src.resultado_orcamentario import (
     calcular_resultado,
     celulas_da_dotacao,
     empenhado_por_ne_e_celula,
+    soma_ou_nulo,
 )
 from src.resultado_orcamentario_cadastro import ArquivoCorrompido, CelulaChave, DespesaManual
 from src.resultado_orcamentario_fontes import projecao_bolsas, projecao_contratos, tabela_bolsas, tabela_contratos
@@ -530,9 +531,9 @@ selecao_atual: list[CelulaChave] = [*ausentes_da_base, *marcadas]
 
 totais = editado.loc[editado["Selecionar"], ["Dotação Atualizada", "Empenhado", "Saldo"]]
 st.caption(
-    f"Total selecionado: Dotação {formatar_brl(totais['Dotação Atualizada'].sum(min_count=1) if len(totais) else 0.0)}"
-    f" · Empenhado {formatar_brl(totais['Empenhado'].sum(min_count=1) if len(totais) else 0.0)}"
-    f" · Saldo {formatar_brl(totais['Saldo'].sum(min_count=1) if len(totais) else 0.0)}"
+    f"Total selecionado: Dotação {formatar_brl(soma_ou_nulo(totais['Dotação Atualizada']))}"
+    f" · Empenhado {formatar_brl(soma_ou_nulo(totais['Empenhado']))}"
+    f" · Saldo {formatar_brl(soma_ou_nulo(totais['Saldo']))}"
 )
 
 col_salvar, col_estado = st.columns([1, 5], vertical_alignment="center")

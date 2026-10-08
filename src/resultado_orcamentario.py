@@ -74,6 +74,19 @@ def _brl(valor: float) -> str:
     return "R$ " + f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def soma_ou_nulo(valores: pd.Series) -> float | None:
+    """Soma para exibição: `None` se QUALQUER valor for nulo (nulo não vira zero na soma, spec §5);
+    série vazia (nada selecionado) = 0,0.
+
+    Correção (08/10/2026, revisão da Task 5): o "Total selecionado" da tabela de células somava com
+    `min_count=1` e tratava a dotação nula de uma célula como zero, mostrando um total definido enquanto
+    o cartão mostrava "—"."""
+
+    if valores.isna().any():
+        return None
+    return float(valores.sum()) if len(valores) else 0.0
+
+
 def celulas_da_dotacao(dotacao: pd.DataFrame, exercicio: int) -> pd.DataFrame:
     """Uma linha por célula do exercício, a partir da Dotação Anual normalizada.
 

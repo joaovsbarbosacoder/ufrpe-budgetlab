@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 from src.resultado_orcamentario import (
+    soma_ou_nulo,
     ORIGEM_BOLSAS,
     ORIGEM_CONTRATOS,
     ORIGEM_OUTROS,
@@ -276,3 +277,11 @@ def test_empenhado_nulo_em_celula_marcada_incompleto():
     assert r.resultado is None
     assert r.incompleto is True
     assert any("nulo" in a and "N3" in a for a in r.avisos)
+
+
+def test_soma_ou_nulo_nao_trata_nulo_como_zero():
+    # revisão da Task 5: "Total selecionado" com uma célula de dotação nula não pode virar total definido
+    assert soma_ou_nulo(pd.Series([100.0, None, 50.0], dtype="Float64")) is None
+    assert soma_ou_nulo(pd.Series([100.0, float("nan")])) is None
+    assert soma_ou_nulo(pd.Series([100.0, -30.0, 0.0], dtype="Float64")) == 70.0
+    assert soma_ou_nulo(pd.Series([], dtype="Float64")) == 0.0
