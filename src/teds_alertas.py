@@ -846,6 +846,90 @@ def sincronizar_alertas_cadastrais(
 
 
 # --------------------------------------------------------------------------------------
+# Fechamento de alertas obsoletos dos tipos revistos (spec de 08/10/2026, §4)
+# --------------------------------------------------------------------------------------
+#: Tipos cujas regras foram revistas em 08/10/2026 (conciliação pela janela comum e "sem base", um alerta de
+#: UG por TED, movimentação com Tesouro). Só estes podem ser fechados pela reavaliação; os demais nunca.
+TIPOS_REVISTOS_08_10_2026 = frozenset({
+    TIPO_NC_DIVERGE_CONSOLIDADO,
+    TIPO_PF_DIVERGE_CONSOLIDADO,
+    TIPO_PF_MAIOR_QUE_NC,
+    TIPO_NC_UG_EMITENTE_AUSENTE,
+    TIPO_TED_SEM_MOVIMENTACAO,
+})
+
+_MOTIVO_COMPARACAO = (
+    "a comparação passou a usar só o período coberto pelo consolidado; TED sem documento no extrato é 'sem base'"
+)
+_MOTIVOS_FECHAMENTO = {
+    TIPO_NC_DIVERGE_CONSOLIDADO: _MOTIVO_COMPARACAO,
+    TIPO_PF_DIVERGE_CONSOLIDADO: _MOTIVO_COMPARACAO,
+    TIPO_PF_MAIOR_QUE_NC: "TED com vigência anterior ao consolidado é 'sem base'",
+    TIPO_NC_UG_EMITENTE_AUSENTE: "o alerta passou a ser um por TED",
+    TIPO_TED_SEM_MOVIMENTACAO: "a movimentação passou a incluir liquidação e pagamento no Tesouro",
+}
+
+
+def candidatos_tipos_revistos(conn: sqlite3.Connection, hoje: date | None = None) -> set[tuple[str, str]]:
+    """`(tipo, documento)` que as regras ATUAIS produzem para os tipos revistos, sem gravar nada — a base
+    para decidir quais alertas abertos desses tipos ficaram obsoletos."""
+
+    hoje = hoje or date.today()
+    candidatos = list(gerar_alertas_conciliacao_simec(_carregar_resumos_conciliacao(conn)))
+    candidatos += gerar_alertas_nc_parcial(detectar_documentos_nc_parciais(_carregar_documentos_nc(conn)))
+    teds, documentos, ultima_execucao_tesouro, movimento_no_ano = _carregar_cadastro(conn, hoje)
+    candidatos += gerar_alertas_cadastrais(
+        teds, documentos, hoje,
+        ultima_execucao_tesouro=ultima_execucao_tesouro,
+        movimento_consolidado_no_ano=movimento_no_ano,
+    )
+    return {(a.tipo, a.documento) for a in candidatos if a.tipo in TIPOS_REVISTOS_08_10_2026}
+
+
+def fechar_alertas_obsoletos(
+    conn: sqlite3.Connection, candidatos_atuais: set[tuple[str, str]]
+) -> dict[str, int]:
+    """Fecha (`resolvido`, responsável "sistema") cada alerta NÃO resolvido de tipo revisto cujo
+    `(tipo, documento)` não está em `candidatos_atuais`. Decisão de 08/10/2026 (spec §4): as regras foram
+    revistas e os alertas gerados pelas regras antigas não se sustentam; deixar para análise manual
+    arrastaria falsos positivos. Cada fechamento grava `alerta_status_alterado` na MESMA transação
+    (ou status e trilha persistem juntos, ou nenhum). Resolvido manualmente nunca é tocado; tipo não
+    revisto nunca é fechado. Devolve a contagem por tipo."""
+
+    tipos = sorted(TIPOS_REVISTOS_08_10_2026)
+    abertos = conn.execute(
+        "SELECT id, tipo, documento, status, responsavel, justificativa FROM alerta "
+        "WHERE status != 'resolvido' AND tipo IN ({}) ORDER BY id".format(",".join("?" * len(tipos))),
+        tipos,
+    ).fetchall()
+    fechados: dict[str, int] = {}
+    agora = datetime.now(timezone.utc).isoformat()
+    try:
+        for alerta_id, tipo, documento, status, responsavel, justificativa in abertos:
+            if (tipo, documento) in candidatos_atuais:
+                continue
+            motivo = _MOTIVOS_FECHAMENTO[tipo]
+            nova_justificativa = "Regra revisada em 08/10/2026: " + motivo
+            conn.execute(
+                "UPDATE alerta SET status = 'resolvido', responsavel = 'sistema', justificativa = ?, "
+                "data_resolucao = ? WHERE id = ?",
+                (nova_justificativa, agora, alerta_id),
+            )
+            registrar_auditoria(
+                conn, acao=ACAO_ALERTA_STATUS_ALTERADO, entidade=ENTIDADE_ALERTA, entidade_id=alerta_id,
+                valor_anterior={"status": status, "responsavel": responsavel, "justificativa": justificativa},
+                valor_novo={"status": "resolvido", "responsavel": "sistema", "justificativa": nova_justificativa},
+                usuario="sistema", motivo=motivo, origem="reavaliacao",
+            )
+            fechados[tipo] = fechados.get(tipo, 0) + 1
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    return dict(sorted(fechados.items()))
+
+
+# --------------------------------------------------------------------------------------
 # Execução no Tesouro Gerencial por NE (briefing, seções 8.2 e 10)
 # --------------------------------------------------------------------------------------
 

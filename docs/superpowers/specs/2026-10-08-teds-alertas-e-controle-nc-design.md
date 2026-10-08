@@ -48,7 +48,9 @@ para tirar dúvidas e sanear pendências caso a caso.
 
 - O consolidado (`execucao_anual`) cobre, por TED, um conjunto de anos (`ano_emissao`). A soma analítica passa a
   considerar **só os documentos com data nesses anos**.
-- Documento sem data fica fora da soma e é contado à parte na descrição (nunca vira zero).
+- Documento sem data não pode decidir sozinho (revisão de 08/10/2026, achado nos dados reais: NCs principais de TEDs
+  vêm sem data): só há alerta se a diferença persistir **com e sem** os documentos sem data (janela e janela + sem
+  data, ambos contra o consolidado). Senão, inconclusivo, sem alerta. A descrição cita o valor sem data.
 - **TED sem nenhum documento do tipo no extrato** = "sem base" → **sem alerta**.
 - Quando houver alerta, a descrição cita o valor dos documentos fora da janela.
 

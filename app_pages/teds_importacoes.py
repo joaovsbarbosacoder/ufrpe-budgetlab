@@ -148,12 +148,17 @@ if st.button("Reavaliar alertas", key="imp_reavaliar_alertas"):
     except Exception as erro:
         st.error(f"Falha ao reavaliar alertas: {erro}")
     else:
-        if resultado_alertas.total == 0:
+        if resultado_alertas.total == 0 and resultado_alertas.total_fechados == 0:
             st.success("Reavaliação concluída — nenhum alerta novo; os existentes continuam como estão.")
         else:
-            st.success(f"Reavaliação concluída — {resultado_alertas.total} alerta(s) novo(s) criado(s).")
+            st.success(
+                f"Reavaliação concluída — {resultado_alertas.total} alerta(s) novo(s) criado(s) e "
+                f"{resultado_alertas.total_fechados} obsoleto(s) fechado(s)."
+            )
             for tipo, quantidade in resultado_alertas.criados_por_tipo.items():
-                st.caption(f"{rotulo_tipo_alerta(tipo)}: {quantidade}")
+                st.caption(f"{rotulo_tipo_alerta(tipo)}: {quantidade} criado(s)")
+            for tipo, quantidade in resultado_alertas.fechados_por_tipo.items():
+                st.caption(f"{rotulo_tipo_alerta(tipo)}: {quantidade} fechado(s) pela regra revista")
 
 st.session_state.setdefault("imp_step", 1)
 
