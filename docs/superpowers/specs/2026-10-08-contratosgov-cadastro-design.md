@@ -70,9 +70,28 @@ Observações que orientam o desenho:
 | `src/contratosgov_extracao.py` | Monta a fotografia (lista + detalhes com política incremental), calcula o delta contra a fotografia anterior, decide se exige confirmação reforçada e grava (JSON bruto + manifesto). Tudo ou nada. | `contratosgov_api`, `importacao_versionada` (`Manifesto`, `destino_sem_sobrescrever`) |
 | `src/contratos_cadastro.py` | Funções puras: fotografia → tabelas `contratos`, `termos`, `empenhos`; conversão de valores e datas; vigência calculada. | `pandas`, `decimal` |
 | `src/contratos_complementos.py` | Leitura e gravação atômica dos complementos manuais por `contrato_id`. | `json` |
-| `app_pages/contratos.py` | Página: Atualizar (prévia + confirmação), Lista (filtros), Detalhe (dados, termos, NEs, complemento editável). | módulos acima |
+| `app_pages/contratos.py` | Página com três abas: **Cadastro** (resumo + lista com filtros + detalhe em `st.dialog`), **Atualizar** (prévia + confirmação) e **Histórico de atualizações** (um manifesto por linha). | módulos acima |
 
 Registro da página em `app.py` como página nova; nenhuma página existente é alterada.
+
+### 4.0 Layout (aprovado em 08/10/2026)
+
+Protótipo: `docs/superpowers/specs/2026-10-08-contratosgov-cadastro-mockup.html`.
+
+- **Cadastro:** cartão-resumo com quatro indicadores — contratos (ativos + inativos na API), vigentes,
+  **vencem em 90 dias** (contagem de vigentes com `dias_para_vencer` ≤ 90; só contagem, sem alerta) e valor
+  global somado dos vigentes. Abas de situação com contagem (Vigentes, A iniciar, Encerrados, Inativos,
+  Todos), busca livre (número, fornecedor, CNPJ/CPF, processo, objeto), filtro de categoria e ordenação.
+  Tabela: contrato/fornecedor, categoria, vigência com chip de dias (verde > 90, laranja 31–90, vermelho
+  ≤ 30), valor global, valor mensal (complemento com marca "MANUAL"; vazio = "—"), qtd. de termos e NEs.
+- **Detalhe** (janela ao clicar no contrato): dados do contrato, complemento manual editável, linha do tempo
+  dos termos (mais recente primeiro) e tabela de NEs com total. A grade de edição é feita com widgets
+  comuns — nunca `st.data_editor` dentro de `st.dialog` (quebra conhecida no projeto).
+- **Atualizar:** passos, opção "atualização completa", progresso, prévia do delta (cartões por categoria +
+  listas expansíveis com antes → depois), alerta de remoção com "Estou ciente" que habilita "Gravar
+  fotografia", estado sem fotografia.
+- **Histórico de atualizações:** uma linha por manifesto — data da consulta, hash curto, contagens,
+  reconsultados e resumo das mudanças; a atual marcada.
 
 ### 4.1 Tabelas derivadas (`contratos_cadastro`)
 
@@ -128,7 +147,8 @@ Complemento de contrato que não está na fotografia atual é mantido e exibido 
 5. Ao confirmar: gravar `data/raw/contratosgov/contratosgov_<sha256[:12]>.json` (imutável, sem sobrescrever)
    e o manifesto (`Manifesto` de `importacao_versionada`, base `contratosgov`, com data/hora da consulta,
    contagens — contratos, vigentes, termos, NEs, reconsultados, reaproveitados — e valor global somado dos
-   vigentes) e atualizar o ponteiro `contratosgov_atual.json`.
+   vigentes, além do resumo do delta em relação à fotografia anterior — contagem por categoria, usada pela aba
+Histórico) e atualizar o ponteiro `contratosgov_atual.json`.
 
 **Delta (por contrato):** contratos novos; contratos ausentes; termos novos; termos removidos; vigência
 alterada (fim antes → depois); valor global alterado; NEs novas; NEs desvinculadas; NEs com valores
@@ -180,7 +200,7 @@ Sem acesso à rede. pytest; rodadas intermediárias com `--testmon -n auto`, su�
 
 ## 8. Fora do escopo
 
-Vencimentos/prorrogações, execução financeira por contrato, necessidade de empenho, fiscalização, empenhos
+Acompanhamento de vencimentos/prorrogações além da contagem do resumo, execução financeira por contrato, necessidade de empenho, fiscalização, empenhos
 substitutivos, integração com Contratos Contínuos, remoção do módulo antigo de Vigência, atualização
 automática agendada, Portal da Transparência e SIOP.
 
