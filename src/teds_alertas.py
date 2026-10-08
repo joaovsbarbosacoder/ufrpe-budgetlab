@@ -18,6 +18,7 @@ registrada na Central de Alertas, fora do escopo desta fase).
 
 from __future__ import annotations
 
+import calendar
 import json
 import sqlite3
 import unicodedata
@@ -151,21 +152,38 @@ def detectar_documentos_nc_parciais(documentos: list[DocumentoNC]) -> list[Docum
     return [d for d in documentos if d.status_relacionamento == STATUS_RELACIONAMENTO_PARCIAL]
 
 
+#: Rótulo do agrupamento das NCs sem UG que também não têm TED conhecido.
+SEM_TED = "(sem TED)"
+
+
 def gerar_alertas_nc_parcial(parciais: list[DocumentoNC]) -> list[Alerta]:
-    alertas = []
+    """Um alerta por TED (documento `ted:<chave_ted>`, gravidade "baixa"), listando as NCs sem UG.
+
+    Decisão de 08/10/2026 (spec `docs/superpowers/specs/2026-10-08-teds-alertas-e-controle-nc-design.md`,
+    §3.3): era um alerta "media" por NC; a ausência de UG é falha sistemática do SIMEC (28% das NCs na
+    extração real), e um alerta por NC (41) poluía a Central. NC sem `chave_ted` agrupa em
+    `ted:(sem TED)`. TED sem NC nessa situação não gera alerta."""
+
+    por_ted: dict[str | None, list[DocumentoNC]] = {}
     for documento in parciais:
-        descricao = (
-            f"NC {documento.numero_nc} (documento {documento.chave_nc_documento}) sem UG "
-            "emitente em nenhuma linha da extração — conciliação externa por UG fica "
-            "incompleta até a UG ser identificada manualmente."
-        )
+        por_ted.setdefault(documento.chave_ted, []).append(documento)
+
+    alertas = []
+    for chave in sorted(por_ted, key=lambda c: (c is None, c or "")):
+        documentos = sorted(por_ted[chave], key=lambda d: (d.numero_nc, d.chave_nc_documento))
+        numeros = ", ".join(d.numero_nc for d in documentos)
+        rotulo = f"TED {chave}" if chave else "NCs sem TED conhecido"
         alertas.append(
             Alerta(
                 tipo=TIPO_NC_UG_EMITENTE_AUSENTE,
-                gravidade="media",
-                documento=documento.chave_nc_documento,
-                descricao=descricao,
-                chave_ted=documento.chave_ted,
+                gravidade="baixa",
+                documento=f"ted:{chave or SEM_TED}",
+                descricao=(
+                    f"{rotulo}: {len(documentos)} NC(s) sem UG emitente em nenhuma linha da extração "
+                    f"({numeros}) — conciliação externa por UG fica incompleta até a UG ser "
+                    "identificada manualmente."
+                ),
+                chave_ted=chave,
             )
         )
     return alertas
@@ -187,44 +205,13 @@ def _carregar_documentos_nc(conn: sqlite3.Connection) -> list[DocumentoNC]:
 
 
 def sincronizar_alertas_nc_parcial(conn: sqlite3.Connection) -> list[Alerta]:
-    """Garante um alerta aberto para cada documento de NC com `status_relacionamento='PARCIAL'`.
-    Devolve só os alertas recém-criados nesta chamada (não os que já existiam) — mesma
-    semântica de `sincronizar_alertas_multiplos_teds`."""
+    """Garante um alerta aberto por TED com NC de `status_relacionamento='PARCIAL'` (um por TED desde
+    08/10/2026, ver `gerar_alertas_nc_parcial`). Devolve só os alertas recém-criados nesta chamada (não
+    os que já existiam) — mesma semântica de `sincronizar_alertas_multiplos_teds`. Nunca fecha alerta:
+    os antigos, um por NC, continuam abertos até resolução (a reavaliação da spec, §4, cuida deles)."""
 
-    documentos = _carregar_documentos_nc(conn)
-    parciais = detectar_documentos_nc_parciais(documentos)
-
-    ja_sinalizados = {
-        documento
-        for (documento,) in conn.execute(
-            "SELECT documento FROM alerta WHERE tipo = ? AND status != 'resolvido'",
-            (TIPO_NC_UG_EMITENTE_AUSENTE,),
-        ).fetchall()
-    }
-
-    novos = [
-        alerta for alerta in gerar_alertas_nc_parcial(parciais) if alerta.documento not in ja_sinalizados
-    ]
-
-    agora = datetime.now(timezone.utc).isoformat()
-    for alerta in novos:
-        conn.execute(
-            """
-            INSERT INTO alerta (tipo, gravidade, chave_ted, documento, descricao, status, data_identificacao)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                alerta.tipo,
-                alerta.gravidade,
-                alerta.chave_ted,
-                alerta.documento,
-                alerta.descricao,
-                alerta.status,
-                agora,
-            ),
-        )
-    conn.commit()
-    return novos
+    parciais = detectar_documentos_nc_parciais(_carregar_documentos_nc(conn))
+    return _gravar_alertas_novos(conn, gerar_alertas_nc_parcial(parciais))
 
 
 # --------------------------------------------------------------------------------------
@@ -245,18 +232,71 @@ class ResumoConciliacaoSimec:
     ou seja, já com o sinal da operação); `*_consolidada` = soma de `execucao_anual` sobre
     todos os exercícios importados (Total Descentralizado / Total Repassado).
 
-    `nc_analitica`/`pf_analitica` ficam `None` quando a base analítica correspondente ainda não
-    foi importada (nunca zero: "sem base" não pode virar "divergência de tudo")."""
+    Janela comum (decisão de 08/10/2026, spec `docs/superpowers/specs/2026-10-08-teds-alertas-e-controle-nc-design.md`,
+    §3.1): `nc_analitica`/`pf_analitica` somam SÓ os documentos com data num ano de `anos_consolidado`
+    (os anos de `execucao_anual` do TED) — a extração analítica cobre outro recorte (ex.: PF desde 2019 ×
+    consolidado desde 2023), e comparar períodos diferentes gerava divergência falsa. O valor fora da
+    janela fica em `nc_fora_janela`/`pf_fora_janela`; documento sem data fica fora da soma e é contado em
+    `documentos_sem_data` (NC + PF do TED), nunca vira zero.
+
+    `nc_analitica`/`pf_analitica` ficam `None` quando o TED não tem NENHUM documento do tipo no extrato
+    ("sem base", nunca zero: não pode virar "divergência de tudo"). Antes de 08/10/2026 o "sem base" era
+    só a tabela inteira vazia, e o TED sem documento era comparado como R$ 0.
+
+    `inicio_vigencia` serve à regra de PF maior que a NC (§3.2). Os campos novos têm valor padrão para um
+    resumo montado à mão continuar valendo como antes (sem janela, sem vigência)."""
 
     chave_ted: str
     nc_consolidada: Decimal
     pf_consolidada: Decimal
     nc_analitica: Decimal | None
     pf_analitica: Decimal | None
+    anos_consolidado: frozenset[int] = frozenset()
+    nc_fora_janela: Decimal = Decimal("0")
+    pf_fora_janela: Decimal = Decimal("0")
+    documentos_sem_data: int = 0
+    inicio_vigencia: date | None = None
 
 
 def _moeda(valor: Decimal) -> str:
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _anos_texto(anos: frozenset[int]) -> str:
+    """"2023–2025" quando os anos são contínuos; senão a lista ("2019, 2023")."""
+
+    ordenados = sorted(anos)
+    if len(ordenados) > 1 and ordenados == list(range(ordenados[0], ordenados[-1] + 1)):
+        return f"{ordenados[0]}–{ordenados[-1]}"
+    return ", ".join(str(a) for a in ordenados)
+
+
+def _detalhe_janela(r: ResumoConciliacaoSimec, fora_janela: Decimal) -> str:
+    """Trecho da descrição com o que ficou fora da soma (spec de 08/10/2026, §3.1). Vazio quando o
+    resumo não traz os anos do consolidado (montado à mão)."""
+
+    if not r.anos_consolidado:
+        return ""
+    texto = (
+        f" Comparados só os documentos emitidos em {_anos_texto(r.anos_consolidado)} (anos do consolidado); "
+        f"documentos de outros anos somam {_moeda(fora_janela)} e ficaram fora"
+    )
+    if r.documentos_sem_data:
+        texto += f"; {r.documentos_sem_data} documento(s) sem data (NC/PF) fora da soma"
+    return texto + "."
+
+
+def vigencia_anterior_ao_consolidado(r: ResumoConciliacaoSimec) -> bool:
+    """Vigência iniciada antes de 1º de janeiro do primeiro ano do consolidado do TED: a NC daquele
+    período não está nas fontes oficiais importadas, então PF > NC é "sem base" (decisão de 08/10/2026,
+    spec, §3.2 — os 7 alertas abertos tinham vigência anterior a 2023). Sem início de vigência ou sem
+    anos do consolidado não dá para afirmar: `False` (alerta como antes)."""
+
+    return (
+        r.inicio_vigencia is not None
+        and bool(r.anos_consolidado)
+        and r.inicio_vigencia < date(min(r.anos_consolidado), 1, 1)
+    )
 
 
 def gerar_alertas_conciliacao_simec(
@@ -267,7 +307,12 @@ def gerar_alertas_conciliacao_simec(
 
       1. NC líquida analítica ≠ Total Descentralizado consolidado;
       2. PF líquido analítico ≠ Total Repassado consolidado;
-      3. PF líquido consolidado > NC líquida consolidada (repasse sem crédito que o cubra).
+      3. PF líquido consolidado > NC líquida consolidada (repasse sem crédito que o cubra) — exceto
+         quando a vigência começa antes do primeiro ano do consolidado ("sem base", spec de
+         08/10/2026, §3.2).
+
+    1 e 2 só avaliam o TED que tem documento do tipo (`*_analitica` não `None`) e, desde 08/10/2026,
+    comparam o mesmo período (janela comum, §3.1; a soma já vem filtrada pelo carregador).
     """
 
     alertas: list[Alerta] = []
@@ -282,8 +327,8 @@ def gerar_alertas_conciliacao_simec(
                     descricao=(
                         f"NC líquida dos documentos importados ({_moeda(r.nc_analitica)}) difere do "
                         f"Total Descentralizado consolidado ({_moeda(r.nc_consolidada)}) em "
-                        f"{_moeda(r.nc_analitica - r.nc_consolidada)}. Possíveis causas: extração de "
-                        "documentos incompleta ou de outro período, documento sem data/TED, ou "
+                        f"{_moeda(r.nc_analitica - r.nc_consolidada)}.{_detalhe_janela(r, r.nc_fora_janela)} "
+                        "Possíveis causas: extração de documentos incompleta, documento sem data/TED, ou "
                         "divergência real na origem — não decidido automaticamente."
                     ),
                 )
@@ -298,13 +343,13 @@ def gerar_alertas_conciliacao_simec(
                     descricao=(
                         f"PF líquido dos documentos importados ({_moeda(r.pf_analitica)}) difere do "
                         f"Total Repassado consolidado ({_moeda(r.pf_consolidada)}) em "
-                        f"{_moeda(r.pf_analitica - r.pf_consolidada)}. Possíveis causas: extração de "
-                        "documentos incompleta ou de outro período, ou divergência real na origem "
-                        "— não decidido automaticamente."
+                        f"{_moeda(r.pf_analitica - r.pf_consolidada)}.{_detalhe_janela(r, r.pf_fora_janela)} "
+                        "Possíveis causas: extração de documentos incompleta, documento sem data, ou "
+                        "divergência real na origem — não decidido automaticamente."
                     ),
                 )
             )
-        if r.pf_consolidada - r.nc_consolidada > tolerancia:
+        if r.pf_consolidada - r.nc_consolidada > tolerancia and not vigencia_anterior_ao_consolidado(r):
             alertas.append(
                 Alerta(
                     tipo=TIPO_PF_MAIOR_QUE_NC,
@@ -325,35 +370,58 @@ def gerar_alertas_conciliacao_simec(
 
 def _carregar_resumos_conciliacao(conn: sqlite3.Connection) -> list[ResumoConciliacaoSimec]:
     consolidado: dict[str, list[Decimal]] = {}
-    for chave_ted, total_descentralizado, total_repassado in conn.execute(
-        "SELECT chave_ted, total_descentralizado, total_repassado FROM execucao_anual"
+    anos: dict[str, set[int]] = {}
+    for chave_ted, ano, total_descentralizado, total_repassado in conn.execute(
+        "SELECT chave_ted, ano_emissao, total_descentralizado, total_repassado FROM execucao_anual"
     ).fetchall():
         acumulado = consolidado.setdefault(chave_ted, [Decimal("0"), Decimal("0")])
         acumulado[0] += texto_para_valor(total_descentralizado)
         acumulado[1] += texto_para_valor(total_repassado)
+        anos.setdefault(chave_ted, set()).add(int(ano))
 
-    def _somar(sql: str) -> dict[str, Decimal] | None:
-        linhas = conn.execute(sql).fetchall()
-        if not linhas:
-            return None
-        somas: dict[str, Decimal] = {}
-        for chave_ted, valor in linhas:
-            if chave_ted:
-                somas[chave_ted] = somas.get(chave_ted, Decimal("0")) + texto_para_valor(valor)
-        return somas
+    inicio_por_ted = {
+        chave: _data_ou_none(inicio)
+        for chave, inicio in conn.execute("SELECT chave_ted, inicio_vigencia FROM ted").fetchall()
+    }
 
-    nc = _somar("SELECT chave_ted, valor_assinado_total FROM documento_nc")
-    pf = _somar("SELECT chave_ted, valor_assinado FROM documento_pf")
-    return [
-        ResumoConciliacaoSimec(
+    def _somar(sql: str) -> dict[str, tuple[Decimal, Decimal, int]]:
+        """chave_ted → (soma na janela do consolidado, soma fora dela, documentos sem data). TED fora
+        do dicionário = nenhum documento do tipo ("sem base", spec de 08/10/2026, §3.1)."""
+
+        somas: dict[str, list] = {}
+        for chave_ted, data_emissao, valor in conn.execute(sql).fetchall():
+            if not chave_ted:
+                continue  # documento sem TED conhecido: aparece na cobertura de relacionamentos
+            acumulado = somas.setdefault(chave_ted, [Decimal("0"), Decimal("0"), 0])
+            data = _data_ou_none(data_emissao)
+            if data is None:
+                acumulado[2] += 1
+            elif data.year in anos.get(chave_ted, ()):
+                acumulado[0] += texto_para_valor(valor)
+            else:
+                acumulado[1] += texto_para_valor(valor)
+        return {chave: (v[0], v[1], v[2]) for chave, v in somas.items()}
+
+    nc = _somar("SELECT chave_ted, data_emissao, valor_assinado_total FROM documento_nc")
+    pf = _somar("SELECT chave_ted, data_emissao, valor_assinado FROM documento_pf")
+    sem_base = (None, Decimal("0"), 0)
+    resumos = []
+    for chave_ted, (nc_cons, pf_cons) in consolidado.items():
+        nc_janela, nc_fora, nc_sem_data = nc.get(chave_ted, sem_base)
+        pf_janela, pf_fora, pf_sem_data = pf.get(chave_ted, sem_base)
+        resumos.append(ResumoConciliacaoSimec(
             chave_ted=chave_ted,
             nc_consolidada=nc_cons,
             pf_consolidada=pf_cons,
-            nc_analitica=None if nc is None else nc.get(chave_ted, Decimal("0")),
-            pf_analitica=None if pf is None else pf.get(chave_ted, Decimal("0")),
-        )
-        for chave_ted, (nc_cons, pf_cons) in consolidado.items()
-    ]
+            nc_analitica=nc_janela,
+            pf_analitica=pf_janela,
+            anos_consolidado=frozenset(anos[chave_ted]),
+            nc_fora_janela=nc_fora,
+            pf_fora_janela=pf_fora,
+            documentos_sem_data=nc_sem_data + pf_sem_data,
+            inicio_vigencia=inicio_por_ted.get(chave_ted),
+        ))
+    return resumos
 
 
 def _gravar_alertas_novos(conn: sqlite3.Connection, candidatos: list[Alerta]) -> list[Alerta]:
@@ -415,8 +483,9 @@ TIPO_TED_SEM_MOVIMENTACAO = "ted_sem_movimentacao"
 TIPO_TED_SEM_SIAFI = "ted_sem_siafi"
 
 #: Prazo padrão de "TED em execução sem movimentação" (briefing, seção 7, não define o prazo — 90 dias
-#: definidos com o usuário em 24/09/2026, ajustável por parâmetro; era 180 por escolha inicial). Movimentação = NC ou PF emitida; a NE não
-#: entra porque `vinculo_ne` não guarda data de emissão.
+#: definidos com o usuário em 24/09/2026, ajustável por parâmetro; era 180 por escolha inicial). Movimentação = NC ou PF emitida
+#: e, desde 08/10/2026, liquidação/pagamento no Tesouro em NE vinculada (a NE em si não entra porque
+#: `vinculo_ne` não guarda data de emissão).
 PRAZO_SEM_MOVIMENTACAO_DIAS = 90
 
 #: Único estado tratado como "em execução" (texto exato da extração real do SIMEC, comparado sem
@@ -435,6 +504,17 @@ def _sem_acento_minusculo(texto: str | None) -> str:
 
 def estado_em_execucao(estado_atual: str | None) -> bool:
     return _sem_acento_minusculo(estado_atual) == ESTADO_EM_EXECUCAO
+
+
+#: Trechos (sem acento, minúsculos) que marcam um TED encerrado — comprovado, finalizado, em prestação de
+#: contas ou relatório de cumprimento (spec de 08/10/2026, §3.5). Só muda a DESCRIÇÃO do crédito sem
+#: empenho; nenhuma regra deixa de valer por causa disso.
+TRECHOS_ESTADO_ENCERRADO = ("comprovado", "finalizado", "prestacao de contas", "relatorio de cumprimento")
+
+
+def ted_encerrado(estado_atual: str | None) -> bool:
+    estado = _sem_acento_minusculo(estado_atual)
+    return any(trecho in estado for trecho in TRECHOS_ESTADO_ENCERRADO)
 
 
 @dataclass(frozen=True)
@@ -468,10 +548,21 @@ def gerar_alertas_cadastrais(
     documentos: list[DocumentoDatado],
     hoje: date,
     prazo_sem_movimentacao_dias: int = PRAZO_SEM_MOVIMENTACAO_DIAS,
+    ultima_execucao_tesouro: dict[str, date] | None = None,
+    movimento_consolidado_no_ano: set[str] | None = None,
 ) -> list[Alerta]:
     """Todas as verificações são descritivas: apontam a inconsistência sem alterar, excluir ou
     deixar de importar nada. Documento fora da vigência pode ser legítimo (briefing, seção 7),
-    por isso gera alerta com justificativa possível, nunca exclusão."""
+    por isso gera alerta com justificativa possível, nunca exclusão.
+
+    Sem movimentação (regra revista em 08/10/2026, spec
+    `docs/superpowers/specs/2026-10-08-teds-alertas-e-controle-nc-design.md`, §3.4):
+      * `ultima_execucao_tesouro` — chave_ted → último dia do mês mais recente com liquidado ou pago ≠ 0
+        no Tesouro em NE vinculada não descartada; conta como movimentação junto com NC/PF emitida (o
+        TED 10782 aparecia "sem movimento desde 2021" com execução no Tesouro). Data além de `hoje`
+        (mês corrente) conta como `hoje`;
+      * `movimento_consolidado_no_ano` — chave_ted com NC ou PF ≠ 0 no ano de `hoje` em `execucao_anual`;
+        sem documento datado nesse ano, a descrição avisa e o alerta continua."""
 
     alertas: list[Alerta] = []
     por_chave = {t.chave_ted: t for t in teds}
@@ -508,32 +599,54 @@ def gerar_alertas_cadastrais(
             ))
 
     ultima_movimentacao: dict[str, date] = {}
+    teds_com_documento_no_ano: set[str] = set()
     for d in documentos:
         if d.data_emissao is not None and d.data_emissao <= hoje:
             atual = ultima_movimentacao.get(d.chave_ted)
             if atual is None or d.data_emissao > atual:
                 ultima_movimentacao[d.chave_ted] = d.data_emissao
+        if d.data_emissao is not None and d.data_emissao.year == hoje.year:
+            teds_com_documento_no_ano.add(d.chave_ted)
+    ultimo_tesouro = {
+        chave: min(data, hoje) for chave, data in (ultima_execucao_tesouro or {}).items()
+    }
     for t in sorted(teds, key=lambda x: x.chave_ted):
         if not estado_em_execucao(t.estado_atual):
             continue
         # Sem nenhum documento datado, a referência é o início da vigência: um TED recém-iniciado
         # ainda não é "sem movimentação". Sem documento e sem início, não há como datar: alerta.
         ultima = ultima_movimentacao.get(t.chave_ted)
-        referencia = ultima or t.inicio_vigencia
+        tesouro = ultimo_tesouro.get(t.chave_ted)
+        mais_recente = max((d for d in (ultima, tesouro) if d is not None), default=None)
+        referencia = mais_recente or t.inicio_vigencia
         if referencia is not None and (hoje - referencia).days <= prazo_sem_movimentacao_dias:
             continue
         if ultima is not None:
             detalhe = f"última NC/PF emitida em {_data_br(ultima)}"
-        elif referencia is not None:
+        elif tesouro is None and referencia is not None:
             detalhe = f"nenhuma NC/PF emitida desde o início da vigência ({_data_br(referencia)})"
-        else:
+        elif tesouro is None:
             detalhe = "nenhuma NC/PF emitida e sem data de início da vigência"
+        else:
+            detalhe = "nenhuma NC/PF emitida"
+        if tesouro is not None:
+            detalhe += f"; última liquidação/pagamento no Tesouro em NE vinculada em {_data_br(tesouro)}"
+        aviso = ""
+        if (
+            t.chave_ted in (movimento_consolidado_no_ano or set())
+            and t.chave_ted not in teds_com_documento_no_ano
+        ):
+            aviso = (
+                f" Atenção: o consolidado indica movimentação em {hoje.year} que não está nos "
+                "documentos importados."
+            )
         alertas.append(Alerta(
             tipo=TIPO_TED_SEM_MOVIMENTACAO, gravidade="media", documento=t.chave_ted, chave_ted=t.chave_ted,
             descricao=(
                 f"TED {t.ted} (SIAFI {t.codigo_siafi}) em execução sem movimentação há mais de "
-                f"{prazo_sem_movimentacao_dias} dias: {detalhe}. Movimentação = NC ou PF emitida "
-                "(a NE não tem data no banco)."
+                f"{prazo_sem_movimentacao_dias} dias: {detalhe}. Movimentação = NC ou PF emitida, ou "
+                "liquidação/pagamento no Tesouro em NE vinculada (último dia do mês de lançamento)."
+                f"{aviso}"
             ),
         ))
 
@@ -605,7 +718,58 @@ def _data_ou_none(texto: str | None) -> date | None:
         return None
 
 
-def _carregar_cadastro(conn: sqlite3.Connection) -> tuple[list[TedCadastro], list[DocumentoDatado]]:
+def _carregar_ultima_execucao_tesouro(conn: sqlite3.Connection) -> dict[str, date]:
+    """chave_ted → último dia do mês mais recente com liquidado ou pago ≠ 0 em `execucao_tg`, numa NE
+    vinculada ao TED e não descartada (spec de 08/10/2026, §3.4). A comparação com zero é feita em
+    `Decimal` (o banco guarda texto); valor nulo não conta como movimento."""
+
+    nes_por_ted: dict[str, set[str]] = {}
+    for chave, numero_ne in conn.execute(
+        "SELECT chave_ted, numero_ne FROM vinculo_ne WHERE status_validacao != ?", (STATUS_DESCARTADO,)
+    ).fetchall():
+        nes_por_ted.setdefault(chave, set()).add(numero_ne)
+
+    ultimo_mes_por_ne: dict[str, tuple[int, int]] = {}
+    for numero_ne, liquidado, pago, ano, mes in conn.execute(
+        "SELECT numero_completo_ne, liquidado, pago, ano_lancamento, mes_lancamento FROM execucao_tg"
+    ).fetchall():
+        if not any(v is not None and texto_para_valor(v) != 0 for v in (liquidado, pago)):
+            continue
+        atual = ultimo_mes_por_ne.get(numero_ne)
+        if atual is None or (ano, mes) > atual:
+            ultimo_mes_por_ne[numero_ne] = (ano, mes)
+
+    resultado: dict[str, date] = {}
+    for chave, nes in nes_por_ted.items():
+        meses = [ultimo_mes_por_ne[ne] for ne in nes if ne in ultimo_mes_por_ne]
+        if meses:
+            ano, mes = max(meses)
+            resultado[chave] = date(ano, mes, calendar.monthrange(ano, mes)[1])
+    return resultado
+
+
+def _carregar_movimento_consolidado_no_ano(conn: sqlite3.Connection, ano: int) -> set[str]:
+    """chave_ted com NC ou PF ≠ 0 em `execucao_anual` no ano dado (qualquer das quatro colunas brutas:
+    descentralização, devolução de NC, repasse, devolução de PF — devolução também é movimento)."""
+
+    resultado: set[str] = set()
+    for chave, *valores in conn.execute(
+        "SELECT chave_ted, total_nc_descentralizacao, total_nc_devolucao, total_pf_repasse, "
+        "total_pf_devolucao FROM execucao_anual WHERE ano_emissao = ?",
+        (ano,),
+    ).fetchall():
+        if any(v is not None and texto_para_valor(v) != 0 for v in valores):
+            resultado.add(chave)
+    return resultado
+
+
+def _carregar_cadastro(
+    conn: sqlite3.Connection, hoje: date | None = None
+) -> tuple[list[TedCadastro], list[DocumentoDatado], dict[str, date], set[str]]:
+    """Cadastro, documentos datados e — desde 08/10/2026 (spec, §3.4) — a última execução no Tesouro por
+    TED e os TEDs com movimento no consolidado no ano de `hoje`."""
+
+    hoje = hoje or date.today()
     teds = [
         TedCadastro(chave_ted, ted, siafi, estado, _data_ou_none(ini), _data_ou_none(fim), ug)
         for chave_ted, ted, siafi, estado, ini, fim, ug in conn.execute(
@@ -625,7 +789,12 @@ def _carregar_cadastro(conn: sqlite3.Connection) -> tuple[list[TedCadastro], lis
             "SELECT chave_ted, ug_emitente, numero_pf, data_emissao FROM documento_pf"
         ).fetchall()
     ]
-    return teds, documentos
+    return (
+        teds,
+        documentos,
+        _carregar_ultima_execucao_tesouro(conn),
+        _carregar_movimento_consolidado_no_ano(conn, hoje.year),
+    )
 
 
 def sincronizar_alertas_cadastrais(
@@ -636,10 +805,15 @@ def sincronizar_alertas_cadastrais(
     """Grava as validações cadastrais/de vigência ainda não sinalizadas. `hoje` e o prazo são
     injetáveis para teste. Nunca fecha alerta existente."""
 
-    teds, documentos = _carregar_cadastro(conn)
+    hoje = hoje or date.today()
+    teds, documentos, ultima_execucao_tesouro, movimento_no_ano = _carregar_cadastro(conn, hoje)
     return _gravar_alertas_novos(
         conn,
-        gerar_alertas_cadastrais(teds, documentos, hoje or date.today(), prazo_sem_movimentacao_dias),
+        gerar_alertas_cadastrais(
+            teds, documentos, hoje, prazo_sem_movimentacao_dias,
+            ultima_execucao_tesouro=ultima_execucao_tesouro,
+            movimento_consolidado_no_ano=movimento_no_ano,
+        ),
     )
 
 
@@ -864,14 +1038,25 @@ def gerar_alertas_execucao_do_ted(
                         if t.inicio_vigencia else "sem NC datada e sem início da vigência"
                     )
                 )
+                base = (
+                    f"{rotulo}: NC líquida de {_moeda(t.nc_liquida)} e nenhuma NE vinculada há mais de "
+                    f"{prazo_dias} dias ({origem})."
+                )
+                if ted_encerrado(t.estado_atual):
+                    # Descrição separada para TED encerrado (decisão de 08/10/2026, spec, §3.5): a regra é
+                    # a mesma, mas o que o usuário faz com o alerta é diferente.
+                    descricao = (
+                        f"{base} Estado atual: {t.estado_atual}. NE não registrada no SIMEC — pendência "
+                        "para a prestação de contas."
+                    )
+                else:
+                    descricao = (
+                        f"{base} Pode ser NE não lançada no SIMEC — conferir na origem. "
+                        f"Estado atual: {t.estado_atual or '—'}."
+                    )
                 alertas.append(Alerta(
                     tipo=TIPO_TED_CREDITO_SEM_EMPENHO, gravidade="alta", documento=t.chave_ted,
-                    chave_ted=t.chave_ted,
-                    descricao=(
-                        f"{rotulo}: NC líquida de {_moeda(t.nc_liquida)} e nenhuma NE vinculada há mais de "
-                        f"{prazo_dias} dias ({origem}). Pode ser NE não lançada no SIMEC — conferir na origem. "
-                        f"Estado atual: {t.estado_atual or '—'}."
-                    ),
+                    chave_ted=t.chave_ted, descricao=descricao,
                 ))
 
         if (

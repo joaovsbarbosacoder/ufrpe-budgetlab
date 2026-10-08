@@ -165,5 +165,108 @@ class SincronizacaoComBancoTests(unittest.TestCase):
         self.assertEqual(sincronizar_alertas_conciliacao_simec(self.conn), [])
 
 
+class JanelaComumESemBaseTests(unittest.TestCase):
+    """Regras revistas em 08/10/2026 (spec `docs/superpowers/specs/2026-10-08-teds-alertas-e-controle-nc-design.md`,
+    §3.1 e §3.2): a soma analítica só considera documentos com data nos anos do consolidado do TED; TED sem
+    nenhum documento do tipo é "sem base"; PF > NC com vigência anterior ao consolidado é "sem base"."""
+
+    def setUp(self):
+        self.conn = conectar(":memory:")
+        self.conn.execute(
+            "INSERT INTO import_batch (id, tipo_relatorio, nome_arquivo, hash_arquivo, data_importacao, status) "
+            "VALUES (1, 'teste', 'x.xlsx', 'hash', '2026-01-01T00:00:00', 'ok')"
+        )
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _ted(self, ted, inicio):
+        numero, siafi = ted.split("|")
+        self.conn.execute(
+            "INSERT INTO ted (chave_ted, ted, codigo_siafi, estado_atual, inicio_vigencia, fim_vigencia, "
+            "ug_descentralizadora) VALUES (?, ?, ?, 'Termo em Execução', ?, '2030-12-31', '153165')",
+            (ted, numero, siafi, inicio),
+        )
+
+    def _anual(self, ted, ano, nc, pf):
+        self.conn.execute(
+            "INSERT INTO execucao_anual VALUES (?, ?, ?, '0.00', ?, ?, '0.00', ?, 1, '{}')",
+            (ted, ano, nc, nc, pf, pf),
+        )
+
+    def _pf(self, ted, numero, data, valor):
+        self.conn.execute(
+            """INSERT INTO documento_pf (chave_ted, ug_emitente, numero_pf, data_emissao, operacao,
+                 valor_original, valor_assinado, import_batch_id, linha_origem)
+               VALUES (?, '153165', ?, ?, '+', ?, ?, 1, '{}')""",
+            (ted, numero, data, valor, valor),
+        )
+
+    def _consolidado_2023_2025(self):
+        # Repassado 2023–2025 = 1.094.824,95 (NC igual, para não misturar com PF > NC).
+        self._anual(TED_17352, 2023, "400000.00", "400000.00")
+        self._anual(TED_17352, 2024, "394824.95", "394824.95")
+        self._anual(TED_17352, 2025, "300000.00", "300000.00")
+
+    def _pfs_2019_2022(self):
+        # 2019–2022 somam 1.711.150,55 — fora da janela do consolidado.
+        self._pf(TED_17352, "PF19", "2019-03-01", "500000.00")
+        self._pf(TED_17352, "PF20", "2020-03-01", "600000.00")
+        self._pf(TED_17352, "PF21", "2021-03-01", "411150.55")
+        self._pf(TED_17352, "PF22", "2022-03-01", "200000.00")
+
+    def _sincronizar(self):
+        return [(a.tipo, a.documento, a.descricao) for a in sincronizar_alertas_conciliacao_simec(self.conn)]
+
+    def test_janela_elimina_divergencia_de_periodo(self):
+        self._consolidado_2023_2025()
+        self._pfs_2019_2022()
+        self._pf(TED_17352, "PF23", "2023-05-01", "400000.00")
+        self._pf(TED_17352, "PF24", "2024-05-01", "394824.95")
+        self._pf(TED_17352, "PF25", "2025-05-01", "300000.00")
+        self.conn.commit()
+        self.assertNotIn(TIPO_PF_DIVERGE_CONSOLIDADO, [t for t, _, _ in self._sincronizar()])
+
+    def test_janela_parcial(self):
+        self._consolidado_2023_2025()
+        self._pfs_2019_2022()
+        self._pf(TED_17352, "PF23", "2023-05-01", "400000.00")
+        self._pf(TED_17352, "PF24", "2024-05-01", "300000.00")
+        self._pf(TED_17352, "PF25", "2025-05-01", "300000.00")  # 2023–2025 = 1.000.000,00
+        self.conn.commit()
+        alertas = [a for a in self._sincronizar() if a[0] == TIPO_PF_DIVERGE_CONSOLIDADO]
+        self.assertEqual(len(alertas), 1)
+        self.assertIn("1.000.000,00", alertas[0][2])
+        self.assertIn("1.711.150,55", alertas[0][2])  # valor fora da janela citado
+
+    def test_documento_sem_data_fica_fora_da_soma_e_e_contado(self):
+        self._consolidado_2023_2025()
+        self._pf(TED_17352, "PF23", "2023-05-01", "1000000.00")
+        self._pf(TED_17352, "PFX", None, "94824.95")
+        self.conn.commit()
+        (alerta,) = [a for a in self._sincronizar() if a[0] == TIPO_PF_DIVERGE_CONSOLIDADO]
+        self.assertIn("1.000.000,00", alerta[2])
+        self.assertIn("1 documento(s) sem data", alerta[2])
+
+    def test_ted_sem_pf_no_extrato_e_sem_base(self):
+        self._anual(TED_17352, 2025, "842294.76", "842294.76")
+        self._anual(TED_17454, 2025, "10.00", "10.00")
+        self._pf(TED_17454, "PFB", "2025-02-01", "10.00")  # há PF, mas de outro TED
+        self.conn.commit()
+        self.assertEqual(self._sincronizar(), [])
+
+    def test_pf_maior_que_nc_vigencia_anterior_e_sem_base(self):
+        self._ted(TED_17352, "2022-08-16")
+        self._anual(TED_17352, 2023, "0.00", "637870.01")
+        self.conn.commit()
+        self.assertNotIn(TIPO_PF_MAIOR_QUE_NC, [t for t, _, _ in self._sincronizar()])
+
+    def test_pf_maior_que_nc_real(self):
+        self._ted(TED_17352, "2024-01-10")
+        self._anual(TED_17352, 2024, "100.00", "200.00")
+        self.conn.commit()
+        self.assertEqual([t for t, _, _ in self._sincronizar()], [TIPO_PF_MAIOR_QUE_NC])
+
+
 if __name__ == "__main__":
     unittest.main()

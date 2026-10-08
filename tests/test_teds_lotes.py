@@ -283,7 +283,9 @@ class ImportarDocNcTests(unittest.TestCase):
         ).fetchone()
         self.assertIsNotNone(alerta)
         tipo, gravidade, status = alerta
-        self.assertEqual(gravidade, "media")
+        # Atualizado em 08/10/2026: era "media" (um alerta por NC); a regra revista gera um alerta "baixa"
+        # por TED (spec 2026-10-08-teds-alertas-e-controle-nc-design.md, §3.3).
+        self.assertEqual(gravidade, "baixa")
         self.assertEqual(status, "aberto")
 
     def test_reimportar_arquivo_diferente_atualiza_em_vez_de_duplicar(self):
