@@ -63,6 +63,7 @@ from src.resultado_orcamentario import (
     calcular_resultado,
     celulas_da_dotacao,
     empenhado_por_ne_e_celula,
+    separar_ativos_sem_ne,
     soma_ou_nulo,
 )
 from src.resultado_orcamentario_cadastro import ArquivoCorrompido, CelulaChave, DespesaManual
@@ -289,6 +290,8 @@ def _tabela_necessidade(linhas: pd.DataFrame, por_ne: pd.DataFrame, origem: str)
     com_empenho = set(por_ne["ne_curta"])
 
     def _situacao(ne: object) -> str:
+        if ne is None or (not isinstance(ne, str) and pd.isna(ne)):
+            return "sem NE (contrato ativo)"
         if ne in selecionadas:
             return "selecionada"
         return "não selecionada" if ne in com_empenho else "sem empenho no exercício"
@@ -507,8 +510,8 @@ area_composicao = st.container()
 # parecia uma planilha e mostrava os valores fora do formato brasileiro.
 st.subheader("3. Células que fazem frente às despesas")
 st.caption(
-    "Marque as células da Dotação Anual que entram como recurso. As ações com célula marcada ficam abertas e "
-    'destacadas. A seleção fica gravada por exercício ("Salvar seleção").'
+    'Marque as células da Dotação Anual que entram como recurso (abra "Ver células" em cada ação). As ações com '
+    'célula marcada ficam destacadas. A seleção fica gravada por exercício ("Salvar seleção").'
 )
 _conjunto_celulas = set(chaves_celulas)
 # Célula gravada que não existe mais na base é mantida na seleção (spec §6): aparece em Avisos.
@@ -554,7 +557,16 @@ with col_busca:
         label_visibility="collapsed",
     ).strip().casefold()
 with col_so:
-    so_selecionadas = st.checkbox("Mostrar só as selecionadas", key="ro_so_selecionadas")
+    # A última escolha sobrevive à atualização da página (08/10/2026): lida do arquivo na 1ª execução
+    # da sessão e gravada a cada mudança.
+    if "ro_so_selecionadas" not in st.session_state:
+        st.session_state["ro_so_selecionadas"] = cadastro.carregar_so_selecionadas(cadastro.DIRETORIO_PADRAO)
+    so_selecionadas = st.checkbox(
+        "Mostrar só as selecionadas", key="ro_so_selecionadas",
+        on_change=lambda: cadastro.salvar_so_selecionadas(
+            st.session_state["ro_so_selecionadas"], cadastro.DIRETORIO_PADRAO
+        ),
+    )
 
 acoes = celulas["acao_codigo"].tolist()
 descricoes = celulas["acao_descricao"].tolist()
@@ -596,7 +608,8 @@ for acao in sorted(grupos):
                 on_click=_marcar_acao, args=(indices, not todas), disabled=not selecao_legivel, width="stretch",
             )
         rotulo = "Ver células" if len(indices) != 1 else "Ver célula"
-        with st.expander(rotulo,expanded=bool(qtd_selecionadas or busca or so_selecionadas)):
+        # Células recolhidas por padrão (pedido de 08/10/2026); só abrem sozinhas durante uma busca.
+        with st.expander(rotulo, expanded=bool(busca)):
             for indice in indices:
                 if _chave_caixa(indice) not in st.session_state:
                     st.session_state[_chave_caixa(indice)] = chaves_celulas[indice] in selecionadas
@@ -738,7 +751,20 @@ if not despesas_legiveis:
 with area_cartoes:
     _render_cartoes(resultado, len(marcadas), len(celulas))
 with area_composicao:
-    _render_composicao(resultado, linhas_contratos, linhas_bolsas, despesas)
+    # contrato ATIVO sem NE entra na necessidade (08/10/2026): aparece também no detalhe de Contratos,
+    # para a tabela fechar com o total da linha
+    ativos_sem_ne, _ = separar_ativos_sem_ne(sem_ne_contratos)
+    linhas_contratos_exibidas = linhas_contratos
+    if linhas_contratos is not None and len(ativos_sem_ne) and "necessidade" in ativos_sem_ne:
+        extras = pd.DataFrame({
+            "ne_curta": [None] * len(ativos_sem_ne),
+            "contrato_numero": ativos_sem_ne.get("contrato_numero", pd.Series([None] * len(ativos_sem_ne))).to_numpy(),
+            "fornecedor": ativos_sem_ne.get("fornecedor", pd.Series([None] * len(ativos_sem_ne))).to_numpy(),
+            "fator": [None] * len(ativos_sem_ne),
+            "necessidade_execucao": pd.to_numeric(ativos_sem_ne["necessidade"], errors="coerce").to_numpy(),
+        })
+        linhas_contratos_exibidas = pd.concat([linhas_contratos, extras], ignore_index=True)
+    _render_composicao(resultado, linhas_contratos_exibidas, linhas_bolsas, despesas)
 
 # --------------------------------------------------------------- Avisos
 st.subheader("5. Avisos")
@@ -756,7 +782,10 @@ for aviso in [*resultado.avisos, *avisos_extras, *avisos_projecao]:
 for origem, sem_ne in ((ORIGEM_CONTRATOS, sem_ne_contratos), (ORIGEM_BOLSAS, sem_ne_bolsas)):
     if sem_ne is not None and len(sem_ne):
         colunas = [
-            c for c in ("contrato_numero", "fornecedor", "programa_bolsa", "processo", "valor_mensal", "necessidade")
+            c for c in (
+                "contrato_numero", "fornecedor", "status_contrato", "programa_bolsa", "processo", "valor_mensal",
+                "necessidade",
+            )
             if c in sem_ne.columns
         ]
         with st.expander(f"Ver {origem} sem NE ({len(sem_ne)})"):

@@ -210,6 +210,20 @@ def _aviso_sem_ne(sem_ne: pd.DataFrame, singular: str, plural: str) -> str | Non
     )
 
 
+STATUS_ATIVO = "ATIVO"
+
+
+def separar_ativos_sem_ne(sem_ne: pd.DataFrame | None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """`(ativos, demais)` entre os contratos sem NE, pelo `status_contrato` (sem diferenciar maiúsculas
+    nem espaços). Sem a coluna de status, nenhum é ativo."""
+
+    if sem_ne is None or sem_ne.empty or "status_contrato" not in sem_ne:
+        vazio = sem_ne.iloc[0:0] if sem_ne is not None else pd.DataFrame()
+        return vazio, sem_ne if sem_ne is not None else pd.DataFrame()
+    ativo = sem_ne["status_contrato"].astype("string").str.strip().str.upper().eq(STATUS_ATIVO).fillna(False)
+    return sem_ne.loc[ativo], sem_ne.loc[~ativo]
+
+
 def calcular_resultado(
     celulas: pd.DataFrame,
     empenhado: pd.DataFrame,
@@ -342,8 +356,27 @@ def calcular_resultado(
         avisos.append(f"Conferência do empenhado não fecha: diferença de {_brl(diferenca)}.")
 
     # --- Necessidade ------------------------------------------------------------------------
+    # Contrato sem NE e ATIVO entra na necessidade (pedido de 08/10/2026): sem execução para medir, vale a
+    # necessidade contratual (Resumo Consolidado). Os demais sem NE (suspenso, vencido, previsto…) ficam
+    # fora e só no aviso. Status ausente não é tratado como ATIVO.
+    ativos_sem_ne, sem_ne_fora = separar_ativos_sem_ne(sem_ne_contratos)
+    necessidade_contratos_total = _soma_necessidade(necessidade_contratos)
+    if necessidade_contratos_total is not None and len(ativos_sem_ne):
+        ativos_valor = (
+            soma_ou_nulo(pd.to_numeric(ativos_sem_ne["necessidade"], errors="coerce"))
+            if "necessidade" in ativos_sem_ne else None
+        )
+        necessidade_contratos_total = None if ativos_valor is None else necessidade_contratos_total + ativos_valor
+        rotulos = ", ".join(
+            str(c) for c in (ativos_sem_ne["contrato_numero"] if "contrato_numero" in ativos_sem_ne else [])
+        )
+        avisos.append(
+            f"{len(ativos_sem_ne)} contrato(s) ATIVO(s) sem NE incluído(s) na necessidade de Contratos pela "
+            f"necessidade contratual ({'valor não calculado' if ativos_valor is None else _brl(ativos_valor)})"
+            + (f": {rotulos}." if rotulos else ".")
+        )
     necessidade: dict[str, float | None] = {
-        ORIGEM_CONTRATOS: _soma_necessidade(necessidade_contratos),
+        ORIGEM_CONTRATOS: necessidade_contratos_total,
         ORIGEM_BOLSAS: _soma_necessidade(necessidade_bolsas),
         OUTRAS_DESPESAS: float(sum(d.valor for d in despesas_manuais)),
     }
@@ -354,13 +387,14 @@ def calcular_resultado(
                 sem_valor = relatorio.loc[
                     pd.to_numeric(relatorio["necessidade_execucao"], errors="coerce").isna(), "ne_curta"
                 ]
-                avisos.append(
-                    f"Necessidade de {origem} não calculada para NE sem valor mensal cadastrado: "
-                    + ", ".join(str(ne) for ne in sem_valor) + "."
-                )
+                if len(sem_valor):
+                    avisos.append(
+                        f"Necessidade de {origem} não calculada para NE sem valor mensal cadastrado: "
+                        + ", ".join(str(ne) for ne in sem_valor) + "."
+                    )
 
     for aviso in (
-        _aviso_sem_ne(sem_ne_contratos, "contrato", "contratos"),
+        _aviso_sem_ne(sem_ne_fora, "contrato", "contratos"),
         _aviso_sem_ne(sem_ne_bolsas, "bolsa", "bolsas"),
     ):
         if aviso:

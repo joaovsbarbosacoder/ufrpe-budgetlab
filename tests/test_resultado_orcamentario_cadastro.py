@@ -74,3 +74,20 @@ def test_incluir_despesa_invalida_levanta_value_error(tmp_path):
 def test_exercicios_isolados(tmp_path):
     salvar_selecao(2026, [CELULA], tmp_path)
     assert carregar_selecao(2025, tmp_path) == []
+
+
+def test_preferencia_so_selecionadas_ida_e_volta(tmp_path):
+    from src.resultado_orcamentario_cadastro import carregar_so_selecionadas, salvar_so_selecionadas
+
+    assert carregar_so_selecionadas(tmp_path) is False  # arquivo ausente: desmarcada
+    salvar_so_selecionadas(True, tmp_path)
+    assert carregar_so_selecionadas(tmp_path) is True
+    salvar_so_selecionadas(False, tmp_path)
+    assert carregar_so_selecionadas(tmp_path) is False
+
+
+def test_preferencia_ilegivel_volta_desmarcada(tmp_path):
+    from src.resultado_orcamentario_cadastro import carregar_so_selecionadas
+
+    (tmp_path / "preferencias.json").write_text("{", encoding="utf-8")
+    assert carregar_so_selecionadas(tmp_path) is False

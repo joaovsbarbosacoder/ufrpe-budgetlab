@@ -104,6 +104,26 @@ def test_marcar_todas_e_filtro_de_selecionadas(diretorio: Path) -> None:
     assert chaves_todas == {f"ro_todas_{exercicio}_{acao}"}
 
 
+def test_filtro_so_selecionadas_sobrevive_a_atualizacao(diretorio: Path) -> None:
+    app = _abrir()
+    assert app.checkbox(key="ro_so_selecionadas").value is False
+    app.checkbox(key="ro_so_selecionadas").check().run()
+    assert not app.exception, [e.value for e in app.exception]
+    assert json.loads((diretorio / "preferencias.json").read_text(encoding="utf-8"))["so_selecionadas"] is True
+    # atualizar a página = sessão nova
+    nova = _abrir()
+    assert nova.checkbox(key="ro_so_selecionadas").value is True
+    nova.checkbox(key="ro_so_selecionadas").uncheck().run()
+    assert _abrir().checkbox(key="ro_so_selecionadas").value is False
+
+
+def test_celulas_recolhidas_por_padrao(diretorio: Path) -> None:
+    app = _abrir()
+    rotulos = {"Ver células", "Ver célula"}
+    expansores = [e for e in app.expander if e.label in rotulos]
+    assert expansores and not any(e.proto.expanded for e in expansores)
+
+
 def test_incluir_despesa_manual(diretorio: Path) -> None:
     app = _abrir()
     exercicio = _exercicio(app)

@@ -101,6 +101,23 @@ def salvar_selecao(exercicio: int, celulas: list[CelulaChave], diretorio: Path =
     _gravar_atomico(_pasta(exercicio, diretorio) / "celulas.json", dado)
 
 
+def carregar_so_selecionadas(diretorio: Path = DIRETORIO_PADRAO) -> bool:
+    """Última escolha de "Mostrar só as selecionadas" (pedido do usuário, 08/10/2026: a opção precisa
+    continuar marcada depois de atualizar a página, que no Streamlit cria uma sessão nova). Vale para
+    todos os exercícios. É só uma conveniência de tela: arquivo ausente ou ilegível volta desmarcada,
+    sem erro."""
+
+    try:
+        dado = _ler(Path(diretorio) / "preferencias.json")
+    except ArquivoCorrompido:
+        return False
+    return bool(dado.get("so_selecionadas", False)) if dado else False
+
+
+def salvar_so_selecionadas(valor: bool, diretorio: Path = DIRETORIO_PADRAO) -> None:
+    _gravar_atomico(Path(diretorio) / "preferencias.json", {"so_selecionadas": bool(valor), "atualizado_em": _agora()})
+
+
 def _caminho_despesas(exercicio: int, diretorio: Path) -> Path:
     return _pasta(exercicio, diretorio) / "despesas_manuais.json"
 

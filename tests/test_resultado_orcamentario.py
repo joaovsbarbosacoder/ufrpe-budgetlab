@@ -357,3 +357,31 @@ def test_sem_elemento_fica_em_outros():
     emp = _empenhado([("N8", A, 15.0, None)])
     r = _calc(empenhado=emp)
     assert r.empenhado[ORIGEM_OUTROS] == 15.0
+
+
+def test_contrato_ativo_sem_ne_entra_na_necessidade():
+    # pedido de 08/10/2026: contrato sem NE e ATIVO conta (necessidade contratual); os demais ficam fora
+    sem = pd.DataFrame({
+        "contrato_numero": ["C77", "C78"], "fornecedor": ["F77", "F78"],
+        "status_contrato": [" ativo ", "SUSPENSO"], "necessidade": [999.0, 500.0],
+    })
+    r = _calc(sem_ne_contratos=sem)
+    assert r.necessidade[ORIGEM_CONTRATOS] == 230.0 + 999.0
+    assert r.resultado == 470 - 999
+    assert any("C77" in a and "ATIVO" in a and "999" in a for a in r.avisos)
+    assert any("1 contrato sem NE" in a and "500" in a and "fora da conta" in a for a in r.avisos)
+
+
+def test_contrato_ativo_sem_ne_com_necessidade_nula_deixa_incompleto():
+    sem = pd.DataFrame({"contrato_numero": ["C77"], "fornecedor": ["F77"], "status_contrato": ["ATIVO"],
+                        "necessidade": [None]})
+    r = _calc(sem_ne_contratos=sem)
+    assert r.necessidade[ORIGEM_CONTRATOS] is None
+    assert r.resultado is None and r.incompleto is True
+
+
+def test_contrato_ativo_sem_ne_nao_muda_projecao_indisponivel():
+    sem = pd.DataFrame({"contrato_numero": ["C77"], "fornecedor": ["F77"], "status_contrato": ["ATIVO"],
+                        "necessidade": [999.0]})
+    r = _calc(necessidade_contratos=None, sem_ne_contratos=sem)
+    assert r.necessidade[ORIGEM_CONTRATOS] is None

@@ -391,7 +391,13 @@ caso ainda não é sinalizado para contratos.
 
 **Contratos e bolsas sem NE** ficam **fora da conta** e aparecem só nos avisos (quantidade e valor
 contratual, como informação). Entram sozinhos quando a NE for incluída no cadastro ou o status do contrato
-mudar.
+mudar. Exceção (08/10/2026): **contrato sem NE com status ATIVO entra** na necessidade de Contratos pela
+necessidade contratual (Resumo Consolidado), com aviso, e aparece no detalhe como "sem NE (contrato
+ativo)". Status ausente não conta como ativo; bolsa sem NE continua fora.
+
+Na seção de células, os grupos de cada Ação começam **recolhidos** ("Ver células"; abrem sozinhos só durante
+uma busca), e a opção **Mostrar só as selecionadas** guarda a última escolha em
+`data/resultado_orcamentario/preferencias.json`, valendo depois de atualizar a página.
 
 **Outras despesas previstas.** Cadastro manual (incluir, editar, excluir) para despesas que não são de
 Contratos nem de Bolsas, com **um valor a empenhar por despesa**, sem distribuição mensal. O valor é
