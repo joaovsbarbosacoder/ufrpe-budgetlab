@@ -7,7 +7,11 @@ import pandas as pd
 from src.ui_resultado_orcamentario import (
     LinhaComposicao,
     html_bloco,
+    html_cabecalho_acao,
     html_cartoes,
+    html_celula,
+    html_dotacao_acao,
+    html_rodape_totais,
     percentual,
     situacao_resultado,
 )
@@ -63,6 +67,39 @@ def test_bloco_total_nulo_sem_percentual_nem_barra():
     assert "%</span>" not in html
     assert 'style="width:0.0%"' in html
     assert ">—</span>" in html
+
+
+def test_cabecalho_acao():
+    html = html_cabecalho_acao("4002", "ASSISTENCIA AO ESTUDANTE", 4, 1)
+    assert "4002" in html and "ASSISTENCIA AO ESTUDANTE" in html
+    assert "4 células" in html and "1 selecionada" in html
+    assert "R&#36; 15.674.953,00" in html_dotacao_acao(15674953.0)
+    assert "selecionada" not in html_cabecalho_acao("8282", "X", 1, 0)
+    assert "1 célula<" in html_cabecalho_acao("8282", "X", 1, 0)
+
+
+def test_celula_valores_pt_br_e_barra():
+    html = html_celula(("0", "2", "4002", "230400", "0002", "3", "1000000000"), 8943623.0, 6707523.21, 2236099.79)
+    for trecho in ("PTRES <b>230400</b>", "PO <b>0002</b>", "Fonte <b>1000000000</b>", "IDUSO <b>0</b>", "RP <b>2</b>"):
+        assert trecho in html
+    assert "R&#36; 8.943.623,00" in html and "R&#36; 6.707.523,21" in html
+    assert "75% empenhado" in html and 'style="width:75.0%"' in html
+
+
+def test_celula_dotacao_nula_sem_barra():
+    html = html_celula(("0",) * 7, None, 10.0, None)
+    assert html.count(">—<") == 2
+    assert "— empenhado" in html and 'style="width:0.0%"' in html
+
+
+def test_celula_barra_alta_a_partir_de_90():
+    assert "ro-barra alto" in html_celula(("0",) * 7, 100.0, 95.0, 5.0)
+    assert "ro-barra alto" not in html_celula(("0",) * 7, 100.0, 50.0, 50.0)
+
+
+def test_rodape_totais():
+    html = html_rodape_totais(100.0, None, 40.0)
+    assert "R&#36; 100,00" in html and "—" in html and "R&#36; 40,00" in html
 
 
 def test_bloco_escapa_html():

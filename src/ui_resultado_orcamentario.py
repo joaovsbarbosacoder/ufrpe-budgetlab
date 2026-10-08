@@ -24,16 +24,16 @@ from src.ui_cadastro import formatar_brl
 
 ESTILO = f"""
 <style>
-.ro-cards{{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;font-family:{dt.FONT_BODY}}}
+.ro-cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;font-family:{dt.FONT_BODY}}}
 .ro-card{{background:{dt.SURFACE};border:1px solid {dt.BORDER};border-radius:{dt.RADIUS};padding:16px 18px}}
 .ro-card .lbl{{font-size:13px;color:{dt.TEXT_MUTED}}}
-.ro-card .val{{font-size:24px;font-weight:600;color:{dt.TEXT};margin-top:6px;{dt.FONT_MONO_NUM}}}
+.ro-card .val{{font-size:22px;font-weight:600;color:{dt.TEXT};margin-top:6px;white-space:nowrap;{dt.FONT_MONO_NUM}}}
 .ro-card .foot{{font-size:12px;color:{dt.TEXT_FAINT};margin-top:4px}}
 .ro-card.res{{border-width:2px}}
 .ro-card.res.pos{{border-color:{dt.POSITIVE};background:{dt.POSITIVE_SOFT}}}
 .ro-card.res.neg{{border-color:{dt.NEGATIVE};background:{dt.NEGATIVE_SOFT}}}
 .ro-card.res.neu{{border-color:{dt.WARNING};background:{dt.WARNING_SOFT}}}
-.ro-card.res .val{{font-size:26px}}
+.ro-card.res .val{{font-size:24px}}
 .ro-card.res.pos .val{{color:{dt.POSITIVE}}} .ro-card.res.neg .val{{color:{dt.NEGATIVE}}}
 .ro-badge{{display:inline-block;font-size:12px;font-weight:600;border-radius:6px;padding:2px 8px;margin-left:6px;
   color:#fff;vertical-align:middle}}
@@ -61,7 +61,6 @@ ESTILO = f"""
 .ro-total{{display:flex;justify-content:space-between;padding:10px 18px;border-top:2px solid {dt.BORDER};font-weight:600}}
 .ro-check{{display:flex;justify-content:space-between;gap:12px;padding:6px 18px 10px;font-size:12px}}
 .ro-check.ok{{color:{dt.POSITIVE}}} .ro-check.erro{{color:{dt.NEGATIVE}}} .ro-check.info{{color:{dt.TEXT_FAINT}}}
-@media (max-width: 900px){{.ro-cards{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
 </style>
 """
 
@@ -122,6 +121,93 @@ def html_cartoes(
         f'</span></div><div class="val">{brl(resultado)}</div><div class="foot">{_txt(rodape_resultado)}</div></div>'
     )
     return ESTILO + '<div class="ro-cards">' + "".join(partes) + "</div>"
+
+
+# ------------------------------------------------------------------------------- células
+# Seção "Células" no desenho do protótipo aprovado em 08/10/2026
+# (`docs/superpowers/specs/2026-10-08-resultado-orcamentario-celulas-mockup.html`): células agrupadas
+# por Ação, códigos em etiquetas, valores em pt-BR e barra do percentual empenhado. As caixas de marcar
+# e os botões são widgets do Streamlit; aqui só o texto. `ESTILO_CELULAS` é entregue uma vez por página.
+ESTILO_CELULAS = f"""
+<style>
+.ro-acao-tit{{font-family:{dt.FONT_BODY};font-weight:600;font-size:15px;color:{dt.TEXT}}}
+.ro-acao-tit .cod{{color:{dt.ACCENT};margin-right:6px}}
+.ro-acao-sub{{font-family:{dt.FONT_BODY};font-size:12px;color:{dt.TEXT_MUTED};margin-top:2px}}
+.ro-pill{{display:inline-block;background:{dt.ACCENT_SOFT};color:{dt.ACCENT};border-radius:999px;padding:1px 8px;
+  font-weight:600;margin-left:6px}}
+.ro-acao-dot{{font-family:{dt.FONT_BODY};text-align:right}}
+.ro-l{{font-size:11px;color:{dt.TEXT_FAINT};text-transform:uppercase;letter-spacing:.06em}}
+.ro-v{{font-weight:600;color:{dt.TEXT};{dt.FONT_MONO_NUM}white-space:nowrap}}
+.ro-v.zero{{color:{dt.TEXT_FAINT};font-weight:500}}
+.ro-cel{{font-family:{dt.FONT_BODY}}}
+.ro-chips{{display:flex;flex-wrap:wrap;gap:6px;font-size:12px}}
+.ro-chip{{background:{dt.SURFACE_ALT};border:1px solid {dt.BORDER};border-radius:6px;padding:1px 7px;color:{dt.TEXT_MUTED}}}
+.ro-chip b{{color:{dt.TEXT};font-weight:600}}
+.ro-valores{{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) 1.3fr;gap:16px;margin-top:8px;align-items:center}}
+.ro-barra{{height:8px;background:{dt.SURFACE_ALT};border-radius:4px;overflow:hidden}}
+.ro-barra>i{{display:block;height:100%;background:{dt.ACCENT}}}
+.ro-barra.alto>i{{background:{dt.WARNING}}}
+.ro-barra-l{{font-size:12px;color:{dt.TEXT_MUTED};margin-top:4px}}
+.ro-rodape{{display:flex;gap:28px;flex-wrap:wrap;font-family:{dt.FONT_BODY}}}
+[class*="st-key-ro_acao_"] [data-testid="stExpander"],
+[class*="st-key-ro_acao_"] [data-testid="stExpander"] details{{border:none !important;background:transparent !important;
+  box-shadow:none !important}}
+[class*="st-key-ro_acao_"] [data-testid="stExpander"] summary{{padding-left:0;color:{dt.ACCENT};font-size:13px}}
+@media (max-width:760px){{.ro-valores{{grid-template-columns:1fr 1fr}}}}
+</style>
+"""
+
+LIMIAR_BARRA_ALTA = 90.0
+
+
+def html_cabecalho_acao(acao: str, descricao: str, qtd: int, qtd_selecionadas: int) -> str:
+    plural = "s" if qtd != 1 else ""
+    selo = (
+        f'<span class="ro-pill">{qtd_selecionadas} selecionada{"s" if qtd_selecionadas != 1 else ""}</span>'
+        if qtd_selecionadas else ""
+    )
+    return (
+        f'<div class="ro-acao-tit"><span class="cod">{_txt(acao)}</span>{_txt(descricao)}</div>'
+        f'<div class="ro-acao-sub">{qtd} célula{plural}{selo}</div>'
+    )
+
+
+def html_dotacao_acao(dotacao: float | None) -> str:
+    return f'<div class="ro-acao-dot"><div class="ro-l">Dotação da ação</div><div class="ro-v">{brl(dotacao)}</div></div>'
+
+
+def html_celula(chave: tuple, dotacao: float | None, empenhado: float | None, saldo: float | None) -> str:
+    """`chave` na ordem de `CHAVE_CELULA` (iduso, rp, ação, ptres, po, gnd, fonte). Barra = empenhado ÷
+    dotação; dotação nula ou zero → "—" e barra vazia (nunca um percentual inventado)."""
+
+    iduso, rp, _acao, ptres, po, gnd, fonte = (("—" if p is None else p) for p in chave)
+    chips = "".join(
+        f'<span class="ro-chip">{rotulo} <b>{_txt(valor)}</b></span>'
+        for rotulo, valor in (("PTRES", ptres), ("PO", po), ("GND", gnd), ("Fonte", fonte), ("IDUSO", iduso), ("RP", rp))
+    )
+    largura = _largura(empenhado, dotacao)
+    pct = percentual(empenhado, dotacao)
+    alto = " alto" if largura >= LIMIAR_BARRA_ALTA else ""
+    zero = " zero" if empenhado == 0 else ""
+    return (
+        f'<div class="ro-cel"><div class="ro-chips">{chips}</div><div class="ro-valores">'
+        f'<div><div class="ro-l">Dotação</div><div class="ro-v">{brl(dotacao)}</div></div>'
+        f'<div><div class="ro-l">Empenhado</div><div class="ro-v{zero}">{brl(empenhado)}</div></div>'
+        f'<div><div class="ro-l">Saldo</div><div class="ro-v">{brl(saldo)}</div></div>'
+        f'<div><div class="ro-barra{alto}"><i style="width:{largura:.1f}%"></i></div>'
+        f'<div class="ro-barra-l">{_txt(pct)} empenhado</div></div>'
+        "</div></div>"
+    )
+
+
+def html_rodape_totais(dotacao: float | None, empenhado: float | None, saldo: float | None) -> str:
+    return (
+        '<div class="ro-rodape">'
+        f'<div><div class="ro-l">Dotação selecionada</div><div class="ro-v">{brl(dotacao)}</div></div>'
+        f'<div><div class="ro-l">Empenhado</div><div class="ro-v">{brl(empenhado)}</div></div>'
+        f'<div><div class="ro-l">Saldo</div><div class="ro-v">{brl(saldo)}</div></div>'
+        "</div>"
+    )
 
 
 # ----------------------------------------------------------------------------- composição

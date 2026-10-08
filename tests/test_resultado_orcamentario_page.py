@@ -7,9 +7,8 @@ despesas manuais) vai para `tmp_path`, via monkeypatch de `DIRETORIO_PADRAO`: o 
 `data/resultado_orcamentario/`. A regra da conta tem testes próprios (`tests/test_resultado_orcamentario.py`);
 aqui só se confere que a tela abre, grava a seleção e inclui uma despesa manual.
 
-Limitação de `AppTest`: não há elemento de teste para `st.data_editor`. A marcação da 1ª linha é feita
-escrevendo o estado de edição do widget em `session_state` (o mesmo dicionário que o navegador envia) na
-mesma execução do clique em "Salvar seleção".
+A seleção de células usa uma caixa de marcar por célula (`ro_cel_<exercício>_<índice>`), agrupadas por
+Ação com "Marcar todas" (`ro_todas_<exercício>_<ação>`) — layout de 08/10/2026.
 """
 
 from __future__ import annotations
@@ -79,17 +78,30 @@ def test_sem_selecao_mostra_mensagem(diretorio: Path) -> None:
 def test_salvar_selecao_grava_arquivo(diretorio: Path) -> None:
     app = _abrir()
     exercicio = _exercicio(app)
-    app.session_state[f"ro_celulas_{exercicio}"] = {
-        "edited_rows": {0: {"Selecionar": True}},
-        "added_rows": [],
-        "deleted_rows": [],
-    }
+    app.checkbox(key=f"ro_cel_{exercicio}_0").check().run()
+    assert not app.exception, [e.value for e in app.exception]
+    assert "Alterações não salvas" in _textos(app)
     app.button(key="ro_salvar_selecao").click().run()
     assert not app.exception, [e.value for e in app.exception]
 
     arquivo = diretorio / str(exercicio) / "celulas.json"
     assert arquivo.exists()
     assert len(json.loads(arquivo.read_text(encoding="utf-8"))["celulas"]) == 1
+
+
+def test_marcar_todas_e_filtro_de_selecionadas(diretorio: Path) -> None:
+    app = _abrir()
+    exercicio = _exercicio(app)
+    botao = next(b for b in app.button if b.key and b.key.startswith(f"ro_todas_{exercicio}_"))
+    acao = botao.key.removeprefix(f"ro_todas_{exercicio}_")
+    botao.click().run()
+    assert not app.exception, [e.value for e in app.exception]
+    assert app.button(key=f"ro_todas_{exercicio}_{acao}").label == "Desmarcar todas"
+    # o filtro esconde as outras ações, mas a seleção feita continua valendo
+    app.checkbox(key="ro_so_selecionadas").check().run()
+    assert not app.exception, [e.value for e in app.exception]
+    chaves_todas = {b.key for b in app.button if b.key and b.key.startswith(f"ro_todas_{exercicio}_")}
+    assert chaves_todas == {f"ro_todas_{exercicio}_{acao}"}
 
 
 def test_incluir_despesa_manual(diretorio: Path) -> None:

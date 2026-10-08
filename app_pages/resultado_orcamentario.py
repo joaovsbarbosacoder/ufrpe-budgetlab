@@ -39,6 +39,7 @@ import streamlit as st
 
 from src import bolsas_auxilios_cadastro as cadastro_bolsas
 from src import contratos_continuos_cadastro as cadastro_contratos
+from src import design_tokens as dt
 from src import resultado_orcamentario_cadastro as cadastro
 from src.execucao_ne_utils import ne_curta as _ne_curta_execucao, saldo_por_ne
 from src.importacao_dotacao import DIRETORIO_MANIFESTOS_PADRAO as DIR_MANIFESTOS_DOTACAO
@@ -67,7 +68,16 @@ from src.resultado_orcamentario_cadastro import ArquivoCorrompido, CelulaChave, 
 from src.resultado_orcamentario_fontes import projecao_bolsas, projecao_contratos, tabela_bolsas, tabela_contratos
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_cadastro import formatar_brl
-from src.ui_resultado_orcamentario import LinhaComposicao, html_bloco, html_cartoes
+from src.ui_resultado_orcamentario import (
+    ESTILO_CELULAS,
+    LinhaComposicao,
+    html_bloco,
+    html_cabecalho_acao,
+    html_cartoes,
+    html_celula,
+    html_dotacao_acao,
+    html_rodape_totais,
+)
 from src.ui_theme import currency_column, render_page_header
 
 
@@ -490,57 +500,160 @@ st.caption("Clique em uma linha para ver o detalhe por NE ou por despesa.")
 area_composicao = st.container()
 
 # --------------------------------------------------------------- Células
+# Layout do protótipo aprovado em 08/10/2026 (`docs/superpowers/specs/2026-10-08-resultado-orcamentario-celulas-mockup.html`):
+# células agrupadas por Ação, uma caixa de marcar por célula, "Marcar todas" por Ação, busca, filtro de
+# selecionadas e rodapé fixo com os totais e "Salvar seleção". Substitui a tabela editável, que
+# parecia uma planilha e mostrava os valores fora do formato brasileiro.
 st.subheader("3. Células que fazem frente às despesas")
 st.caption(
-    "Marque as células da Dotação Anual que entram como recurso. A seleção fica gravada por exercício "
-    '("Salvar seleção"). Célula sem nenhum empenho registrado no exercício mostra Empenhado R$ 0,00.'
+    "Marque as células da Dotação Anual que entram como recurso. As ações com célula marcada ficam abertas e "
+    'destacadas. A seleção fica gravada por exercício ("Salvar seleção").'
 )
-conjunto_salvo = set(selecao_salva)
-tabela_celulas = _tabela_celulas(celulas, empenhado, conjunto_salvo)
-editado = st.data_editor(
-    tabela_celulas,
-    key=f"ro_celulas_{exercicio}",
-    hide_index=True,
-    width="stretch",
-    disabled=[coluna for coluna in tabela_celulas.columns if coluna != "Selecionar"],
-    column_config={
-        "Selecionar": st.column_config.CheckboxColumn("", width="small"),
-        "Dotação Atualizada": currency_column("Dotação Atualizada"),
-        "Empenhado": currency_column("Empenhado"),
-        "Saldo": currency_column("Saldo"),
-    },
-)
-marcadas = [chave for chave, marcada in zip(chaves_celulas, editado["Selecionar"].tolist()) if marcada]
-# Célula gravada que não existe mais na base é mantida na seleção (spec §6): aparece em Avisos.
 _conjunto_celulas = set(chaves_celulas)
+# Célula gravada que não existe mais na base é mantida na seleção (spec §6): aparece em Avisos.
 ausentes_da_base = [chave for chave in selecao_salva if chave not in _conjunto_celulas]
-selecao_atual: list[CelulaChave] = [*ausentes_da_base, *marcadas]
+# A seleção em edição vive em `session_state` (um conjunto de chaves), e não no estado de cada caixa:
+# caixa escondida pelo filtro sai do estado do Streamlit, e a marcação não pode se perder com ela.
+_CHAVE_SELECAO = f"ro_sel_{exercicio}"
+if _CHAVE_SELECAO not in st.session_state:
+    st.session_state[_CHAVE_SELECAO] = {chave for chave in selecao_salva if chave in _conjunto_celulas}
+selecionadas: set = st.session_state[_CHAVE_SELECAO]
+valores_celulas = _tabela_celulas(celulas, empenhado, set())
 
-totais = editado.loc[editado["Selecionar"], ["Dotação Atualizada", "Empenhado", "Saldo"]]
-st.caption(_sem_latex(
-    f"Total selecionado: Dotação {formatar_brl(soma_ou_nulo(totais['Dotação Atualizada']))}"
-    f" · Empenhado {formatar_brl(soma_ou_nulo(totais['Empenhado']))}"
-    f" · Saldo {formatar_brl(soma_ou_nulo(totais['Saldo']))}"
-))
 
-col_salvar, col_estado = st.columns([1, 5], vertical_alignment="center")
-with col_salvar:
-    salvar = st.button(
-        "Salvar seleção", key="ro_salvar_selecao", type="primary", disabled=not selecao_legivel, width="stretch",
-    )
-if salvar:
-    cadastro.salvar_selecao(exercicio, selecao_atual, diretorio=cadastro.DIRETORIO_PADRAO)
-    selecao_salva = list(selecao_atual)
-    st.success("Seleção gravada.")
-with col_estado:
-    if set(selecao_atual) != set(selecao_salva):
-        st.caption("Alterações não salvas — o resultado acima já considera a seleção em edição.")
+def _numero_ou_none(valor: object) -> float | None:
+    return None if valor is None or pd.isna(valor) else float(valor)
+
+
+def _chave_caixa(indice: int) -> str:
+    return f"ro_cel_{exercicio}_{indice}"
+
+
+def _ao_marcar(indice: int) -> None:
+    chave = chaves_celulas[indice]
+    if st.session_state[_chave_caixa(indice)]:
+        selecionadas.add(chave)
     else:
-        arquivo_selecao = Path(cadastro.DIRETORIO_PADRAO) / str(exercicio) / "celulas.json"
-        if arquivo_selecao.exists():
-            st.caption(f"Última gravação: {datetime.fromtimestamp(arquivo_selecao.stat().st_mtime):%d/%m/%Y %H:%M}")
+        selecionadas.discard(chave)
+
+
+def _marcar_acao(indices: list[int], marcar: bool) -> None:
+    for indice in indices:
+        if marcar:
+            selecionadas.add(chaves_celulas[indice])
         else:
-            st.caption("Nenhuma seleção gravada para este exercício.")
+            selecionadas.discard(chaves_celulas[indice])
+        st.session_state[_chave_caixa(indice)] = marcar
+
+
+col_busca, col_so = st.columns([4, 2], vertical_alignment="center")
+with col_busca:
+    busca = st.text_input(
+        "Buscar", key="ro_busca_celulas", placeholder="Buscar por ação, PTRES, PO ou descrição…",
+        label_visibility="collapsed",
+    ).strip().casefold()
+with col_so:
+    so_selecionadas = st.checkbox("Mostrar só as selecionadas", key="ro_so_selecionadas")
+
+acoes = celulas["acao_codigo"].tolist()
+descricoes = celulas["acao_descricao"].tolist()
+ptres_celulas = celulas["ptres_codigo"].tolist()
+po_celulas = celulas["plano_orcamentario_codigo"].tolist()
+grupos: dict[str, list[int]] = {}
+for indice, chave in enumerate(chaves_celulas):
+    texto = " ".join(
+        str(v) for v in (acoes[indice], ptres_celulas[indice], po_celulas[indice], descricoes[indice]) if v is not None
+    ).casefold()
+    if busca and busca not in texto:
+        continue
+    if so_selecionadas and chave not in selecionadas:
+        continue
+    grupos.setdefault(str(acoes[indice]), []).append(indice)
+
+st.html(ESTILO_CELULAS)
+if not grupos:
+    st.caption("Nenhuma célula corresponde ao filtro.")
+destaques: list[str] = []
+for acao in sorted(grupos):
+    indices = grupos[acao]
+    qtd_selecionadas = sum(chaves_celulas[i] in selecionadas for i in indices)
+    chave_cartao = f"ro_acao_{exercicio}_{acao}"
+    if qtd_selecionadas:
+        destaques.append(
+            f".st-key-{chave_cartao}{{border-color:{dt.ACCENT} !important;box-shadow:0 0 0 1px {dt.ACCENT_SOFT}}}"
+        )
+    with st.container(border=True, key=chave_cartao):
+        col_tit, col_dot, col_todas = st.columns([6, 2, 1.4], vertical_alignment="center")
+        with col_tit:
+            st.html(html_cabecalho_acao(acao, descricoes[indices[0]] or "", len(indices), qtd_selecionadas))
+        with col_dot:
+            st.html(html_dotacao_acao(soma_ou_nulo(valores_celulas["Dotação Atualizada"].iloc[indices])))
+        todas = qtd_selecionadas == len(indices)
+        with col_todas:
+            st.button(
+                "Desmarcar todas" if todas else "Marcar todas", key=f"ro_todas_{exercicio}_{acao}",
+                on_click=_marcar_acao, args=(indices, not todas), disabled=not selecao_legivel, width="stretch",
+            )
+        rotulo = "Ver células" if len(indices) != 1 else "Ver célula"
+        with st.expander(rotulo,expanded=bool(qtd_selecionadas or busca or so_selecionadas)):
+            for indice in indices:
+                if _chave_caixa(indice) not in st.session_state:
+                    st.session_state[_chave_caixa(indice)] = chaves_celulas[indice] in selecionadas
+                col_caixa, col_info = st.columns([0.35, 9.65], vertical_alignment="center")
+                with col_caixa:
+                    st.checkbox(
+                        "Selecionar", key=_chave_caixa(indice), on_change=_ao_marcar, args=(indice,),
+                        label_visibility="collapsed", disabled=not selecao_legivel,
+                    )
+                with col_info:
+                    linha = valores_celulas.iloc[indice]
+                    st.html(
+                        html_celula(
+                            chaves_celulas[indice], _numero_ou_none(linha["Dotação Atualizada"]),
+                            _numero_ou_none(linha["Empenhado"]), _numero_ou_none(linha["Saldo"]),
+                        )
+                    )
+if destaques:
+    st.html("<style>" + "".join(destaques) + "</style>")
+
+marcadas = [chave for chave in chaves_celulas if chave in selecionadas]
+selecao_atual: list[CelulaChave] = [*ausentes_da_base, *marcadas]
+indices_marcados = [i for i, chave in enumerate(chaves_celulas) if chave in selecionadas]
+totais = valores_celulas.iloc[indices_marcados]
+
+# rodapé fixo: totais da seleção e "Salvar seleção" sempre visíveis ao rolar a lista
+st.html(
+    "<style>.st-key-ro_rodape_celulas{position:sticky;bottom:0;z-index:5;"
+    f"background:{dt.SURFACE};box-shadow:0 -4px 16px rgba(7,19,61,.06)}}</style>"
+)
+with st.container(border=True, key="ro_rodape_celulas"):
+    col_totais, col_estado, col_salvar = st.columns([5, 2.6, 1.4], vertical_alignment="center")
+    with col_totais:
+        st.html(
+            html_rodape_totais(
+                soma_ou_nulo(totais["Dotação Atualizada"]), soma_ou_nulo(totais["Empenhado"]),
+                soma_ou_nulo(totais["Saldo"]),
+            )
+        )
+    with col_salvar:
+        salvar = st.button(
+            "Salvar seleção", key="ro_salvar_selecao", type="primary", disabled=not selecao_legivel, width="stretch",
+        )
+    if salvar:
+        cadastro.salvar_selecao(exercicio, selecao_atual, diretorio=cadastro.DIRETORIO_PADRAO)
+        selecao_salva = list(selecao_atual)
+    with col_estado:
+        st.caption(f"**{len(marcadas)}** de {len(chaves_celulas)} células selecionadas")
+        if salvar:
+            st.caption("✓ Seleção gravada.")
+        elif set(selecao_atual) != set(selecao_salva):
+            st.caption("Alterações não salvas — o resultado acima já considera a seleção em edição.")
+        else:
+            arquivo_selecao = Path(cadastro.DIRETORIO_PADRAO) / str(exercicio) / "celulas.json"
+            if arquivo_selecao.exists():
+                st.caption(f"Última gravação: {datetime.fromtimestamp(arquivo_selecao.stat().st_mtime):%d/%m/%Y %H:%M}")
+            else:
+                st.caption("Nenhuma seleção gravada para este exercício.")
 
 # --------------------------------------------------------------- Outras despesas previstas
 st.subheader(f"4. {OUTRAS_DESPESAS}")
