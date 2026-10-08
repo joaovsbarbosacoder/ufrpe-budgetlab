@@ -236,8 +236,14 @@ class ResumoConciliacaoSimec:
     §3.1): `nc_analitica`/`pf_analitica` somam SÓ os documentos com data num ano de `anos_consolidado`
     (os anos de `execucao_anual` do TED) — a extração analítica cobre outro recorte (ex.: PF desde 2019 ×
     consolidado desde 2023), e comparar períodos diferentes gerava divergência falsa. O valor fora da
-    janela fica em `nc_fora_janela`/`pf_fora_janela`; documento sem data fica fora da soma e é contado em
-    `documentos_sem_data` (NC + PF do TED), nunca vira zero.
+    janela fica em `nc_fora_janela`/`pf_fora_janela`; documento sem data fica fora da soma e é contado e
+    somado À PARTE, por tipo (`nc_sem_data`/`nc_sem_data_valor`, `pf_sem_data`/`pf_sem_data_valor`).
+
+    Documento sem data (correção de 08/10/2026, decisão do controlador após rodar as regras no banco real,
+    onde NCs principais de vários TEDs vêm sem data — ex.: 14142|1AAVEH, duas NCs sem data somam exatamente
+    o consolidado): sem data não dá para saber se está na janela, então só há divergência se ela persiste
+    TANTO com a soma da janela QUANTO com janela + sem data; se uma das duas bate, é inconclusivo (sem
+    alerta). Ver `_diverge`.
 
     `nc_analitica`/`pf_analitica` ficam `None` quando o TED não tem NENHUM documento do tipo no extrato
     ("sem base", nunca zero: não pode virar "divergência de tudo"). Antes de 08/10/2026 o "sem base" era
@@ -254,7 +260,10 @@ class ResumoConciliacaoSimec:
     anos_consolidado: frozenset[int] = frozenset()
     nc_fora_janela: Decimal = Decimal("0")
     pf_fora_janela: Decimal = Decimal("0")
-    documentos_sem_data: int = 0
+    nc_sem_data: int = 0
+    nc_sem_data_valor: Decimal = Decimal("0")
+    pf_sem_data: int = 0
+    pf_sem_data_valor: Decimal = Decimal("0")
     inicio_vigencia: date | None = None
 
 
@@ -271,9 +280,23 @@ def _anos_texto(anos: frozenset[int]) -> str:
     return ", ".join(str(a) for a in ordenados)
 
 
-def _detalhe_janela(r: ResumoConciliacaoSimec, fora_janela: Decimal) -> str:
-    """Trecho da descrição com o que ficou fora da soma (spec de 08/10/2026, §3.1). Vazio quando o
-    resumo não traz os anos do consolidado (montado à mão)."""
+def _diverge(
+    janela: Decimal | None, sem_data_qtd: int, sem_data_valor: Decimal, consolidado: Decimal, tolerancia: Decimal
+) -> bool:
+    """Divergência comprovável (correção de 08/10/2026): `janela` `None` é "sem base" (nunca diverge). Com
+    documentos sem data, a diferença tem de persistir com a janela sozinha E com janela + sem data — se
+    qualquer uma das duas bate com o consolidado, é inconclusivo, não divergência."""
+
+    if janela is None or abs(janela - consolidado) <= tolerancia:
+        return False
+    return sem_data_qtd == 0 or abs(janela + sem_data_valor - consolidado) > tolerancia
+
+
+def _detalhe_janela(
+    r: ResumoConciliacaoSimec, fora_janela: Decimal, tipo: str, sem_data_qtd: int, sem_data_valor: Decimal
+) -> str:
+    """Trecho da descrição com o que ficou fora da soma (spec de 08/10/2026, §3.1), só do tipo do alerta
+    (`tipo` = "NC" ou "PF"). Vazio quando o resumo não traz os anos do consolidado (montado à mão)."""
 
     if not r.anos_consolidado:
         return ""
@@ -281,8 +304,11 @@ def _detalhe_janela(r: ResumoConciliacaoSimec, fora_janela: Decimal) -> str:
         f" Comparados só os documentos emitidos em {_anos_texto(r.anos_consolidado)} (anos do consolidado); "
         f"documentos de outros anos somam {_moeda(fora_janela)} e ficaram fora"
     )
-    if r.documentos_sem_data:
-        texto += f"; {r.documentos_sem_data} documento(s) sem data (NC/PF) fora da soma"
+    if sem_data_qtd:
+        texto += (
+            f"; {sem_data_qtd} {tipo} sem data ({_moeda(sem_data_valor)}) fora da soma — a diferença persiste "
+            "também somando-as"
+        )
     return texto + "."
 
 
@@ -317,7 +343,7 @@ def gerar_alertas_conciliacao_simec(
 
     alertas: list[Alerta] = []
     for r in sorted(resumos, key=lambda x: x.chave_ted):
-        if r.nc_analitica is not None and abs(r.nc_analitica - r.nc_consolidada) > tolerancia:
+        if _diverge(r.nc_analitica, r.nc_sem_data, r.nc_sem_data_valor, r.nc_consolidada, tolerancia):
             alertas.append(
                 Alerta(
                     tipo=TIPO_NC_DIVERGE_CONSOLIDADO,
@@ -327,13 +353,13 @@ def gerar_alertas_conciliacao_simec(
                     descricao=(
                         f"NC líquida dos documentos importados ({_moeda(r.nc_analitica)}) difere do "
                         f"Total Descentralizado consolidado ({_moeda(r.nc_consolidada)}) em "
-                        f"{_moeda(r.nc_analitica - r.nc_consolidada)}.{_detalhe_janela(r, r.nc_fora_janela)} "
+                        f"{_moeda(r.nc_analitica - r.nc_consolidada)}.{_detalhe_janela(r, r.nc_fora_janela, 'NC', r.nc_sem_data, r.nc_sem_data_valor)} "
                         "Possíveis causas: extração de documentos incompleta, documento sem data/TED, ou "
                         "divergência real na origem — não decidido automaticamente."
                     ),
                 )
             )
-        if r.pf_analitica is not None and abs(r.pf_analitica - r.pf_consolidada) > tolerancia:
+        if _diverge(r.pf_analitica, r.pf_sem_data, r.pf_sem_data_valor, r.pf_consolidada, tolerancia):
             alertas.append(
                 Alerta(
                     tipo=TIPO_PF_DIVERGE_CONSOLIDADO,
@@ -343,7 +369,7 @@ def gerar_alertas_conciliacao_simec(
                     descricao=(
                         f"PF líquido dos documentos importados ({_moeda(r.pf_analitica)}) difere do "
                         f"Total Repassado consolidado ({_moeda(r.pf_consolidada)}) em "
-                        f"{_moeda(r.pf_analitica - r.pf_consolidada)}.{_detalhe_janela(r, r.pf_fora_janela)} "
+                        f"{_moeda(r.pf_analitica - r.pf_consolidada)}.{_detalhe_janela(r, r.pf_fora_janela, 'PF', r.pf_sem_data, r.pf_sem_data_valor)} "
                         "Possíveis causas: extração de documentos incompleta, documento sem data, ou "
                         "divergência real na origem — não decidido automaticamente."
                     ),
@@ -384,31 +410,32 @@ def _carregar_resumos_conciliacao(conn: sqlite3.Connection) -> list[ResumoConcil
         for chave, inicio in conn.execute("SELECT chave_ted, inicio_vigencia FROM ted").fetchall()
     }
 
-    def _somar(sql: str) -> dict[str, tuple[Decimal, Decimal, int]]:
-        """chave_ted → (soma na janela do consolidado, soma fora dela, documentos sem data). TED fora
-        do dicionário = nenhum documento do tipo ("sem base", spec de 08/10/2026, §3.1)."""
+    def _somar(sql: str) -> dict[str, tuple[Decimal, Decimal, int, Decimal]]:
+        """chave_ted → (soma na janela do consolidado, soma fora dela, qtd. sem data, soma sem data). TED
+        fora do dicionário = nenhum documento do tipo ("sem base", spec de 08/10/2026, §3.1)."""
 
         somas: dict[str, list] = {}
         for chave_ted, data_emissao, valor in conn.execute(sql).fetchall():
             if not chave_ted:
                 continue  # documento sem TED conhecido: aparece na cobertura de relacionamentos
-            acumulado = somas.setdefault(chave_ted, [Decimal("0"), Decimal("0"), 0])
+            acumulado = somas.setdefault(chave_ted, [Decimal("0"), Decimal("0"), 0, Decimal("0")])
             data = _data_ou_none(data_emissao)
             if data is None:
                 acumulado[2] += 1
+                acumulado[3] += texto_para_valor(valor)
             elif data.year in anos.get(chave_ted, ()):
                 acumulado[0] += texto_para_valor(valor)
             else:
                 acumulado[1] += texto_para_valor(valor)
-        return {chave: (v[0], v[1], v[2]) for chave, v in somas.items()}
+        return {chave: (v[0], v[1], v[2], v[3]) for chave, v in somas.items()}
 
     nc = _somar("SELECT chave_ted, data_emissao, valor_assinado_total FROM documento_nc")
     pf = _somar("SELECT chave_ted, data_emissao, valor_assinado FROM documento_pf")
-    sem_base = (None, Decimal("0"), 0)
+    sem_base = (None, Decimal("0"), 0, Decimal("0"))
     resumos = []
     for chave_ted, (nc_cons, pf_cons) in consolidado.items():
-        nc_janela, nc_fora, nc_sem_data = nc.get(chave_ted, sem_base)
-        pf_janela, pf_fora, pf_sem_data = pf.get(chave_ted, sem_base)
+        nc_janela, nc_fora, nc_sem_data, nc_sem_data_valor = nc.get(chave_ted, sem_base)
+        pf_janela, pf_fora, pf_sem_data, pf_sem_data_valor = pf.get(chave_ted, sem_base)
         resumos.append(ResumoConciliacaoSimec(
             chave_ted=chave_ted,
             nc_consolidada=nc_cons,
@@ -418,7 +445,10 @@ def _carregar_resumos_conciliacao(conn: sqlite3.Connection) -> list[ResumoConcil
             anos_consolidado=frozenset(anos[chave_ted]),
             nc_fora_janela=nc_fora,
             pf_fora_janela=pf_fora,
-            documentos_sem_data=nc_sem_data + pf_sem_data,
+            nc_sem_data=nc_sem_data,
+            nc_sem_data_valor=nc_sem_data_valor,
+            pf_sem_data=pf_sem_data,
+            pf_sem_data_valor=pf_sem_data_valor,
             inicio_vigencia=inicio_por_ted.get(chave_ted),
         ))
     return resumos
@@ -623,12 +653,10 @@ def gerar_alertas_cadastrais(
             continue
         if ultima is not None:
             detalhe = f"última NC/PF emitida em {_data_br(ultima)}"
-        elif tesouro is None and referencia is not None:
-            detalhe = f"nenhuma NC/PF emitida desde o início da vigência ({_data_br(referencia)})"
-        elif tesouro is None:
-            detalhe = "nenhuma NC/PF emitida e sem data de início da vigência"
+        elif t.inicio_vigencia is not None:
+            detalhe = f"nenhuma NC/PF emitida desde o início da vigência ({_data_br(t.inicio_vigencia)})"
         else:
-            detalhe = "nenhuma NC/PF emitida"
+            detalhe = "nenhuma NC/PF emitida e sem data de início da vigência"
         if tesouro is not None:
             detalhe += f"; última liquidação/pagamento no Tesouro em NE vinculada em {_data_br(tesouro)}"
         aviso = ""

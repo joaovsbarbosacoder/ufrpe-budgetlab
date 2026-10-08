@@ -332,6 +332,14 @@ class MovimentacaoRevistaTests(unittest.TestCase):
         (alerta,) = self._sem_movimentacao()
         self.assertIn("30/04/2026", alerta.descricao)
 
+    def test_sem_documento_com_tesouro_antigo_mantem_o_inicio_da_vigencia(self):
+        self._ne("2026NE000001")
+        self._tg("2026NE000001", 2025, 3, pago="10.00")
+        self.conn.commit()
+        (alerta,) = self._sem_movimentacao()
+        self.assertIn("desde o início da vigência (01/01/2025)", alerta.descricao)
+        self.assertIn("31/03/2025", alerta.descricao)
+
     def test_movimentacao_consolidado_sem_documento_na_descricao(self):
         self.conn.execute(
             "INSERT INTO execucao_anual VALUES (?, 2026, '0.00', '0.00', '0.00', '500.00', '0.00', '500.00', 1, '{}')",

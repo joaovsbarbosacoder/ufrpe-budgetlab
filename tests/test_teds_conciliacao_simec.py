@@ -239,14 +239,53 @@ class JanelaComumESemBaseTests(unittest.TestCase):
         self.assertIn("1.000.000,00", alertas[0][2])
         self.assertIn("1.711.150,55", alertas[0][2])  # valor fora da janela citado
 
-    def test_documento_sem_data_fica_fora_da_soma_e_e_contado(self):
+    def _nc(self, ted, numero, data, valor):
+        self.conn.execute(
+            """INSERT INTO documento_nc (chave_nc_documento, chave_ted, numero_nc, data_emissao, operacao,
+                 valor_original_total, valor_assinado_total, quantidade_linhas, status_relacionamento, import_batch_id)
+               VALUES (?, ?, ?, ?, '+', ?, ?, 1, 'OK', 1)""",
+            (f"{ted}|{numero}", ted, numero, data, valor, valor),
+        )
+
+    def test_documento_sem_data_que_explica_a_diferenca_e_inconclusivo(self):
+        # Correção de 08/10/2026 (revisão com o banco real): PF sem data que completa o consolidado não pode
+        # virar divergência — janela + sem data bate, então é inconclusivo (sem alerta).
         self._consolidado_2023_2025()
         self._pf(TED_17352, "PF23", "2023-05-01", "1000000.00")
         self._pf(TED_17352, "PFX", None, "94824.95")
         self.conn.commit()
+        self.assertNotIn(TIPO_PF_DIVERGE_CONSOLIDADO, [t for t, _, _ in self._sincronizar()])
+
+    def test_documento_sem_data_que_nao_explica_a_diferenca_gera_alerta(self):
+        self._consolidado_2023_2025()
+        self._pf(TED_17352, "PF23", "2023-05-01", "1000000.00")
+        self._pf(TED_17352, "PFX", None, "50000.00")
+        self.conn.commit()
         (alerta,) = [a for a in self._sincronizar() if a[0] == TIPO_PF_DIVERGE_CONSOLIDADO]
         self.assertIn("1.000.000,00", alerta[2])
-        self.assertIn("1 documento(s) sem data", alerta[2])
+        self.assertIn("1 PF sem data", alerta[2])
+        self.assertIn("50.000,00", alerta[2])
+
+    def test_nc_sem_data_igual_ao_consolidado_formato_14142_nao_gera_alerta(self):
+        # Formato real do TED 14142|1AAVEH: duas NCs sem data (3.473.147,40 + 1.210.680,00) somam exatamente o
+        # Total Descentralizado consolidado (4.683.827,40) e nenhuma NC datada cai na janela.
+        self._anual(TED_17352, 2023, "4683827.40", "0.00")
+        self._nc(TED_17352, "NC1", None, "3473147.40")
+        self._nc(TED_17352, "NC2", None, "1210680.00")
+        self.conn.commit()
+        self.assertNotIn(TIPO_NC_DIVERGE_CONSOLIDADO, [t for t, _, _ in self._sincronizar()])
+
+    def test_nc_diverge_com_e_sem_os_documentos_sem_data_gera_alerta(self):
+        self._anual(TED_17352, 2023, "1000.00", "0.00")
+        self._nc(TED_17352, "NC1", "2023-02-01", "600.00")
+        self._nc(TED_17352, "NC2", None, "123.45")
+        self._pf(TED_17352, "PFX", None, "77.77")  # PF sem data não pode aparecer no alerta de NC
+        self.conn.commit()
+        (alerta,) = [a for a in self._sincronizar() if a[0] == TIPO_NC_DIVERGE_CONSOLIDADO]
+        self.assertIn("1 NC sem data", alerta[2])
+        self.assertIn("123,45", alerta[2])
+        self.assertNotIn("77,77", alerta[2])
+        self.assertNotIn("PF sem data", alerta[2])
 
     def test_ted_sem_pf_no_extrato_e_sem_base(self):
         self._anual(TED_17352, 2025, "842294.76", "842294.76")
