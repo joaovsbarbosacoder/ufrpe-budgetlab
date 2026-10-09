@@ -84,6 +84,11 @@ page = st.navigation(
                 icon="🚨",
             ),
             st.Page(
+                "app_pages/diario_oficial.py",
+                title="Diário Oficial (DOU)",
+                icon="📰",
+            ),
+            st.Page(
                 "app_pages/painel_prazos.py",
                 title="Gerenciamento de Prazos",
                 icon="⏰",

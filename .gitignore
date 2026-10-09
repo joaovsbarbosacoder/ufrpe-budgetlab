@@ -101,3 +101,8 @@ inbox_*.png
 # src/resultado_orcamentario_cadastro.py.
 data/resultado_orcamentario/*
 !data/resultado_orcamentario/.gitkeep
+
+# Termos de busca da pagina Diario Oficial, salvos a pedido do usuario (aprovado em 09/10/2026)
+# — ver src/dou_inlabs.py::salvar_termos. Os ZIPs baixados do DOU ficam em data/raw/dou/ (ja ignorado).
+data/dou/*
+!data/dou/.gitkeep

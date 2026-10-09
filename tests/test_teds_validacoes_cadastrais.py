@@ -261,5 +261,112 @@ class SemMovimentacaoTests(unittest.TestCase):
             conn.close()
 
 
+class MovimentacaoRevistaTests(unittest.TestCase):
+    """Regra revista em 08/10/2026 (spec `2026-10-08-teds-alertas-e-controle-nc-design.md`, §3.4):
+    liquidação/pagamento no Tesouro em NE vinculada conta como movimentação; consolidado com movimento no
+    ano corrente sem documento datado é avisado na descrição (o alerta continua)."""
+
+    def setUp(self):
+        self.conn = conectar(":memory:")
+        self.conn.execute(
+            "INSERT INTO import_batch (id, tipo_relatorio, nome_arquivo, hash_arquivo, data_importacao, status) "
+            "VALUES (1, 'teste', 'x.xlsx', 'hash', '2026-01-01T00:00:00', 'ok')"
+        )
+        self.conn.execute(
+            "INSERT INTO ted (chave_ted, ted, codigo_siafi, estado_atual, inicio_vigencia, fim_vigencia, "
+            "ug_descentralizadora) VALUES (?, '17352', '1ABDKU', 'Termo em Execução', '2025-01-01', '2027-12-31', '153165')",
+            (CH,),
+        )
+
+    def tearDown(self):
+        self.conn.close()
+
+    def _sem_movimentacao(self):
+        return [a for a in sincronizar_alertas_cadastrais(self.conn, HOJE) if a.tipo == TIPO_TED_SEM_MOVIMENTACAO]
+
+    def _ne(self, numero_ne, status="ok"):
+        self.conn.execute(
+            "INSERT INTO vinculo_ne (chave_ted, chave_empenho, ug_emitente, gestao_emitente, numero_ne, valor_ne, "
+            "status_validacao, import_batch_id, linha_origem) VALUES (?, ?, '153165', '15239', ?, '1000.00', ?, 1, '{}')",
+            (CH, f"153165|15239|{numero_ne}", numero_ne, status),
+        )
+
+    def _tg(self, numero_ne, ano, mes, liquidado="0", pago="0"):
+        self.conn.execute(
+            "INSERT INTO execucao_tg (numero_completo_ne, empenhado, liquidado, pago, ano_lancamento, mes_lancamento, "
+            "import_batch_id, linha_origem) VALUES (?, '0', ?, ?, ?, ?, 1, '{}')",
+            (numero_ne, liquidado, pago, ano, mes),
+        )
+
+    def _pf_antigo(self):
+        # Último PF há 200 dias de HOJE (23/09/2026).
+        self.assertEqual((HOJE - date(2026, 3, 7)).days, 200)
+        self.conn.execute(
+            """INSERT INTO documento_pf (chave_ted, ug_emitente, numero_pf, data_emissao, operacao,
+                 valor_original, valor_assinado, import_batch_id, linha_origem)
+               VALUES (?, '153165', 'PF1', '2026-03-07', '+', '10.00', '10.00', 1, '{}')""",
+            (CH,),
+        )
+
+    def test_movimentacao_pelo_tesouro(self):
+        self._pf_antigo()
+        self._ne("2026NE000001")
+        self._tg("2026NE000001", 2026, 8, pago="150.00")  # mês anterior a HOJE
+        self.conn.commit()
+        self.assertEqual(self._sem_movimentacao(), [])
+
+    def test_tesouro_de_ne_descartada_ou_sem_valor_nao_conta(self):
+        self._pf_antigo()
+        self._ne("2026NE000001", status="descartado")
+        self._tg("2026NE000001", 2026, 8, pago="150.00")
+        self._ne("2026NE000002")
+        self._tg("2026NE000002", 2026, 8)  # liquidado e pago zero
+        self.conn.commit()
+        self.assertEqual(len(self._sem_movimentacao()), 1)
+
+    def test_tesouro_antigo_aparece_na_descricao(self):
+        self._pf_antigo()
+        self._ne("2026NE000001")
+        self._tg("2026NE000001", 2026, 4, liquidado="80.00")
+        self.conn.commit()
+        (alerta,) = self._sem_movimentacao()
+        self.assertIn("30/04/2026", alerta.descricao)
+
+    def test_sem_documento_com_tesouro_antigo_mantem_o_inicio_da_vigencia(self):
+        self._ne("2026NE000001")
+        self._tg("2026NE000001", 2025, 3, pago="10.00")
+        self.conn.commit()
+        (alerta,) = self._sem_movimentacao()
+        self.assertIn("desde o início da vigência (01/01/2025)", alerta.descricao)
+        self.assertIn("31/03/2025", alerta.descricao)
+
+    def test_movimentacao_consolidado_sem_documento_na_descricao(self):
+        self.conn.execute(
+            "INSERT INTO execucao_anual VALUES (?, 2026, '0.00', '0.00', '0.00', '500.00', '0.00', '500.00', 1, '{}')",
+            (CH,),
+        )
+        self.conn.commit()
+        (alerta,) = self._sem_movimentacao()
+        self.assertIn("o consolidado indica movimentação em 2026", alerta.descricao)
+
+    def test_consolidado_com_documento_datado_no_ano_nao_avisa(self):
+        self._pf_antigo()
+        self.conn.execute(
+            "INSERT INTO execucao_anual VALUES (?, 2026, '0.00', '0.00', '0.00', '10.00', '0.00', '10.00', 1, '{}')",
+            (CH,),
+        )
+        self.conn.commit()
+        (alerta,) = self._sem_movimentacao()
+        self.assertNotIn("o consolidado indica movimentação", alerta.descricao)
+
+    def test_parametros_puros(self):
+        ted = _ted()
+        documentos = [_doc(date(2026, 3, 7))]
+        sem = [a for a in gerar_alertas_cadastrais([ted], documentos, HOJE) if a.tipo == TIPO_TED_SEM_MOVIMENTACAO]
+        self.assertEqual(len(sem), 1)
+        com = gerar_alertas_cadastrais([ted], documentos, HOJE, ultima_execucao_tesouro={CH: date(2026, 8, 31)})
+        self.assertEqual([a for a in com if a.tipo == TIPO_TED_SEM_MOVIMENTACAO], [])
+
+
 if __name__ == "__main__":
     unittest.main()

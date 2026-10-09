@@ -153,16 +153,20 @@ with col_detalhe:
                 "simultaneamente — a execução fica fora dos totais consolidados de todos os TEDs envolvidos até "
                 "a pendência ser resolvida (ver src/teds_alertas.py::detectar_ne_em_multiplos_teds).",
                 "nc_ug_emitente_ausente": "Toda NC deveria trazer a UG emitente na extração do SIMEC, para "
-                "permitir a conciliação externa por UG — quando ausente em todas as linhas do documento, a "
-                "conciliação fica parcial até a UG ser identificada manualmente "
+                "permitir a conciliação externa por UG. Um alerta por TED, com a lista das NCs sem UG; a falha é "
+                "sistemática do SIMEC e a UG pode ser conferida na planilha de controle (página Conciliação) "
                 "(ver src/teds_alertas.py::detectar_documentos_nc_parciais).",
-                "nc_liquida_diverge_consolidado": "A NC líquida somada dos documentos importados deve coincidir "
-                "com o Total Descentralizado do relatório consolidado (tolerância R$ 0,01). A diferença pode vir "
-                "de extração incompleta ou de outro período — o sistema não decide qual fonte está certa.",
-                "pf_liquida_diverge_consolidado": "O PF líquido somado dos documentos importados (com o sinal da "
-                "operação) deve coincidir com o Total Repassado do relatório consolidado (tolerância R$ 0,01).",
+                "nc_liquida_diverge_consolidado": "A NC líquida dos documentos importados, somada só nos anos que "
+                "o consolidado cobre para o TED, deve coincidir com o Total Descentralizado do relatório "
+                "consolidado (tolerância R$ 0,01). TED sem NC no extrato não é comparado, e documento sem data só "
+                "gera alerta se a diferença persistir com e sem ele — o sistema não decide qual fonte está certa.",
+                "pf_liquida_diverge_consolidado": "O PF líquido dos documentos importados (com o sinal da "
+                "operação), somado só nos anos que o consolidado cobre para o TED, deve coincidir com o Total "
+                "Repassado do relatório consolidado (tolerância R$ 0,01). TED sem PF no extrato não é comparado, e "
+                "documento sem data só gera alerta se a diferença persistir com e sem ele.",
                 "pf_liquida_maior_que_nc": "O repasse financeiro líquido não deve superar o crédito líquido "
-                "descentralizado do TED — conferir crédito de exercício anterior ao período importado.",
+                "descentralizado do TED. Não há alerta quando a vigência começa antes do primeiro ano do "
+                "consolidado (a NC do período anterior não está nas fontes importadas).",
                 "ted_vigencia_invertida": "O início da vigência do TED não pode ser posterior ao fim.",
                 "siafi_em_multiplos_teds": "Um código SIAFI identifica um único TED; associado a mais de um "
                 "número, exige justificativa.",
@@ -171,9 +175,9 @@ with col_detalhe:
                 "casos legítimos, que pedem justificativa — o documento nunca é excluído.",
                 "ted_vencido_em_execucao": "TED com vigência encerrada não deveria continuar no estado "
                 "\"Termo em Execução\" — conferir prorrogação ou encerramento.",
-                "ted_sem_movimentacao": "TED em execução deveria ter NC ou PF emitida dentro do prazo (padrão 90 "
-                "dias); o prazo é uma escolha inicial, não uma regra do briefing, e a NE não conta por não ter "
-                "data no banco.",
+                "ted_sem_movimentacao": "TED em execução deveria ter movimentação dentro do prazo (padrão 90 "
+                "dias): NC ou PF emitida, ou liquidação/pagamento no Tesouro em NE vinculada. O prazo é uma "
+                "escolha inicial, não uma regra do briefing, e a NE em si não conta por não ter data no banco.",
                 "ne_celula_diverge_nc": "A célula orçamentária da NE (PTRES, fonte detalhada, natureza de 6 dígitos e "
                 "Plano Interno) deve constar entre as células das NCs do mesmo TED e exercício. Alerta para "
                 "conferência: pode ser erro no detalhamento previsto; não é conclusão de uso indevido.",

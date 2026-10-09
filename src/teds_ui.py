@@ -918,6 +918,7 @@ _ROTULO_TIPO_RELATORIO = {
     "tesouro_gerencial_execucao": "Tesouro Gerencial — Execução",
     TIPO_NC_TG_HISTORICA: "Tesouro Gerencial — NC (Destaques Recebidos)",
     TIPO_NC_TG_2026: "Tesouro Gerencial — NC 2026",
+    "transferegov_ted": "TransfereGov — TEDs (API)",
 }
 
 _ROTULOS_COLUNA_LOTE = {

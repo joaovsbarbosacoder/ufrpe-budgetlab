@@ -68,6 +68,18 @@ class CreditoSemEmpenhoTests(unittest.TestCase):
         for estado in ("Comprovado no SIAFI.", "Termo Finalizado", None):
             self.assertEqual(_tipos(_ted(qtd_nes_ativas=0, estado_atual=estado)), [TIPO_TED_CREDITO_SEM_EMPENHO], estado)
 
+    def test_credito_sem_empenho_ted_encerrado(self):
+        # Regra revista em 08/10/2026 (spec 2026-10-08-teds-alertas-e-controle-nc-design.md, §3.5): mesma
+        # regra, descrição separa TED encerrado de TED em execução.
+        (alerta,) = gerar_alertas_execucao_do_ted([_ted(qtd_nes_ativas=0, estado_atual="Comprovado no SIAFI.")], HOJE)
+        self.assertTrue(alerta.descricao.endswith("pendência para a prestação de contas."), alerta.descricao)
+        self.assertIn("NE não registrada no SIMEC", alerta.descricao)
+        for estado in ("Termo Finalizado", "Em Prestação de Contas", "Relatório de Cumprimento do Objeto"):
+            (alerta,) = gerar_alertas_execucao_do_ted([_ted(qtd_nes_ativas=0, estado_atual=estado)], HOJE)
+            self.assertTrue(alerta.descricao.endswith("pendência para a prestação de contas."), estado)
+        (em_execucao,) = gerar_alertas_execucao_do_ted([_ted(qtd_nes_ativas=0)], HOJE)
+        self.assertNotIn("prestação de contas", em_execucao.descricao)
+
     def test_sem_credito_liquido_positivo_nao_gera(self):
         self.assertEqual(_tipos(_ted(qtd_nes_ativas=0, nc_liquida=D("0.00"))), [])
         self.assertEqual(_tipos(_ted(qtd_nes_ativas=0, nc_liquida=D("-5.00"))), [])

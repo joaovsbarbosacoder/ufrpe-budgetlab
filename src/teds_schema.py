@@ -268,6 +268,132 @@ CREATE TABLE IF NOT EXISTS ne_celula (
     PRIMARY KEY (numero_ne, ptres, fonte_detalhada, natureza, pi)
 );
 
+-- TEDs do TransfereGov (API de dados abertos, `src/teds_transferegov.py`; decisão de 08/10/2026): origem
+-- SEPARADA do SIMEC, em tabelas próprias. Os TEDs do MEC tramitam no SIMEC; os de outros órgãos (MDA,
+-- INCRA, MPA…) no TransfereGov — os dois conjuntos não se sobrepõem, e misturá-los em `ted` faria as
+-- regras de conciliação/alerta do SIMEC (que exigem SIAFI e Execução Anual) acusarem divergências falsas.
+-- Chaves são os identificadores da própria API (texto). Valores em TEXT/Decimal; NENHUM total é derivado
+-- dos eventos de NC (`cd_evento`) nem da situação contábil da TRF: o significado desses códigos não foi
+-- confirmado (só o 300302 aparece como "estorno" no texto das NCs), então eles ficam guardados como vieram.
+CREATE TABLE IF NOT EXISTS tg_ted (
+    id_plano_acao TEXT PRIMARY KEY,
+    instrumento TEXT,
+    sq_instrumento TEXT,
+    aa_instrumento TEXT,
+    id_programa TEXT,
+    codigo_programa TEXT,
+    nome_programa TEXT,
+    sigla_concedente TEXT,
+    concedente TEXT,
+    sigla_executora TEXT,
+    executora TEXT,
+    objeto TEXT,
+    valor_plano TEXT,
+    inicio_vigencia TEXT,
+    fim_vigencia TEXT,
+    situacao_plano TEXT,
+    id_termo TEXT,
+    situacao_termo TEXT,
+    processo_sei TEXT,
+    numero_ns TEXT,
+    data_assinatura TEXT,
+    data_efetivacao TEXT,
+    import_batch_id INTEGER NOT NULL,
+    linha_origem TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tg_nota_credito (
+    id_nota TEXT PRIMARY KEY,
+    id_plano_acao TEXT,
+    numero_nc TEXT,
+    minuta TEXT,
+    data_emissao TEXT,
+    ug_emitente TEXT,
+    gestao_emitente TEXT,
+    ug_favorecida TEXT,
+    gestao_favorecida TEXT,
+    situacao TEXT,
+    observacao TEXT,
+    import_batch_id INTEGER NOT NULL,
+    linha_origem TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_tg_nota_credito_plano ON tg_nota_credito (id_plano_acao);
+
+-- Eventos (células) de cada NC. A API não dá identificador ao evento: `chave_evento` é o conteúdo da
+-- linha mais o número da ocorrência (duas linhas idênticas na mesma NC continuam sendo duas). `valor` sem
+-- sinal, como veio; `cd_evento` guardado sem interpretação.
+CREATE TABLE IF NOT EXISTS tg_nc_evento (
+    chave_evento TEXT PRIMARY KEY,
+    id_nota TEXT NOT NULL,
+    cd_evento TEXT,
+    ptres TEXT,
+    fonte_detalhada TEXT,
+    pi TEXT,
+    natureza TEXT,
+    descricao_natureza TEXT,
+    ug_responsavel TEXT,
+    esfera TEXT,
+    valor TEXT,
+    import_batch_id INTEGER NOT NULL,
+    linha_origem TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_tg_nc_evento_nota ON tg_nc_evento (id_nota);
+
+CREATE TABLE IF NOT EXISTS tg_programacao_financeira (
+    id_programacao TEXT PRIMARY KEY,
+    id_plano_acao TEXT,
+    tipo TEXT,
+    numero_pf TEXT,
+    minuta TEXT,
+    situacao TEXT,
+    ug_emitente TEXT,
+    ug_favorecida TEXT,
+    data_recebimento TEXT,
+    observacao TEXT,
+    import_batch_id INTEGER NOT NULL,
+    linha_origem TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_tg_pf_plano ON tg_programacao_financeira (id_plano_acao);
+
+-- Linhas TRF de cada PF (mesma lógica de chave por conteúdo de `tg_nc_evento`); `situacao_contabil`
+-- (TRF003, TRF004…) guardada sem interpretação.
+CREATE TABLE IF NOT EXISTS tg_pf_trf (
+    chave_trf TEXT PRIMARY KEY,
+    id_programacao TEXT NOT NULL,
+    vinculacao TEXT,
+    fonte TEXT,
+    categoria_gasto TEXT,
+    situacao_contabil TEXT,
+    valor TEXT,
+    import_batch_id INTEGER NOT NULL,
+    linha_origem TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_tg_pf_trf_pf ON tg_pf_trf (id_programacao);
+
+-- Resposta da API de cada sincronização, inteira (JSON canônico cujo SHA-256 é o `hash_arquivo` do lote):
+-- é o "arquivo de origem" desta base, guardado para auditoria e reconciliação. Append-only.
+CREATE TABLE IF NOT EXISTS tg_extracao_bruta (
+    import_batch_id INTEGER PRIMARY KEY,
+    consultado_em TEXT NOT NULL,
+    conteudo TEXT NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_tg_extracao_bruta_sem_update
+BEFORE UPDATE ON tg_extracao_bruta
+BEGIN
+    SELECT RAISE(ABORT, 'tg_extracao_bruta é append-only: não pode ser alterada');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_tg_extracao_bruta_sem_delete
+BEFORE DELETE ON tg_extracao_bruta
+BEGIN
+    SELECT RAISE(ABORT, 'tg_extracao_bruta é append-only: não pode ser apagada');
+END;
+
 -- Trilha de auditoria (`src/teds_auditoria.py`): append-only. Os gatilhos abaixo abortam
 -- UPDATE e DELETE, então nem uma correção posterior reescreve a história — corrigir é inserir
 -- um novo registro. `valor_anterior`/`valor_novo` são JSON dos campos que mudaram.
@@ -364,6 +490,33 @@ TABELAS_VERSIONADAS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
         ("numero_completo_ne", "ano_lancamento", "mes_lancamento"),
         ("id", "numero_completo_ne", "favorecido", "descricao", "empenhado", "liquidado", "pago",
          "ano_lancamento", "mes_lancamento", "import_batch_id", "linha_origem"),
+    ),
+    "tg_ted": (
+        ("id_plano_acao",),
+        ("id_plano_acao", "instrumento", "sq_instrumento", "aa_instrumento", "id_programa", "codigo_programa",
+         "nome_programa", "sigla_concedente", "concedente", "sigla_executora", "executora", "objeto",
+         "valor_plano", "inicio_vigencia", "fim_vigencia", "situacao_plano", "id_termo", "situacao_termo",
+         "processo_sei", "numero_ns", "data_assinatura", "data_efetivacao", "import_batch_id", "linha_origem"),
+    ),
+    "tg_nota_credito": (
+        ("id_nota",),
+        ("id_nota", "id_plano_acao", "numero_nc", "minuta", "data_emissao", "ug_emitente", "gestao_emitente",
+         "ug_favorecida", "gestao_favorecida", "situacao", "observacao", "import_batch_id", "linha_origem"),
+    ),
+    "tg_nc_evento": (
+        ("chave_evento",),
+        ("chave_evento", "id_nota", "cd_evento", "ptres", "fonte_detalhada", "pi", "natureza",
+         "descricao_natureza", "ug_responsavel", "esfera", "valor", "import_batch_id", "linha_origem"),
+    ),
+    "tg_programacao_financeira": (
+        ("id_programacao",),
+        ("id_programacao", "id_plano_acao", "tipo", "numero_pf", "minuta", "situacao", "ug_emitente",
+         "ug_favorecida", "data_recebimento", "observacao", "import_batch_id", "linha_origem"),
+    ),
+    "tg_pf_trf": (
+        ("chave_trf",),
+        ("chave_trf", "id_programacao", "vinculacao", "fonte", "categoria_gasto", "situacao_contabil", "valor",
+         "import_batch_id", "linha_origem"),
     ),
 }
 

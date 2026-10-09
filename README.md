@@ -532,11 +532,15 @@ drill-down), Conciliação (SIMEC × Tesouro Gerencial), Células NC × NE, Cent
 Importações (assistente de 4 passos: Arquivo → Mapeamento → Validação → Confirmação) e
 Configurações. Dezenove
 alertas estão implementados: empenho associado a mais de um TED; NC sem UG emitente (achado
-real da extração do SIMEC, não do briefing original — a coluna vem vazia em cerca de 41% das
-linhas); e três de conciliação SIMEC (NC líquida e PF líquido dos documentos importados contra os
-totais consolidados, e PF líquido maior que a NC líquida) e seis de validação cadastral e de
+real da extração do SIMEC, não do briefing original — a coluna vem vazia em cerca de 28% das
+NCs; um alerta de gravidade baixa por TED, com a lista das NCs); e três de conciliação SIMEC (NC líquida
+e PF líquido dos documentos importados contra os totais consolidados, e PF líquido maior que a NC
+líquida; comparados só na janela de anos que o consolidado cobre, sem alerta quando o TED não tem
+documento do tipo no extrato ou quando a vigência começa antes do consolidado, e sem decidir por
+documentos sem data) e seis de validação cadastral e de
 vigência (vigência invertida, SIAFI em mais de um TED, TED sem UG descentralizadora, documento
-fora da vigência, TED vencido ainda em execução e TED em execução sem movimentação) e três de
+fora da vigência, TED vencido ainda em execução e TED em execução sem movimentação — esta considera
+também liquidação e pagamento no Tesouro) e três de
 execução por NE no Tesouro Gerencial (liquidado maior que empenhado, pago maior que liquidado e
 valor da NE no SIMEC diferente do empenhado do Tesouro, sempre pelo acumulado da NE) e um de importação
 (o total do rodapé do relatório do SIMEC deve bater com a soma das linhas importadas; no DOC NC e no DOC PF
@@ -545,8 +549,14 @@ código SIAFI na Execução Anual (a linha não é importada e o TED fica fora d
 de 90 dias) e um de célula orçamentária (a célula da NE — PTRES, fonte detalhada, natureza e Plano Interno — não consta
 entre as células das NCs do mesmo TED e exercício, lidas dos relatórios de NC do Tesouro Gerencial; é alerta para
 conferência, nunca conclusão de uso indevido). Os demais alertas previstos no
-briefing original (crédito sem empenho etc.) ficam para uma fase seguinte, fora do
-escopo já aprovado.
+briefing original ficam para uma fase seguinte, fora do escopo já aprovado.
+
+Revisão de 08/10/2026: a reavaliação de alertas fecha sozinha, com justificativa "Regra revisada em
+08/10/2026…" e auditoria, os alertas abertos dos cinco tipos de regra revista que as regras atuais não
+sustentam mais. Na página Conciliação, a seção "Conferir com a planilha de controle" lê a planilha
+`CONTROLE DESC.CREDITOS ATUALIZADA.xlsx` enviada pelo usuário **em memória** (nunca é gravada nem alimenta
+as regras), confere as NCs do SIMEC com ela, oferece o resultado em Excel e permite resolver alertas
+relacionados com justificativa pré-preenchida (só com o clique do usuário). Ver `docs/base_teds.md` §9.1–9.2.
 
 A fonte do Tesouro Gerencial é a mesma extração de Execução Mensal já usada por outra página
 do projeto (`src/tesouro_execucao_mensal.py`) — não uma extração separada. Na página
@@ -569,8 +579,45 @@ nem altera os existentes nem os dados importados, e a execução fica na trilha 
 NE em mais de um TED (recalcula `status_validacao`) nem TED sem SIAFI (depende das linhas rejeitadas de uma
 leitura).
 
+**TEDs de outros órgãos (TransfereGov).** Os TEDs do MEC tramitam no SIMEC; os de outros órgãos (MDA, INCRA,
+MPA, MDS…) tramitam no TransfereGov e entram pela API de dados abertos
+(`https://api.transferegov.gestao.gov.br/ted/`, `src/teds_transferegov.py`), com o botão "Sincronizar com o
+TransfereGov" em Importações. É uma origem separada, em tabelas próprias (`tg_*`): não entra nos totais, na
+conciliação nem nos alertas dos TEDs do SIMEC. Na Lista, o seletor "Origem" mostra esses TEDs (planos de ação
+em que a UFRPE é executora, com termo, NCs e seus eventos, PFs e suas linhas TRF); a Visão geral traz só as
+quantidades. **Nenhum total de NC/PF é calculado:** o significado dos códigos de evento da NC (300300, 300302…)
+e da situação contábil da TRF (TRF003, TRF004…) não foi confirmado, então os valores aparecem sem sinal, ao lado
+do código. As NEs da Execução Mensal com a mesma célula (exercício, PTRES, fonte, natureza e PI) de um evento de
+NC aparecem como indício para conferência, nunca como vínculo. A sincronização é um lote como os demais
+(idempotente pelo SHA-256 da resposta, reversível, JSON bruto guardado em `tg_extracao_bruta`). Validado em
+08/10/2026 com a API real: 53 planos, 93 NCs, 104 eventos, 80 PFs, 84 linhas TRF e 44 NEs com célula
+coincidente, nenhuma delas já vinculada a TED do SIMEC.
+
 O contrato completo (tabelas, chaves e decisões de projeto) está em
 `docs/base_teds.md`.
+
+### Diário Oficial (DOU)
+
+Página que baixa o Diário Oficial da União pelo INLABS (Imprensa Nacional) e
+lista as matérias que citam a UFRPE (`src/dou_inlabs.py`). O botão "Baixar
+atualizações do DOU" consulta só os dias que faltam — do dia seguinte ao último
+consultado até hoje (na primeira vez, os últimos 7 dias; no máximo 30 por
+clique). Dia sem edição fica registrado como consultado, sem erro.
+
+A busca ignora acentos e maiúsculas e tem dois grupos de termos: **Termos de
+busca** (a matéria cita algum deles; padrão: nome, sigla, UG 153165 e UO 26248)
+e **Refinar** (opcional: também precisa citar algum destes — ex.: "pregão" traz
+só os pregões da UFRPE, não os do país inteiro). As duas listas são salvas em
+`data/dou/termos.json` a cada mudança (fora do git, incluídas no backup) e
+"Restaurar termos padrão" volta aos padrões. Um termo novo alcança também os
+dias já baixados, sem novo download. Filtros por período e seção; link para a
+página no DOU.
+
+Exige conta pessoal no INLABS, com credenciais só em variáveis de ambiente —
+a página não pede nem guarda senha. Os ZIPs ficam intactos em
+`data/raw/dou/<data>/` com manifesto (sha256), sem banco de dados. Também há
+uso por linha de comando (`python -m src.dou_inlabs AAAA-MM-DD`). Detalhes em
+`docs/dou_inlabs.md`.
 
 ### Limitações atuais
 
@@ -727,6 +774,7 @@ ufrpe-budgetlab/
 |-- src/
 |   |-- design_tokens.py            # Tokens de cor/tipografia/espaçamento
 |   |-- dotacao_anual_analysis.py   # Filtros e agregações da Dotação Anual
+|   |-- dou_inlabs.py               # Download e filtro do DOU (INLABS)
 |   |-- execucao_anual.py           # Leitura, validação e agregação da Execução Anual (BI PROPLAD)
 |   |-- importacao_dotacao.py       # Especificação da Dotação Anual sobre o núcleo genérico
 |   |-- importacao_emendas.py       # Carga histórica e atualizações 2026+ de Emendas
