@@ -557,6 +557,29 @@ coincidente, nenhuma delas já vinculada a TED do SIMEC.
 O contrato completo (tabelas, chaves e decisões de projeto) está em
 `docs/base_teds.md`.
 
+### Diário Oficial (DOU)
+
+Página que baixa o Diário Oficial da União pelo INLABS (Imprensa Nacional) e
+lista as matérias que citam a UFRPE (`src/dou_inlabs.py`). O botão "Baixar
+atualizações do DOU" consulta só os dias que faltam — do dia seguinte ao último
+consultado até hoje (na primeira vez, os últimos 7 dias; no máximo 30 por
+clique). Dia sem edição fica registrado como consultado, sem erro.
+
+A busca ignora acentos e maiúsculas e tem dois grupos de termos: **Termos de
+busca** (a matéria cita algum deles; padrão: nome, sigla, UG 153165 e UO 26248)
+e **Refinar** (opcional: também precisa citar algum destes — ex.: "pregão" traz
+só os pregões da UFRPE, não os do país inteiro). As duas listas são salvas em
+`data/dou/termos.json` a cada mudança (fora do git, incluídas no backup) e
+"Restaurar termos padrão" volta aos padrões. Um termo novo alcança também os
+dias já baixados, sem novo download. Filtros por período e seção; link para a
+página no DOU.
+
+Exige conta pessoal no INLABS, com credenciais só em variáveis de ambiente —
+a página não pede nem guarda senha. Os ZIPs ficam intactos em
+`data/raw/dou/<data>/` com manifesto (sha256), sem banco de dados. Também há
+uso por linha de comando (`python -m src.dou_inlabs AAAA-MM-DD`). Detalhes em
+`docs/dou_inlabs.md`.
+
 ### Limitações atuais
 
 - não há soma, reconciliação ou identidade rígida entre itens de dotação;
@@ -712,6 +735,7 @@ ufrpe-budgetlab/
 |-- src/
 |   |-- design_tokens.py            # Tokens de cor/tipografia/espaçamento
 |   |-- dotacao_anual_analysis.py   # Filtros e agregações da Dotação Anual
+|   |-- dou_inlabs.py               # Download e filtro do DOU (INLABS)
 |   |-- execucao_anual.py           # Leitura, validação e agregação da Execução Anual (BI PROPLAD)
 |   |-- importacao_dotacao.py       # Especificação da Dotação Anual sobre o núcleo genérico
 |   |-- importacao_emendas.py       # Carga histórica e atualizações 2026+ de Emendas

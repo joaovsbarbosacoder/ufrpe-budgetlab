@@ -63,6 +63,7 @@ GRUPOS: dict[str, str] = {
     "teds": "TEDs (banco SQLite e uploads)",
     "limite_empenho": "Fração liberada e remanejamentos do Limite de Empenho",
     "glossario": "Verbetes do Glossário",
+    "dou": "Termos de busca do Diário Oficial",
     "google_agenda": "Google Agenda (histórico de sincronização; credenciais só se pedido)",
 }
 
