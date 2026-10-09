@@ -14,6 +14,12 @@ exponencial. Timeout, falha de conexão e ChunkedEncodingError são transitório
 as tentativas, ou diante de JSON inválido, levanta `ErroApiContratosGov` — nunca devolve
 dado parcial em silêncio. Entre chamadas consecutivas há uma pequena pausa de cortesia
 (`pausa_entre_chamadas`). `dormir` é injetável para que os testes não esperem de verdade.
+
+Prazos de espera: a lista de contratos ativos da UG (4,8 MB, ~1.800 itens) leva de 45 a 55 s
+para o servidor começar a responder (medido em 09/10/2026; a conexão em si leva 0,1 s e a lista
+de inativos, 0,6 s), então as duas listas usam `timeout_lista` (180 s). Os detalhes por contrato
+respondem em ~0,4 s e seguem com `timeout` (30 s). Com 3 novas tentativas, uma lista que nunca
+responda pode levar até ~12 min para falhar.
 """
 
 from __future__ import annotations
@@ -43,6 +49,7 @@ class ClienteContratosGov:
         sessao: requests.Session | None = None,
         *,
         timeout: float = 30,
+        timeout_lista: float = 180,
         tentativas: int = 3,
         pausa_base: float = 2.0,
         pausa_entre_chamadas: float = 0.2,
@@ -50,6 +57,7 @@ class ClienteContratosGov:
     ):
         self._sessao = sessao if sessao is not None else requests.Session()
         self._timeout = timeout
+        self._timeout_lista = timeout_lista
         self._tentativas = tentativas
         self._pausa_base = pausa_base
         self._pausa_entre_chamadas = pausa_entre_chamadas
@@ -57,12 +65,12 @@ class ClienteContratosGov:
         #: total de requisições HTTP feitas (inclui novas tentativas).
         self.chamadas = 0
 
-    def _requisitar(self, url: str):
+    def _requisitar(self, url: str, timeout: float):
         """Uma requisição, respeitando a pausa entre chamadas. Devolve resposta ou exceção."""
         if self.chamadas > 0 and self._pausa_entre_chamadas > 0:
             self._dormir(self._pausa_entre_chamadas)
         self.chamadas += 1
-        return self._sessao.get(url, timeout=self._timeout)
+        return self._sessao.get(url, timeout=timeout)
 
     @staticmethod
     def _pausa_retry_after(resposta, padrao: float) -> float:
@@ -76,13 +84,14 @@ class ClienteContratosGov:
             return padrao
         return min(valor, LIMITE_RETRY_AFTER)
 
-    def get_json(self, caminho: str) -> list | dict:
+    def get_json(self, caminho: str, *, timeout: float | None = None) -> list | dict:
         url = f"{URL_BASE}{caminho}"
+        prazo = self._timeout if timeout is None else timeout
         for n in range(self._tentativas + 1):
             ultima = n == self._tentativas
             pausa = self._pausa_base * 2**n
             try:
-                resposta = self._requisitar(url)
+                resposta = self._requisitar(url, prazo)
             except (requests.Timeout, requests.ConnectionError, requests.exceptions.ChunkedEncodingError) as exc:
                 if ultima:
                     raise ErroApiContratosGov(
@@ -116,10 +125,10 @@ class ClienteContratosGov:
         raise AssertionError("inalcançável")  # pragma: no cover
 
     def contratos_ug(self, ug: str) -> list[dict]:
-        return self.get_json(f"/api/contrato/ug/{ug}")
+        return self.get_json(f"/api/contrato/ug/{ug}", timeout=self._timeout_lista)
 
     def contratos_inativos_ug(self, ug: str) -> list[dict]:
-        return self.get_json(f"/api/contrato/inativo/ug/{ug}")
+        return self.get_json(f"/api/contrato/inativo/ug/{ug}", timeout=self._timeout_lista)
 
     def historico(self, contrato_id: str) -> list[dict]:
         return self.get_json(f"/api/contrato/{contrato_id}/historico")

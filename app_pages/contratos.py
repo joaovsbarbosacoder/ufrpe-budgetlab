@@ -580,7 +580,7 @@ def _consultar(fotografia, completa: bool, referencia: date) -> None:
 
     st.session_state.pop(CHAVE_CONSULTA, None)  # prévia antiga não sobrevive a uma nova consulta (nem falha)
     cliente = contratosgov_api.ClienteContratosGov()
-    barra = st.progress(0.0, text="Consultando as listas de contratos…")
+    barra = st.progress(0.0, text="Consultando as listas de contratos… (a lista de ativos pode levar cerca de 1 minuto)")
 
     def progresso(feito: int, total: int) -> None:
         barra.progress(feito / total if total else 1.0, text=f"Detalhe (termos e NEs): {feito} de {total} contratos")

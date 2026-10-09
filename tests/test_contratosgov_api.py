@@ -37,9 +37,28 @@ def test_get_json_monta_url_e_devolve_json():
     cliente, sessao, _ = _cliente(_resposta(dados=[{"id": 1}]))
     assert cliente.contratos_ug("153165") == [{"id": 1}]
     sessao.get.assert_called_once_with(
-        "https://contratos.comprasnet.gov.br/api/contrato/ug/153165", timeout=30
+        "https://contratos.comprasnet.gov.br/api/contrato/ug/153165", timeout=180
     )
     assert URL_BASE == "https://contratos.comprasnet.gov.br"
+
+
+def test_listas_usam_prazo_longo_e_detalhes_o_curto():
+    """A lista de contratos ativos leva ~50 s para o servidor começar a responder (medido em
+    09/10/2026, 4,8 MB); os detalhes por contrato respondem em ~0,4 s."""
+    cliente, sessao, _ = _cliente(*[_resposta() for _ in range(4)])
+    cliente.contratos_ug("153165")
+    cliente.contratos_inativos_ug("153165")
+    cliente.historico("1004328")
+    cliente.empenhos("1004328")
+    prazos = [c.kwargs["timeout"] for c in sessao.get.call_args_list]
+    assert prazos == [180, 180, 30, 30]
+
+
+def test_prazos_sao_configuraveis():
+    cliente, sessao, _ = _cliente(_resposta(), _resposta(), timeout=7, timeout_lista=90)
+    cliente.contratos_ug("153165")
+    cliente.historico("1004328")
+    assert [c.kwargs["timeout"] for c in sessao.get.call_args_list] == [90, 7]
 
 
 def test_rotas_dos_quatro_metodos():
