@@ -24,9 +24,12 @@ Recorte: só instrumentos do tipo **"Contrato"**, todos os anos, ativos e inativ
 substitutivos (tipo "Empenho") ficam de fora. Garantias, arquivos, cronograma, faturas e unidades
 requisitantes não são lidos.
 
-Resiliência: HTTP 5xx, timeout e falha de conexão são repetidos até 3 vezes, com pausa exponencial
-(2 s, 4 s, 8 s); HTTP 429 respeita `Retry-After` numérico; os demais 4xx abortam sem repetir; JSON
-inválido também aborta. Há uma pausa de cortesia de 0,2 s entre chamadas. Esgotadas as tentativas,
+Resiliência: HTTP 5xx, timeout, falha de conexão e `ChunkedEncodingError` são repetidos até 3 vezes,
+com pausa exponencial (2 s, 4 s, 8 s); HTTP 429 respeita `Retry-After` numérico, finito e não negativo
+(limitado a 60 s; outro valor cai na pausa exponencial); os demais 4xx e as demais exceções do
+`requests` abortam sem repetir (`status` nulo); JSON inválido também aborta. Resposta HTTP 200 fora do
+formato (lista que não é lista, item que não é objeto ou contrato sem `id`) levanta
+`ErroDadoContratosGov` com o endpoint — nunca vira lista vazia em silêncio. Há uma pausa de cortesia de 0,2 s entre chamadas. Esgotadas as tentativas,
 levanta `ErroApiContratosGov` com a URL e o status — nunca devolve dado parcial.
 
 ## 2. Fotografia
@@ -82,7 +85,7 @@ alterados). A página nunca consulta a rede ao ser aberta — só no botão "Con
 tabelas. A data de referência da vigência é parâmetro (padrão: hoje).
 
 - **`contratos`** — uma linha por contrato: identificação (`contrato_id`, `numero`, `ano_contrato`),
-  fornecedor (`fornecedor_tipo`, `fornecedor_documento` só dígitos, `fornecedor_nome`), `processo`,
+  fornecedor (`fornecedor_tipo`, `fornecedor_documento` (CNPJ/CPF sem pontuação para os tipos `JURIDICA`/`FISICA`; outro tipo, ex. `IDGENERICO`, fica como veio), `fornecedor_nome`), `processo`,
   `objeto`, `categoria`, `modalidade`, datas, valores (`valor_inicial`, `valor_global`,
   `num_parcelas`, `valor_parcela`, `valor_acumulado`), `situacao_api`, `inativo_api`,
   `situacao_vigencia`, `dias_para_vencer`, `qtd_termos`, `qtd_empenhos`, `detalhe_consultado_em`,
@@ -135,8 +138,15 @@ Registrada em `app.py` no grupo "Contratos", antes de Contratos Contínuos. Trê
   situação, busca livre, filtro de categoria, ordenação e a lista; o botão da linha abre o detalhe
   (`st.dialog`) com dados do contrato, complemento editável, linha do tempo dos termos e NEs com
   total. Nulo aparece "—" e zero "R$ 0,00"; o valor mensal vem só do complemento, marcado "MANUAL".
+  Linha do tempo dos termos: um "novo valor global" nulo ou 0,00 é exibido como "sem novo valor" e a
+  linha mostra o "valor global do termo" (regra a confirmar com o usuário; o dado bruto não muda).
+  Busca: o texto casa número, fornecedor, processo e objeto; só uma busca sem letras e com ao menos 4
+  dígitos também casa o CNPJ/CPF. "Vencimento mais próximo" ordena por |dias| até o fim da vigência
+  (um contrato encerrado há muito tempo não vem antes de um que vence em breve). Textos vindos da
+  API são exibidos escapados (sem interpretar Markdown/LaTeX).
   A grade de edição usa widgets comuns — nunca `st.data_editor` dentro de `st.dialog`.
-- **Atualizar** — "Consultar agora" (ou "Fazer primeira carga"), opção de atualização completa,
+- **Atualizar** — (fotografia atual ilegível, ausente ou adulterada: o erro aparece e esta aba oferece
+  "Fazer primeira carga" como carga completa, sem Cadastro) "Consultar agora" (ou "Fazer primeira carga"), opção de atualização completa,
   progresso, prévia do delta e "Gravar fotografia"; falha da API mostra a URL e mantém a fotografia
   anterior.
 - **Histórico de atualizações** — um manifesto por linha, a atual marcada.

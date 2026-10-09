@@ -8,7 +8,9 @@ campos vivem em outros módulos. Não importa Streamlit e não grava nada em dis
 
 Resiliência: erros transitórios (HTTP 5xx, timeout, falha de conexão) são repetidos até
 `tentativas` vezes, com pausa exponencial `pausa_base * 2**(n-1)`. HTTP 429 respeita o
-cabeçalho `Retry-After` numérico, quando houver. Demais 4xx abortam sem repetir. Esgotadas
+cabeçalho `Retry-After` numérico, finito e não negativo (limitado a 60 s); senão usa a pausa
+exponencial. Timeout, falha de conexão e ChunkedEncodingError são transitórios; as demais
+`requests.RequestException` abortam sem repetir (`status` None). Demais 4xx abortam sem repetir. Esgotadas
 as tentativas, ou diante de JSON inválido, levanta `ErroApiContratosGov` — nunca devolve
 dado parcial em silêncio. Entre chamadas consecutivas há uma pequena pausa de cortesia
 (`pausa_entre_chamadas`). `dormir` é injetável para que os testes não esperem de verdade.
@@ -16,12 +18,14 @@ dado parcial em silêncio. Entre chamadas consecutivas há uma pequena pausa de 
 
 from __future__ import annotations
 
+import math
 import time
 from typing import Callable
 
 import requests
 
 URL_BASE = "https://contratos.comprasnet.gov.br"
+LIMITE_RETRY_AFTER = 60.0  # segundos: teto da pausa pedida pelo servidor
 
 
 class ErroApiContratosGov(RuntimeError):
@@ -60,6 +64,18 @@ class ClienteContratosGov:
         self.chamadas += 1
         return self._sessao.get(url, timeout=self._timeout)
 
+    @staticmethod
+    def _pausa_retry_after(resposta, padrao: float) -> float:
+        """`Retry-After` numérico, finito e não negativo, limitado a `LIMITE_RETRY_AFTER`;
+        qualquer outro valor (ausente, negativo, nan, inf, data) usa a pausa exponencial."""
+        try:
+            valor = float(resposta.headers.get("Retry-After"))
+        except (TypeError, ValueError):
+            return padrao
+        if not math.isfinite(valor) or valor < 0:
+            return padrao
+        return min(valor, LIMITE_RETRY_AFTER)
+
     def get_json(self, caminho: str) -> list | dict:
         url = f"{URL_BASE}{caminho}"
         for n in range(self._tentativas + 1):
@@ -67,13 +83,17 @@ class ClienteContratosGov:
             pausa = self._pausa_base * 2**n
             try:
                 resposta = self._requisitar(url)
-            except (requests.Timeout, requests.ConnectionError) as exc:
+            except (requests.Timeout, requests.ConnectionError, requests.exceptions.ChunkedEncodingError) as exc:
                 if ultima:
                     raise ErroApiContratosGov(
                         f"Falha de conexão com {url}: {exc}", url
                     ) from exc
                 self._dormir(pausa)
                 continue
+            except requests.RequestException as exc:  # demais falhas do requests: sem repetir
+                raise ErroApiContratosGov(
+                    f"Falha ao consultar {url}: {exc}", url
+                ) from exc
 
             status = resposta.status_code
             if status == 429 or status >= 500:
@@ -82,10 +102,7 @@ class ClienteContratosGov:
                         f"HTTP {status} ao consultar {url}", url, status
                     )
                 if status == 429:
-                    try:
-                        pausa = float(resposta.headers.get("Retry-After"))
-                    except (TypeError, ValueError):
-                        pass
+                    pausa = self._pausa_retry_after(resposta, pausa)
                 self._dormir(pausa)
                 continue
             if status >= 400:

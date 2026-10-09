@@ -91,7 +91,8 @@ ROTULO_SITUACAO = {
     "sem_vigencia": ("Sem vigência", "warn"),
 }
 ORDENACOES = {
-    "Ordenar: vencimento mais próximo": ("dias_para_vencer", True),
+    # Proximidade em módulo (|dias|): fora de Vigentes/A iniciar, o encerrado há mais tempo não vem primeiro.
+    "Ordenar: vencimento mais próximo": ("_dias_abs_ordem", True),
     "Maior valor global": ("_valor_global_ordem", False),
     "Nº do contrato": ("_numero_ordem", False),
 }
@@ -103,6 +104,13 @@ CABECALHOS_REGISTRO = [
 
 
 # ----------------------------------------------------------------------------- formatação
+
+def _legenda(texto: str) -> None:
+    """Texto da API como legenda, escapado como HTML: `st.caption` o interpretaria como Markdown/LaTeX
+    ("R$ 1,00 … R$ 2,00" virava fórmula; `*` e `_` viravam ênfase). Quebras viram espaço."""
+
+    st.markdown(f'<div class="ctg-legenda">{escape(" ".join(texto.split()))}</div>', unsafe_allow_html=True)
+
 
 def _nulo(valor: object) -> bool:
     return valor is None or bool(pd.isna(valor))
@@ -128,12 +136,21 @@ def _data_hora(texto: object) -> str:
         return str(texto)
 
 
+def _rotulo_documento(tipo: object) -> str:
+    """Rótulo do documento do fornecedor conforme o tipo da API."""
+
+    return {"JURIDICA": "CNPJ", "FISICA": "CPF"}.get(str(tipo), "Identificador")
+
+
 def _documento(digitos: object) -> str:
-    """CNPJ/CPF só com dígitos (texto) -> máscara de exibição; outro tamanho fica como veio."""
+    """CNPJ/CPF só com dígitos (texto) -> máscara de exibição; identificador com letras ou de outro
+    tamanho fica como veio."""
 
     if _nulo(digitos):
         return ""
     d = str(digitos)
+    if not d.isdigit():
+        return d
     if len(d) == 14:
         return f"{d[:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:]}"
     if len(d) == 11:
@@ -194,6 +211,7 @@ def _css_pagina() -> str:
 .ctg-vig {{ display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; color: {TEXT_MUTED}; }}
 .ctg-num {{ text-align: right; font-size: 15px; color: {TEXT}; font-variant-numeric: tabular-nums; }}
 .ctg-fonte {{ text-align: right; font-size: 13px; color: {TEXT_FAINT}; padding-top: 18px; }}
+.ctg-legenda {{ font-size: 13.5px; color: {TEXT_FAINT}; margin: 2px 0 8px; overflow-wrap: anywhere; }}
 .ctg-fonte code, .ctg-hash {{ font-size: 12.5px; }}
 .ctg-timeline {{ border-left: 2px solid {BORDER}; margin: 6px 0 0 6px; padding-left: 16px; }}
 .ctg-ev {{ position: relative; padding: 0 0 14px; }}
@@ -223,20 +241,25 @@ def _referencia() -> date:
 
 
 def _carregar(referencia: date):
-    """(fotografia, manifesto, contratos, termos, empenhos) da fotografia atual — tudo None sem
-    fotografia. Erro de leitura ou de dado para a página com a mensagem (nunca "sem dados")."""
+    """(fotografia, manifesto, contratos, termos, empenhos, erro) da fotografia atual — tudo None
+    sem fotografia. Erro de leitura ou de dado NÃO derruba a página: mostra a mensagem (nunca "sem
+    dados"), não exibe o Cadastro e deixa a aba Atualizar tratar a anterior como ausente
+    (`fotografia=None`, carga completa), para o usuário conseguir se recuperar."""
 
     try:
         fotografia, manifesto = contratosgov_extracao.carregar_atual()
         if fotografia is None:
-            return None, None, None, None, None
+            return None, None, None, None, None, None
         return (
             fotografia, manifesto, montar_contratos(fotografia, referencia),
-            montar_termos(fotografia), montar_empenhos(fotografia),
+            montar_termos(fotografia), montar_empenhos(fotografia), None,
         )
     except (contratosgov_extracao.FotografiaAusente, ValueError) as erro:
-        st.error(f"Não foi possível ler a fotografia atual do Contratos.gov.br: {erro}")
-        st.stop()
+        st.error(
+            f"Não foi possível ler a fotografia atual do Contratos.gov.br: {erro} "
+            "O Cadastro fica oculto até uma nova carga completa: use a aba **Atualizar**."
+        )
+        return None, None, None, None, None, erro
 
 
 def _carregar_complementos():
@@ -268,10 +291,10 @@ def _detalhe_contrato(linha, termos, empenhos, complemento, editavel: bool, sha1
     doc = _documento(linha["fornecedor_documento"])
     partes = [p for p in (
         linha["fornecedor_nome"] if not _nulo(linha["fornecedor_nome"]) else None,
-        f"{'CPF' if linha['fornecedor_tipo'] == 'FISICA' else 'CNPJ'} {doc}" if doc else None,
+        f"{_rotulo_documento(linha['fornecedor_tipo'])} {doc}" if doc else None,
         f"Processo {linha['processo']}" if not _nulo(linha["processo"]) else None,
     ) if p]
-    st.caption(" · ".join(partes))
+    _legenda(" · ".join(partes))
     st.markdown(
         grade_indicadores([
             ("Vigência atual", f"{_data(linha['vigencia_inicio'])} – {_data(linha['vigencia_fim'])}"),
@@ -284,7 +307,7 @@ def _detalhe_contrato(linha, termos, empenhos, complemento, editavel: bool, sha1
         unsafe_allow_html=True,
     )
     if not _nulo(linha["objeto"]):
-        st.caption(f"Objeto: {linha['objeto']}")
+        _legenda(f"Objeto: {linha['objeto']}")
 
     st.markdown(
         '<div class="cad-secao-dialogo">Complemento manual · não vem da API · nunca é alterado pela atualização</div>',
@@ -318,10 +341,13 @@ def _detalhe_contrato(linha, termos, empenhos, complemento, editavel: bool, sha1
         ordenados = termos.iloc[::-1]  # montar_termos ordena por assinatura crescente: mais recente primeiro
         for posicao, (_, termo) in enumerate(ordenados.iterrows()):
             titulo = " ".join(str(p) for p in (termo["tipo"], termo["numero"]) if not _nulo(p))
+            # Regra (decisão do controlador, a confirmar com o usuário): "novo valor global" nulo ou
+            # 0,00 é lido como "este termo não define novo valor" — mostra-se então o valor global
+            # do termo, rotulado como tal. O dado bruto permanece intacto na fotografia/tabela.
             valor = (
                 f"novo valor global {formatar_brl(termo['novo_valor_global'])}"
                 if not _nulo(termo["novo_valor_global"]) and termo["novo_valor_global"] != 0
-                else formatar_brl(termo["valor_global"])
+                else f"valor global do termo {formatar_brl(termo['valor_global'])}"
             )
             detalhes = [f"Assinado {_data(termo['data_assinatura'])}"]
             if not _nulo(termo["vigencia_inicio"]) or not _nulo(termo["vigencia_fim"]):
@@ -423,6 +449,7 @@ def _render_cadastro(contratos, termos, empenhos, manifesto, complementos, compl
 
     dados = contratos.assign(
         _valor_global_ordem=contratos["valor_global"].map(lambda v: float("nan") if _nulo(v) else float(v)),
+        _dias_abs_ordem=contratos["dias_para_vencer"].map(lambda d: float("nan") if _nulo(d) else float(abs(int(d)))),
         _numero_ordem=pd.to_numeric(contratos["ano_contrato"], errors="coerce") * 100000
         + pd.to_numeric(contratos["numero"].str.extract(r"^(\d{5})/", expand=False), errors="coerce"),
     )
@@ -448,8 +475,12 @@ def _render_cadastro(contratos, termos, empenhos, manifesto, complementos, compl
             registro = registro[registro["categoria"].astype("string") == categoria]
         termo_busca = busca.strip().casefold()
         if termo_busca:
+            # Dígitos casam com o documento do fornecedor só em busca numérica (sem letras, >= 4 dígitos):
+            # "ltda 2" não pode casar com todo CNPJ que contenha "2".
             digitos = "".join(ch for ch in termo_busca if ch.isdigit())
-            texto = registro[["numero", "fornecedor_nome", "processo", "objeto"]].fillna("").astype(str).agg(" ".join, axis=1)
+            if len(digitos) < 4 or any(ch.isalpha() for ch in termo_busca):
+                digitos = ""
+            texto = registro[["numero", "fornecedor_nome", "processo", "objeto"]].fillna("").astype(str).agg("\n".join, axis=1)  # "\n": a busca não atravessa campos
             achou = texto.str.casefold().str.contains(termo_busca, regex=False)
             if digitos:
                 achou |= registro["fornecedor_documento"].fillna("").astype(str).str.contains(digitos, regex=False)
@@ -547,6 +578,7 @@ def _render_cadastro(contratos, termos, empenhos, manifesto, complementos, compl
 def _consultar(fotografia, completa: bool, referencia: date) -> None:
     """Consulta a API e guarda fotografia nova + delta na sessão. Nada é gravado aqui."""
 
+    st.session_state.pop(CHAVE_CONSULTA, None)  # prévia antiga não sobrevive a uma nova consulta (nem falha)
     cliente = contratosgov_api.ClienteContratosGov()
     barra = st.progress(0.0, text="Consultando as listas de contratos…")
 
@@ -694,7 +726,7 @@ def _render_previa(consulta: dict, referencia: date) -> None:
                 st.rerun()
 
 
-def _render_atualizar(fotografia, contratos, referencia) -> None:
+def _render_atualizar(fotografia, contratos, referencia, erro_carga=None) -> None:
     st.markdown('<div class="cad-secao-titulo">Atualizar do Contratos.gov.br</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="cad-secao-desc">Consulta só de leitura. Nada é gravado antes de você confirmar; '
@@ -711,10 +743,16 @@ def _render_atualizar(fotografia, contratos, referencia) -> None:
         unsafe_allow_html=True,
     )
     if fotografia is None:
-        st.info(
-            "Ainda não há dados do Contratos.gov.br. Faça a primeira carga "
-            "(cerca de 2 chamadas por contrato, alguns minutos)."
-        )
+        if erro_carga is not None:
+            st.info(
+                "A fotografia atual não pôde ser lida (veja o erro no topo): a carga abaixo é completa e, "
+                "ao gravar, vira a nova fotografia atual. As anteriores continuam no histórico."
+            )
+        else:
+            st.info(
+                "Ainda não há dados do Contratos.gov.br. Faça a primeira carga "
+                "(cerca de 2 chamadas por contrato, alguns minutos)."
+            )
         if st.button("Fazer primeira carga", key="ctg_primeira_carga", type="primary"):
             _consultar(None, True, referencia)
     else:
@@ -790,7 +828,7 @@ st.markdown(css_cadastro(), unsafe_allow_html=True)
 st.markdown(_css_pagina(), unsafe_allow_html=True)
 
 referencia = _referencia()
-fotografia, manifesto, contratos, termos, empenhos = _carregar(referencia)
+fotografia, manifesto, contratos, termos, empenhos, erro_carga = _carregar(referencia)
 
 c_titulo, c_acao = st.columns([3, 1.3])
 with c_titulo:
@@ -813,14 +851,16 @@ if aviso:
 aba_cadastro, aba_atualizar, aba_historico = st.tabs(ABAS, key=CHAVE_ABA, on_change="rerun")
 
 with aba_cadastro:
-    if contratos is None:
+    if erro_carga is not None:
+        st.warning("Cadastro indisponível: a fotografia atual não pôde ser lida (veja o erro acima).")
+    elif contratos is None:
         st.info("Ainda não há dados do Contratos.gov.br. Faça a primeira carga na aba **Atualizar**.")
     else:
         complementos, complementos_ok = _carregar_complementos()
         _render_cadastro(contratos, termos, empenhos, manifesto, complementos, complementos_ok, referencia)
 
 with aba_atualizar:
-    _render_atualizar(fotografia, contratos, referencia)
+    _render_atualizar(fotografia, contratos, referencia, erro_carga)
 
 with aba_historico:
     _render_historico(manifesto)

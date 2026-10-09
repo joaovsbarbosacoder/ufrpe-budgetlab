@@ -13,7 +13,8 @@ Fluxo (spec §5):
      sem a chave `links`, que só traz URLs); ou mudou de lista (ativo <-> inativo). Os demais
      copiam o detalhe da fotografia anterior com `origem = "reaproveitado:<sha12>"`, onde o sha12
      é o da fotografia em que o detalhe foi realmente consultado (origem já reaproveitada é
-     mantida). Qualquer `ErroApiContratosGov` propaga: nada parcial é devolvido nem gravado.
+     mantida). Resposta fora do formato (lista que não é lista, item que não é objeto ou sem `id`) levanta
+     `ErroDadoContratosGov`. Qualquer `ErroApiContratosGov` propaga: nada parcial é devolvido nem gravado.
   2. `calcular_delta` compara a anterior com a nova, por contrato. Termos e NEs são comparados só
      entre contratos presentes nas duas fotografias (contrato novo/ausente já é a mudança).
      Vigência e valor global comparam o texto bruto da API (`vigencia_fim`, `valor_global`).
@@ -39,6 +40,7 @@ from pathlib import Path
 from typing import Callable
 
 from src.contratos_cadastro import (
+    ErroDadoContratosGov,
     data_iso,
     montar_contratos,
     montar_empenhos,
@@ -111,7 +113,7 @@ def carregar_atual(
         raise FotografiaAusente(
             f"O manifesto atual do cadastro de contratos aponta para {manifesto.arquivo}, que não "
             f"existe em {caminho.parent}. Restaure o arquivo (ele não é versionado no Git) ou faça "
-            "uma atualização completa."
+            "uma carga completa na aba Atualizar da página Contratos."
         )
     conteudo = caminho.read_bytes()
     sha = _sha256(conteudo)
@@ -153,8 +155,31 @@ def _sem_links(item: dict) -> dict:
     return {k: v for k, v in item.items() if k != "links"}
 
 
-def _so_contratos(itens: list[dict]) -> list[dict]:
-    return [i for i in itens if isinstance(i, dict) and i.get("tipo") == TIPO_CONTRATO]
+def _exigir_lista(resposta, endpoint: str) -> list:
+    """Resposta de endpoint de lista precisa ser uma lista JSON (nunca vira lista vazia em silêncio)."""
+    if not isinstance(resposta, list):
+        raise ErroDadoContratosGov(
+            f"Resposta de {endpoint} fora do formato: esperada lista JSON, veio {type(resposta).__name__}."
+        )
+    return resposta
+
+
+def _so_contratos(resposta, endpoint: str) -> list[dict]:
+    """Valida a lista (itens objeto) e mantém só `tipo == "Contrato"`; contrato sem `id` é erro."""
+    contratos = []
+    for posicao, item in enumerate(_exigir_lista(resposta, endpoint)):
+        if not isinstance(item, dict):
+            raise ErroDadoContratosGov(
+                f"Item {posicao} de {endpoint} fora do formato: esperado objeto JSON, veio {type(item).__name__}."
+            )
+        if item.get("tipo") != TIPO_CONTRATO:
+            continue
+        if item.get("id") in (None, ""):
+            raise ErroDadoContratosGov(
+                f"Item {posicao} de {endpoint} (número {item.get('numero')!r}) sem o campo 'id'."
+            )
+        contratos.append(item)
+    return contratos
 
 
 def _precisa_detalhe(
@@ -187,8 +212,8 @@ def consultar(
     """
     consultado_em = _agora_iso(agora)
     ug = UG_UFRPE
-    lista_ativos = _so_contratos(cliente.contratos_ug(ug))
-    lista_inativos = _so_contratos(cliente.contratos_inativos_ug(ug))
+    lista_ativos = _so_contratos(cliente.contratos_ug(ug), f"/api/contrato/ug/{ug}")
+    lista_inativos = _so_contratos(cliente.contratos_inativos_ug(ug), f"/api/contrato/inativo/ug/{ug}")
 
     sha12 = None
     if anterior is not None and not completa:
@@ -213,8 +238,8 @@ def consultar(
         progresso(0, total)
     for n, cid in enumerate(alvos, start=1):
         detalhes[cid] = {
-            "historico": cliente.historico(cid),
-            "empenhos": cliente.empenhos(cid),
+            "historico": _exigir_lista(cliente.historico(cid), f"/api/contrato/{cid}/historico"),
+            "empenhos": _exigir_lista(cliente.empenhos(cid), f"/api/contrato/{cid}/empenhos"),
             "consultado_em": consultado_em,
             "origem": "consulta",
         }

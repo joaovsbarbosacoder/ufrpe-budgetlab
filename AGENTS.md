@@ -111,3 +111,11 @@ Ao atualizar as planilhas de trabalho em `data/raw/`:
   `CAMINHO_BASE` para o arquivo novo.
 - O mesmo raciocínio vale para `tests/fixtures/execucao_anual_manifesto_formato_antigo.json`,
   fixture equivalente para o formato antigo do manifesto de Execução Anual.
+- `tests/fixtures/contratosgov_2026-10-08.json` é a fotografia congelada do
+  Contratos.gov.br (UG 153165, 6 contratos), lida pelos testes de
+  `src/contratos_cadastro.py` e `src/contratosgov_extracao.py` (e da página
+  Contratos), no lugar de `data/raw/contratosgov/` (fotografias gravadas pela
+  própria página, imutáveis e não versionadas). Os CPFs de pessoa física estão
+  anonimizados. Mesma regra: não a sobrescreva automaticamente; para trocá-la,
+  crie um arquivo novo com a data de referência e recalcule à mão os valores
+  esperados.

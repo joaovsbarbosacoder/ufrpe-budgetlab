@@ -16,7 +16,8 @@ Decisões:
   passada como parâmetro (testes determinísticos).
 - Nenhuma regra de derivação do valor mensal é presumida (`valor_parcela` vem como está).
 - Códigos (id, número, UG, gestão, NE, fonte, natureza, CNPJ/CPF) são sempre texto, com zeros
-  iniciais preservados; `fornecedor_documento` guarda só os dígitos.
+  iniciais preservados; `fornecedor_documento` guarda CNPJ/CPF sem
+  pontuação (tipo JURIDICA/FISICA); identificador genérico fica como veio, apenas aparado.
 - Valores monetários: texto brasileiro ("830.906,44") -> Decimal (colunas dtype object).
   Vazio/None -> nulo; zero e negativo preservados; formato fora do padrão -> erro.
 - `qualificacao_termo` vem da API como lista de {codigo, descricao} (achado da fixture de
@@ -196,6 +197,23 @@ def _df(linhas, colunas, monetarias) -> pd.DataFrame:
     return df
 
 
+def _documento_fornecedor(valor: str | None, tipo) -> str | None:
+    """Tira a pontuação (`.`, `-`, `/`, espaços) só de CNPJ (JURIDICA, 14 posições) e CPF (FISICA,
+    11 dígitos). Qualquer outro caso (identificador genérico, tamanho inesperado) fica como veio,
+    apenas aparado: valor não vazio nunca vira nulo e letras nunca são descartadas."""
+    if valor is None:
+        return None
+    bruto = valor.strip()
+    if not bruto:
+        return None
+    limpo = re.sub(r"[.\-/\s]", "", bruto)
+    if tipo == "JURIDICA" and len(limpo) == 14 and limpo.isalnum():
+        return limpo
+    if tipo == "FISICA" and len(limpo) == 11 and limpo.isdigit():
+        return limpo
+    return bruto
+
+
 def montar_contratos(fotografia: dict, referencia: date) -> pd.DataFrame:
     linhas = []
     for item, inativo, endpoint in _ids_dos_contratos(fotografia):
@@ -216,7 +234,7 @@ def montar_contratos(fotografia: dict, referencia: date) -> pd.DataFrame:
             raise _erro(cid, endpoint, "fornecedor", "esperado objeto JSON")
         forn = forn or {}
         doc = _texto(forn.get("cnpj_cpf_idgener"), cid, endpoint, "fornecedor.cnpj_cpf_idgener")
-        doc = re.sub(r"\D", "", doc) if doc else None
+        doc = _documento_fornecedor(doc, forn.get("tipo"))
         numero = _texto(item["numero"], cid, endpoint, "numero")
         m = _RE_NUMERO.match(numero or "")
         ini, fim = d("vigencia_inicio"), d("vigencia_fim")

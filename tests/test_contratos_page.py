@@ -187,3 +187,125 @@ def test_remocao_exige_ciencia_para_gravar(dirs, monkeypatch):
     _botao(app, "Gravar fotografia").click().run()
     assert not app.exception, [e.value for e in app.exception]
     assert len(contratosgov_extracao.historico_atualizacoes()) == 2
+
+
+# --------------------------------------------------------------------------------------
+# Correções da revisão final
+# --------------------------------------------------------------------------------------
+
+def _numeros_na_ordem(app: AppTest) -> list[str]:
+    """Números de contrato na ordem em que as linhas do registro aparecem."""
+    achados = []
+    for b in app.markdown:
+        trecho = str(b.value)
+        if 'class="cad-tit"' in trecho:
+            achados.append(trecho.split('class="cad-tit">')[1].split("<")[0])
+    return achados
+
+
+def _aba(app: AppTest, rotulo: str) -> None:
+    app.segmented_control(key="cad_abas_ctg").set_value(rotulo).run()
+    assert not app.exception, [e.value for e in app.exception]
+
+
+def test_fotografia_ausente_mostra_erro_e_permite_nova_carga(dirs, monkeypatch):
+    manifesto = _gravar_fixture(dirs)
+    (dirs[1] / manifesto.arquivo).unlink()
+    monkeypatch.setattr(contratosgov_api, "ClienteContratosGov", _ClienteFalso)
+    app = _app()  # não pode levantar exceção
+    erros = "\n".join(str(e.value) for e in app.error)
+    assert manifesto.arquivo in erros and "aba **Atualizar**" in erros
+    assert not any(b.label == "Consultar agora" for b in app.button)  # nenhum dado do Cadastro
+    _botao(app, "Fazer primeira carga").click().run()
+    assert not app.exception, [e.value for e in app.exception]
+    _botao(app, "Gravar fotografia").click().run()
+    assert not app.exception, [e.value for e in app.exception]
+    assert len(contratosgov_extracao.historico_atualizacoes()) == 2
+    assert not app.error  # a nova fotografia é a atual e legível
+
+
+def test_fotografia_adulterada_tambem_nao_derruba_a_pagina(dirs):
+    manifesto = _gravar_fixture(dirs)
+    caminho = dirs[1] / manifesto.arquivo
+    caminho.write_bytes(caminho.read_bytes() + b"\n")
+    app = _app()
+    assert "sha256" in "\n".join(str(e.value) for e in app.error)
+    _botao(app, "Fazer primeira carga")
+
+
+def test_nova_consulta_que_falha_descarta_a_previa_antiga(dirs, monkeypatch):
+    _gravar_fixture(dirs)
+    monkeypatch.setattr(contratosgov_api, "ClienteContratosGov", _ClienteFalso)
+    app = _app()
+    _botao(app, "Consultar agora").click().run()
+    assert not app.exception, [e.value for e in app.exception]
+    _botao(app, "Gravar fotografia")  # prévia da primeira consulta na tela
+
+    monkeypatch.setattr(contratosgov_api, "ClienteContratosGov", _ClienteQueFalha)
+    _botao(app, "Consultar agora").click().run()
+    assert not app.exception, [e.value for e in app.exception]
+    assert app.error
+    assert not any(b.label == "Gravar fotografia" for b in app.button)
+
+
+def test_busca_com_letras_nao_casa_por_digitos_do_documento(dirs):
+    _gravar_fixture(dirs)
+    app = _app()
+    _aba(app, "Todos")
+    assert len(_numeros_na_ordem(app)) == 6
+    app.text_input(key="ctg_busca").set_value("ltda 2").run()
+    assert not app.exception, [e.value for e in app.exception]
+    assert _numeros_na_ordem(app) == []
+    assert "0 contrato(s)" in _textos(app)
+
+
+def test_busca_numerica_curta_nao_casa_documento_mas_longa_sim(dirs):
+    _gravar_fixture(dirs)
+    app = _app()
+    _aba(app, "Todos")
+    app.text_input(key="ctg_busca").set_value("1004").run()  # 4 dígitos: casa o documento de ninguém aqui
+    assert _numeros_na_ordem(app) == []
+    app.text_input(key="ctg_busca").set_value("05.340.639/0001").run()
+    assert _numeros_na_ordem(app) == ["00013/2026"]
+
+
+def test_vencimento_mais_proximo_nao_poe_o_encerrado_ha_mais_tempo_primeiro(dirs):
+    _gravar_fixture(dirs)
+    app = _app()
+    _aba(app, "Todos")
+    ordem = _numeros_na_ordem(app)
+    # |dias| crescente: 00029/2021 (9), 00021/2017 (232), 00013/2026 (337), 00021/2023 (360),
+    # 00018/2014 (495 vencidos), 00011/2017 (3.403 vencidos, inativo)
+    assert ordem == ["00029/2021", "00021/2017", "00013/2026", "00021/2023", "00018/2014", "00011/2017"]
+
+
+def test_texto_da_api_no_detalhe_nao_e_interpretado_como_markdown(dirs):
+    nova = _fixture()
+    primeiro = nova["lista_ativos"][0]
+    primeiro["objeto"] = "Pagar R$ 1,00 e R$ 2,00 com *ênfase* e _traço_"
+    primeiro["fornecedor"]["nome"] = "A $ B * C"
+    gravar(
+        nova, calcular_delta(None, nova), importado_em=datetime(2026, 10, 8, 9, 45),
+        referencia=REF, dir_manifestos=dirs[0], dir_fotografias=dirs[1],
+    )
+    app = _app()
+    _aba(app, "Todos")
+    botoes = [b for b in app.button if b.key == f"ctg_detalhe_{primeiro['id']}"]
+    assert botoes
+    botoes[0].click().run()
+    assert not app.exception, [e.value for e in app.exception]
+    legendas = [str(b.value) for b in app.markdown if "ctg-legenda" in str(b.value)]
+    assert any("Pagar R$ 1,00 e R$ 2,00 com *ênfase* e _traço_" in t for t in legendas)
+    assert any("A $ B * C" in t for t in legendas)
+    assert not any("Objeto:" in str(c.value) for c in app.caption)
+
+
+def test_termo_sem_novo_valor_global_rotula_o_valor_do_termo(dirs):
+    _gravar_fixture(dirs)
+    cid = next(c for c, d in _fixture()["detalhes"].items() if d["historico"])
+    app = _app()
+    _aba(app, "Todos")
+    [b for b in app.button if b.key == f"ctg_detalhe_{cid}"][0].click().run()
+    assert not app.exception, [e.value for e in app.exception]
+    linha_do_tempo = "".join(str(b.value) for b in app.markdown if "ctg-timeline" in str(b.value))
+    assert "valor global do termo R$" in linha_do_tempo or "novo valor global R$" in linha_do_tempo

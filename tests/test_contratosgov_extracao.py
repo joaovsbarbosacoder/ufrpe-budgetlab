@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from src import contratosgov_extracao as ext
-from src.contratos_cadastro import data_iso, montar_contratos, resumo, situacao_vigencia
+from src.contratos_cadastro import ErroDadoContratosGov, data_iso, montar_contratos, resumo, situacao_vigencia
 from src.contratosgov_api import ErroApiContratosGov
 from src.contratosgov_extracao import (
     ConfirmacaoNecessaria,
@@ -225,6 +225,53 @@ def test_falha_no_meio_propaga_e_nao_grava(tmp_path):
     assert not dir_m.exists() and not dir_f.exists()
     assert list(tmp_path.iterdir()) == []
     assert carregar_atual(dir_m, dir_f) == (None, None)
+
+
+class _ClienteComResposta(ClienteFalso):
+    """ClienteFalso que substitui a resposta de um método (resposta fora do formato)."""
+
+    def __init__(self, foto, metodo, resposta):
+        super().__init__(foto)
+        self._metodo, self._resposta = metodo, resposta
+
+    def __getattribute__(self, nome):
+        if nome == object.__getattribute__(self, "_metodo"):
+            resposta = object.__getattribute__(self, "_resposta")
+            return lambda *a, **k: copy.deepcopy(resposta)
+        return super().__getattribute__(nome)
+
+
+@pytest.mark.parametrize("metodo", ["contratos_ug", "contratos_inativos_ug"])
+def test_lista_que_nao_e_lista_levanta_erro_de_dado(metodo):
+    cliente = _ClienteComResposta(fixture(), metodo, {"message": "erro"})
+    with pytest.raises(ErroDadoContratosGov, match="/api/contrato/"):
+        consultar(cliente, None, referencia=REF, agora=AGORA)
+
+
+@pytest.mark.parametrize("metodo", ["historico", "empenhos"])
+def test_detalhe_que_nao_e_lista_levanta_erro_de_dado(metodo):
+    cliente = _ClienteComResposta(fixture(), metodo, {"message": "erro"})
+    with pytest.raises(ErroDadoContratosGov, match=metodo):
+        consultar(cliente, None, referencia=REF, agora=AGORA)
+
+
+def test_item_da_lista_que_nao_e_objeto_levanta_erro_de_dado():
+    cliente = _ClienteComResposta(fixture(), "contratos_ug", ["texto solto"])
+    with pytest.raises(ErroDadoContratosGov, match="/api/contrato/ug/"):
+        consultar(cliente, None, referencia=REF, agora=AGORA)
+
+
+def test_item_da_lista_sem_id_levanta_erro_de_dado():
+    item = {k: v for k, v in fixture()["lista_ativos"][0].items() if k != "id"}
+    cliente = _ClienteComResposta(fixture(), "contratos_ug", [item])
+    with pytest.raises(ErroDadoContratosGov, match="id"):
+        consultar(cliente, None, referencia=REF, agora=AGORA)
+
+
+def test_instrumento_de_outro_tipo_sem_id_e_apenas_filtrado():
+    cliente = _ClienteComResposta(fixture(), "contratos_ug", [{"id": 1, "tipo": "Empenho"}])
+    nova = consultar(cliente, None, referencia=REF, agora=AGORA)
+    assert nova["lista_ativos"] == []
 
 
 # --------------------------------------------------------------------------------------
@@ -438,6 +485,18 @@ def test_fotografia_alterada_depois_de_gravada_e_erro(tmp_path):
 
     with pytest.raises(ValueError, match="sha256"):
         carregar_atual(tmp_path / "manifestos", tmp_path / "raw")
+
+
+def test_gravar_com_dado_invalido_aborta_sem_escrever(tmp_path):
+    nova = fixture()
+    nova["lista_ativos"][0]["valor_global"] = "abc"
+    delta = calcular_delta(None, nova)
+
+    with pytest.raises(ErroDadoContratosGov, match="valor_global"):
+        _gravar(nova, delta, tmp_path)
+
+    assert not (tmp_path / "manifestos").exists() and not (tmp_path / "raw").exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_so_escreve_nos_diretorios_previstos(tmp_path):

@@ -366,5 +366,31 @@ class ErrosDeFormatoTest(unittest.TestCase):
         self.assertIs(t["retroativo"], True)
 
 
+class DocumentoDoFornecedorTest(unittest.TestCase):
+    """`fornecedor_documento`: pontuação só sai de CNPJ/CPF; identificador genérico fica como veio."""
+
+    def _doc(self, tipo, valor):
+        item = _item_minimo(fornecedor={"tipo": tipo, "cnpj_cpf_idgener": valor, "nome": "X"})
+        return montar_contratos(_foto_minima(ativos=[item]), REF).iloc[0]["fornecedor_documento"]
+
+    def test_identificador_generico_alfanumerico_preservado(self):
+        self.assertEqual(self._doc("IDGENERICO", " AB-123/x "), "AB-123/x")
+
+    def test_identificador_generico_sem_digitos_nao_vira_nulo(self):
+        self.assertEqual(self._doc("IDGENERICO", "SEM-DOC"), "SEM-DOC")
+
+    def test_juridica_so_digitos_com_zeros_iniciais(self):
+        self.assertEqual(self._doc("JURIDICA", "00.000.000/0001-00"), "00000000000100")
+
+    def test_fisica_so_digitos_com_zeros_iniciais(self):
+        self.assertEqual(self._doc("FISICA", "000.000.001-91"), "00000000191")
+
+    def test_juridica_fora_do_tamanho_fica_como_veio(self):
+        self.assertEqual(self._doc("JURIDICA", " 12.345 "), "12.345")
+
+    def test_documento_vazio_continua_nulo(self):
+        self.assertIsNone(self._doc("JURIDICA", ""))
+
+
 if __name__ == "__main__":
     unittest.main()

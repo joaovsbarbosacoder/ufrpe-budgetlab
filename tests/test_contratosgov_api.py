@@ -114,3 +114,31 @@ def test_pausa_entre_chamadas_so_apos_a_primeira():
     assert pausas == []
     cliente.contratos_ug("2")
     assert pausas == [0.2]
+
+
+def test_chunked_encoding_error_e_repetido():
+    cliente, sessao, _ = _cliente(requests.exceptions.ChunkedEncodingError(), _resposta(dados=[1]))
+    assert cliente.contratos_ug("1") == [1]
+    assert sessao.get.call_count == 2
+
+
+def test_outra_excecao_do_requests_vira_erro_sem_repetir():
+    cliente, sessao, _ = _cliente(requests.exceptions.InvalidURL("url ruim"), _resposta(dados=[1]))
+    with pytest.raises(ErroApiContratosGov) as exc:
+        cliente.contratos_ug("1")
+    assert exc.value.status is None
+    assert exc.value.url.endswith("/api/contrato/ug/1")
+    assert sessao.get.call_count == 1
+
+
+@pytest.mark.parametrize("retry_after", ["-5", "nan", "inf", "-inf", "abc"])
+def test_retry_after_invalido_cai_na_pausa_exponencial(retry_after):
+    cliente, _, pausas = _cliente(_resposta(429, headers={"Retry-After": retry_after}), _resposta(dados=[]))
+    cliente.contratos_ug("1")
+    assert pausas == [2.0]
+
+
+def test_retry_after_grande_e_limitado_a_60_segundos():
+    cliente, _, pausas = _cliente(_resposta(429, headers={"Retry-After": "600"}), _resposta(dados=[]))
+    cliente.contratos_ug("1")
+    assert pausas == [60.0]
