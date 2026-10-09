@@ -274,6 +274,35 @@ projeção até a data ser corrigida no card; a competência dos últimos meses 
 defasada, o que afeta o saldo e o realizado desses meses; a data de início só é considerada
 quando informada.
 
+### Contratos (Contratos.gov.br)
+
+A página **Contratos** é um cadastro dos contratos da UG 153165 montado a partir da API pública do
+Contratos.gov.br (somente leitura, sem credencial), independente de Contratos Contínuos e de
+Contratos — Vigência. Recorte: instrumentos do tipo "Contrato", todos os anos, ativos e inativos
+(empenhos substitutivos ficam fora). Detalhes (endpoints, formato, regras de conversão) em
+`docs/contratosgov.md`.
+
+- **Fotografia versionada.** Cada atualização confirmada grava um JSON imutável em
+  `data/raw/contratosgov/` (hash no nome, nunca sobrescrito) e um manifesto em `data/manifestos/`;
+  a página sempre lê a fotografia atual e mostra o histórico de atualizações. Nada é consultado na
+  rede ao abrir a página.
+- **Atualização incremental, com prévia.** O botão "Consultar agora" reconsulta o detalhe (termos e
+  NEs) só de vigentes, a iniciar, novos e alterados; os demais reaproveitam a fotografia anterior
+  (ou "atualização completa" reconsulta todos). A prévia mostra o delta (contratos, termos, vigência,
+  valor global, NEs); remoção de contrato, termo ou NE exige "Estou ciente da remoção". A gravação é
+  tudo ou nada e uma falha de API mantém a fotografia anterior.
+- **Vigência calculada pelas datas.** A `situacao` da API não é confiável (muitos "Ativo" já vencidos),
+  então a situação (vigente, a iniciar, encerrado, inativo) sai das datas, com a data de referência
+  de hoje.
+- **Complementos manuais.** O valor mensal (a parcela da API não é confiável, e nenhuma derivação é
+  presumida) e as observações são digitados no detalhe e gravados à parte em
+  `data/contratos/complementos.json`; a atualização nunca os altera, e o complemento de contrato
+  ausente da API é preservado. Nulo, zero e negativo são sempre distintos; códigos e CNPJ/CPF ficam
+  como texto, com zeros iniciais.
+- **Fixture congelada.** Os testes leem `tests/fixtures/contratosgov_2026-10-08.json` (CPFs de
+  pessoa física anonimizados), nunca de `data/`; ela não é sobrescrita automaticamente — o
+  procedimento para atualizá-la deliberadamente está em `docs/contratosgov.md`.
+
 ### Emendas Parlamentares
 
 O relatório **Emendas — Acompanhamento** possui leitor específico em
