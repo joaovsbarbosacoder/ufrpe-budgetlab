@@ -99,6 +99,8 @@ page = st.navigation(
         # (código mantido em app_pages/contratos_pagamentos.py e
         # src/contratos_pagamentos.py, pronta pra reativar bastando devolver o st.Page abaixo).
         "Contratos": [
+            # Cadastro de contratos a partir do Contratos.gov.br (08/10/2026) — primeiro do grupo.
+            st.Page("app_pages/contratos.py", title="Contratos", icon="📑"),
             st.Page(
                 "app_pages/contratos_continuos.py",
                 title="Contratos Contínuos",
