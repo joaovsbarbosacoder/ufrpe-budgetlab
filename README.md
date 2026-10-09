@@ -503,11 +503,15 @@ drill-down), Conciliação (SIMEC × Tesouro Gerencial), Células NC × NE, Cent
 Importações (assistente de 4 passos: Arquivo → Mapeamento → Validação → Confirmação) e
 Configurações. Dezenove
 alertas estão implementados: empenho associado a mais de um TED; NC sem UG emitente (achado
-real da extração do SIMEC, não do briefing original — a coluna vem vazia em cerca de 41% das
-linhas); e três de conciliação SIMEC (NC líquida e PF líquido dos documentos importados contra os
-totais consolidados, e PF líquido maior que a NC líquida) e seis de validação cadastral e de
+real da extração do SIMEC, não do briefing original — a coluna vem vazia em cerca de 28% das
+NCs; um alerta de gravidade baixa por TED, com a lista das NCs); e três de conciliação SIMEC (NC líquida
+e PF líquido dos documentos importados contra os totais consolidados, e PF líquido maior que a NC
+líquida; comparados só na janela de anos que o consolidado cobre, sem alerta quando o TED não tem
+documento do tipo no extrato ou quando a vigência começa antes do consolidado, e sem decidir por
+documentos sem data) e seis de validação cadastral e de
 vigência (vigência invertida, SIAFI em mais de um TED, TED sem UG descentralizadora, documento
-fora da vigência, TED vencido ainda em execução e TED em execução sem movimentação) e três de
+fora da vigência, TED vencido ainda em execução e TED em execução sem movimentação — esta considera
+também liquidação e pagamento no Tesouro) e três de
 execução por NE no Tesouro Gerencial (liquidado maior que empenhado, pago maior que liquidado e
 valor da NE no SIMEC diferente do empenhado do Tesouro, sempre pelo acumulado da NE) e um de importação
 (o total do rodapé do relatório do SIMEC deve bater com a soma das linhas importadas; no DOC NC e no DOC PF
@@ -516,8 +520,14 @@ código SIAFI na Execução Anual (a linha não é importada e o TED fica fora d
 de 90 dias) e um de célula orçamentária (a célula da NE — PTRES, fonte detalhada, natureza e Plano Interno — não consta
 entre as células das NCs do mesmo TED e exercício, lidas dos relatórios de NC do Tesouro Gerencial; é alerta para
 conferência, nunca conclusão de uso indevido). Os demais alertas previstos no
-briefing original (crédito sem empenho etc.) ficam para uma fase seguinte, fora do
-escopo já aprovado.
+briefing original ficam para uma fase seguinte, fora do escopo já aprovado.
+
+Revisão de 08/10/2026: a reavaliação de alertas fecha sozinha, com justificativa "Regra revisada em
+08/10/2026…" e auditoria, os alertas abertos dos cinco tipos de regra revista que as regras atuais não
+sustentam mais. Na página Conciliação, a seção "Conferir com a planilha de controle" lê a planilha
+`CONTROLE DESC.CREDITOS ATUALIZADA.xlsx` enviada pelo usuário **em memória** (nunca é gravada nem alimenta
+as regras), confere as NCs do SIMEC com ela, oferece o resultado em Excel e permite resolver alertas
+relacionados com justificativa pré-preenchida (só com o clique do usuário). Ver `docs/base_teds.md` §9.1–9.2.
 
 A fonte do Tesouro Gerencial é a mesma extração de Execução Mensal já usada por outra página
 do projeto (`src/tesouro_execucao_mensal.py`) — não uma extração separada. Na página
