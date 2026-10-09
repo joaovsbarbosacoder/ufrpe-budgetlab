@@ -423,8 +423,48 @@ Roda `sincronizar_alertas_rodape`, `_nc_parcial`, `_conciliacao_simec`, `_cadast
 real, as importações de 22/09 antecediam as regras de 23–24/09, e uma prévia em cópia do banco mostrou
 38 alertas que nunca tinham sido gerados (12 de PF que difere do consolidado).
 
+## 12. TEDs do TransfereGov (`src/teds_transferegov.py`, implementado em 08/10/2026)
+
+**Por que existe.** Os TEDs do MEC tramitam no SIMEC; os de outros órgãos, no TransfereGov, e ficavam fora do
+módulo. No levantamento de 08/10/2026 nenhuma NC do TransfereGov coincidia com as do SIMEC. Fonte: API de dados
+abertos (PostgREST, sem autenticação, só leitura, até 1.000 linhas por resposta).
+
+**O que é consultado.** `plano_acao` com `sigla_unidade_responsavel_execucao=eq.UFRPE`; a partir dos planos,
+`programa` (concedente), `termo_execucao`, `nota_credito` (do plano **ou** com UG favorecida 153165), `evento`
+das NCs, `programacao_financeira` (idem) e `trf` das PFs. Paginação por `offset` com `order` estável.
+
+**Persistência.** Tabelas próprias, separadas de `ted`/`documento_nc`/`documento_pf` para as regras do SIMEC
+(SIAFI, Execução Anual) não acusarem divergências falsas: `tg_ted` (um por plano de ação, chave `id_plano_acao`;
+o número do TED é `sq_instrumento/aa_instrumento`, vazio enquanto o plano não tem termo), `tg_nota_credito`,
+`tg_nc_evento`, `tg_programacao_financeira`, `tg_pf_trf` e `tg_extracao_bruta` (resposta inteira, append-only).
+Evento e TRF não têm identificador na API: a chave é o conteúdo da linha + número da ocorrência. Códigos como
+texto (zeros à esquerda preservados), valores como texto decimal exato, nulo continua nulo. As cinco tabelas
+estão em `TABELAS_VERSIONADAS`, então o lote pode ser revertido. Idempotente pelo SHA-256 do JSON canônico da
+resposta (linhas ordenadas, sem a hora da consulta); a sincronização nunca apaga linha que a API deixe de trazer.
+
+**Decisões.**
+- **Nenhum total de NC ou PF** é calculado: o significado de `cd_evento` (300300, 300302, 300306, 300309) e da
+  situação contábil da TRF (TRF003, TRF004, TRF027) não foi confirmado — só o 300302 aparece como "estorno" no
+  texto das NCs, e somando 300300 − 300302 − 300306 a NC líquida batia com o valor do plano em só 12 de 38 TEDs.
+  O lote não tem soma bruta/líquida; a tela mostra cada valor ao lado do código.
+- **Valor do plano** é informativo (não é teto das NCs: aditivos e valores por exercício).
+- **NE:** a API não traz NE. `indicios_ne` cruza (exercício, PTRES, fonte detalhada, natureza, PI) dos eventos
+  das NCs para a UG 153165 com `ne_celula`; é indício para conferência, **nunca vínculo**, e não gera alerta.
+- **Sem alertas** nesta etapa: nenhuma regra de alerta lê as tabelas `tg_*`.
+
+**Telas.** Importações: "Sincronizar com o TransfereGov". Lista: seletor "Origem" → lista e detalhe por plano
+(NCs com eventos, PFs com TRF, NEs com célula coincidente). Visão geral: bloco só com quantidades.
+
+**Validação com a API real (08/10/2026, cópia do banco):** 53 planos (38 com termo), 93 NCs, 104 eventos, 80 PFs,
+84 linhas TRF, nenhuma rejeitada; segunda sincronização sem mudança = no-op; 44 NEs com célula coincidente,
+nenhuma já vinculada a TED do SIMEC; nenhum alerta novo.
+
+**Pendências:** significado dos códigos de evento e de TRF (bloqueia qualquer total ou conciliação NC × PF ×
+execução); NC para a UFRPE ligada a plano de outra executora (3 no levantamento) aparece só nos indícios de NE.
+
 ## 10. O que NÃO foi aprovado ainda
 
+- Totais, conciliação e alertas dos TEDs do TransfereGov (seção 12) — dependem do significado dos códigos.
 - Alertas além dos dezenove da seção 8.
 - Edição do mapeamento de colunas na tela de Importações.
 - Campo de observação manual por TED.

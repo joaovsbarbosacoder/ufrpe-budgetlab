@@ -540,6 +540,20 @@ nem altera os existentes nem os dados importados, e a execução fica na trilha 
 NE em mais de um TED (recalcula `status_validacao`) nem TED sem SIAFI (depende das linhas rejeitadas de uma
 leitura).
 
+**TEDs de outros órgãos (TransfereGov).** Os TEDs do MEC tramitam no SIMEC; os de outros órgãos (MDA, INCRA,
+MPA, MDS…) tramitam no TransfereGov e entram pela API de dados abertos
+(`https://api.transferegov.gestao.gov.br/ted/`, `src/teds_transferegov.py`), com o botão "Sincronizar com o
+TransfereGov" em Importações. É uma origem separada, em tabelas próprias (`tg_*`): não entra nos totais, na
+conciliação nem nos alertas dos TEDs do SIMEC. Na Lista, o seletor "Origem" mostra esses TEDs (planos de ação
+em que a UFRPE é executora, com termo, NCs e seus eventos, PFs e suas linhas TRF); a Visão geral traz só as
+quantidades. **Nenhum total de NC/PF é calculado:** o significado dos códigos de evento da NC (300300, 300302…)
+e da situação contábil da TRF (TRF003, TRF004…) não foi confirmado, então os valores aparecem sem sinal, ao lado
+do código. As NEs da Execução Mensal com a mesma célula (exercício, PTRES, fonte, natureza e PI) de um evento de
+NC aparecem como indício para conferência, nunca como vínculo. A sincronização é um lote como os demais
+(idempotente pelo SHA-256 da resposta, reversível, JSON bruto guardado em `tg_extracao_bruta`). Validado em
+08/10/2026 com a API real: 53 planos, 93 NCs, 104 eventos, 80 PFs, 84 linhas TRF e 44 NEs com célula
+coincidente, nenhuma delas já vinculada a TED do SIMEC.
+
 O contrato completo (tabelas, chaves e decisões de projeto) está em
 `docs/base_teds.md`.
 

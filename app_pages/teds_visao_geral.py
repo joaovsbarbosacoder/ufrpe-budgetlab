@@ -41,6 +41,7 @@ from src.teds_ui import (
     rotulo_tipo_alerta,
     soma_tg_por_teds,
 )
+from src.ui_teds_transferegov import render_resumo_visao_geral as render_resumo_transferegov
 from src.ui_theme import render_page_header
 
 injetar_css()
@@ -58,6 +59,7 @@ if teds_df.empty:
         'Nenhum TED importado ainda. Vá em "Importações" (barra lateral) e envie ao menos a '
         "planilha de Execução: Orçamentário e Financeiro."
     )
+    render_resumo_transferegov(conn)
     st.stop()
 
 # ---------------------------------------------------------------------- filtros e ação principal
@@ -226,3 +228,7 @@ if cobertura.qtd_documentos_nao_relacionados or cobertura.qtd_documentos_parciai
     )
 else:
     st.success("Todos os documentos de NC e PF importados têm TED identificado.")
+
+# ---------------------------------------------------------------------- TEDs do TransfereGov
+# Base separada (outros órgãos, `src/teds_transferegov.py`): só quantidades, não entra nos KPIs acima.
+render_resumo_transferegov(conn)

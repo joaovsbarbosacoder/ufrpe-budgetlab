@@ -61,6 +61,13 @@ from src.teds_lotes import (
 )
 from src.teds_normalizacao import ColunaObrigatoriaAusente, mapear_colunas
 from src.teds_reversao import ReversaoNaoPermitida, lotes_reversiveis, reverter_lote
+from src.teds_transferegov import (
+    TIPO_TRANSFEREGOV,
+    ErroConsultaTransfereGov,
+    baixar_extracao,
+    sincronizar_transferegov,
+    ultimo_lote_transferegov,
+)
 from src.teds_ui import brl, conexao, formatar_historico_lotes, historico_importacoes, injetar_css, render_kpi_strip, rotulo_tipo_alerta
 from src.ui_theme import render_page_header
 
@@ -74,6 +81,7 @@ _ROTULO_LOTE = {
     "simec_doc_ne": "SIMEC — DOC NE", "simec_doc_pf": "SIMEC — DOC PF",
     "tesouro_gerencial_execucao": "Tesouro Gerencial — Execução",
     TIPO_NC_TG_HISTORICA: "Tesouro Gerencial — NC (Destaques)", TIPO_NC_TG_2026: "Tesouro Gerencial — NC 2026",
+    TIPO_TRANSFEREGOV: "TransfereGov — TEDs (API)",
 }
 
 _TIPOS = {
@@ -134,6 +142,43 @@ else:
             )
             for rejeitada in resultado_tg.rejeitadas[:10]:
                 st.caption(f"Rejeitada: {rejeitada.motivo}")
+
+st.markdown("#### TransfereGov — TEDs de outros órgãos")
+st.caption(
+    "Consulta a API de dados abertos do TransfereGov (planos de ação em que a UFRPE é executora, termos, NCs e PFs). "
+    "Base separada do SIMEC: não entra nos totais nem nos alertas dos TEDs do MEC, e nenhum total de NC/PF é "
+    "calculado — o significado dos códigos de evento e de situação contábil não está confirmado."
+)
+lote_transferegov = ultimo_lote_transferegov(conn)
+if lote_transferegov is None:
+    st.warning("O TransfereGov ainda não foi sincronizado.")
+else:
+    st.caption(
+        f"Última sincronização com mudança: lote #{lote_transferegov[0]} em "
+        f"{pd.Timestamp(lote_transferegov[1]).strftime('%d/%m/%Y %H:%M')}."
+    )
+if st.button("Sincronizar com o TransfereGov", key="imp_sincronizar_transferegov"):
+    try:
+        with st.spinner("Consultando a API do TransfereGov…"):
+            extracao_tg = baixar_extracao()
+            resultado_transferegov = sincronizar_transferegov(conn, extracao_tg)
+    except ErroConsultaTransfereGov as erro:
+        st.error(f"{erro} — nada foi gravado; tente de novo mais tarde.")
+    except Exception as erro:
+        st.error(f"Falha ao sincronizar com o TransfereGov: {erro} — nada foi gravado.")
+    else:
+        if resultado_transferegov.ja_importado:
+            st.success(
+                f"A API não mudou desde o lote #{resultado_transferegov.import_batch_id} — nada a gravar."
+            )
+        else:
+            st.success(
+                f"Sincronização concluída (lote #{resultado_transferegov.import_batch_id}) — "
+                f"{resultado_transferegov.inseridos} registro(s) gravado(s), "
+                f"{len(resultado_transferegov.rejeitadas)} rejeitado(s)."
+            )
+            for rejeitada in resultado_transferegov.rejeitadas[:10]:
+                st.caption(f"Rejeitada ({rejeitada.tabela}): {rejeitada.motivo}")
 
 st.markdown("#### Alertas")
 st.caption(
