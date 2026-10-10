@@ -37,8 +37,9 @@ Contrato público:
 from __future__ import annotations
 
 import calendar
+import unicodedata
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 
@@ -71,6 +72,9 @@ class EstimativaContrato:
     datas_base: list[date] = field(default_factory=list)
     #: um dict por ciclo: data_base, percentual (ou None), origem
     ciclos: list[dict] = field(default_factory=list)
+    #: reajustes que o Contratos.gov mostra como assinados no exercício e não têm aditivo de Reajuste cadastrado
+    #: (o valor novo não vem do gov: fica a registrar)
+    reajustes_gov_a_registrar: list[date] = field(default_factory=list)
 
 
 def _vazio(valor: object) -> bool:
@@ -94,8 +98,34 @@ def _somar_meses(dia: date, meses: int) -> date:
     return date(ano, mes, min(dia.day, calendar.monthrange(ano, mes)[1]))
 
 
+def _sem_acento(texto: object) -> str:
+    return unicodedata.normalize("NFKD", str(texto or "")).encode("ascii", "ignore").decode("ascii").upper()
+
+
+def datas_dos_termos(termos: pd.DataFrame) -> dict[str, dict[str, list[date]]]:
+    """Por `contrato_id`, as datas dos Termos Aditivos do Contratos.gov que importam à data-base: `renovacoes`
+    (qualificação com VIGÊNCIA: o início da nova vigência) e `reajustes` (qualificação com REAJUSTE: a data de
+    início do novo valor, ou o início do termo). Termo sem VIGÊNCIA não é renovação (acréscimo/supressão,
+    por exemplo, também traz `vigencia_inicio`, mas não muda a vigência); apostilamento não conta."""
+
+    resultado: dict[str, dict[str, list[date]]] = {}
+    if termos is None or termos.empty:
+        return resultado
+    for _, termo in termos[termos["tipo"] == "Termo Aditivo"].iterrows():
+        qualificacao = _sem_acento(termo.get("qualificacao_termo"))
+        inicio = _como_data(termo.get("vigencia_inicio"))
+        item = resultado.setdefault(str(termo["contrato_id"]), {"renovacoes": [], "reajustes": []})
+        if "VIGENCIA" in qualificacao and inicio is not None:
+            item["renovacoes"].append(inicio)
+        if "REAJUSTE" in qualificacao:
+            data = _como_data(termo.get("data_inicio_novo_valor")) or inicio
+            if data is not None:
+                item["reajustes"].append(data)
+    return resultado
+
+
 def _primeira_data_base(
-    vigencia_inicio: object, inicios_vigencia: list, aditivos: list[Aditivo]
+    vigencia_inicio: object, inicios_vigencia: list, aditivos: list[Aditivo], reajustes_gov: list | None = None
 ) -> date | None:
     """Primeira data-base candidata (decisão do usuário, 11/10/2026: "a data-base vem das últimas vigências").
     O reajuste acompanha a renovação: a data-base é o início da vigência MAIS RECENTE de renovação (termo de
@@ -108,6 +138,7 @@ def _primeira_data_base(
     renovacoes += [a.data_inicio for a in aditivos if a.situacao == "ASSINADO" and a.data_inicio is not None and a.vigencia_fim is not None]
     renovacoes = [d for d in renovacoes if d is not None]
     reajustes = [a.data_inicio for a in aditivos if a.tipo == "REAJUSTE" and a.situacao == "ASSINADO" and a.data_inicio is not None]
+    reajustes += [d for d in (_como_data(x) for x in reajustes_gov or []) if d is not None]  # assinados no Contratos.gov
     if renovacoes:
         renovacao = max(renovacoes)
         ja_refletido = [d for d in reajustes if d >= renovacao]
@@ -119,7 +150,7 @@ def _primeira_data_base(
 
 def datas_base(
     *, vigencia_inicio: object, vigencia_fim_efetiva: object, aditivos: list[Aditivo], data_base_manual: object,
-    a_partir_de: date | None = None, inicios_vigencia: list | None = None,
+    a_partir_de: date | None = None, inicios_vigencia: list | None = None, reajustes_gov: list | None = None,
 ) -> tuple[list[date], str]:
     """Datas-base dos ciclos e o motivo (`ok`, `sem_data_base`, `sem_vigencia_fim` ou
     `sem_reajuste_na_vigencia`); a primeira segue `_primeira_data_base` (ou é a manual) e as seguintes vêm a
@@ -132,7 +163,7 @@ def datas_base(
         return [], "sem_vigencia_fim"
     primeira = _como_data(data_base_manual)
     if primeira is None:
-        primeira = _primeira_data_base(vigencia_inicio, inicios_vigencia or [], aditivos)
+        primeira = _primeira_data_base(vigencia_inicio, inicios_vigencia or [], aditivos, reajustes_gov)
         if primeira is None:
             return [], "sem_data_base"
     datas = []
@@ -190,6 +221,7 @@ def estimar_contrato(
     vigencia_fim: object, parametros: ParametrosReajuste, exercicio_inicial: int,
     variacoes: dict | None = None, liquidado: dict[tuple[int, int], float] | None = None,
     ultimo_mes_coberto: tuple[int, int] | None = None, inicios_vigencia: list | None = None,
+    reajustes_gov: list | None = None,
 ) -> EstimativaContrato:
     """Matriz por competência (mês/ano) do contrato, do início da vigência (ou de janeiro de
     `exercicio_inicial`, sem o início) ao fim da vigência efetiva. `liquidado` é o liquidado por competência
@@ -202,7 +234,7 @@ def estimar_contrato(
     datas, motivo = datas_base(
         vigencia_inicio=inicio, vigencia_fim_efetiva=fim_efetivo, aditivos=aditivos,
         data_base_manual=parametros.data_base_manual, a_partir_de=date(exercicio_inicial, 1, 1),
-        inicios_vigencia=inicios_vigencia,
+        inicios_vigencia=inicios_vigencia, reajustes_gov=reajustes_gov,
     )
     if fim_efetivo is None:
         return EstimativaContrato(pd.DataFrame(columns=COLUNAS_MATRIZ), "sem_vigencia_fim")
@@ -266,7 +298,13 @@ def estimar_contrato(
         situacao = "sem_indice"
     else:
         situacao = "estimado"
-    return EstimativaContrato(matriz, situacao, datas, ciclos)
+    inicio_exercicio = date(exercicio_inicial, 1, 1)
+    cadastrados = [a.data_inicio for a in aditivos if a.tipo == "REAJUSTE" and a.situacao == "ASSINADO" and a.data_inicio]
+    a_registrar = sorted({
+        d for d in (_como_data(x) for x in reajustes_gov or [])
+        if d is not None and d >= inicio_exercicio and not any(c >= d - timedelta(days=45) for c in cadastrados)
+    })
+    return EstimativaContrato(matriz, situacao, datas, ciclos, a_registrar)
 
 
 def aditivo_previsto_do_ciclo(

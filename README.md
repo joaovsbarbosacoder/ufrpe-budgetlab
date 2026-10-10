@@ -204,12 +204,17 @@ com erro de leitura) a tela segue como antes, com aviso.
 `docs/superpowers/specs/2026-10-11-estimativa-reajuste-contratos-design.md`). **Cenário separado**: não altera
 Necessidade de Empenho, Projeção nem aditivos. Para cada contrato, uma matriz mês/ano (inclusive vigências que
 atravessam exercícios) do **acréscimo** causado pelo reajuste:
-- **Data-base:** a manual; senão o **início da vigência de renovação mais recente** (termo aditivo com vigência no
-  Contratos.gov ou aditivo ASSINADO com nova vigência), repetida a cada 12 meses enquanto cabe na vigência efetiva
+- **Data-base:** a manual; senão o **início da vigência de renovação mais recente** (termo aditivo do Contratos.gov
+  cuja qualificação inclui VIGÊNCIA — acréscimo/supressão sozinho não é renovação — ou aditivo ASSINADO com nova
+  vigência), repetida a cada 12 meses enquanto cabe na vigência efetiva
   (prorrogação prevista conta, marcada) e a partir de janeiro do exercício. Se um Reajuste ASSINADO já começa nessa
   renovação (ou depois), ele já está no valor em vigor e o ciclo seguinte vem 12 meses depois dele. Sem renovação:
   12 meses após o início da vigência. Data-base passada sem reajuste registrado gera acréscimo retroativo a conferir.
   Sem ciclo na vigência: "sem reajuste previsto" (nulo, nunca 0).
+- **Reajuste já assinado no gov:** termo aditivo com qualificação REAJUSTE conta como reajuste assinado — o ciclo sai
+  da estimativa e a coluna "Reajuste assinado no gov (registrar)" mostra a data quando não há aditivo de Reajuste
+  cadastrado. O gov não traz o valor novo da parcela (a parcela do gov é do contrato inteiro): o valor continua a
+  registrar à mão na aba Aditivos.
 - **Percentual:** manual > oficial (índice do contrato; **padrão IPCA**, ou INPC/IGP-M; acumulado de 12 meses da API do
   Banco Central, só em sessão) > sem índice. Zero manual vale; ausente nunca vira 0%. Ciclos são compostos.
 - **Base:** o reajuste incide sobre o **liquidado por competência** (Liquidação por Competência, estornos com sinal,
