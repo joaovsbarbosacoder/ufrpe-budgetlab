@@ -20,7 +20,7 @@ from src.teds_transferegov import (
     pfs_do_plano,
     ultimo_lote_transferegov,
 )
-from src.teds_ui import badge, brl, dash, html_linha, paginar, render_doc_list, render_kpi_strip
+from src.teds_ui import badge, brl, dash, data_br, html_linha, paginar, render_doc_list, render_kpi_strip
 
 CHAVE_SELECIONADO = "teds_tg_selecionado"
 ORIGEM_SIMEC = "SIMEC (MEC)"
@@ -141,7 +141,7 @@ def render_lista(conn) -> None:
                     [badge(escape(rotulo_situacao(linha["situacao_termo"], linha["situacao_plano"])), _cor_situacao(linha["situacao_termo"])),
                      badge(escape(dash(linha["sigla_concedente"])), design_tokens.ACCENT)],
                     [
-                        ("Vigência", f"{dash(linha['inicio_vigencia'])} a {dash(linha['fim_vigencia'])}"),
+                        ("Vigência", f"{data_br(linha['inicio_vigencia'])} a {data_br(linha['fim_vigencia'])}"),
                         ("Valor do plano (informado)", _valor_ou_sem(linha["valor_plano"])),
                         ("NCs", str(int(linha["qtd_nc"]))),
                         ("PFs", str(int(linha["qtd_pf"]))),
@@ -182,7 +182,7 @@ def render_detalhe(conn, id_plano_acao: str) -> None:
     itens = [
         ("Concedente", f"{dash(linha['sigla_concedente'])} — {dash(linha['concedente'])}"),
         ("Situação", rotulo_situacao(linha["situacao_termo"], linha["situacao_plano"])),
-        ("Vigência", f"{dash(linha['inicio_vigencia'])} a {dash(linha['fim_vigencia'])}"),
+        ("Vigência", f"{data_br(linha['inicio_vigencia'])} a {data_br(linha['fim_vigencia'])}"),
         ("Processo SEI", dash(linha["processo_sei"])),
         ("Plano de ação", linha["id_plano_acao"]),
         ("Valor do plano (informado)", _valor_ou_sem(linha["valor_plano"])),
@@ -224,7 +224,7 @@ def render_detalhe(conn, id_plano_acao: str) -> None:
                 tone=design_tokens.POSITIVE,
                 empty="NC sem eventos na API.",
                 note=" · ".join(filter(None, [
-                    f"Emissão {dash(nota['data_emissao'])}", f"UG emitente {dash(nota['ug_emitente'])}",
+                    f"Emissão {data_br(nota['data_emissao'])}", f"UG emitente {dash(nota['ug_emitente'])}",
                     f"UG favorecida {dash(nota['ug_favorecida'])}", dash(nota["situacao"]), nota["observacao"],
                 ])),
             )

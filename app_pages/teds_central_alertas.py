@@ -31,6 +31,7 @@ from src.teds_ui import (
     conexao,
     cor_gravidade,
     cor_status_alerta,
+    data_br,
     formatar_valor_auditoria,
     html_linha,
     injetar_css,
@@ -124,7 +125,7 @@ with col_lista:
             cinfo.markdown(
                 html_linha(
                     rotulo_tipo_alerta(a.tipo),
-                    f"{a.documento} — {a.data_identificacao[:10]}",
+                    f"{a.documento} — {data_br(a.data_identificacao)}",
                     [badge(rotulo_gravidade(a.gravidade), cor_gravidade(a.gravidade)),
                      badge(rotulo_status_alerta(a.status), cor_status_alerta(a.status))],
                     [],
@@ -203,7 +204,7 @@ with col_detalhe:
             st.caption(regra)
 
             st.markdown("**Rastreabilidade**")
-            st.caption(f"Origem dos dados: SIMEC  \nIdentificado em: {alvo.data_identificacao}")
+            st.caption(f"Origem dos dados: SIMEC  \nIdentificado em: {data_br(alvo.data_identificacao, com_hora=True)}")
             if alvo.chave_ted:
                 st.caption(f"TED: {alvo.chave_ted}")
 
@@ -224,7 +225,7 @@ with col_detalhe:
             for registro in sorted(registros, key=lambda r: r.data_hora):
                 with st.container(border=True):
                     st.caption(
-                        f"{registro.data_hora[:19].replace('T', ' ')} UTC — {registro.usuario} — "
+                        f"{data_br(registro.data_hora, com_hora=True)} UTC — {registro.usuario} — "
                         f"{rotulo_acao_auditoria(registro.acao)}"
                     )
                     st.caption(
@@ -240,7 +241,7 @@ with col_detalhe:
                     st.markdown("**Histórico de decisões**")
                     for decisao in decisoes:
                         st.caption(
-                            f"{decisao.data_decisao} — TED escolhido: "
+                            f"{data_br(decisao.data_decisao, com_hora=True)} — TED escolhido: "
                             f"{decisao.chave_ted_escolhida} — responsável: {decisao.responsavel}"
                         )
                         st.write(decisao.justificativa)

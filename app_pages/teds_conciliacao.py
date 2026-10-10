@@ -29,7 +29,7 @@ from src.teds_controle_nc import (
     SITUACAO_AMBIGUA, SITUACAO_CONFERE, SITUACAO_DIVERGE, SITUACAO_SEM_PLANILHA, conferir_controle,
     gerar_xlsx_conferencia, justificativa_sugerida, ler_controle_nc,
 )
-from src.teds_ui import STATUS_RESOLVIDO, anos_disponiveis, atualizar_status_alerta, badge, brl, carregar_teds, conexao, cor_situacao_conciliacao, filtrar_por_exercicio, html_linha, injetar_css, paginar, render_doc_list, render_kpi_strip, situacao_conciliacao
+from src.teds_ui import STATUS_RESOLVIDO, anos_disponiveis, atualizar_status_alerta, badge, brl, carregar_teds, conexao, data_br, cor_situacao_conciliacao, filtrar_por_exercicio, html_linha, injetar_css, paginar, render_doc_list, render_kpi_strip, situacao_conciliacao
 from src.ui_theme import render_page_header
 
 injetar_css()
@@ -230,7 +230,7 @@ _ROTULO_SITUACAO = {
 
 def _linhas_planilha_df(linhas) -> pd.DataFrame:
     return pd.DataFrame([
-        {"Aba": l.aba, "Linha": l.linha_origem, "NC": l.nc, "Data": l.data, "UG emitente": l.ug_emitente,
+        {"Aba": l.aba, "Linha": l.linha_origem, "NC": l.nc, "Data": data_br(l.data), "UG emitente": l.ug_emitente,
          "TED": l.ted, "Valor": brl(l.valor), "Processo": l.processo, "Observação": l.observacao}
         for l in linhas
     ])

@@ -27,6 +27,7 @@ from src.teds_ui import (
     calcular_cobertura_relacionamentos,
     carregar_alertas,
     carregar_teds,
+    data_br,
     conexao,
     cor_estado_ted,
     cor_gravidade,
@@ -188,7 +189,7 @@ else:
                     dash(linha["descricao"]),
                     [badge(f"{contagem_alertas_por_ted.get(linha['chave_ted'], 0)} alerta(s)", cor_gravidade("alta"))],
                     [
-                        ("Fim da vigência", dash(linha["fim_vigencia"])),
+                        ("Fim da vigência", data_br(linha["fim_vigencia"])),
                         ("NC líquida", brl(texto_para_valor(linha["total_nc_descentralizacao"] or "0") - texto_para_valor(linha["total_nc_devolucao"] or "0"))),
                         ("PF líquida", brl(texto_para_valor(linha["total_pf_repasse"] or "0") - texto_para_valor(linha["total_pf_devolucao"] or "0"))),
                     ],

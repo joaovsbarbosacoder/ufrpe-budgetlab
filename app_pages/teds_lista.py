@@ -33,6 +33,7 @@ from src.teds_ui import (
     brl,
     carregar_alertas,
     carregar_teds,
+    data_br,
     cobertura_tg,
     conexao,
     cor_estado_ted,
@@ -112,7 +113,7 @@ def _nota_consolidado(soma, consolidado, origem: str, kpi: str) -> str:
 def _cartao_nc(docs: list[tuple], consolidado: Decimal) -> tuple[list[dict[str, str]], str, str]:
     linhas = []
     for numero, ug_emitente, operacao, data_emissao, valor_total, qtd_linhas, status in docs:
-        meta = [dash(data_emissao), f"UG emitente: {dash(ug_emitente)}" if status != "PARCIAL" else "UG emitente ausente"]
+        meta = [data_br(data_emissao), f"UG emitente: {dash(ug_emitente)}" if status != "PARCIAL" else "UG emitente ausente"]
         if qtd_linhas > 1:
             meta.append(f"{qtd_linhas} linhas de origem")
         linhas.append({"main": f"{numero} ({operacao})", "meta": " · ".join(meta), "value": brl(valor_total)})
@@ -123,7 +124,7 @@ def _cartao_nc(docs: list[tuple], consolidado: Decimal) -> tuple[list[dict[str, 
 
 def _cartao_pf(docs: list[tuple], consolidado: Decimal) -> tuple[list[dict[str, str]], str, str]:
     linhas = [
-        {"main": f"{numero} ({operacao})", "meta": f"{dash(data_emissao)} · UG {dash(ug_emitente)}", "value": brl(valor)}
+        {"main": f"{numero} ({operacao})", "meta": f"{data_br(data_emissao)} · UG {dash(ug_emitente)}", "value": brl(valor)}
         for numero, ug_emitente, operacao, data_emissao, valor in docs
     ]
     soma, sem_valor = somar_valores([d[4] for d in docs])
@@ -169,8 +170,8 @@ def _render_detalhe(chave_ted: str) -> None:
         f"<div class='teds-hero-item'><span>SIAFI</span><strong>{escape(dash(linha['codigo_siafi']))}</strong></div>"
         f"<div class='teds-hero-item'><span>Estado</span>{badge(escape(dash(linha['estado_atual'])), cor_estado_ted(linha['estado_atual']))}</div>"
         f"<div class='teds-hero-item'><span>UG descentralizadora</span><strong>{escape(dash(linha['ug_descentralizadora']))}</strong></div>"
-        f"<div class='teds-hero-item'><span>Vigência</span><strong>{escape(dash(linha['inicio_vigencia']))} a "
-        f"{escape(dash(linha['fim_vigencia']))} ({escape(_situacao_vigencia(linha['fim_vigencia']))})</strong></div>"
+        f"<div class='teds-hero-item'><span>Vigência</span><strong>{escape(data_br(linha['inicio_vigencia']))} a "
+        f"{escape(data_br(linha['fim_vigencia']))} ({escape(_situacao_vigencia(linha['fim_vigencia']))})</strong></div>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -397,7 +398,7 @@ for posicao, linha in pagina_df.reset_index(drop=True).iterrows():
                 dash(linha["descricao"]),
                 selos,
                 [
-                    ("Fim da vigência", dash(linha["fim_vigencia"])),
+                    ("Fim da vigência", data_br(linha["fim_vigencia"])),
                     ("NC líquida", brl(texto_para_valor(linha["total_nc_descentralizacao"] or "0") - texto_para_valor(linha["total_nc_devolucao"] or "0"))),
                     ("PF líquida", brl(texto_para_valor(linha["total_pf_repasse"] or "0") - texto_para_valor(linha["total_pf_devolucao"] or "0"))),
                     ("Empenhado", brl(linha["empenhado"])),
