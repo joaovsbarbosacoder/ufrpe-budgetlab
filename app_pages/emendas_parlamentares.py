@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import html as html_lib
 from collections.abc import Iterable
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
 
+from src import ajustes_dotacao_emendas as ajustes
+from src.ajustes_dotacao_emendas import ErroAjusteDotacao, ptres_com_uma_emenda
 from src.design_tokens import (
     ACCENT,
     ACCENT_LINE,
@@ -87,6 +90,14 @@ def _cached_dotacao(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFram
 
 def _valor_brl(valor: object) -> str:
     return "—" if valor is None or pd.isna(valor) else format_brl_full(float(valor))
+
+
+def _brl_md(valor: object) -> str:
+    """`_valor_brl` para texto em MARKDOWN (`st.markdown`/`st.caption`): escapa o `$`. Dois `$` no mesmo bloco viram
+    delimitadores de fórmula e o texto sai quebrado ("R 300.000,00**"; conferido na tela real). Em HTML
+    (`unsafe_allow_html`) não é preciso."""
+
+    return _valor_brl(valor).replace("$", "\\$")
 
 
 def _total(series: pd.Series) -> object:
@@ -308,7 +319,7 @@ def _html_dotacao_anual(linha) -> str:
         )
     aviso = (
         _badge("Difere do informado", WARNING, "rgba(245,165,36,0.14)")
-        if bool(linha.dotacao_divergente)
+        if bool(getattr(linha, "dotacao_divergencia_pendente", linha.dotacao_divergente))
         else ""
     )
     return f'<div class="em-tags" style="margin-bottom:8px"><span class="em-tag">{_esc(texto)}</span>{aviso}</div>'
@@ -319,13 +330,23 @@ def _render_card_emenda(linha, vinculos_da_emenda: pd.DataFrame) -> None:
         "(não informado)" if pd.isna(linha.parlamentar) else _esc(linha.parlamentar)
     )
     ptres_total = int(linha.ptres_total)
+    decidida = (
+        "dotacao_decisao_estado" in vinculos_da_emenda.columns
+        and bool(vinculos_da_emenda["dotacao_decisao_estado"].eq("ativa").fillna(False).any())
+    )
     tags_html = "".join(
         [
             f'<span class="em-tag">PTRES {ptres_total}</span>',
             f'<span class="em-tag">GND {_resumo_tupla(linha.gnds)}</span>',
             _badge_origem(linha.origem_valores),
+            *(['<span class="em-tag">dotação decidida</span>'] if decidida else []),
         ]
     )
+    original_relatorio = ""
+    if decidida and hasattr(linha, "dotacao_relatorio"):
+        original_relatorio = (
+            f'<div class="em-metric-label">Relatório: {_esc(_valor_brl(linha.dotacao_relatorio))}</div>'
+        )
     linhas_html = "".join(_html_linha_ptres(row) for row in vinculos_da_emenda.itertuples())
 
     st.markdown(
@@ -340,6 +361,7 @@ def _render_card_emenda(linha, vinculos_da_emenda: pd.DataFrame) -> None:
             <div style="text-align:right">
               <div class="em-metric-label">Dotação atualizada</div>
               <div class="em-metric">{_esc(_valor_brl(linha.dotacao_atualizada))}</div>
+              {original_relatorio}
             </div>
           </div>
           <div class="em-stats">
@@ -484,6 +506,8 @@ dotacao_anual = (
 try:
     cadastros_manuais = carregar_emendas_cadastradas()
     eventos_vinculo = carregar_eventos_vinculo()
+    # decisões sobre divergência de dotação (10/2026): eventos imutáveis; ilegível/incoerente levanta erro
+    decisoes_dotacao = ajustes.reconstruir_decisoes(ajustes.carregar_eventos(ajustes.DIRETORIO_AJUSTES))
     composicao = compor_relatorio_com_cadastros(
         relatorio_base,
         cadastros_manuais,
@@ -494,9 +518,9 @@ try:
         eventos_vinculo,
     )
     resultado = vincular_execucao_emendas(
-        composicao_vinculos.relatorio, execucao, dotacao=dotacao_anual
+        composicao_vinculos.relatorio, execucao, dotacao=dotacao_anual, decisoes_dotacao=decisoes_dotacao
     )
-except (ErroPoliticaImportacao, ErroVinculoEmenda) as error:
+except (ErroPoliticaImportacao, ErroVinculoEmenda, ErroAjusteDotacao) as error:
     st.error(f"Não foi possível consolidar as Emendas: {error}")
     st.stop()
 
@@ -570,9 +594,124 @@ with st.container(horizontal=True):
     st.metric("Pago", _valor_brl(_total(filtradas["paga"])), border=True)
 
 
-def _render_divergencias_dotacao(filtradas: pd.DataFrame, vinculos: pd.DataFrame) -> None:
-    """Lista os PTRES cuja Dotação informada difere da Dotação Anual — só das emendas filtradas.
-    Informativo: os dois valores aparecem lado a lado, sem dizer qual está correto."""
+ROTULO_DECISAO = {
+    "adotar_dotacao_anual": "Dotação Anual adotada",
+    "manter_relatorio": "Relatório mantido",
+    "valor_informado": "Valor informado",
+}
+ROTULO_ESTADO_DECISAO = {"ativa": "ativa", "obsoleta": "obsoleta", "sem_efeito": "sem efeito"}
+
+
+def _data_hora(iso: str | None) -> str:
+    if not iso:
+        return "—"
+    return datetime.fromisoformat(iso).astimezone().strftime("%d/%m/%Y %H:%M")
+
+
+def _decisao_ativa(decisoes: list[dict], linha: pd.Series) -> dict | None:
+    chave = (int(linha["ano"]), str(linha["resultado_primario_cod"]), str(linha["emenda_numero"]), str(linha["ptres"]))
+    return next(
+        (d for d in decisoes if not d["desfeita"]
+         and (d["ano"], d["resultado_primario_cod"], d["emenda_numero"], d["ptres"]) == chave),
+        None,
+    )
+
+
+@st.dialog("Resolver divergência de dotação")
+def _dialogo_resolver_divergencia(linha: pd.Series, vinculos: pd.DataFrame, decisoes: list[dict]) -> None:
+    """Decisão registrada sobre uma divergência de dotação (spec 2026-10-10-emendas-ajuste-dotacao). Nada é gravado
+    ao abrir; só o botão de confirmação grava um evento imutável (quem, quando, valor anterior e novo). O relatório
+    importado nunca é alterado e a decisão pode ser desfeita."""
+
+    relatorio, anual, diferenca = linha["dotacao_atualizada"], linha["dotacao_anual_ptres"], linha["diferenca_dotacao"]
+    st.markdown(
+        f"Emenda **{linha['emenda_numero']}** · {linha['parlamentar']} · PTRES {linha['ptres']} · "
+        f"exercício {int(linha['ano'])}"
+    )
+    st.markdown(
+        f"Relatório de Emendas: **{_brl_md(relatorio)}**  \n"
+        f"Dotação Anual (PTRES): **{_brl_md(anual)}**  \n"
+        f"Diferença: **{_brl_md(diferenca)}**"
+    )
+    opcoes = {
+        "adotar_dotacao_anual": f"Adotar a Dotação Anual ({_valor_brl(anual)})",
+        "manter_relatorio": f"Manter o relatório ({_valor_brl(relatorio)})",
+        "valor_informado": "Informar outro valor",
+    }
+    if not ptres_com_uma_emenda(vinculos, int(linha["ano"]), str(linha["resultado_primario_cod"]), str(linha["ptres"])):
+        del opcoes["adotar_dotacao_anual"]
+        st.caption(
+            "Este PTRES tem mais de uma emenda: a Dotação Anual é do PTRES inteiro e não pode ser adotada como "
+            "dotação de uma só. Mantenha o relatório ou informe o valor desta emenda."
+        )
+    anterior = _decisao_ativa(decisoes, linha)
+    if anterior is not None:
+        st.caption(
+            f"Há uma decisão anterior ({_data_hora(anterior['registrado_em'])}), obsoleta: ela será desfeita e "
+            "substituída por esta, e fica no histórico."
+        )
+    with st.form("emendas_resolver_dotacao", border=False):
+        decisao = st.radio("Decisão", list(opcoes), format_func=opcoes.get)
+        valor = st.number_input(
+            "Valor (R$) — só para “Informar outro valor”", min_value=0.0, step=1000.0, format="%.2f", value=None,
+            placeholder="deixe em branco nas outras opções",
+        )
+        justificativa = st.text_area("Justificativa", help="Obrigatória, no mínimo 10 caracteres.")
+        responsavel = st.text_input("Responsável")
+        st.caption(
+            "A decisão fica registrada (quem, quando, valor anterior e novo), pode ser desfeita e o valor original "
+            "do relatório continua guardado."
+        )
+        enviado = st.form_submit_button("Registrar decisão", type="primary", icon=":material/check:")
+    if not enviado:
+        return
+    try:
+        if anterior is not None:
+            ajustes.desfazer_decisao(
+                decisao_id=anterior["decisao_id"], responsavel=responsavel, diretorio=ajustes.DIRETORIO_AJUSTES,
+                justificativa=f"Substituída por nova decisão (a anterior ficou obsoleta). {justificativa}".strip(),
+            )
+        ajustes.registrar_decisao(
+            vinculos=vinculos, ano=int(linha["ano"]), resultado_primario_cod=str(linha["resultado_primario_cod"]),
+            emenda_numero=str(linha["emenda_numero"]), ptres=str(linha["ptres"]), decisao=decisao,
+            valor_informado=valor, justificativa=justificativa, responsavel=responsavel,
+            diretorio=ajustes.DIRETORIO_AJUSTES,
+        )
+    except (ErroAjusteDotacao, OSError) as error:
+        st.error(str(error))
+        return
+    st.toast("Decisão registrada.", icon=":material/check_circle:")
+    st.rerun()
+
+
+@st.dialog("Desfazer decisão de dotação")
+def _dialogo_desfazer_decisao(decisao: dict) -> None:
+    st.markdown(
+        f"Emenda **{decisao['emenda_numero']}** · PTRES {decisao['ptres']} · "
+        f"{ROTULO_DECISAO[decisao['decisao']]} (valor {_brl_md(decisao['valor_efetivo'])})"
+    )
+    st.caption("O registro original permanece no histórico; o desfazimento acrescenta um novo evento.")
+    with st.form("emendas_desfazer_dotacao", border=False):
+        justificativa = st.text_area("Justificativa", help="Obrigatória, no mínimo 10 caracteres.")
+        responsavel = st.text_input("Responsável")
+        enviado = st.form_submit_button("Desfazer decisão", type="primary")
+    if not enviado:
+        return
+    try:
+        ajustes.desfazer_decisao(
+            decisao_id=decisao["decisao_id"], justificativa=justificativa, responsavel=responsavel,
+            diretorio=ajustes.DIRETORIO_AJUSTES,
+        )
+    except (ErroAjusteDotacao, OSError) as error:
+        st.error(str(error))
+        return
+    st.toast("Decisão desfeita.", icon=":material/undo:")
+    st.rerun()
+
+
+def _render_divergencias_dotacao(filtradas: pd.DataFrame, vinculos: pd.DataFrame, decisoes: list[dict]) -> None:
+    """Lista os PTRES cuja Dotação informada difere da Dotação Anual — só das emendas filtradas e só as PENDENTES
+    (decisão ativa encerra o alerta; decisão obsoleta o traz de volta, com aviso). Cada linha tem "Resolver"."""
     divergencias = divergencias_dotacao(vinculos)
     if divergencias.empty or filtradas.empty:
         return
@@ -586,6 +725,7 @@ def _render_divergencias_dotacao(filtradas: pd.DataFrame, vinculos: pd.DataFrame
             "Os dois valores são exibidos sem indicar qual está correto: não há regra definida "
             "de prevalência. Confira na origem antes de decidir."
         )
+        st.caption("Use “Resolver” para registrar a decisão (fica guardada, com justificativa, e pode ser desfeita).")
         tabela = divergencias.assign(
             resultado_primario_cod=divergencias["resultado_primario_cod"].map("RP{}".format),
             dotacao_atualizada=divergencias["dotacao_atualizada"].map(_valor_brl),
@@ -603,10 +743,53 @@ def _render_divergencias_dotacao(filtradas: pd.DataFrame, vinculos: pd.DataFrame
                 "diferenca_dotacao": "Diferença",
             }
         )
-        st.dataframe(tabela, hide_index=True, width="stretch")
+        colunas_visiveis = [
+            "Exercício", "RP", "Emenda", "Parlamentar", "PTRES",
+            "Dotação informada", "Dotação Anual (por PTRES)", "Diferença",
+        ]
+        st.dataframe(tabela[colunas_visiveis], hide_index=True, width="stretch")
+        for _, linha in divergencias.iterrows():
+            anterior = _decisao_ativa(decisoes, linha)
+            if anterior is not None and linha.get("dotacao_decisao_estado") == "obsoleta":
+                st.caption(
+                    f"Emenda {linha['emenda_numero']} · PTRES {linha['ptres']}: a decisão de "
+                    f"{_data_hora(anterior['registrado_em'])} está obsoleta — o relatório mudou de "
+                    f"{_brl_md(anterior['valor_relatorio'])} para {_brl_md(linha['dotacao_atualizada'])}. "
+                    "Ela não está sendo aplicada."
+                )
+            chave = f"em_resolver_{int(linha['ano'])}_{linha['resultado_primario_cod']}_{linha['emenda_numero']}_{linha['ptres']}"
+            if st.button(f"Resolver — emenda {linha['emenda_numero']} · PTRES {linha['ptres']}", key=chave, icon=":material/rule:"):
+                _dialogo_resolver_divergencia(linha, vinculos, decisoes)
 
 
-_render_divergencias_dotacao(filtradas, resultado.vinculos)
+def _render_decisoes_dotacao(decisoes: list[dict]) -> None:
+    """Histórico das decisões de dotação (ativas, obsoletas, sem efeito e desfeitas), com "Desfazer"."""
+    if not decisoes:
+        return
+    ativas = [d for d in decisoes if not d["desfeita"]]
+    with st.expander(f"Decisões de dotação ({len(ativas)} vigente(s) · {len(decisoes)} no histórico)"):
+        for decisao in reversed(decisoes):
+            linhas = [
+                f"**{decisao['emenda_numero']}** · PTRES {decisao['ptres']} · exercício {decisao['ano']} — "
+                f"{ROTULO_DECISAO[decisao['decisao']]}",
+                f"Relatório {_brl_md(decisao['valor_relatorio'])} → **{_brl_md(decisao['valor_efetivo'])}** "
+                f"(Dotação Anual na decisão: {_brl_md(decisao['valor_dotacao_anual'])})",
+                f"“{decisao['justificativa']}” — {decisao['responsavel']}, {_data_hora(decisao['registrado_em'])}",
+            ]
+            if decisao["desfeita"]:
+                linhas.append(
+                    f"Desfeita por {decisao['desfeita_por']} em {_data_hora(decisao['desfeita_em'])}: "
+                    f"{decisao['desfeita_motivo']}"
+                )
+            st.markdown("  \n".join(linhas))
+            if not decisao["desfeita"] and st.button(
+                "Desfazer", key=f"em_desfazer_{decisao['decisao_id']}", icon=":material/undo:"
+            ):
+                _dialogo_desfazer_decisao(decisao)
+
+
+_render_divergencias_dotacao(filtradas, resultado.vinculos, decisoes_dotacao)
+_render_decisoes_dotacao(decisoes_dotacao)
 
 if filtradas.empty:
     st.info("Nenhuma emenda corresponde aos filtros selecionados.")
