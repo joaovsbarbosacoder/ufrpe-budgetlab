@@ -141,6 +141,12 @@ def _soma_ou_nulo(serie: pd.Series) -> float | None:
     return None if pd.isna(total) else float(total)
 
 
+def _total_ou_traco(serie: pd.Series) -> str:
+    """Total em R$; "—" quando nenhum contrato tem valor (nulo, nunca R$ 0,00)."""
+
+    return _md(formatar_brl(serie.sum())) if serie.notna().any() else "—"
+
+
 def _resumo(resultados: list[dict], ano: int, hoje: date) -> pd.DataFrame:
     linhas = []
     for item in resultados:
@@ -243,9 +249,12 @@ def render_estimativa_reajuste(
         matriz = _matriz_longa(resultados)
         coluna_ano = f"Acréscimo {ano}"
         a, b, c = st.columns(3)
-        a.metric(f"Acréscimo estimado em {ano}", _md(formatar_brl(resumo[coluna_ano].sum(skipna=True))))
-        b.metric("Acréscimo na vigência", _md(formatar_brl(resumo["Acréscimo na vigência"].sum(skipna=True))))
-        c.metric("Contratos sem estimativa", str(int((resumo["Situação"] != ROTULO_SITUACAO["estimado"]).sum())))
+        a.metric(f"Acréscimo estimado em {ano}", _total_ou_traco(resumo[coluna_ano]))
+        b.metric("Acréscimo na vigência", _total_ou_traco(resumo["Acréscimo na vigência"]))
+        # "sem estimativa" = situação desconhecida (falta índice, data-base ou fim de vigência); "sem reajuste
+        # previsto na vigência" é uma resposta conhecida, não falta de dado
+        desconhecidas = {ROTULO_SITUACAO[s] for s in ("sem_indice", "sem_data_base", "sem_vigencia_fim")}
+        c.metric("Contratos sem estimativa", str(int(resumo["Situação"].isin(desconhecidas).sum())))
 
         st.dataframe(
             resumo, hide_index=True, use_container_width=True,

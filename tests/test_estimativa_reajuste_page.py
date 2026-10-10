@@ -69,6 +69,9 @@ def test_configuracao_vazia_nao_inventa_percentual(tmp_path, monkeypatch) -> Non
 
     resumo = _tabela_resumo(app)
     assert resumo["Percentual (%)"].isna().all()  # sem índice nem manual: nulo, nunca 0%
+    metricas = {m.label: m.value for m in app.metric}
+    assert metricas["Acréscimo na vigência"] == "—"  # nenhum contrato tem valor: traço, nunca "R$ 0,00"
+    assert metricas["Contratos sem estimativa"] == str(len(resumo))  # todos sem data-base
     assert not app.exception
 
 
