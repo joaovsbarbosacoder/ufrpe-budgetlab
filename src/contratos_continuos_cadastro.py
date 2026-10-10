@@ -106,6 +106,9 @@ CAMPOS_IDENTIDADE = [
     "tipo_contrato", "tipo_despesa", "fornecedor_cnpj_cpf", "vigencia_fim", "unidade_cod",
     "acao_cod", "ptres", "fonte_cod", "natureza_despesa_cod", "ugr_cod", "pi_cod",
     "despesa_mensal", "meses_no_ano", "itens", "aditivos",
+    #: estimativa de reajuste (11/10/2026, `src/estimativa_reajuste.py`): configuração do contrato, nunca
+    #: derivada — índice oficial (IPCA/INPC/IGPM), percentual manual (zero vale) e data-base manual (ISO).
+    "reajuste_indice", "reajuste_percentual_manual", "reajuste_data_base_manual",
 ]
 
 #: em branco/zerados no exercício novo — o vínculo com a Execução Anual se refaz quando o
