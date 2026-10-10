@@ -199,6 +199,25 @@ com erro de leitura) a tela segue como antes, com aviso.
   mensal, empenhado, saldo, meses empenhados/liquidados e os textos (`novo_contrato_do_formulario`); um zero
   digitado continua zero, e "Meses no ano" em branco vale 12 nas contas. Só grava em "Adicionar contrato".
 
+**Estimativa de reajuste (cenário por competência).** Seção "Estimativa de reajuste" em Contratos Contínuos
+(`src/estimativa_reajuste.py`, `src/indices_economicos.py`, `src/ui_reajuste.py`; spec em
+`docs/superpowers/specs/2026-10-11-estimativa-reajuste-contratos-design.md`). **Cenário separado**: não altera
+Necessidade de Empenho, Projeção nem aditivos. Para cada contrato, uma matriz mês/ano (inclusive vigências que
+atravessam exercícios) do **acréscimo** causado pelo reajuste:
+- **Data-base:** a manual; senão 12 meses após o último Reajuste ASSINADO; senão 12 meses após o início da vigência
+  (Contratos.gov), repetida a cada 12 meses enquanto cabe na vigência efetiva (prorrogação prevista conta, marcada)
+  e a partir de janeiro do exercício. Sem ciclo na vigência: "sem reajuste previsto" (nulo, nunca 0).
+- **Percentual:** manual > oficial (IPCA, INPC ou IGP-M, acumulado de 12 meses da API do Banco Central, só em sessão) >
+  sem índice. Zero manual vale; ausente nunca vira 0%. Ciclos são compostos.
+- **Base:** o reajuste incide sobre o **liquidado por competência** (Liquidação por Competência, estornos com sinal,
+  NEs de todos os exercícios do contrato). Competência já apurada sem lançamento fica **vazia**; competência futura usa
+  o valor contratado, rotulado **teto**. NE ligada a dois contratos é inconsistência sinalizada (o liquidado dela fica fora).
+- **Configuração** (índice, percentual e data-base manuais) é gravada no próprio registro do contrato; "Registrar
+  aditivo previsto" cria o aditivo REAJUSTE/PREVISTO do próximo ciclo só por clique; a estimativa sai em Excel.
+- **Dúvidas registradas (não são regra definitiva):** janela do índice (12 meses anteriores à data-base); reajuste
+  composto entre ciclos; incidência sobre o valor mensal total; data-base pela vigência (e não pela proposta);
+  um percentual manual único para todos os ciclos; último mês "apurado" = mês anterior à data de referência.
+
 **Necessidade de Empenho até Dezembro (card "Resumo Consolidado").** É o que falta empenhar
 para cobrir os meses do exercício: despesa mensal × meses restantes, nunca negativa, em que
 meses restantes = menor entre os meses no ano e os meses em execução (regra acima) − empenhado ÷

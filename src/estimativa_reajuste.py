@@ -11,7 +11,8 @@ cadastrados — o módulo só LÊ o contrato e devolve a estimativa. A promoçã
 Regras (resumo; detalhes e dúvidas registradas na spec):
   * Data-base: a manual; senão 12 meses após o último aditivo de Reajuste ASSINADO; senão 12 meses após o
     início da vigência. As seguintes, a cada 12 meses, só enquanto a data-base cabe na vigência EFETIVA
-    (inclusive prorrogação PREVISTA).
+    (inclusive prorrogação PREVISTA) e a partir de janeiro do exercício selecionado (ciclos passados já estão
+    no valor em vigor do cadastro).
   * Percentual do ciclo: manual > oficial (acumulado de 12 meses) > ausente. Ausente = nulo, nunca 0%.
   * Reajustes compostos entre ciclos; o mês da data-base é proporcional aos dias.
   * Base da competência: liquidado por competência (vazio quando a competência já foi apurada e o contrato
@@ -27,6 +28,9 @@ Contrato público:
     estimar_contrato(*, contrato, despesa_mensal, aditivos, vigencia_inicio, vigencia_fim, parametros,
                      exercicio_inicial, variacoes=None, liquidado=None, ultimo_mes_coberto=None) -> EstimativaContrato
     aditivo_previsto_do_ciclo(estimativa, aditivos, despesa_mensal) -> Aditivo | None
+    nes_em_conflito(registros) -> dict[ne, set[contrato]]
+    liquidado_do_contrato(nes, liquidacao_por_mes) -> dict[(ano, mes), float]
+    ultimo_mes_coberto(liquidacao_por_mes) -> (ano, mes) | None
 """
 
 from __future__ import annotations
@@ -90,11 +94,13 @@ def _somar_meses(dia: date, meses: int) -> date:
 
 
 def datas_base(
-    *, vigencia_inicio: object, vigencia_fim_efetiva: object, aditivos: list[Aditivo], data_base_manual: object
+    *, vigencia_inicio: object, vigencia_fim_efetiva: object, aditivos: list[Aditivo], data_base_manual: object,
+    a_partir_de: date | None = None,
 ) -> tuple[list[date], str]:
     """Datas-base dos ciclos e o motivo (`ok`, `sem_data_base`, `sem_vigencia_fim` ou
     `sem_reajuste_na_vigencia`). Só aditivos de Reajuste ASSINADOS deslocam a data-base: os PREVISTOS são a
-    própria estimativa."""
+    própria estimativa. `a_partir_de` descarta as datas-base anteriores a ele: o reajuste de um ciclo que já
+    passou está incorporado ao valor em vigor do cadastro (ou é um aditivo a registrar), não é estimativa."""
 
     fim = _como_data(vigencia_fim_efetiva)
     if fim is None:
@@ -112,7 +118,8 @@ def datas_base(
     datas = []
     atual, passo = primeira, 0
     while atual <= fim:
-        datas.append(atual)
+        if a_partir_de is None or atual >= a_partir_de:
+            datas.append(atual)
         passo += 1
         atual = _somar_meses(primeira, 12 * passo)
     return datas, ("ok" if datas else "sem_reajuste_na_vigencia")
@@ -174,7 +181,7 @@ def estimar_contrato(
     inicio = _como_data(vigencia_inicio)
     datas, motivo = datas_base(
         vigencia_inicio=inicio, vigencia_fim_efetiva=fim_efetivo, aditivos=aditivos,
-        data_base_manual=parametros.data_base_manual,
+        data_base_manual=parametros.data_base_manual, a_partir_de=date(exercicio_inicial, 1, 1),
     )
     if fim_efetivo is None:
         return EstimativaContrato(pd.DataFrame(columns=COLUNAS_MATRIZ), "sem_vigencia_fim")
@@ -200,23 +207,26 @@ def estimar_contrato(
         valor = custos[ano][mes - 1]
         return None if pd.isna(valor) else float(valor)
 
-    primeiro_mes = (inicio.year, inicio.month) if inicio is not None else (exercicio_inicial, 1)
+    # a matriz começa no mês do início da vigência ou, se for anterior, em janeiro do exercício selecionado
+    primeiro_mes = max((inicio.year, inicio.month), (exercicio_inicial, 1)) if inicio is not None else (exercicio_inicial, 1)
     linhas = []
     for ano, mes in _meses_entre(primeiro_mes, (fim_efetivo.year, fim_efetivo.month)):
         primeiro_dia = date(ano, mes, 1)
         ultimo_dia = date(ano, mes, calendar.monthrange(ano, mes)[1])
-        if ultimo_mes_coberto is not None and (ano, mes) <= ultimo_mes_coberto:
-            if liquidado is not None and (ano, mes) in liquidado:
-                base, origem_base = float(liquidado[(ano, mes)]), "liquidado"
-            else:
-                base, origem_base = None, "sem_liquidado"
+        if liquidado is not None and (ano, mes) in liquidado:
+            base, origem_base = float(liquidado[(ano, mes)]), "liquidado"  # lançamento existe: vale, mesmo em mês futuro
+        elif ultimo_mes_coberto is not None and (ano, mes) <= ultimo_mes_coberto:
+            base, origem_base = None, "sem_liquidado"  # competência já apurada, sem lançamento: vazio, nunca zero
         else:
             base, origem_base = contratado(ano, mes), "contratado"
 
         fator, n_ciclo, ciclo = _fator_do_mes(ciclos, primeiro_dia, ultimo_dia)
         if motivo == "sem_data_base":
             fator = None  # data-base desconhecida: o acréscimo é desconhecido, não zero
-        acrescimo = _NAN if base is None or fator is None else base * (fator - 1.0)
+        if fator is not None and n_ciclo == 0:
+            acrescimo = 0.0  # antes da primeira data-base nada incide, mesmo sem base apurada
+        else:
+            acrescimo = _NAN if base is None or fator is None else base * (fator - 1.0)
         linhas.append({
             "contrato": contrato, "ano": ano, "mes": mes, "competencia": f"{mes:02d}/{ano}",
             "base_valor": _NAN if base is None else base, "base_origem": origem_base,
@@ -259,3 +269,45 @@ def aditivo_previsto_do_ciclo(
             data_inicio=ciclo["data_base"], valor_mensal=round(vigente * (1.0 + ciclo["percentual"] / 100.0), 2),
         )
     return None
+
+
+def nes_em_conflito(registros: list[dict]) -> dict[str, set[str]]:
+    """NEs ligadas a mais de um `contrato_numero` (entre os registros de todos os exercícios). Uma NE
+    pertence a um único contrato: a repetição é inconsistência de cadastro — sinalizada, e o liquidado dessa
+    NE fica fora da base até a correção (nunca se escolhe um contrato por conta própria)."""
+
+    por_ne: dict[str, set[str]] = {}
+    for registro in registros:
+        ne, contrato = registro.get("ne_curta"), registro.get("contrato_numero")
+        if _vazio(ne) or _vazio(contrato) or not str(ne).strip() or not str(contrato).strip():
+            continue
+        por_ne.setdefault(str(ne).strip(), set()).add(str(contrato).strip())
+    return {ne: contratos for ne, contratos in por_ne.items() if len(contratos) > 1}
+
+
+def liquidado_do_contrato(nes: set[str], liquidacao_por_mes: pd.DataFrame | None) -> dict[tuple[int, int], float]:
+    """Liquidado por competência (ano, mês) das `nes` do contrato, estornos com sinal. `liquidacao_por_mes`
+    é o `liquidado_por_ne_e_mes` com `ne_curta` (colunas `ne_curta`, `ano_mes` AAAAMM e `valor`). Só
+    aparece o mês com lançamento — ausência é ausência de dado."""
+
+    if liquidacao_por_mes is None or liquidacao_por_mes.empty or not nes:
+        return {}
+    recorte = liquidacao_por_mes[liquidacao_por_mes["ne_curta"].isin(nes)]
+    resultado: dict[tuple[int, int], float] = {}
+    for ano_mes, valor in recorte.groupby("ano_mes")["valor"].sum().items():
+        resultado[(int(ano_mes) // 100, int(ano_mes) % 100)] = float(valor)
+    return resultado
+
+
+def ultimo_mes_coberto(liquidacao_por_mes: pd.DataFrame | None, hoje: date | None = None) -> tuple[int, int] | None:
+    """Último mês (ano, mês) que se considera APURADO na base de Liquidação por Competência: o mês anterior ao
+    de `hoje`, nunca além do maior mês presente na base. Não é o maior mês da base: ela traz competências
+    futuras esparsas (documentos hábeis com referência adiante) que não indicam cobertura. `None` sem base.
+    Dúvida registrada: o último mês cheio ainda pode receber liquidação tardia."""
+
+    if liquidacao_por_mes is None or liquidacao_por_mes.empty:
+        return None
+    hoje = hoje or date.today()
+    maior = int(liquidacao_por_mes["ano_mes"].max())
+    anterior = (hoje.year, hoje.month - 1) if hoje.month > 1 else (hoje.year - 1, 12)
+    return min((maior // 100, maior % 100), anterior)

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Estimativa de reajuste</title>
+<style>
+  :root{--bg:#f4f6fa;--card:#fff;--tx:#14233c;--mut:#5d6b82;--bd:#dde3ee;--pri:#1d4ed8;--ok:#0f7b45;--okb:#e3f5ea;--warn:#9a5b00;--warnb:#fdf1d9;--info:#1e5fb8;--infob:#e4eefb;--teto:#eef0f4}
+  @media (prefers-color-scheme:dark){:root{--bg:#0e1626;--card:#16213a;--tx:#e8edf7;--mut:#9fb0cc;--bd:#2a3858;--pri:#6c9bff;--ok:#5fd194;--okb:#12382a;--warn:#f0b758;--warnb:#3b2c0f;--info:#7fb2ff;--infob:#15294a;--teto:#1d2944}}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.45 system-ui,Segoe UI,Roboto,sans-serif;padding:24px 16px}
+  .wrap{max-width:1180px;margin:0 auto} h1{font-size:20px;margin:0 0 4px} .sub{color:var(--mut);margin:0 0 18px;font-size:13px}
+  .nota{background:var(--warnb);color:var(--warn);border-radius:8px;padding:8px 12px;font-size:12.5px;margin-bottom:16px}
+  .exp{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:18px 20px;margin-bottom:18px}
+  .exp>h2{font-size:16px;margin:0 0 6px} .cap{color:var(--mut);font-size:12.5px;margin:0 0 14px}
+  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px}
+  .kpi{border:1px solid var(--bd);border-radius:10px;padding:10px 14px} .kpi small{color:var(--mut);display:block;font-size:12px} .kpi b{font-size:20px}
+  table{width:100%;border-collapse:collapse;font-size:13px} th{font-size:11.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--mut);text-align:left;padding:8px 8px;border-bottom:1px solid var(--bd);white-space:nowrap}
+  td{padding:9px 8px;border-bottom:1px solid var(--bd);white-space:nowrap} td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+  .scroll{overflow-x:auto} .chip{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;font-weight:600}
+  .ok{background:var(--okb);color:var(--ok)} .warn{background:var(--warnb);color:var(--warn)} .info{background:var(--infob);color:var(--info)} .teto{background:var(--teto);color:var(--mut)}
+  .vazio{color:var(--mut)} h3{font-size:14px;margin:20px 0 8px}
+  .acoes{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px} button{font:inherit;border:1px solid var(--bd);background:var(--card);color:var(--tx);border-radius:8px;padding:8px 14px;cursor:pointer}
+  button.pri{background:var(--pri);border-color:var(--pri);color:#fff} .sel{display:inline-block;border:1px solid var(--bd);border-radius:8px;padding:6px 12px;background:var(--card);min-width:220px}
+  .lbl{font-size:12px;color:var(--mut);display:block;margin:10px 0 3px}
+  .barra{border-left:3px solid var(--pri);padding:6px 12px;background:var(--infob);border-radius:0 8px 8px 0;font-size:13px;margin:10px 0}
+  .legenda{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--mut);margin-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Estimativa de reajuste — Contratos Contínuos</h1>
+  <p class="sub">Maquete da nova seção (abaixo da Projeção pela Execução). Todos os valores abaixo são <b>ilustrativos</b>.</p>
+  <div class="nota">Cenário separado: não altera Necessidade de Empenho, Projeção nem aditivos cadastrados.</div>
+
+  <div class="exp">
+    <h2>▾ Estimativa de reajuste (cenário por competência)</h2>
+    <p class="cap">O reajuste incide sobre o valor <b>liquidado</b> por competência. Onde ainda não há liquidado apurado (meses futuros), a base é o valor contratado, marcado como <b>teto</b>. Competência já apurada sem lançamento fica vazia, nunca zero.</p>
+
+    <div class="kpis">
+      <div class="kpi"><small>Acréscimo estimado em 2027</small><b>R$ 3.250,00</b></div>
+      <div class="kpi"><small>Acréscimo na vigência</small><b>R$ 9.250,00</b></div>
+      <div class="kpi"><small>Contratos sem estimativa</small><b>2</b></div>
+    </div>
+
+    <div class="scroll"><table>
+      <tr><th>Contrato</th><th>Fornecedor</th><th>Situação</th><th>Data-base</th><th class="n">Percentual</th><th>Origem do %</th><th class="n">Acréscimo 2027</th><th class="n">Na vigência</th><th class="n">Sem estimativa</th></tr>
+      <tr><td><b>05/2026</b></td><td>EMPRESA EXEMPLO A</td><td><span class="chip ok">Estimado</span></td><td>01/06/2027</td><td class="n">5,00%</td><td>Manual</td><td class="n">R$ 3.250,00</td><td class="n">R$ 6.000,00</td><td class="n">0</td></tr>
+      <tr><td><b>12/2025</b></td><td>EMPRESA EXEMPLO B</td><td><span class="chip ok">Estimado</span></td><td>01/09/2027</td><td class="n">4,50%</td><td>Oficial (12 meses)</td><td class="n">R$ 0,00</td><td class="n">R$ 3.250,00</td><td class="n">0</td></tr>
+      <tr><td><b>21/2026</b></td><td>EMPRESA EXEMPLO C</td><td><span class="chip warn">Sem percentual (índice indisponível)</span></td><td>01/03/2027</td><td class="n vazio">—</td><td class="vazio">Sem índice</td><td class="n vazio">—</td><td class="n vazio">—</td><td class="n">10</td></tr>
+      <tr><td><b>30/2026</b></td><td>EMPRESA EXEMPLO D</td><td><span class="chip teto">Sem reajuste previsto na vigência</span></td><td class="vazio">—</td><td class="n vazio">—</td><td class="vazio">—</td><td class="n">R$ 0,00</td><td class="n">R$ 0,00</td><td class="n">0</td></tr>
+    </table></div>
+
+    <h3>Acréscimo por competência — exercício <span class="sel" style="min-width:90px">2027 ▾</span></h3>
+    <div class="scroll"><table>
+      <tr><th>Contrato</th><th class="n">01/2027</th><th class="n">02/2027</th><th class="n">03/2027</th><th class="n">04/2027</th><th class="n">05/2027</th><th class="n">06/2027</th><th class="n">07/2027</th><th class="n">08/2027</th><th class="n">09/2027</th><th class="n">10/2027</th><th class="n">11/2027</th><th class="n">12/2027</th></tr>
+      <tr><td><b>05/2026</b></td><td class="n">0,00</td><td class="n">0,00</td><td class="n">0,00</td><td class="n">0,00</td><td class="n">0,00</td><td class="n">400,00</td><td class="n">450,00</td><td class="n vazio">—</td><td class="n">500,00</td><td class="n">500,00</td><td class="n">500,00</td><td class="n">500,00</td></tr>
+      <tr><td><b>12/2025</b></td><td class="n">0,00</td><td class="n">0,00</td><td class="n">0,00</td><td class="n">0,00</td><td class="n">0,00</td><td class="n">0,00</td><td class="n">0,00</td><td class="n">0,00</td><td class="n">162,50</td><td class="n">325,00</td><td class="n">325,00</td><td class="n">325,00</td></tr>
+      <tr><td><b>21/2026</b></td><td class="n">0,00</td><td class="n">0,00</td><td class="n vazio">—</td><td class="n vazio">—</td><td class="n vazio">—</td><td class="n vazio">—</td><td class="n vazio">—</td><td class="n vazio">—</td><td class="n vazio">—</td><td class="n vazio">—</td><td class="n vazio">—</td><td class="n vazio">—</td></tr>
+    </table></div>
+    <p class="cap" style="margin-top:6px">— = sem estimativa (vazio, não zero). Zero = nada incide naquela competência.</p>
+
+    <h3>Detalhar contrato <span class="sel">05/2026 ▾</span></h3>
+    <div class="barra">Vigência 01/06/2026 a 31/05/2028 · data-base 01/06/2027 · ciclo 1 (5,00% manual) · prorrogação prevista a partir de 06/2027</div>
+    <div class="scroll"><table>
+      <tr><th>Competência</th><th class="n">Base</th><th>Origem da base</th><th class="n">Ciclo</th><th class="n">Percentual</th><th>Origem do %</th><th class="n">Acréscimo</th><th>Prorrog. prevista</th></tr>
+      <tr><td>05/2027</td><td class="n">R$ 10.000,00</td><td><span class="chip info">Liquidado</span></td><td class="n">0</td><td class="n vazio">—</td><td class="vazio">—</td><td class="n">R$ 0,00</td><td>não</td></tr>
+      <tr><td>06/2027</td><td class="n">R$ 8.000,00</td><td><span class="chip info">Liquidado</span></td><td class="n">1</td><td class="n">5,00%</td><td>Manual</td><td class="n">R$ 400,00</td><td><span class="chip warn">sim</span></td></tr>
+      <tr><td>07/2027</td><td class="n">R$ 9.000,00</td><td><span class="chip info">Liquidado</span></td><td class="n">1</td><td class="n">5,00%</td><td>Manual</td><td class="n">R$ 450,00</td><td><span class="chip warn">sim</span></td></tr>
+      <tr><td>08/2027</td><td class="n vazio">—</td><td><span class="chip warn">Sem liquidado apurado</span></td><td class="n">1</td><td class="n">5,00%</td><td>Manual</td><td class="n vazio">—</td><td><span class="chip warn">sim</span></td></tr>
+      <tr><td>09/2027</td><td class="n">R$ 10.000,00</td><td><span class="chip teto">Contratado (teto)</span></td><td class="n">1</td><td class="n">5,00%</td><td>Manual</td><td class="n">R$ 500,00</td><td><span class="chip warn">sim</span></td></tr>
+    </table></div>
+    <div class="legenda"><span><span class="chip info">Liquidado</span> base real apurada</span><span><span class="chip teto">Contratado (teto)</span> competência futura</span><span><span class="chip warn">Sem liquidado apurado</span> vazio, não zero</span></div>
+
+    <div class="acoes">
+      <button>Configurar reajuste</button>
+      <button class="pri">Registrar aditivo previsto (01/06/2027)</button>
+      <button>Baixar estimativa (Excel)</button>
+    </div>
+  </div>
+
+  <div class="exp">
+    <h2>Janela “Configurar reajuste”</h2>
+    <span class="lbl">Índice</span><span class="sel">IPCA ▾</span>
+    <span class="lbl">☐ Informar percentual manual (sobrescreve o oficial)</span><span class="sel">5,0000</span>
+    <span class="lbl">☐ Informar data-base manual</span><span class="sel">01/06/2027</span>
+    <div class="acoes"><button class="pri">Salvar configuração</button></div>
+  </div>
+</div>
+</body>
+</html>

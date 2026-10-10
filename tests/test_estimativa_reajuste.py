@@ -15,7 +15,12 @@ from src.estimativa_reajuste import (
     aditivo_previsto_do_ciclo,
     datas_base,
     estimar_contrato,
+    liquidado_do_contrato,
+    nes_em_conflito,
+    ultimo_mes_coberto,
 )
+
+import pandas as pd
 
 CINCO = ParametrosReajuste(indice=None, percentual_manual=5.0, data_base_manual=None)
 
@@ -137,6 +142,13 @@ class BaseLiquidadoTests(unittest.TestCase):
         self.assertEqual(setembro["base_origem"], "contratado")  # além da cobertura: teto
         self.assertAlmostEqual(setembro["acrescimo"], 500.0)
 
+    def test_lancamento_em_mes_futuro_vale_como_liquidado(self) -> None:
+        estimativa = _estimar(liquidado={(2027, 9): 7_000.0}, ultimo_mes_coberto=(2026, 9))
+        setembro = _linha(estimativa, 2027, 9)
+        self.assertEqual(setembro["base_origem"], "liquidado")
+        self.assertAlmostEqual(setembro["acrescimo"], 350.0)
+        self.assertEqual(_linha(estimativa, 2027, 10)["base_origem"], "contratado")
+
     def test_liquidado_zero_e_negativo_sao_preservados(self) -> None:
         estimativa = _estimar(liquidado={(2027, 6): 0.0, (2027, 7): -1_000.0}, ultimo_mes_coberto=(2027, 7))
         self.assertAlmostEqual(_linha(estimativa, 2027, 6)["acrescimo"], 0.0)
@@ -207,6 +219,37 @@ class PromocaoTests(unittest.TestCase):
     def test_sem_percentual_conhecido_nao_ha_o_que_promover(self) -> None:
         estimativa = _estimar(params=ParametrosReajuste(indice="IPCA", percentual_manual=None, data_base_manual=None))
         self.assertIsNone(aditivo_previsto_do_ciclo(estimativa, [], 10_000.0))
+
+
+class LiquidadoDoContratoTests(unittest.TestCase):
+    def _base(self) -> pd.DataFrame:
+        return pd.DataFrame({
+            "ne_curta": ["2026NE000001", "2026NE000001", "2027NE000002", "2026NE000009"],
+            "ano_mes": [202606, 202607, 202706, 202606],
+            "valor": [8_000.0, -500.0, 9_000.0, 1_234.0],
+        })
+
+    def test_soma_as_nes_do_contrato_em_todos_os_exercicios_com_estorno(self) -> None:
+        resultado = liquidado_do_contrato({"2026NE000001", "2027NE000002"}, self._base())
+        self.assertEqual(resultado, {(2026, 6): 8_000.0, (2026, 7): -500.0, (2027, 6): 9_000.0})
+
+    def test_sem_base_ou_sem_nes_devolve_vazio_e_ultimo_mes_coberto(self) -> None:
+        self.assertEqual(liquidado_do_contrato({"2026NE000001"}, None), {})
+        self.assertEqual(liquidado_do_contrato(set(), self._base()), {})
+        # a base traz competências futuras esparsas: cobertura = mês anterior a "hoje", nunca o maior mês da base
+        self.assertEqual(ultimo_mes_coberto(self._base(), hoje=date(2026, 10, 11)), (2026, 9))
+        self.assertEqual(ultimo_mes_coberto(self._base(), hoje=date(2030, 1, 5)), (2027, 6))  # não passa do maior mês
+        self.assertEqual(ultimo_mes_coberto(self._base(), hoje=date(2027, 1, 5)), (2026, 12))  # virada de ano
+        self.assertIsNone(ultimo_mes_coberto(None))
+
+    def test_ne_em_dois_contratos_e_inconsistencia_sinalizada(self) -> None:
+        registros = [
+            {"ne_curta": "2026NE000001", "contrato_numero": "01/2026"},
+            {"ne_curta": "2026NE000001", "contrato_numero": "02/2026"},
+            {"ne_curta": "2026NE000002", "contrato_numero": "02/2026"},
+            {"ne_curta": None, "contrato_numero": "03/2026"},
+        ]
+        self.assertEqual(nes_em_conflito(registros), {"2026NE000001": {"01/2026", "02/2026"}})
 
 
 if __name__ == "__main__":
