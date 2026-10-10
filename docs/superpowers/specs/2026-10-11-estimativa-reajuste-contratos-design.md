@@ -12,8 +12,8 @@ Necessidade de Empenho, Projeção pela Execução, Registro nem aditivos cadast
 
 | Tema | Decisão |
 |---|---|
-| Percentual | Oficial (BCB/SGS) **e** manual; o manual sobrescreve. Índices: IPCA, INPC, IGP-M, Outro (só manual). |
-| Data-base | 12 meses após o último aditivo de Reajuste ASSINADO; sem ele, 12 meses após o início da vigência no Contratos.gov. Editável por contrato. |
+| Percentual | Oficial (BCB/SGS) **e** manual; o manual sobrescreve. Índices: IPCA (**padrão**, ajuste de 11/10/2026), INPC, IGP-M. |
+| Data-base | Início da **vigência de renovação mais recente** (termos aditivos de vigência do Contratos.gov, aditivos ASSINADOS de vigência), repetida a cada 12 meses — ajuste de 11/10/2026 ("pelas últimas vigências"); Reajuste ASSINADO na renovação já está no valor (próximo ciclo +12 meses); sem renovação, início + 12 meses. Editável por contrato. |
 | Destino | Cenário separado; promoção a aditivo "Previsto" só por clique. |
 | Detalhe | Matriz por competência (mês/ano), vigência multianual. |
 | Base de cálculo | **Liquidado por competência** (Liquidação por Competência, com estornos). O reajuste incide só sobre o executado. |

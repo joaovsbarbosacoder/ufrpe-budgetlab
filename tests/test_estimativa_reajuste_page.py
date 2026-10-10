@@ -62,6 +62,17 @@ def test_secao_lista_cada_contrato_e_usa_o_percentual_manual(tmp_path, monkeypat
     assert pd.isna(resumo.loc["29/2021", "Acréscimo na vigência"])
 
 
+def test_sem_configuracao_o_indice_padrao_e_o_ipca_oficial(tmp_path, monkeypatch) -> None:
+    # a série fixa de tests/conftest.py tem 0,40% ao mês: acumulado de 12 meses = 1,004^12 − 1 = 4,9102...%
+    _ambiente(tmp_path, monkeypatch, com_fotografia=True)
+
+    app = _abrir()
+
+    resumo = _tabela_resumo(app).set_index("Contrato")
+    assert resumo.loc["13/2026", "Origem do %"] == "Oficial (12 meses)"
+    assert resumo.loc["13/2026", "Percentual (%)"] == pytest.approx((1.004**12 - 1) * 100, abs=1e-3)
+
+
 def test_configuracao_vazia_nao_inventa_percentual(tmp_path, monkeypatch) -> None:
     _ambiente(tmp_path, monkeypatch, com_fotografia=False)
 

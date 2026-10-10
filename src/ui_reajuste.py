@@ -28,7 +28,7 @@ from src.estimativa_reajuste import (
     nes_em_conflito,
     ultimo_mes_coberto,
 )
-from src.indices_economicos import INDICES, ErroIndiceEconomico, variacoes_bcb
+from src.indices_economicos import INDICE_PADRAO, INDICES, ErroIndiceEconomico, variacoes_bcb
 from src.ui_cadastro import formatar_brl
 
 ROTULO_SITUACAO = {
@@ -43,7 +43,7 @@ ROTULO_ORIGEM_PERCENTUAL = {
     "manual": "Manual", "oficial": "Oficial (12 meses)", "oficial_ultimo": "Oficial (último disponível)",
     "sem_indice": "Sem índice",
 }
-_NENHUM = "(nenhum)"
+_PADRAO = f"Padrão ({INDICE_PADRAO})"
 
 
 def _md(texto: str) -> str:
@@ -70,7 +70,7 @@ def _parametros(linha: pd.Series) -> ParametrosReajuste:
     percentual = valor("reajuste_percentual_manual")
     data_base = valor("reajuste_data_base_manual")
     return ParametrosReajuste(
-        indice=None if indice is None else str(indice).upper(),
+        indice=INDICE_PADRAO if indice is None else str(indice).upper(),  # sem índice no cadastro: IPCA
         percentual_manual=None if percentual is None else float(percentual),
         data_base_manual=None if data_base is None else date.fromisoformat(str(data_base)[:10]),
     )
@@ -88,7 +88,7 @@ def _inicio_da_vigencia(linha: pd.Series, inicio_por_gov: dict[str, object]) -> 
 
 def _estimativas(
     dataframe: pd.DataFrame, todos_registros: list[dict], liquidacao_por_mes: pd.DataFrame | None,
-    inicio_por_gov: dict[str, object], ano: int, hoje: date,
+    inicio_por_gov: dict[str, object], ano: int, hoje: date, vigencias_por_gov: dict[str, list] | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Uma estimativa por contrato (a primeira linha de cada `contrato_numero` no exercício) e os avisos de
     NE em conflito. O liquidado soma as NEs do contrato em todos os exercícios, menos as NEs em conflito."""
@@ -131,6 +131,7 @@ def _estimativas(
             parametros=parametros, exercicio_inicial=ano, variacoes=variacoes_por_indice.get(indice) if indice else None,
             liquidado=liquidado_do_contrato(nes_por_contrato.get(numero, set()), liquidacao_por_mes),
             ultimo_mes_coberto=cobertura,
+            inicios_vigencia=(vigencias_por_gov or {}).get(str(linha.get("contratosgov_id"))),
         )
         resultados.append({"linha": linha, "estimativa": estimativa, "parametros": parametros})
     return resultados, avisos
@@ -192,11 +193,11 @@ def _excel(resumo: pd.DataFrame, matriz: pd.DataFrame) -> bytes:
 @st.dialog("Configurar reajuste")
 def _dialogo_configurar(registro: dict, ano: int, chave: str) -> None:
     st.caption(_md(
-        "Índice oficial (IPCA, INPC ou IGP-M) sugere o percentual; o percentual manual, se informado, "
-        "sobrescreve. A data-base manual substitui a calculada pela vigência."
+        "O índice oficial (padrão IPCA; também INPC ou IGP-M) sugere o percentual; o percentual manual, se "
+        "informado, sobrescreve. A data-base manual substitui a calculada pelas últimas vigências."
     ))
     atual_indice = str(registro.get("reajuste_indice") or "").upper()
-    opcoes = [_NENHUM, *INDICES]
+    opcoes = [_PADRAO, *INDICES]
     indice = st.selectbox(
         "Índice", opcoes, index=opcoes.index(atual_indice) if atual_indice in opcoes else 0, key=f"{chave}_indice"
     )
@@ -214,7 +215,7 @@ def _dialogo_configurar(registro: dict, ano: int, chave: str) -> None:
     )
     if st.button("Salvar configuração", type="primary", key=f"{chave}_salvar"):
         novo = dict(registro)
-        novo["reajuste_indice"] = None if indice == _NENHUM else indice
+        novo["reajuste_indice"] = None if indice == _PADRAO else indice
         novo["reajuste_percentual_manual"] = float(percentual) if usar_percentual else None
         novo["reajuste_data_base_manual"] = data_base.isoformat() if usar_data else None
         atualizar_contrato(ano, novo)
@@ -224,7 +225,7 @@ def _dialogo_configurar(registro: dict, ano: int, chave: str) -> None:
 def render_estimativa_reajuste(
     dataframe: pd.DataFrame, registros: list[dict], todos_registros: list[dict], ano: int,
     liquidacao_por_mes: pd.DataFrame | None, inicio_por_gov: dict[str, object], source_key: str,
-    hoje: date | None = None,
+    hoje: date | None = None, vigencias_por_gov: dict[str, list] | None = None,
 ) -> None:
     """Seção completa. `registros` são os do exercício `ano` (o que se grava); `todos_registros` são os de todos
     os exercícios (liquidado e conflito de NE); `inicio_por_gov` mapeia `contratosgov_id` → início da vigência;
@@ -238,7 +239,9 @@ def render_estimativa_reajuste(
             "valor LIQUIDADO por competência; onde ainda não há liquidado apurado (meses futuros) a base é o valor "
             "contratado, marcado como teto. Competência já apurada sem lançamento fica vazia, nunca zero."
         ))
-        resultados, avisos = _estimativas(dataframe, todos_registros, liquidacao_por_mes, inicio_por_gov, ano, hoje)
+        resultados, avisos = _estimativas(
+            dataframe, todos_registros, liquidacao_por_mes, inicio_por_gov, ano, hoje, vigencias_por_gov
+        )
         for aviso in avisos:
             st.warning(_md(aviso))
         if not resultados:

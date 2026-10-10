@@ -45,6 +45,16 @@ def _arquivo_de_pagina(caminho: Path) -> bool:
 
 
 @pytest.fixture(autouse=True)
+def _sem_rede_nos_indices_oficiais(monkeypatch):
+    """A estimativa de reajuste consulta o IPCA no Banco Central por padrão; nenhum teste usa a rede. A série
+    fixa tem 0,40% ao mês de 01/2023 a 12/2030 (acumulado de 12 meses = 1,004^12 − 1)."""
+
+    serie = [{"data": f"01/{mes:02d}/{ano}", "valor": "0.40"} for ano in range(2023, 2031) for mes in range(1, 13)]
+    monkeypatch.setattr("src.indices_economicos._buscar_http", lambda url: serie)
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _coletar_lixo_apos_teste_de_pagina(request):
     yield
     if _arquivo_de_pagina(Path(str(request.node.path))):

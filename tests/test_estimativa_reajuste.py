@@ -63,6 +63,42 @@ class DatasBaseTests(unittest.TestCase):
         )
         self.assertEqual(datas, [date(2028, 1, 1)])  # o PREVISTO não conta
 
+    def test_data_base_e_o_inicio_da_vigencia_de_renovacao_mais_recente_e_se_repete(self) -> None:
+        datas, _ = datas_base(
+            vigencia_inicio=date(2022, 1, 27), inicios_vigencia=[date(2025, 1, 27), date(2026, 1, 27), date(2023, 1, 27)],
+            vigencia_fim_efetiva=date(2027, 12, 31), aditivos=[], data_base_manual=None, a_partir_de=date(2026, 1, 1),
+        )
+        # a renovação de 27/01/2026 é a data-base; o contrato original (2022) e as renovações antigas não mandam
+        self.assertEqual(datas, [date(2026, 1, 27), date(2027, 1, 27)])
+
+    def test_renovacao_antiga_cai_no_aniversario_do_exercicio(self) -> None:
+        datas, _ = datas_base(
+            vigencia_inicio=date(2022, 1, 27), inicios_vigencia=[date(2025, 6, 10)], vigencia_fim_efetiva=date(2027, 12, 31),
+            aditivos=[], data_base_manual=None, a_partir_de=date(2026, 1, 1),
+        )
+        self.assertEqual(datas, [date(2026, 6, 10), date(2027, 6, 10)])
+
+    def test_reajuste_assinado_na_renovacao_ja_esta_refletido(self) -> None:
+        reajuste = Aditivo(numero="5º TA", tipo="REAJUSTE", situacao="ASSINADO", data_inicio=date(2026, 1, 27), valor_mensal=11_000.0)
+        datas, _ = datas_base(
+            vigencia_inicio=date(2022, 1, 27), inicios_vigencia=[date(2026, 1, 27)], vigencia_fim_efetiva=date(2028, 12, 31),
+            aditivos=[reajuste], data_base_manual=None, a_partir_de=date(2026, 1, 1),
+        )
+        self.assertEqual(datas, [date(2027, 1, 27), date(2028, 1, 27)])  # o de 2026 já está no valor em vigor
+
+    def test_aditivo_assinado_de_vigencia_ancora_e_o_previsto_nao(self) -> None:
+        prorrogacao = Aditivo(
+            numero="3º TA", tipo="PRORROGACAO", situacao="ASSINADO", data_inicio=date(2026, 3, 1), vigencia_fim=date(2027, 12, 31)
+        )
+        previsto = Aditivo(
+            numero="4º TA", tipo="PRORROGACAO", situacao="PREVISTO", data_inicio=date(2026, 9, 1), vigencia_fim=date(2028, 12, 31)
+        )
+        datas, _ = datas_base(
+            vigencia_inicio=date(2022, 1, 27), vigencia_fim_efetiva=date(2028, 12, 31), aditivos=[prorrogacao, previsto],
+            data_base_manual=None, a_partir_de=date(2026, 1, 1),
+        )
+        self.assertEqual(datas, [date(2026, 3, 1), date(2027, 3, 1), date(2028, 3, 1)])
+
     def test_data_base_manual_e_a_proxima_data_base(self) -> None:
         datas, _ = datas_base(
             vigencia_inicio=date(2026, 6, 1), vigencia_fim_efetiva=date(2028, 5, 31), aditivos=[], data_base_manual=date(2027, 6, 16)
