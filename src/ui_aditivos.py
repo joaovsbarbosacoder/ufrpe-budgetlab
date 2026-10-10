@@ -41,6 +41,33 @@ def _recarregar() -> None:
         st.rerun()
 
 
+#: nome público de `_recarregar`, para o chamador de `acrescentar_aditivo` (a página).
+recarregar_fragmento = _recarregar
+
+
+def _iniciar_estado(k: str, aditivos: list[Aditivo]) -> str:
+    """Cria, uma vez, a lista de cartões da aba em `st.session_state[f"{k}_aditivos"]` a partir do registro
+    (cada cartão com `_uid` = posição; `..._prox` = próximo `_uid` livre). Devolve a chave da lista."""
+
+    chave = f"{k}_aditivos"
+    if chave not in st.session_state:
+        st.session_state[chave] = [{**aditivo_para_registro(a), "_uid": posicao} for posicao, a in enumerate(aditivos)]
+        st.session_state[f"{chave}_prox"] = len(st.session_state[chave])
+    return chave
+
+
+def acrescentar_aditivo(k: str, aditivos_atuais: list[Aditivo], novo: Aditivo) -> None:
+    """Põe um aditivo (ex.: o sugerido a partir de um termo do Contratos.gov) na lista da aba Aditivos,
+    depois dos que já estão lá. Só mexe em `st.session_state` — NADA é gravado: o aditivo só vira parte do
+    cadastro quando o usuário clica "Salvar" na janela de edição, e continua editável até lá. Inicializa a
+    lista a partir de `aditivos_atuais` se a aba ainda não foi aberta. O chamador recarrega o fragmento."""
+
+    chave = _iniciar_estado(k, aditivos_atuais)
+    uid = st.session_state[f"{chave}_prox"]
+    st.session_state[chave].append({**aditivo_para_registro(novo), "_uid": uid})
+    st.session_state[f"{chave}_prox"] = uid + 1
+
+
 def render_aba_aditivos(k: str, aditivos: list[Aditivo], itens_base: object) -> list[Aditivo]:
     """Aba "Aditivos" da janela de edição (06/10/2026): um cartão por aditivo (nº, tipo, situação, início,
     assinatura, novo valor mensal, nova vigência e, opcionalmente, novo rateio dos itens), em ordem de
@@ -50,10 +77,7 @@ def render_aba_aditivos(k: str, aditivos: list[Aditivo], itens_base: object) -> 
     zero). Devolve os aditivos conforme digitados, para os indicadores ao vivo e a validação ao salvar.
     Sem `st.data_editor` (quebra dentro de `st.dialog`); adicionar/remover recarrega só o fragmento."""
 
-    chave = f"{k}_aditivos"
-    if chave not in st.session_state:
-        st.session_state[chave] = [{**aditivo_para_registro(a), "_uid": posicao} for posicao, a in enumerate(aditivos)]
-        st.session_state[f"{chave}_prox"] = len(st.session_state[chave])
+    chave = _iniciar_estado(k, aditivos)
     cartoes = st.session_state[chave]
     itens_base = itens_base if isinstance(itens_base, list) and itens_base else [{"numero": 1, "percentual": 100.0}]
 

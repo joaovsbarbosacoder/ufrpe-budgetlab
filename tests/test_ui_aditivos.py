@@ -122,5 +122,55 @@ class TestAbaAditivos(unittest.TestCase):
         self.assertTrue(any("ordem ambígua" in e for e in app.session_state["erros"]))
 
 
+def _pagina_acrescentar() -> None:
+    from datetime import date
+
+    import streamlit as st
+
+    from src.contratos_aditivos import Aditivo
+    from src.ui_aditivos import acrescentar_aditivo
+
+    existentes = [Aditivo(numero="1º TA", tipo="REAJUSTE", situacao="ASSINADO", data_inicio=date(2025, 7, 1))]
+    novo = Aditivo(
+        numero="00004/2025", tipo="REAJUSTE", situacao="ASSINADO", data_inicio=date(2025, 10, 18),
+        data_assinatura=date(2025, 9, 16), vigencia_fim=date(2026, 10, 17),
+    )
+    if st.button("acrescentar", key="acrescentar"):
+        acrescentar_aditivo("t", existentes, novo)
+
+
+class TestAcrescentarAditivo(unittest.TestCase):
+    """`acrescentar_aditivo` (10/2026, "Registrar aditivo do gov"): coloca um aditivo sugerido na lista da aba
+    Aditivos SEM gravar nada — a lista vive só em `st.session_state` até o "Salvar" da janela."""
+
+    def _clicar(self, app: AppTest) -> AppTest:
+        app.button(key="acrescentar").click().run()
+        self.assertEqual(len(app.exception), 0)
+        return app
+
+    def test_sem_estado_inicializa_com_os_atuais_e_acrescenta(self):
+        app = AppTest.from_function(_pagina_acrescentar, default_timeout=TEMPO_LIMITE_APPTEST)
+        app.run()
+        self.assertNotIn("t_aditivos", app.session_state)  # nada é criado sem o clique
+        self._clicar(app)
+        cartoes = app.session_state["t_aditivos"]
+        self.assertEqual([c["numero"] for c in cartoes], ["1º TA", "00004/2025"])
+        self.assertEqual([c["_uid"] for c in cartoes], [0, 1])
+        self.assertEqual(app.session_state["t_aditivos_prox"], 2)
+        self.assertEqual(cartoes[1]["tipo"], "REAJUSTE")
+        self.assertEqual(cartoes[1]["situacao"], "ASSINADO")
+        self.assertEqual(cartoes[1]["data_inicio"], "2025-10-18")
+        self.assertEqual(cartoes[1]["vigencia_fim"], "2026-10-17")
+        self.assertIsNone(cartoes[1]["valor_mensal"])  # valor do gov nunca é importado
+
+    def test_com_estado_existente_usa_o_proximo_uid(self):
+        app = AppTest.from_function(_pagina_acrescentar, default_timeout=TEMPO_LIMITE_APPTEST)
+        app.run()
+        self._clicar(app)
+        self._clicar(app)
+        self.assertEqual([c["_uid"] for c in app.session_state["t_aditivos"]], [0, 1, 2])
+        self.assertEqual(app.session_state["t_aditivos_prox"], 3)
+
+
 if __name__ == "__main__":
     unittest.main()
