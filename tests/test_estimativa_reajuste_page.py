@@ -73,6 +73,14 @@ def test_sem_configuracao_o_indice_padrao_e_o_ipca_oficial(tmp_path, monkeypatch
     assert resumo.loc["13/2026", "Percentual (%)"] == pytest.approx((1.004**12 - 1) * 100, abs=1e-3)
 
 
+def test_resumo_traz_a_coluna_de_reajuste_assinado_no_gov(tmp_path, monkeypatch) -> None:
+    _ambiente(tmp_path, monkeypatch, com_fotografia=True)
+
+    resumo = _tabela_resumo(_abrir())
+
+    assert "Reajuste assinado no gov (registrar)" in resumo.columns
+
+
 def test_configuracao_vazia_nao_inventa_percentual(tmp_path, monkeypatch) -> None:
     _ambiente(tmp_path, monkeypatch, com_fotografia=False)
 

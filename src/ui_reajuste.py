@@ -125,13 +125,14 @@ def _estimativas(
                 variacoes_por_indice[indice] = None
             else:
                 variacoes_por_indice[indice] = retorno
+        termos_gov = (vigencias_por_gov or {}).get(str(linha.get("contratosgov_id")), {})
         estimativa = estimar_contrato(
             contrato=numero, despesa_mensal=linha.get("despesa_mensal"), aditivos=list(linha.get("aditivos") or []),
             vigencia_inicio=_inicio_da_vigencia(linha, inicio_por_gov), vigencia_fim=linha.get("vigencia_fim"),
             parametros=parametros, exercicio_inicial=ano, variacoes=variacoes_por_indice.get(indice) if indice else None,
             liquidado=liquidado_do_contrato(nes_por_contrato.get(numero, set()), liquidacao_por_mes),
             ultimo_mes_coberto=cobertura,
-            inicios_vigencia=(vigencias_por_gov or {}).get(str(linha.get("contratosgov_id"))),
+            inicios_vigencia=termos_gov.get("renovacoes"), reajustes_gov=termos_gov.get("reajustes"),
         )
         resultados.append({"linha": linha, "estimativa": estimativa, "parametros": parametros})
     return resultados, avisos
@@ -167,6 +168,7 @@ def _resumo(resultados: list[dict], ano: int, hoje: date) -> pd.DataFrame:
             f"Acréscimo {ano}": None if do_ano.empty else _soma_ou_nulo(do_ano["acrescimo"]),
             "Acréscimo na vigência": None if matriz.empty else _soma_ou_nulo(matriz["acrescimo"]),
             "Competências sem estimativa": 0 if matriz.empty else int(matriz["acrescimo"].isna().sum()),
+            "Reajuste assinado no gov (registrar)": ", ".join(f"{d:%d/%m/%Y}" for d in estimativa.reajustes_gov_a_registrar) or None,
         })
     return pd.DataFrame(linhas)
 
@@ -259,6 +261,12 @@ def render_estimativa_reajuste(
         desconhecidas = {ROTULO_SITUACAO[s] for s in ("sem_indice", "sem_data_base", "sem_vigencia_fim")}
         c.metric("Contratos sem estimativa", str(int(resumo["Situação"].isin(desconhecidas).sum())))
 
+        if resumo["Reajuste assinado no gov (registrar)"].notna().any():
+            st.info(_md(
+                "Contratos com reajuste já assinado no Contratos.gov (coluna \"Reajuste assinado no gov\"): o ciclo "
+                "sai da estimativa. O gov não traz o valor novo da parcela — registre o aditivo de Reajuste, com o "
+                "valor, na aba Aditivos do contrato."
+            ))
         st.dataframe(
             resumo, hide_index=True, use_container_width=True,
             column_config={

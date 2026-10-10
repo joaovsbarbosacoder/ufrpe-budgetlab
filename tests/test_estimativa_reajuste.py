@@ -14,6 +14,7 @@ from src.estimativa_reajuste import (
     ParametrosReajuste,
     aditivo_previsto_do_ciclo,
     datas_base,
+    datas_dos_termos,
     estimar_contrato,
     liquidado_do_contrato,
     nes_em_conflito,
@@ -112,6 +113,67 @@ class DatasBaseTests(unittest.TestCase):
         self.assertEqual(sem_fim, ([], "sem_vigencia_fim"))
         curto = datas_base(vigencia_inicio=date(2026, 6, 1), vigencia_fim_efetiva=date(2027, 5, 31), aditivos=[], data_base_manual=None)
         self.assertEqual(curto, ([], "sem_reajuste_na_vigencia"))
+
+
+class TermosDoGovTests(unittest.TestCase):
+    def _termos(self) -> pd.DataFrame:
+        return pd.DataFrame({
+            "contrato_id": ["1", "1", "1", "1", "2"],
+            "tipo": ["Contrato", "Termo Aditivo", "Termo Aditivo", "Termo de Apostilamento", "Termo Aditivo"],
+            "qualificacao_termo": [None, "VIGÊNCIA; REAJUSTE", "ACRÉSCIMO / SUPRESSÃO; REAJUSTE", None, "VIGENCIA"],
+            "vigencia_inicio": [date(2025, 5, 7), date(2026, 5, 8), date(2026, 9, 30), date(2025, 5, 7), date(2026, 1, 10)],
+            "data_inicio_novo_valor": [None, date(2026, 5, 8), date(2026, 9, 30), date(2026, 4, 23), None],
+        })
+
+    def test_renovacao_exige_vigencia_e_reajuste_exige_reajuste_so_em_termo_aditivo(self) -> None:
+        datas = datas_dos_termos(self._termos())
+        self.assertEqual(datas["1"], {"renovacoes": [date(2026, 5, 8)], "reajustes": [date(2026, 5, 8), date(2026, 9, 30)]})
+        self.assertEqual(datas["2"], {"renovacoes": [date(2026, 1, 10)], "reajustes": []})  # sem acento também vale
+
+    def test_reajuste_sem_data_de_novo_valor_usa_o_inicio_do_termo(self) -> None:
+        termos = pd.DataFrame({
+            "contrato_id": ["3"], "tipo": ["Termo Aditivo"], "qualificacao_termo": ["REAJUSTE"],
+            "vigencia_inicio": [date(2026, 3, 1)], "data_inicio_novo_valor": [None],
+        })
+        self.assertEqual(datas_dos_termos(termos)["3"]["reajustes"], [date(2026, 3, 1)])
+
+
+class ReajusteJaAssinadoNoGovTests(unittest.TestCase):
+    def test_reajuste_do_gov_na_renovacao_ja_esta_refletido_e_adia_o_ciclo(self) -> None:
+        datas, motivo = datas_base(
+            vigencia_inicio=date(2025, 5, 7), inicios_vigencia=[date(2026, 5, 8)], reajustes_gov=[date(2026, 5, 8)],
+            vigencia_fim_efetiva=date(2027, 5, 7), aditivos=[], data_base_manual=None, a_partir_de=date(2026, 1, 1),
+        )
+        self.assertEqual((datas, motivo), ([], "sem_reajuste_na_vigencia"))  # o próximo seria 08/05/2027, após o fim
+
+    def test_termo_sem_vigencia_nao_e_renovacao_e_o_reajuste_do_gov_desloca_o_inicio(self) -> None:
+        datas, _ = datas_base(
+            vigencia_inicio=date(2026, 6, 17), inicios_vigencia=[], reajustes_gov=[date(2026, 9, 30)],
+            vigencia_fim_efetiva=date(2028, 12, 31), aditivos=[], data_base_manual=None, a_partir_de=date(2026, 1, 1),
+        )
+        self.assertEqual(datas, [date(2027, 9, 30), date(2028, 9, 30)])
+
+    def test_reajuste_antigo_do_gov_nao_impede_o_ciclo_da_renovacao_nova(self) -> None:
+        datas, _ = datas_base(
+            vigencia_inicio=date(2022, 9, 1), inicios_vigencia=[date(2026, 9, 2)], reajustes_gov=[date(2025, 9, 2)],
+            vigencia_fim_efetiva=date(2027, 9, 1), aditivos=[], data_base_manual=None, a_partir_de=date(2026, 1, 1),
+        )
+        self.assertEqual(datas, [date(2026, 9, 2)])  # a renovação de 2026 ainda não tem reajuste assinado
+
+    def test_estimativa_sinaliza_o_reajuste_do_gov_sem_aditivo_cadastrado(self) -> None:
+        estimativa = _estimar(
+            inicio=date(2025, 5, 7), fim=date(2027, 5, 7), inicios_vigencia=[date(2026, 5, 8)],
+            reajustes_gov=[date(2026, 5, 8), date(2024, 5, 8)],
+        )
+        self.assertEqual(estimativa.situacao, "sem_reajuste_na_vigencia")
+        self.assertEqual(estimativa.reajustes_gov_a_registrar, [date(2026, 5, 8)])  # o de 2024 é de exercício passado
+
+    def test_reajuste_do_gov_ja_cadastrado_como_aditivo_nao_e_sinalizado(self) -> None:
+        cadastrado = Aditivo(numero="2º TA", tipo="REAJUSTE", situacao="ASSINADO", data_inicio=date(2026, 5, 8), valor_mensal=11_000.0)
+        estimativa = _estimar(
+            inicio=date(2025, 5, 7), fim=date(2027, 5, 7), aditivos=[cadastrado], reajustes_gov=[date(2026, 5, 8)],
+        )
+        self.assertEqual(estimativa.reajustes_gov_a_registrar, [])
 
 
 class MatrizPorCompetenciaTests(unittest.TestCase):
