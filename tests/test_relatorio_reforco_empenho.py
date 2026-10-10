@@ -246,6 +246,62 @@ class TestExcluirLinhasZeradas(unittest.TestCase):
         self.assertTrue(resultado.empty)
 
 
+class TestCabecalhoDetalhado(unittest.TestCase):
+    def test_cabecalho_segue_o_modelo_com_item_lic_e_sem_unidade(self):
+        from src.relatorio_reforco_empenho import _cabecalho_detalhado
+
+        self.assertEqual(
+            _cabecalho_detalhado(TIPO_REFORCO),
+            [
+                "Nº CONTRATO", "Nº PROCESSO EMPENHO", "FORNECEDOR", "CNPJ/CPF FORNEC", "AÇÃO", "PTRES",
+                "FONTE", "ND", "UGR", "PI", "EMPENHO", "ITEM LIC.", "EMPENHAR (R$)",
+            ],
+        )
+        self.assertEqual(_cabecalho_detalhado(TIPO_ANULACAO)[-1], "ANULAR (R$)")
+
+    def test_larguras_acompanham_as_colunas_e_cabem_na_pagina(self):
+        from src.relatorio_reforco_empenho import _LARGURAS_COLUNA_DETALHADO, _cabecalho_detalhado
+
+        self.assertEqual(len(_LARGURAS_COLUNA_DETALHADO), len(_cabecalho_detalhado(TIPO_REFORCO)))
+        self.assertLessEqual(sum(_LARGURAS_COLUNA_DETALHADO), 756)
+
+    def test_contratos_trazem_contrato_e_cnpj_nas_linhas(self):
+        df = _continuos_sintetico().assign(
+            contrato_numero=["23/2025", "29/2024", "05/2026", "29/2021"],
+            fornecedor_cnpj_cpf=["76659820000151", "11863530000180", "12345678000100", "7674744000130"],
+        )
+        linhas = linhas_para_processo(df, CONTRATOS_CONTINUOS, "001370/2026-44", 2026)
+        apc = linhas[linhas["item_despesa"].str.startswith("Associação")].iloc[0]
+        self.assertEqual(apc["contrato"], "23/2025")
+        self.assertEqual(apc["cnpj_cpf"], "76659820000151")
+        # contrato com 2 itens de licitação: contrato e CNPJ repetidos nas duas linhas
+        tekis = linhas[linhas["item_despesa"].str.startswith("Tekis")]
+        self.assertEqual(len(tekis), 2)
+        self.assertEqual(set(tekis["contrato"]), {"29/2021"})
+
+    def test_bolsas_ficam_com_contrato_e_cnpj_vazios(self):
+        linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78", 2026)
+        self.assertTrue(linhas[["contrato", "cnpj_cpf"]].isna().all().all())
+
+    def test_cnpj_sem_zero_a_esquerda_e_completado_sem_mexer_em_cpf_ou_cnpj_completo(self):
+        from src.relatorio_reforco_empenho import _formatar_cnpj_cpf
+
+        self.assertEqual(_formatar_cnpj_cpf("7578965000105"), "07578965000105")
+        self.assertEqual(_formatar_cnpj_cpf("76659820000151"), "76659820000151")
+        self.assertEqual(_formatar_cnpj_cpf("12345678901"), "12345678901")
+        self.assertEqual(_formatar_cnpj_cpf(None), "")
+
+    def test_pdf_detalhado_de_contratos_com_contrato_e_cnpj_gera(self):
+        df = _continuos_sintetico().assign(
+            contrato_numero=["23/2025", "29/2024", "05/2026", "29/2021"],
+            fornecedor_cnpj_cpf=["76659820000151", "11863530000180", "12345678000100", "7674744000130"],
+        )
+        linhas = linhas_para_processo(df, CONTRATOS_CONTINUOS, "001370/2026-44", 2026)
+        linhas = linhas.assign(empenhar=1000.0)
+        pdf = gerar_pdf_detalhado(CONTRATOS_CONTINUOS, TIPO_REFORCO, "001370/2026-44", linhas)
+        self.assertTrue(pdf.startswith(b"%PDF"))
+
+
 class TestGerarPdfDetalhado(unittest.TestCase):
     def test_pdf_valido_com_total_correto(self):
         linhas = linhas_para_processo(_bolsas_sintetico(), BOLSAS_AUXILIOS, "001167/2026-78", 2026)
