@@ -138,3 +138,64 @@ def test_sem_fotografia_segue_com_aviso(sem_gov):
     assert "Gov: vigência" not in html
     assert "sem par no Contratos.gov" not in html
     assert len([b for b in app.button if b.key and b.key.startswith("cc_editar_")]) == 3  # o registro continua
+
+
+# --- Task 5: bloco "Novos no Contratos.gov" e inclusão -----------------------------------------------
+# Cadastro de teste: 13/2026 (liga ao 1004328) e 29/2021 (liga ao 118872); candidatos = os outros dois
+# vigentes do gov: 00021/2017 (id 18940, 14 NEs) e 00021/2023 (id 220038, sem empenhos).
+
+
+def _campo(app: AppTest, rotulo: str):
+    return next(w for w in (*app.text_input, *app.number_input, *app.date_input) if w.label == rotulo)
+
+
+def _incluir(app: AppTest, contrato_id: str, ne: str | None = None) -> AppTest:
+    if ne is not None:
+        app.selectbox(key=f"cc_gov_ne_{contrato_id}").select(ne)
+    next(b for b in app.button if b.key == f"cc_gov_incluir_{contrato_id}").click()
+    app.run()
+    assert not app.exception, [e.value for e in app.exception]
+    return app
+
+
+def test_bloco_lista_candidatos_sem_ligados_inativos_e_encerrados(com_gov):
+    app = _abrir()
+    rotulos = [e.label for e in app.expander]
+    assert any(r.startswith("Novos no Contratos.gov (2 candidato(s) · 0 em dúvida)") for r in rotulos), rotulos[:6]
+    html = _html(app)
+    _contem(html, "00021/2017")
+    _contem(html, "00021/2023")
+    # markdown simples, sem HTML: com `unsafe_allow_html` o Streamlit codificava `&` duas vezes ("C&C" virava
+    # "C&amp;C" na tela real, conferido no navegador — o AppTest só vê o texto enviado, não o DOM renderizado).
+    _contem(html, "**00021/2017** — RIO AVE IMOVEIS LTDA")
+    assert "&amp;" not in html
+    for ausente in ("00013/2026", "00029/2021", "00011/2017", "00018/2014"):  # ligados, inativo, encerrado
+        assert ausente not in html, ausente
+
+
+def test_incluir_abre_janela_pre_preenchida_sem_gravar(com_gov, tmp_path):
+    antes = _conteudo_do_cadastro(tmp_path)
+    app = _incluir(_abrir(), "18940")
+    assert _campo(app, "Nº do contrato").value == "21/2017"
+    assert _campo(app, "Fornecedor").value == "RIO AVE IMOVEIS LTDA"
+    assert _campo(app, "Ano").value == 2017
+    assert _campo(app, "CNPJ/CPF").value == "10729661000106"
+    assert _campo(app, "Vigência (fim) — opcional").value == date(2027, 5, 28)
+    for campo_manual in ("Ação", "PTRES", "UGR", "NE (opcional)", "ND", "PI"):  # NE não escolhida: tudo em branco
+        assert _campo(app, campo_manual).value == "", campo_manual
+    assert _campo(app, "Despesa mensal (R$)").value == 0.0  # padrão do formulário, não vem do gov
+    assert _conteudo_do_cadastro(tmp_path) == antes
+
+
+def test_ne_escolhida_preenche_ne_nd_e_pi(com_gov):
+    app = _incluir(_abrir(), "18940", ne="2026NE000203")
+    assert _campo(app, "NE (opcional)").value == "2026NE000203"
+    assert _campo(app, "ND").value == "339092"
+    assert _campo(app, "PI").value == "M20RKG01SCN"
+
+
+def test_contrato_sem_empenhos_pode_ser_incluido(com_gov):
+    app = _incluir(_abrir(), "220038")
+    assert _campo(app, "Nº do contrato").value == "21/2023"
+    assert _campo(app, "CNPJ/CPF").value == "00000000191"  # zeros preservados
+    assert _campo(app, "NE (opcional)").value == ""

@@ -172,7 +172,9 @@ from src.contratos_continuos import (
     SITUACAO_VIGENCIA_ENCERRADA,
     aditivo_sugerido,
     aditivos_pendentes,
+    candidatos_novos,
     com_contratosgov,
+    registro_novo_do_gov,
     situacao_contrato,
 )
 from src.contratos_continuos_cadastro import (
@@ -488,6 +490,18 @@ def _secao(titulo: str) -> None:
     st.markdown(f'<div class="cad-secao-dialogo">{titulo}</div>', unsafe_allow_html=True)
 
 
+#: caracteres que o markdown interpreta; cada um ganha uma barra invertida na frente em `_md`.
+_ESPECIAIS_MARKDOWN = {ord(c): chr(92) + c for c in chr(92) + "`*_{}[]<>~$|"}
+
+
+def _md(texto: object) -> str:
+    """Texto de dado externo para `st.markdown` SEM HTML: escapa os caracteres especiais do markdown. Dado do
+    Contratos.gov (ex.: "C&C COMERCIO") não passa por HTML aqui — no markdown com `unsafe_allow_html` o Streamlit
+    codificava o `&` duas vezes ("C&amp;C" na tela, conferido no navegador)."""
+
+    return str(texto).translate(_ESPECIAIS_MARKDOWN)
+
+
 def _fmt_data_gov(valor: object) -> str:
     dia = _data_ou_none(valor)
     return dia.strftime("%d/%m/%Y") if dia else "sem dado"
@@ -570,7 +584,7 @@ def _render_contratosgov_no_dialogo(linha: pd.Series, k: str, termos_gov: pd.Dat
     st.markdown(
         f"Vigência no cadastro (com aditivos): **{_fmt_data_gov(linha['vigencia_fim_efetiva'])}** · "
         f"no Contratos.gov: **{_fmt_data_gov(linha['vigencia_fim_contratosgov'])}** · "
-        f"situação no gov: **{_esc(linha['situacao_vigencia_gov'])}** · ligado por {_esc(linha['ligacao_por'])}"
+        f"situação no gov: **{_md(linha['situacao_vigencia_gov'])}** · ligado por {_md(linha['ligacao_por'])}"
     )
     if pd.notna(linha["valor_parcela_contratosgov"]):
         st.caption(
@@ -941,22 +955,27 @@ def _dialogo_remover_contrato(id_contrato: str, rotulo: str, ano_exercicio: int)
 
 
 @st.dialog("Novo contrato", width="large")
-def _dialogo_novo_contrato(ano_exercicio: int, source_key: str) -> None:
+def _dialogo_novo_contrato(ano_exercicio: int, source_key: str, valores: dict | None = None) -> None:
     """Formulário de "+ Novo contrato" em janela, organizado em seções (era um popover estreito com
     20 campos empilhados). Grava direto no cadastro nativo do exercício em tela
     (`src/contratos_continuos_cadastro.py`).
 
     `ano_exercicio` (parâmetro, o exercício em tela) != `ano` (campo do formulário, o ano do
-    próprio contrato) — nomes diferentes de propósito, para não colidir."""
+    próprio contrato) — nomes diferentes de propósito, para não colidir.
 
+    `valores` (opcional, 10/2026): argumentos de `novo_contrato` já preenchidos a partir de um contrato do
+    Contratos.gov (`registro_novo_do_gov`) — só o que o gov tem; o resto fica no padrão do formulário. Nada é
+    gravado até "Adicionar contrato". `fonte_cod` não tem campo no formulário: segue direto para o registro."""
+
+    valores = valores or {}
     with st.form(f"contratos_continuos_form_{source_key}", clear_on_submit=True, border=False):
         _secao("Identificação")
         c1, c2, c3 = st.columns([1, 2.2, 1])
-        numero = c1.text_input("Nº do contrato")
-        fornecedor = c2.text_input("Fornecedor")
-        ano = c3.number_input("Ano", min_value=2000, max_value=2100, value=2026, step=1)
+        numero = c1.text_input("Nº do contrato", value=valores.get("contrato_numero") or "")
+        fornecedor = c2.text_input("Fornecedor", value=valores.get("fornecedor") or "")
+        ano = c3.number_input("Ano", min_value=2000, max_value=2100, value=int(valores.get("ano_contrato") or 2026), step=1)
         c4, c5, c6 = st.columns(3)
-        cnpj = c4.text_input("CNPJ/CPF")
+        cnpj = c4.text_input("CNPJ/CPF", value=valores.get("fornecedor_cnpj_cpf") or "")
         tipo_despesa = c5.text_input("Tipo de despesa")
         status = c6.selectbox("Status", STATUS_OPCOES)
         c7, c8 = st.columns(2)
@@ -966,7 +985,7 @@ def _dialogo_novo_contrato(ano_exercicio: int, source_key: str) -> None:
         _secao("Período de execução")
         p1, p2, p3 = st.columns(3)
         vigencia = p1.date_input(
-            "Vigência (fim) — opcional", value=None, format="DD/MM/YYYY",
+            "Vigência (fim) — opcional", value=_data_ou_none(valores.get("vigencia_fim")), format="DD/MM/YYYY",
             min_value=date(2000, 1, 1), max_value=date(2100, 12, 31),
         )
         inicio_data = p2.date_input(
@@ -989,13 +1008,13 @@ def _dialogo_novo_contrato(ano_exercicio: int, source_key: str) -> None:
         unidade = q[0].text_input("Unidade")
         acao = q[1].text_input("Ação")
         ptres = q[2].text_input("PTRES")
-        nd = q[3].text_input("ND")
+        nd = q[3].text_input("ND", value=valores.get("natureza_despesa_cod") or "")
         ugr = q[4].text_input("UGR")
-        pi = st.text_input("PI")
+        pi = st.text_input("PI", value=valores.get("pi_cod") or "")
 
         _secao("Empenho e valores")
         e1, e2, e3 = st.columns(3)
-        ne_curta = e1.text_input("NE (opcional)", placeholder="ex. 2026NE000999")
+        ne_curta = e1.text_input("NE (opcional)", value=valores.get("ne_curta") or "", placeholder="ex. 2026NE000999")
         despesa_mensal = e2.number_input("Despesa mensal (R$)", min_value=0.0, step=100.0)
         valor_empenhado = e3.number_input("Valor empenhado (R$)", min_value=0.0, step=100.0)
         e4, e5, e6 = st.columns(3)
@@ -1016,7 +1035,7 @@ def _dialogo_novo_contrato(ano_exercicio: int, source_key: str) -> None:
                     data_suspensao=pd.Timestamp(data_suspensao) if data_suspensao else None,
                     fornecedor=fornecedor, fornecedor_cnpj_cpf=cnpj, tipo_despesa=tipo_despesa,
                     unidade_cod=unidade, acao_cod=acao, ptres=ptres,
-                    natureza_despesa_cod=nd, ugr_cod=ugr, pi_cod=pi,
+                    natureza_despesa_cod=nd, ugr_cod=ugr, pi_cod=pi, fonte_cod=valores.get("fonte_cod"),
                     ne_curta=ne_curta.strip() or None, despesa_mensal=despesa_mensal,
                     meses_no_ano=meses_no_ano,
                     valor_empenhado=valor_empenhado, saldo_colado_planilha=saldo_colado,
@@ -1033,6 +1052,55 @@ def _render_novo_contrato(ano_exercicio: int, source_key: str) -> None:
     with st.container(key="cad_novo"):
         if st.button("Novo contrato", icon=":material/add:", type="primary", use_container_width=True, key=f"cc_novo_{source_key}"):
             _dialogo_novo_contrato(ano_exercicio, source_key)
+
+
+def _render_novos_contratosgov(
+    candidatos: pd.DataFrame, em_duvida: pd.DataFrame, ano_exercicio: int, source_key: str
+) -> None:
+    """"Novos no Contratos.gov" (10/2026): contratos vigentes do gov que ainda não estão no cadastro do exercício
+    (`candidatos_novos` — o gov não informa se o contrato é contínuo, então todos os vigentes ausentes são
+    listados e o usuário escolhe) e os que ficaram em dúvida (sem botão, com o motivo). "Incluir" abre a janela
+    "Novo contrato" já preenchida com o que o gov tem (`registro_novo_do_gov`); nada é gravado até "Adicionar
+    contrato". Contrato com várias NEs pede a escolha da NE (ND, PI e fonte vêm da NE escolhida); com uma só, ela
+    é usada; sem empenhos, a NE fica em branco. A parcela do gov é só referência."""
+
+    if candidatos.empty and em_duvida.empty:
+        return
+    rotulo = f"Novos no Contratos.gov ({len(candidatos)} candidato(s) · {len(em_duvida)} em dúvida)"
+    with st.expander(rotulo, expanded=False):
+        st.caption(
+            "Contratos vigentes no Contratos.gov que ainda não estão no cadastro deste exercício (o gov não informa "
+            "se o contrato é contínuo — você escolhe). “Incluir” abre o formulário de novo contrato já preenchido com "
+            "o que o gov tem; nada é gravado até “Adicionar contrato”. A parcela do gov é só referência (contrato "
+            "inteiro, não a parcela da ação 20RK)."
+        )
+        for _, candidato in candidatos.iterrows():
+            contrato_id = candidato["contrato_id"]
+            coluna_info, coluna_ne, coluna_botao = st.columns([4, 2, 1], vertical_alignment="center")
+            parcela = _brl(float(candidato["valor_parcela"])) if pd.notna(candidato["valor_parcela"]) else "sem dado"
+            coluna_info.markdown(
+                f"**{_md(candidato['numero'])}** — {_md(_dash(candidato['fornecedor_nome']))}"
+                f" · vigência até {_fmt_data_gov(candidato['vigencia_fim'])} · parcela no gov (ref.) {parcela}"
+            )
+            nes = [item["ne"] for item in candidato["nes"]]
+            ne_escolhida = nes[0] if len(nes) == 1 else None
+            if len(nes) > 1:
+                escolha = coluna_ne.selectbox(
+                    "NE do contrato", ["—", *nes], key=f"cc_gov_ne_{contrato_id}", label_visibility="collapsed",
+                )
+                ne_escolhida = None if escolha == "—" else escolha
+            elif nes:
+                coluna_ne.caption(f"NE {nes[0]}")
+            else:
+                coluna_ne.caption("sem empenhos no gov")
+            if coluna_botao.button("Incluir", key=f"cc_gov_incluir_{contrato_id}", use_container_width=True):
+                _dialogo_novo_contrato(ano_exercicio, source_key, registro_novo_do_gov(candidato, ne_escolhida))
+        if not em_duvida.empty:
+            st.markdown("**Em dúvida — não incluídos automaticamente**")
+            for _, candidato in em_duvida.iterrows():
+                st.markdown(
+                    f"**{_md(candidato['numero'])}** — {_md(_dash(candidato['fornecedor_nome']))} · {_md(candidato['motivo'])}"
+                )
 
 
 def _texto_meses_liquidados(meses_liquidados: object, ultimo_mes_liquidado: object) -> str:
@@ -1871,6 +1939,8 @@ _gov = _carregar_gov(_referencia_gov())
 if _gov is not None:
     _contratos_gov, termos_gov, _empenhos_gov = _gov
     dataframe = com_contratosgov(dataframe, _contratos_gov, termos_gov, _empenhos_gov)
+    _candidatos_gov, _em_duvida_gov = candidatos_novos(dataframe, _contratos_gov, _empenhos_gov)
+    _render_novos_contratosgov(_candidatos_gov, _em_duvida_gov, ano_selecionado, source_key)
 
 with col_relatorio:
     st.write("")
