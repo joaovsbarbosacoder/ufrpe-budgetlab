@@ -13,8 +13,10 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.emendas_parlamentares import divergencias_dotacao, vincular_execucao_emendas
 from src.ajustes_dotacao_emendas import (
     DECISOES,
+    aplicar_decisoes,
     ErroAjusteDotacao,
     carregar_eventos,
     desfazer_decisao,
@@ -213,6 +215,159 @@ class TestPtresComUmaEmenda(_Base):
         self.assertTrue(ptres_com_uma_emenda(self.vinculos, 2026, "6", "P1"))
         self.assertFalse(ptres_com_uma_emenda(self.vinculos, 2026, "6", "P3"))
         self.assertFalse(ptres_com_uma_emenda(self.vinculos, 2026, "6", "NAO"))  # inexistente
+
+
+# ------------------------------------------------------------------ aplicação na composição (Task 2)
+
+
+def _relatorio(dotacao_e1: float = 300000.0) -> pd.DataFrame:
+    padrao = {
+        "ano": 2026, "resultado_primario_cod": "6", "autor_emenda": "AUTOR / EMENDA", "parlamentar": "AUTOR",
+        "gnd_cod": "4", "linha_origem": 4, "empenhada_relatorio": pd.NA, "liquidada_relatorio": pd.NA,
+        "paga_relatorio": pd.NA,
+    }
+    linhas = [
+        {"emenda_numero": "E1", "ptres": "P1", "dotacao_atualizada": dotacao_e1},
+        {"emenda_numero": "E2", "ptres": "P2", "dotacao_atualizada": 100000.0},
+    ]
+    return pd.DataFrame([{**padrao, **linha} for linha in linhas])
+
+
+def _execucao() -> pd.DataFrame:
+    return pd.DataFrame(
+        [{"ano": 2026, "resultado_primario_cod": "6", "ptres": "P2", "empenhada": 100000.0, "liquidada": pd.NA, "paga": pd.NA}]
+    )
+
+
+def _dotacao() -> pd.DataFrame:
+    base = {"ano_lancamento": 2026, "resultado_primario_codigo": "6", "item_informacao_codigo": "dotacao_atualizada"}
+    return pd.DataFrame(
+        [
+            {**base, "ptres_codigo": "P1", "valor_movimento_liquido": 600000.0},
+            {**base, "ptres_codigo": "P2", "valor_movimento_liquido": 100000.0},
+        ]
+    )
+
+
+class TestAplicarDecisoes(unittest.TestCase):
+    """O caso do usuário: E1 com R$ 300.000,00 no relatório e R$ 600.000,00 na Dotação Anual do seu PTRES."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = Path(self._tmp.name) / "ajustes"
+        self.base = vincular_execucao_emendas(_relatorio(), _execucao(), dotacao=_dotacao())
+
+    def decidir(self, decisao="adotar_dotacao_anual", valor=None) -> dict:
+        return registrar_decisao(
+            vinculos=self.base.vinculos, ano=2026, resultado_primario_cod="6", emenda_numero="E1", ptres="P1",
+            decisao=decisao, valor_informado=valor, justificativa=JUSTIFICATIVA, responsavel="Maria", diretorio=self.dir,
+        )
+
+    def decisoes(self) -> list[dict]:
+        return reconstruir_decisoes(carregar_eventos(self.dir))
+
+    def resultado(self, relatorio=None, dotacao=None, decisoes=None):
+        return vincular_execucao_emendas(
+            _relatorio() if relatorio is None else relatorio, _execucao(),
+            dotacao=_dotacao() if dotacao is None else dotacao,
+            decisoes_dotacao=self.decisoes() if decisoes is None else decisoes,
+        )
+
+    @staticmethod
+    def e1(tabela: pd.DataFrame) -> pd.Series:
+        return tabela[tabela["emenda_numero"] == "E1"].iloc[0]
+
+    def test_adotar_muda_dotacao_atualizada_e_preserva_o_original(self) -> None:
+        self.decidir()
+        resultado = self.resultado()
+        vinculo = self.e1(resultado.vinculos)
+        self.assertEqual(vinculo["dotacao_atualizada"], 600000.0)
+        self.assertEqual(vinculo["dotacao_relatorio"], 300000.0)
+        self.assertEqual(vinculo["dotacao_decisao_estado"], "ativa")
+        self.assertEqual(vinculo["dotacao_decisao"], "adotar_dotacao_anual")
+        self.assertFalse(vinculo["dotacao_divergencia_pendente"])
+        self.assertFalse(vinculo["dotacao_divergente"])
+        self.assertEqual(vinculo["diferenca_dotacao"], 0.0)
+        emenda = self.e1(resultado.emendas)
+        self.assertEqual(emenda["dotacao_atualizada"], 600000.0)
+        self.assertEqual(emenda["dotacao_relatorio"], 300000.0)
+        self.assertFalse(emenda["dotacao_divergencia_pendente"])
+        outra = resultado.vinculos.query("emenda_numero == 'E2'").iloc[0]
+        self.assertTrue(pd.isna(outra["dotacao_decisao"]) and pd.isna(outra["dotacao_decisao_estado"]))
+        self.assertEqual(outra["dotacao_atualizada"], 100000.0)
+
+    def test_manter_nao_muda_o_valor_mas_encerra_o_alerta(self) -> None:
+        self.decidir("manter_relatorio")
+        resultado = self.resultado()
+        vinculo = self.e1(resultado.vinculos)
+        self.assertEqual(vinculo["dotacao_atualizada"], 300000.0)
+        self.assertTrue(vinculo["dotacao_divergente"])  # numericamente ainda difere...
+        self.assertFalse(vinculo["dotacao_divergencia_pendente"])  # ...mas está decidida
+        self.assertEqual(vinculo["dotacao_decisao_estado"], "ativa")
+        self.assertTrue(divergencias_dotacao(resultado.vinculos).empty)
+
+    def test_valor_informado_zero_vira_dotacao_zero_e_nao_nula(self) -> None:
+        self.decidir("valor_informado", 0.0)
+        vinculo = self.e1(self.resultado().vinculos)
+        self.assertEqual(vinculo["dotacao_atualizada"], 0.0)
+        self.assertFalse(pd.isna(vinculo["dotacao_atualizada"]))
+
+    def test_decisao_obsoleta_nao_e_aplicada_quando_o_relatorio_muda(self) -> None:
+        self.decidir()
+        resultado = self.resultado(relatorio=_relatorio(dotacao_e1=450000.0))
+        vinculo = self.e1(resultado.vinculos)
+        self.assertEqual(vinculo["dotacao_decisao_estado"], "obsoleta")
+        self.assertEqual(vinculo["dotacao_atualizada"], 450000.0)  # o valor NOVO do relatório; a decisão antiga não vale
+        self.assertTrue(vinculo["dotacao_divergencia_pendente"])
+        listadas = divergencias_dotacao(resultado.vinculos)
+        self.assertEqual(list(listadas["emenda_numero"]), ["E1"])
+        self.assertEqual(list(listadas["dotacao_decisao_estado"]), ["obsoleta"])
+
+    def test_sem_efeito_quando_o_relatorio_passa_a_igualar_a_dotacao_anual(self) -> None:
+        self.decidir()
+        vinculo = self.e1(self.resultado(relatorio=_relatorio(dotacao_e1=600000.0)).vinculos)
+        self.assertEqual(vinculo["dotacao_decisao_estado"], "sem_efeito")
+        self.assertEqual(vinculo["dotacao_atualizada"], 600000.0)
+        self.assertFalse(vinculo["dotacao_divergencia_pendente"])
+
+    def test_decisao_desfeita_e_ignorada(self) -> None:
+        evento = self.decidir()
+        desfazer_decisao(decisao_id=evento["decisao_id"], justificativa=JUSTIFICATIVA, responsavel="J", diretorio=self.dir)
+        resultado = self.resultado(decisoes=self.decisoes())
+        vinculo = self.e1(resultado.vinculos)
+        self.assertEqual(vinculo["dotacao_atualizada"], 300000.0)
+        self.assertTrue(pd.isna(vinculo["dotacao_decisao_estado"]))
+        self.assertTrue(vinculo["dotacao_divergencia_pendente"])
+        self.assertEqual(len(divergencias_dotacao(resultado.vinculos)), 1)
+
+    def test_sem_decisoes_o_resultado_e_identico_ao_atual(self) -> None:
+        sem_parametro = vincular_execucao_emendas(_relatorio(), _execucao(), dotacao=_dotacao())
+        for decisoes in (None, []):
+            com_parametro = vincular_execucao_emendas(_relatorio(), _execucao(), dotacao=_dotacao(), decisoes_dotacao=decisoes)
+            pd.testing.assert_frame_equal(sem_parametro.emendas, com_parametro.emendas)
+            pd.testing.assert_frame_equal(sem_parametro.vinculos, com_parametro.vinculos)
+        self.assertNotIn("dotacao_decisao_estado", sem_parametro.vinculos.columns)
+        self.assertNotIn("dotacao_divergencia_pendente", sem_parametro.emendas.columns)
+
+    def test_sem_dotacao_anual_a_decisao_de_valor_informado_ainda_vale(self) -> None:
+        sem_anual = vincular_execucao_emendas(_relatorio(), _execucao())
+        registrar_decisao(
+            vinculos=sem_anual.vinculos, ano=2026, resultado_primario_cod="6", emenda_numero="E1", ptres="P1",
+            decisao="valor_informado", valor_informado=123.0, justificativa=JUSTIFICATIVA, responsavel="Maria",
+            diretorio=self.dir,
+        )
+        resultado = vincular_execucao_emendas(_relatorio(), _execucao(), decisoes_dotacao=self.decisoes())
+        vinculo = self.e1(resultado.vinculos)
+        self.assertEqual(vinculo["dotacao_atualizada"], 123.0)
+        self.assertEqual(vinculo["dotacao_decisao_estado"], "ativa")
+        self.assertNotIn("dotacao_divergente", resultado.vinculos.columns)
+
+    def test_aplicar_decisoes_nao_altera_a_entrada(self) -> None:
+        self.decidir()
+        antes = self.base.vinculos.copy(deep=True)
+        aplicar_decisoes(self.base.vinculos, self.decisoes())
+        pd.testing.assert_frame_equal(self.base.vinculos, antes)
 
 
 if __name__ == "__main__":

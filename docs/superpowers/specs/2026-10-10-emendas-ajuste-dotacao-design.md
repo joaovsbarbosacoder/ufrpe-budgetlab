@@ -53,7 +53,8 @@ alteração de valores executados (empenhado/liquidado/pago) — só a **dotaç�
   divergência volta a aparecer como pendente com o aviso "decisão de DD/MM/AAAA obsoleta: o relatório mudou de R$ X
   para R$ Y" — nunca se aplica um ajuste antigo sobre dado novo em silêncio.
 - **Se a divergência deixa de existir** (ex.: relatório novo já traz R$ 600.000,00): a decisão continua registrada
-  mas aparece como "sem efeito" (valores já iguais).
+  mas aparece como "sem efeito" (valores já iguais). **"Sem efeito" tem precedência sobre "obsoleta"**: sem
+  divergência não há alerta a trazer de volta, mesmo que o relatório tenha mudado desde a decisão.
 - **Valor original sempre preservado**: o relatório importado não muda; as visões ganham `dotacao_relatorio`
   (original) ao lado de `dotacao_atualizada` (efetiva). Nulo ≠ zero.
 

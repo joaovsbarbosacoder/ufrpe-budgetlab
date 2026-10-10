@@ -507,6 +507,7 @@ def vincular_execucao_emendas(
     execucao: pd.DataFrame,
     ano_inicio_atualizacao: int = ANO_INICIO_ATUALIZACAO,
     dotacao: pd.DataFrame | None = None,
+    decisoes_dotacao: list[dict] | None = None,
 ) -> ResultadoVinculoEmendas:
     """Aplica a política estática/dinâmica e devolve as lacunas do vínculo.
 
@@ -514,6 +515,10 @@ def vincular_execucao_emendas(
     (>= ``ano_inicio_atualizacao``), ``dotacao_anual_ptres`` ao lado — nunca no lugar — da
     ``dotacao_atualizada`` do relatório/cadastro, mais ``diferenca_dotacao`` e
     ``dotacao_divergente``. Sem ``dotacao``, nenhuma coluna nova é criada.
+
+    ``decisoes_dotacao`` (lista de ``reconstruir_decisoes`` de ``src/ajustes_dotacao_emendas.py``) aplica as
+    decisões registradas sobre a dotação ANTES das medidas e dos totais por emenda (10/2026). Vazio ou ``None``
+    deixa o resultado idêntico ao de antes (sem colunas novas).
     """
 
     vinculos = construir_vinculos_relatorio(relatorio)
@@ -540,6 +545,12 @@ def vincular_execucao_emendas(
 
     if dotacao is not None:
         cruzado = _acrescentar_dotacao_anual(cruzado, dotacao, dinamico)
+
+    if decisoes_dotacao:
+        # import tardio: `src.ajustes_dotacao_emendas` importa constantes deste módulo
+        from src.ajustes_dotacao_emendas import aplicar_decisoes
+
+        cruzado = aplicar_decisoes(cruzado, decisoes_dotacao)
 
     for medida in _MEDIDAS_EXECUCAO:
         relatorio_col = f"{medida}_relatorio"
@@ -593,10 +604,18 @@ def divergencias_dotacao(vinculos: pd.DataFrame) -> pd.DataFrame:
         "ano", "resultado_primario_cod", "emenda_numero", "parlamentar", "ptres",
         "dotacao_atualizada", "dotacao_anual_ptres", "diferenca_dotacao",
     ]
+    if "dotacao_decisao_estado" in vinculos.columns:
+        colunas = [*colunas, "dotacao_decisao_estado"]
     if "dotacao_divergente" not in vinculos.columns:
         return pd.DataFrame(columns=colunas)
+    # com decisões aplicadas, só as PENDENTES (a divergência decidida deixa de alertar; a obsoleta volta)
+    pendentes = (
+        vinculos["dotacao_divergencia_pendente"]
+        if "dotacao_divergencia_pendente" in vinculos.columns
+        else vinculos["dotacao_divergente"]
+    )
     return (
-        vinculos.loc[vinculos["dotacao_divergente"], colunas]
+        vinculos.loc[pendentes, colunas]
         .sort_values(["ano", "emenda_numero", "ptres"])
         .reset_index(drop=True)
     )
@@ -656,6 +675,14 @@ def _resumir_emendas_vinculadas(vinculos: pd.DataFrame) -> pd.DataFrame:
             liquidada=("liquidada", _soma_min_count),
             paga=("paga", _soma_min_count),
             origem_valores=("origem_valores", "first"),
+            **(
+                {
+                    "dotacao_relatorio": ("dotacao_relatorio", _soma_min_count),
+                    "dotacao_divergencia_pendente": ("dotacao_divergencia_pendente", "any"),
+                }
+                if "dotacao_divergencia_pendente" in vinculos.columns
+                else {}
+            ),
             **(
                 {
                     "dotacao_anual_ptres": ("dotacao_anual_ptres", _soma_min_count),

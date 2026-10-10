@@ -20,6 +20,7 @@ Contrato público:
     desfazer_decisao(...) -> dict
     carregar_eventos(diretorio) -> list[dict]
     reconstruir_decisoes(eventos) -> list[dict]
+    aplicar_decisoes(vinculos, decisoes) -> pd.DataFrame
     ptres_com_uma_emenda(vinculos, ano, resultado_primario_cod, ptres) -> bool
 """
 
@@ -34,12 +35,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.emendas_parlamentares import ANO_INICIO_ATUALIZACAO, RPS_EMENDA
+from src.emendas_parlamentares import ANO_INICIO_ATUALIZACAO, RPS_EMENDA, TOLERANCIA_DOTACAO
 
 DIRETORIO_AJUSTES = Path("data/emendas/ajustes_dotacao")
 DECISOES = ("adotar_dotacao_anual", "manter_relatorio", "valor_informado")
 ACOES_EVENTO = {"decidir", "desfazer"}
 MIN_JUSTIFICATIVA = 10
+TOLERANCIA_VALOR = 0.01  # R$ — mesma tolerância da divergência de dotação
 VERSAO_SCHEMA = 1
 
 
@@ -370,3 +372,76 @@ def desfazer_decisao(
     }
     _salvar_evento(evento, diretorio)
     return evento
+
+
+# ----------------------------------------------------------------------------- aplicação nas contas
+
+
+def aplicar_decisoes(vinculos: pd.DataFrame, decisoes: list[dict]) -> pd.DataFrame:
+    """Aplica as decisões ATIVAS (não desfeitas) ao DataFrame de vínculos, sem alterar a entrada. Acrescenta
+    `dotacao_relatorio` (a dotação original do relatório/cadastro), `dotacao_decisao`, `dotacao_decisao_id`,
+    `dotacao_decisao_estado` e `dotacao_divergencia_pendente`, e substitui `dotacao_atualizada` só nas decisões
+    `ativa`, recalculando `diferenca_dotacao`/`dotacao_divergente` (quando há Dotação Anual) com a dotação efetiva.
+
+    Estado de cada decisão, nesta ordem de precedência: `sem_efeito` — o relatório atual já é igual à Dotação
+    Anual (a divergência deixou de existir; não há alerta a trazer de volta, então vale mesmo que o relatório tenha
+    mudado); `obsoleta` — o relatório atual difere do valor que a decisão viu (±R$ 0,01): NÃO é aplicada e a
+    divergência volta a aparecer como pendente (um ajuste antigo nunca vale sobre dado novo); `ativa` — as demais
+    (inclui `manter_relatorio`, que não muda o valor mas encerra o alerta). Nulo nunca vira zero."""
+
+    resultado = vinculos.copy()
+    total = len(resultado)
+    original = pd.Series(pd.array(resultado["dotacao_atualizada"], dtype="Float64"), index=resultado.index)
+    tem_anual = "dotacao_anual_ptres" in resultado.columns
+    anual = pd.Series(pd.array(resultado["dotacao_anual_ptres"], dtype="Float64"), index=resultado.index) if tem_anual else None
+
+    ativas = {_chave_da_decisao(d): d for d in decisoes if not d["desfeita"]}
+    efetiva = list(original)
+    decisao_col: list = [pd.NA] * total
+    id_col: list = [pd.NA] * total
+    estado_col: list = [pd.NA] * total
+    indices_ativos: list[int] = []
+
+    chaves = zip(resultado["ano"], resultado["resultado_primario_cod"], resultado["emenda_numero"], resultado["ptres"])
+    for posicao, (ano, rp, emenda, ptres) in enumerate(chaves):
+        decisao = ativas.get((int(ano), str(rp).strip(), str(emenda).strip(), str(ptres).strip()))
+        if decisao is None:
+            continue
+        relatorio_atual = original.iloc[posicao]
+        divergencia_acabou = (
+            tem_anual
+            and not pd.isna(relatorio_atual)
+            and not pd.isna(anual.iloc[posicao])
+            and abs(float(anual.iloc[posicao]) - float(relatorio_atual)) <= TOLERANCIA_VALOR
+        )
+        if divergencia_acabou:
+            estado = "sem_efeito"  # precede `obsoleta`: sem divergência não há alerta a trazer de volta
+        elif pd.isna(relatorio_atual) or abs(float(relatorio_atual) - decisao["valor_relatorio"]) > TOLERANCIA_VALOR:
+            estado = "obsoleta"
+        else:
+            estado = "ativa"
+            efetiva[posicao] = decisao["valor_efetivo"]
+            indices_ativos.append(posicao)
+        decisao_col[posicao] = decisao["decisao"]
+        id_col[posicao] = decisao["decisao_id"]
+        estado_col[posicao] = estado
+
+    efetiva_serie = pd.Series(pd.array(efetiva, dtype="Float64"), index=resultado.index)
+    resultado["dotacao_relatorio"] = original
+    resultado["dotacao_atualizada"] = efetiva_serie
+    resultado["dotacao_decisao"] = pd.array(decisao_col, dtype="string")
+    resultado["dotacao_decisao_id"] = pd.array(id_col, dtype="string")
+    resultado["dotacao_decisao_estado"] = pd.array(estado_col, dtype="string")
+
+    pendente = [False] * total
+    if tem_anual:
+        tem_ambos = efetiva_serie.notna() & anual.notna()
+        diferenca = pd.Series(pd.array((anual - efetiva_serie).where(tem_ambos), dtype="Float64"), index=resultado.index)
+        divergente = diferenca.abs().round(2).gt(TOLERANCIA_DOTACAO).fillna(False).astype(bool)
+        resultado["diferenca_dotacao"] = diferenca
+        resultado["dotacao_divergente"] = divergente
+        pendente = divergente.tolist()
+    for posicao in indices_ativos:
+        pendente[posicao] = False  # decisão ativa encerra o alerta, mesmo que os valores ainda difiram (`manter`)
+    resultado["dotacao_divergencia_pendente"] = pd.Series(pendente, index=resultado.index, dtype=bool)
+    return resultado
