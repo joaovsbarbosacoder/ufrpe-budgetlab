@@ -160,7 +160,6 @@ import streamlit as st
 from src import contratosgov_extracao
 from src.contratos_aditivos import (
     aditivo_para_registro,
-    aditivos_do_registro,
     dia_de_referencia,
     validar_aditivos,
     valor_vigente_em,
@@ -172,6 +171,7 @@ from src.contratos_continuos import (
     SITUACAO_VIGENCIA_ENCERRADA,
     aditivo_sugerido,
     aditivos_pendentes,
+    numero_do_termo,
     candidatos_novos,
     com_contratosgov,
     filtrar_candidatos,
@@ -503,6 +503,12 @@ def _md(texto: object) -> str:
     return str(texto).translate(_ESPECIAIS_MARKDOWN)
 
 
+def _ou_traco(valor: object) -> str:
+    """Texto puro (SEM escape de HTML) ou "—" — para o que vai a `st.markdown` via `_md`."""
+
+    return "—" if valor is None or pd.isna(valor) else str(valor)
+
+
 def _fmt_data_gov(valor: object) -> str:
     dia = _data_ou_none(valor)
     return dia.strftime("%d/%m/%Y") if dia else "sem dado"
@@ -530,7 +536,7 @@ def _carregar_gov(referencia: date) -> tuple[pd.DataFrame, pd.DataFrame, pd.Data
             )
             return None
         return montar_contratos(fotografia, referencia), montar_termos(fotografia), montar_empenhos(fotografia)
-    except (contratosgov_extracao.FotografiaAusente, ValueError) as erro:
+    except Exception as erro:  # manifesto incompleto (TypeError), arquivo travado pelo Drive (OSError), dado inválido...
         st.warning(
             f"Não foi possível ler a fotografia do Contratos.gov.br ({erro}) — a conciliação de vigência e "
             "aditivos e a lista de contratos novos não aparecem."
@@ -555,17 +561,27 @@ def _texto_conciliacao(linha: pd.Series) -> str:
     if "situacao_conciliacao" not in linha.index or pd.isna(linha["situacao_conciliacao"]):
         return ""
     partes = [_TEXTO_CONCILIACAO.get(linha["situacao_conciliacao"], "")]
+    status = linha.get("status_contrato", pd.NA)
+    status = "ATIVO" if pd.isna(status) else str(status).strip().upper()
+    if str(linha.get("situacao_vigencia_gov")) == "encerrado" and status == "ATIVO":
+        partes.append("contrato encerrado no gov")
     pendentes = linha["qtd_aditivos_pendentes"]
     if pd.notna(pendentes) and int(pendentes) > 0:
         partes.append(f"{int(pendentes)} aditivo(s) do gov sem registro")
     return " · ".join(parte for parte in partes if parte)
 
 
-def _render_contratosgov_no_dialogo(linha: pd.Series, k: str, termos_gov: pd.DataFrame | None) -> None:
+def _render_contratosgov_no_dialogo(
+    linha: pd.Series, k: str, termos_gov: pd.DataFrame | None, aditivos_atuais: list | None = None
+) -> None:
     """Seção "Contratos.gov" da janela de edição: vigência do cadastro × a do gov, histórico de termos e um botão
     "Registrar aditivo do gov" por aditivo sem registro. O botão SÓ pré-preenche a aba Aditivos (em
     `st.session_state`, via `acrescentar_aditivo`): nada é gravado até o "Salvar" da janela, e o valor mensal
-    fica em branco (a parcela do gov é do contrato inteiro; Contínuos traz a parcela da ação 20RK)."""
+    fica em branco (a parcela do gov é do contrato inteiro; Contínuos traz a parcela da ação 20RK).
+
+    `aditivos_atuais` = os aditivos como estão digitados na aba Aditivos NESTA execução (a seção é desenhada
+    depois da aba, num contêiner reservado antes dela): um aditivo digitado à mão ou recém-registrado já
+    tira o termo da lista de pendentes, sem a defasagem de uma execução."""
 
     if termos_gov is None or "situacao_conciliacao" not in linha.index or pd.isna(linha["situacao_conciliacao"]):
         return
@@ -573,8 +589,8 @@ def _render_contratosgov_no_dialogo(linha: pd.Series, k: str, termos_gov: pd.Dat
     if pd.isna(linha["contratosgov_id"]):
         if linha["situacao_conciliacao"] == "conflito":
             st.caption(
-                "Conflito de ligação: a NE e o número/CNPJ deste registro apontam contratos diferentes do "
-                "Contratos.gov — nada do gov é aplicado."
+                "Conflito de ligação: a NE ou o número/CNPJ deste registro aponta mais de um contrato (ou "
+                "contratos diferentes) no Contratos.gov — nada do gov é aplicado."
             )
         else:
             st.caption(
@@ -603,14 +619,12 @@ def _render_contratosgov_no_dialogo(linha: pd.Series, k: str, termos_gov: pd.Dat
         hide_index=True, width="stretch",
     )
 
-    estado = st.session_state.get(f"{k}_aditivos")  # o que já está na aba Aditivos nesta janela
-    atuais = aditivos_do_registro(estado) if estado is not None else linha["aditivos"]
-    pendentes = aditivos_pendentes(atuais, termos)
+    pendentes = aditivos_pendentes(linha["aditivos"] if aditivos_atuais is None else aditivos_atuais, termos)
     if pendentes.empty:
         st.caption("Todos os aditivos do Contratos.gov já têm registro neste contrato.")
         return
     for _, termo in pendentes.iterrows():
-        if st.button(f"Registrar aditivo do gov ({termo['numero']})", key=f"{k}_gov_registrar_{termo['termo_id']}"):
+        if st.button(f"Registrar aditivo do gov ({numero_do_termo(termo)})", key=f"{k}_gov_registrar_{termo['termo_id']}"):
             acrescentar_aditivo(k, linha["aditivos"], aditivo_sugerido(termo))
             recarregar_fragmento()
     st.caption(
@@ -692,12 +706,14 @@ def _dialogo_editar_contrato(
         "Processo de empenho", value=_ou_vazio(linha["processo_empenho"]), key=f"{k}_processo_empenho",
     )
 
-    _render_contratosgov_no_dialogo(linha, k, termos_gov)
+    gov_container = st.container()  # reservado aqui; preenchido depois da aba Aditivos (ver `_render_contratosgov_no_dialogo`)
 
     _secao("Período de execução")
     aba_periodo, aba_aditivos = st.tabs(["Período", "Aditivos"])
     with aba_aditivos:
         aditivos_editados = render_aba_aditivos(k, linha["aditivos"], linha["itens"])
+        with gov_container:
+            _render_contratosgov_no_dialogo(linha, k, termos_gov, aditivos_editados)
     with aba_periodo:
         p_vig, p_data, p_mes, p_meses = st.columns(4)
         # Vigência (fim) — a data de fim do cadastro limita a projeção do relatório de Necessidade de
@@ -969,6 +985,11 @@ def _dialogo_novo_contrato(ano_exercicio: int, source_key: str, valores: dict | 
     gravado até "Adicionar contrato". `fonte_cod` não tem campo no formulário: segue direto para o registro."""
 
     valores = valores or {}
+    if valores.get("fonte_cod"):
+        st.caption(
+            f"Fonte {valores['fonte_cod']} (da NE {valores.get('ne_curta') or '—'} escolhida no gov) vai junto com o "
+            "contrato — o formulário não tem campo de fonte; se trocar a NE abaixo, a fonte continua a da NE escolhida."
+        )
     with st.form(f"contratos_continuos_form_{source_key}", clear_on_submit=True, border=False):
         _secao("Identificação")
         c1, c2, c3 = st.columns([1, 2.2, 1])
@@ -1096,7 +1117,7 @@ def _render_novos_contratosgov(
             coluna_info, coluna_ne, coluna_botao = st.columns([4, 2, 1], vertical_alignment="center")
             parcela = _brl(float(candidato["valor_parcela"])) if pd.notna(candidato["valor_parcela"]) else "sem dado"
             coluna_info.markdown(
-                f"**{_md(candidato['numero'])}** — {_md(_dash(candidato['fornecedor_nome']))}"
+                f"**{_md(candidato['numero'])}** — {_md(_ou_traco(candidato['fornecedor_nome']))}"
                 f" · vigência até {_fmt_data_gov(candidato['vigencia_fim'])} · parcela no gov (ref.) {parcela}"
             )
             nes = [item["ne"] for item in candidato["nes"]]
@@ -1116,7 +1137,7 @@ def _render_novos_contratosgov(
             st.markdown("**Em dúvida — não incluídos automaticamente**")
             for _, candidato in em_duvida.iterrows():
                 st.markdown(
-                    f"**{_md(candidato['numero'])}** — {_md(_dash(candidato['fornecedor_nome']))} · {_md(candidato['motivo'])}"
+                    f"**{_md(candidato['numero'])}** — {_md(_ou_traco(candidato['fornecedor_nome']))} · {_md(candidato['motivo'])}"
                 )
 
 

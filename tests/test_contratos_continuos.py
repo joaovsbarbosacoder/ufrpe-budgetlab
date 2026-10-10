@@ -551,6 +551,19 @@ class TestComContratosGov(unittest.TestCase):
         self.assertEqual(linha["qtd_aditivos_gov"], 4)
         self.assertEqual(linha["situacao_conciliacao"], "conciliado")
 
+    def test_cnpj_sem_zero_a_esquerda_liga_por_numero(self):
+        # o cadastro real tem CNPJs que perderam o zero inicial ("3508097000136"); a comparação ignora os
+        # zeros à esquerda dos DOIS lados, sem alterar o que está gravado
+        registro = {"contrato_numero": "13/2026", "fornecedor_cnpj_cpf": "5340639000130"}  # gov: 05340639000130
+        linha = self._ligar(registro).iloc[0]
+        self.assertEqual((linha["ligacao_por"], linha["contratosgov_id"]), ("numero", "1004328"))
+        pf = self._ligar({"contrato_numero": "21/2023", "fornecedor_cnpj_cpf": "191"}).iloc[0]  # gov: 00000000191
+        self.assertEqual(pf["contratosgov_id"], "220038")
+
+    def test_cnpj_so_de_zeros_nao_liga(self):
+        linha = self._ligar({"contrato_numero": "13/2026", "fornecedor_cnpj_cpf": "000"}).iloc[0]
+        self.assertEqual(linha["situacao_conciliacao"], "sem_par_no_contratosgov")
+
     def test_numero_sem_cnpj_nao_liga(self):
         linha = self._ligar({"contrato_numero": "29/2021"}).iloc[0]
         self.assertEqual(linha["situacao_conciliacao"], "sem_par_no_contratosgov")
@@ -702,6 +715,19 @@ class TestAditivosDoGov(unittest.TestCase):
         self.assertEqual(sugerido.data_inicio, date(2019, 11, 28))
         self.assertIsNone(sugerido.valor_mensal)
 
+    def test_termo_sem_numero_usa_o_id_do_termo_e_nao_duplica(self):
+        termo = pd.Series(
+            {"termo_id": "999", "tipo": "Termo Aditivo", "numero": None, "qualificacao_termo": "VIGÊNCIA",
+             "data_assinatura": None, "data_inicio_novo_valor": None, "vigencia_fim": None}
+        )
+        sugerido = aditivo_sugerido(termo)
+        self.assertEqual(sugerido.numero, "TERMO 999")  # nunca o texto "None"
+        termos = pd.DataFrame([termo])
+        self.assertEqual(len(aditivos_pendentes([], termos)), 1)
+        self.assertEqual(len(aditivos_pendentes([sugerido], termos)), 0)  # depois de registrado, não é mais pendente
+        vazio = aditivos_do_registro([{"numero": "", "tipo": "OUTRO", "situacao": "ASSINADO", "data_inicio": "2026-01-01"}])
+        self.assertEqual(len(aditivos_pendentes(vazio, termos)), 1)  # cartão em branco não "registra" o termo
+
     def test_aditivo_sugerido_sem_nenhuma_data_deixa_inicio_nulo(self):
         termo = pd.Series(
             {"numero": "00009/2026", "qualificacao_termo": "VIGÊNCIA", "data_assinatura": None,
@@ -787,6 +813,18 @@ class TestCandidatosNovos(unittest.TestCase):
     def _candidato(self, contrato_id: str) -> pd.Series:
         candidatos, _ = self._candidatos()
         return candidatos[candidatos["contrato_id"] == contrato_id].iloc[0]
+
+    def test_cnpj_sem_zero_nao_gera_candidato_duplicado(self):
+        candidatos, _ = self._candidatos({"contrato_numero": "13/2026", "fornecedor_cnpj_cpf": "5340639000130"})
+        self.assertNotIn("1004328", set(candidatos["contrato_id"]))
+
+    def test_motivo_de_conflito_nao_afirma_a_causa(self):
+        _, em_duvida = self._candidatos(
+            {"contrato_numero": "13/2026", "fornecedor_cnpj_cpf": "05340639000130", "ne_curta": "2025NE000046"}
+        )
+        motivo = em_duvida.iloc[0]["motivo"]
+        self.assertIn("conflito", motivo)
+        self.assertIn("mais de um contrato", motivo)  # a NE pode estar em dois contratos, não só "contratos diferentes"
 
     def test_registro_novo_do_gov_com_ne(self):
         registro = registro_novo_do_gov(self._candidato("1004328"), "2026NE000522")

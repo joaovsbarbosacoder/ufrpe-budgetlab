@@ -193,8 +193,9 @@ com erro de leitura) a tela segue como antes, com aviso.
   registro no exercício em tela (o gov não informa se o contrato é contínuo — a escolha é sua). Contrato sem
   vigência ou envolvido em conflito de ligação fica "em dúvida", sem botão. "Incluir" abre a janela "Novo
   contrato" preenchida só com o que o gov tem (número, ano, fornecedor, CNPJ/CPF, vigência e, se escolher a
-  NE, a NE, a natureza de despesa, o plano interno e a fonte dela); ação, PTRES, UGR, despesa mensal e meses
-  ficam em branco. Só grava em "Adicionar contrato".
+  NE, a NE, a natureza de despesa, o plano interno e a fonte dela); ação, PTRES e UGR ficam em branco.
+  Despesa mensal, empenhado, saldo e meses ficam **no padrão do formulário "Novo contrato"** (0,00 e 12 meses no
+  ano) — é um zero do formulário, não ausência de dado: preencha antes de salvar. Só grava em "Adicionar contrato".
 
 **Necessidade de Empenho até Dezembro (card "Resumo Consolidado").** É o que falta empenhar
 para cobrir os meses do exercício: despesa mensal × meses restantes, nunca negativa, em que

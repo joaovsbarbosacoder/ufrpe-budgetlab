@@ -46,6 +46,9 @@ REGISTROS = [
      "vigencia_fim": "2025-10-17", "despesa_mensal": 1000.0},
     {"contrato_numero": "99/2026", "ne_curta": "2026NE999999", "fornecedor": "SEM PAR LTDA",
      "vigencia_fim": "2027-01-31", "despesa_mensal": 1000.0},
+    # ligado a um contrato ENCERRADO no gov (7925, vigência 2025-05-31) mas ATIVO no cadastro
+    {"contrato_numero": "18/2014", "ne_curta": "2021NE000072", "fornecedor": "PESSOA FISICA FICTICIA",
+     "vigencia_fim": "2025-05-31", "despesa_mensal": 1000.0},
 ]
 
 
@@ -54,13 +57,17 @@ def _aquecer_cache_das_bases_reais():
     aquecer_pagina(PAGINA)
 
 
-def _ambiente(tmp_path, monkeypatch, *, com_fotografia: bool) -> list[dict]:
+def _ambiente(tmp_path, monkeypatch, *, com_fotografia: bool, nome_do_18940: str | None = None) -> list[dict]:
     monkeypatch.setattr(cadastro, "DIRETORIO_PADRAO", tmp_path / "continuos")
     manifestos, fotografias = tmp_path / "manifestos", tmp_path / "fotografias"
     monkeypatch.setattr(contratosgov_extracao, "DIRETORIO_MANIFESTOS", manifestos)
     monkeypatch.setattr(contratosgov_extracao, "DIRETORIO_FOTOGRAFIAS", fotografias)
     if com_fotografia:
         nova = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        if nome_do_18940 is not None:  # nome com `&`, `<`, `>`: a fixture não tem nenhum
+            for item in nova["lista_ativos"]:
+                if item["id"] == 18940:
+                    item["fornecedor"]["nome"] = nome_do_18940
         gravar(
             nova, calcular_delta(None, nova), importado_em=datetime(2026, 10, 8, 9, 45), referencia=REF,
             dir_manifestos=manifestos, dir_fotografias=fotografias,
@@ -74,6 +81,18 @@ def _ambiente(tmp_path, monkeypatch, *, com_fotografia: bool) -> list[dict]:
 @pytest.fixture
 def com_gov(tmp_path, monkeypatch):
     return _ambiente(tmp_path, monkeypatch, com_fotografia=True)
+
+
+@pytest.fixture
+def com_gov_nome_especial(tmp_path, monkeypatch):
+    return _ambiente(tmp_path, monkeypatch, com_fotografia=True, nome_do_18940="C&C COMERCIO <LTDA>")
+
+
+@pytest.fixture
+def com_manifesto_incompleto(tmp_path, monkeypatch):
+    registros = _ambiente(tmp_path, monkeypatch, com_fotografia=True)
+    (tmp_path / "manifestos" / "contratosgov_atual.json").write_text('{"campo_que_nao_existe": 1}', encoding="utf-8")
+    return registros
 
 
 @pytest.fixture
@@ -113,6 +132,7 @@ def test_linhas_mostram_conciliacao_e_aditivos_pendentes(com_gov):
     _contem(html, "Gov: vigência diverge")  # 29/2021
     _contem(html, "4 aditivo(s) do gov sem registro")  # 29/2021: 4 termos aditivos, nenhum nativo
     _contem(html, "sem par no Contratos.gov")  # 99/2026
+    _contem(html, "contrato encerrado no gov")  # 18/2014: encerrado no gov, ATIVO no cadastro
 
 
 def test_janela_de_edicao_lista_aditivos_do_gov_sem_gravar(com_gov, tmp_path):
@@ -137,7 +157,7 @@ def test_sem_fotografia_segue_com_aviso(sem_gov):
     html = _html(app)
     assert "Gov: vigência" not in html
     assert "sem par no Contratos.gov" not in html
-    assert len([b for b in app.button if b.key and b.key.startswith("cc_editar_")]) == 3  # o registro continua
+    assert len([b for b in app.button if b.key and b.key.startswith("cc_editar_")]) == 4  # o registro continua
 
 
 # --- Task 5: bloco "Novos no Contratos.gov" e inclusão -----------------------------------------------
@@ -192,6 +212,25 @@ def test_ne_escolhida_preenche_ne_nd_e_pi(com_gov):
     assert _campo(app, "NE (opcional)").value == "2026NE000203"
     assert _campo(app, "ND").value == "339092"
     assert _campo(app, "PI").value == "M20RKG01SCN"
+    # a fonte não tem campo no formulário: vai junto, e a janela avisa de onde ela vem
+    _contem(_legendas(app), "Fonte 1000000000 (da NE 2026NE000203")
+
+
+def test_sem_ne_escolhida_nao_ha_aviso_de_fonte(com_gov):
+    app = _incluir(_abrir(), "18940")
+    assert "Fonte 1000000000" not in _legendas(app)
+
+
+def test_manifesto_incompleto_nao_derruba_a_tela(com_manifesto_incompleto):
+    app = _abrir()  # `_abrir` já exige "sem exceção"
+    _contem(" ".join(str(e.value) for e in (*app.info, *app.warning)), "Contratos.gov")
+    assert len([b for b in app.button if b.key and b.key.startswith("cc_editar_")]) == 4
+
+
+def test_nome_com_e_comercial_e_sinais_de_menor_vai_escapado_para_o_markdown(com_gov_nome_especial):
+    html = _html(_abrir())
+    _contem(html, "**00021/2017** — C&C COMERCIO \\<LTDA\\>")  # `&` intacto; `<` e `>` escapados do markdown
+    assert "&amp;" not in html and "&lt;" not in html
 
 
 def test_contrato_sem_empenhos_pode_ser_incluido(com_gov):

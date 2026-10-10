@@ -420,6 +420,16 @@ def _so_digitos(valor: object) -> str | None:
     return digitos or None
 
 
+def _chave_documento(valor: object) -> str | None:
+    """Chave de comparação de CNPJ/CPF: só dígitos e SEM zeros à esquerda, dos dois lados. O cadastro real tem
+    CNPJs que perderam o zero inicial ("3508097000136" em vez de "03508097000136"); comparar dígito a dígito
+    deixava o registro "sem par" e o contrato do gov aparecia como candidato (duplicata ao incluir). Só a
+    COMPARAÇÃO ignora os zeros — nada gravado é alterado. Só zeros ou nulo → `None` (não liga)."""
+
+    digitos = _so_digitos(valor)
+    return None if digitos is None else (digitos.lstrip("0") or None)
+
+
 def _ne_normalizada(valor: object) -> str | None:
     if valor is None or pd.isna(valor):
         return None
@@ -446,14 +456,14 @@ def _resolver_ligacoes(df: pd.DataFrame, contratos: pd.DataFrame, empenhos: pd.D
     for contrato_id, numero, documento in zip(
         contratos["contrato_id"], contratos["numero"], contratos["fornecedor_documento"]
     ):
-        numero_norm, documento_norm = normalizar_numero_contrato(numero), _so_digitos(documento)
+        numero_norm, documento_norm = normalizar_numero_contrato(numero), _chave_documento(documento)
         if numero_norm and documento_norm:
             por_numero.setdefault((numero_norm, documento_norm), set()).add(str(contrato_id))
 
     linhas = []
     for ne_curta, numero, documento in zip(df["ne_curta"], df["contrato_numero"], df["fornecedor_cnpj_cpf"]):
         ne = _ne_normalizada(ne_curta)
-        numero_norm, documento_norm = normalizar_numero_contrato(numero), _so_digitos(documento)
+        numero_norm, documento_norm = normalizar_numero_contrato(numero), _chave_documento(documento)
         cand_ne = por_ne.get(ne, set()) if ne else set()
         cand_numero = por_numero.get((numero_norm, documento_norm), set()) if numero_norm and documento_norm else set()
 
@@ -592,6 +602,16 @@ def _chave_numero_termo(numero: object) -> str:
     return "" if numero is None or pd.isna(numero) else str(numero).strip().upper()
 
 
+def numero_do_termo(termo: pd.Series) -> str:
+    """Número do termo do gov como texto; termo SEM número (campo opcional na API) vira "TERMO <termo_id>" — nunca
+    o texto "None" — para o aditivo sugerido poder ser reconhecido como registrado depois."""
+
+    numero = termo["numero"]
+    if numero is None or pd.isna(numero) or not str(numero).strip():
+        return f"TERMO {termo.get('termo_id')}"
+    return str(numero).strip()
+
+
 def aditivos_pendentes(aditivos: list[Aditivo], termos_do_contrato: pd.DataFrame) -> pd.DataFrame:
     """Termos aditivos do gov (só `tipo == "Termo Aditivo"` — apostilamento, rescisão e o próprio
     contrato nunca contam) que não têm aditivo nativo correspondente. Um termo está REGISTRADO se algum
@@ -599,11 +619,11 @@ def aditivos_pendentes(aditivos: list[Aditivo], termos_do_contrato: pd.DataFrame
     heurístico (número nativo é texto livre): serve para SUGERIR o registro, nunca para gravar sozinho."""
 
     do_gov = termos_do_contrato[termos_do_contrato["tipo"] == TIPO_TERMO_ADITIVO]
-    numeros = {_chave_numero_termo(a.numero) for a in aditivos}
+    numeros = {chave for chave in (_chave_numero_termo(a.numero) for a in aditivos) if chave}  # cartão sem nº não conta
     datas = {a.data_assinatura for a in aditivos if a.data_assinatura is not None}
     registrado = [
-        _chave_numero_termo(numero) in numeros or _data_ou_none(assinatura) in datas
-        for numero, assinatura in zip(do_gov["numero"], do_gov["data_assinatura"])
+        _chave_numero_termo(numero_do_termo(termo)) in numeros or _data_ou_none(termo["data_assinatura"]) in datas
+        for _, termo in do_gov.iterrows()
     ]
     return do_gov[[not r for r in registrado]]
 
@@ -617,7 +637,7 @@ def aditivo_sugerido(termo: pd.Series) -> Aditivo:
     assinatura = _data_ou_none(termo["data_assinatura"])
     inicio = _data_ou_none(termo["data_inicio_novo_valor"]) or assinatura
     return Aditivo(
-        numero=str(termo["numero"]),
+        numero=numero_do_termo(termo),
         tipo=tipo_aditivo_por_qualificacao(termo["qualificacao_termo"]),
         situacao="ASSINADO",
         data_inicio=inicio,
@@ -681,7 +701,7 @@ def candidatos_novos(
             continue
         situacao = contrato["situacao_vigencia"]
         if contrato_id in em_conflito:
-            motivo, destino = "conflito de ligação: NE e número/CNPJ apontam contratos diferentes", em_duvida
+            motivo, destino = "conflito de ligação com o cadastro: a NE ou o número/CNPJ de um registro aponta mais de um contrato (ou contratos diferentes)", em_duvida
         elif situacao == "sem_vigencia":
             motivo, destino = "sem vigência no Contratos.gov", em_duvida
         elif situacao in ("vigente", "a_iniciar"):
