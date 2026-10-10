@@ -169,6 +169,33 @@ mês e dia a dia, o valor em vigor (reajuste no meio do mês é proporcional aos
   digitado por cima** de "Despesa mensal", volte o campo ao valor antigo e lance o aditivo com o novo — o
   sistema não faz essa troca sozinho.
 
+**Integração com o Contratos.gov.br (10/2026, `src/contratos_continuos.py`).** A tela cruza cada registro do
+cadastro com a fotografia atual do Contratos.gov.br (tabelas `contratos`, `termos` e `empenhos` de
+`src/contratos_cadastro.py`), em memória: nada é gravado e a fotografia nunca é alterada. Sem fotografia (ou
+com erro de leitura) a tela segue como antes, com aviso.
+
+- **Ligação** (`com_contratosgov`): primeiro pela **NE** (`ne_curta` do cadastro = `ne` dos empenhos do gov, mesmo
+  formato); depois por número normalizado + CNPJ/CPF (só dígitos; número sem CNPJ/CPF não liga). NE e número
+  apontando contratos diferentes, ou NE em mais de um contrato, é `conflito` e nada do gov é aplicado. Vários
+  registros (uma NE cada) podem ligar ao mesmo contrato do gov.
+- **Conciliação de vigência:** `vigencia_fim_efetiva` do cadastro (já com os aditivos nativos) contra a vigência
+  do gov, igualdade exata de data. Falta de data ou de par nunca vira divergência. A linha do registro mostra
+  "Gov: vigência confere/diverge", "sem par no Contratos.gov" ou "conflito de ligação".
+- **Aditivos do gov sem registro** (`aditivos_pendentes`): só `Termo Aditivo` conta (apostilamento e rescisão
+  não). Um termo está registrado se um aditivo nativo tem o mesmo número normalizado ou a mesma data de
+  assinatura — **casamento heurístico**, porque o número nativo é texto livre. Na janela de edição, a seção
+  "Contratos.gov" mostra o histórico de termos e um botão "Registrar aditivo do gov" por pendente, que só
+  **pré-preenche a aba Aditivos**: nada é gravado até clicar em Salvar. O tipo sugerido vem da qualificação do
+  termo (REAJUSTE > VIGÊNCIA > ACRÉSCIMO/SUPRESSÃO; um termo com várias qualificações vira um aditivo) e é
+  editável. **O valor mensal não é importado**: a parcela do gov é do contrato inteiro e Contínuos traz a
+  parcela da ação 20RK (por isso ela aparece só como referência, nunca comparada).
+- **Novos no Contratos.gov** (`candidatos_novos`): todos os contratos vigentes ou a iniciar que ainda não têm
+  registro no exercício em tela (o gov não informa se o contrato é contínuo — a escolha é sua). Contrato sem
+  vigência ou envolvido em conflito de ligação fica "em dúvida", sem botão. "Incluir" abre a janela "Novo
+  contrato" preenchida só com o que o gov tem (número, ano, fornecedor, CNPJ/CPF, vigência e, se escolher a
+  NE, a NE, a natureza de despesa, o plano interno e a fonte dela); ação, PTRES, UGR, despesa mensal e meses
+  ficam em branco. Só grava em "Adicionar contrato".
+
 **Necessidade de Empenho até Dezembro (card "Resumo Consolidado").** É o que falta empenhar
 para cobrir os meses do exercício: despesa mensal × meses restantes, nunca negativa, em que
 meses restantes = menor entre os meses no ano e os meses em execução (regra acima) − empenhado ÷
@@ -276,7 +303,8 @@ quando informada.
 ### Contratos (Contratos.gov.br)
 
 A página **Contratos** é um cadastro dos contratos da UG 153165 montado a partir da API pública do
-Contratos.gov.br (somente leitura, sem credencial), independente de Contratos Contínuos. Recorte: instrumentos do tipo "Contrato", todos os anos, ativos e inativos
+Contratos.gov.br (somente leitura, sem credencial). A integração com Contratos Contínuos (conciliação de
+vigência, aditivos e contratos novos) está descrita na seção Contratos Contínuos. Recorte: instrumentos do tipo "Contrato", todos os anos, ativos e inativos
 (empenhos substitutivos ficam fora). Detalhes (endpoints, formato, regras de conversão) em
 `docs/contratosgov.md`.
 
