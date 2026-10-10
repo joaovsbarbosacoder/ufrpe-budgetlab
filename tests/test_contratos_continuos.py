@@ -34,12 +34,16 @@ from src.contratos_continuos import (
     ErroLayoutBase,
     NOME_ABA,
     SITUACOES_CONCILIACAO,
+    aditivo_sugerido,
+    aditivos_pendentes,
     com_contratosgov,
     com_efeitos_da_suspensao,
     com_meses_pagos,
     com_saldo_execucao,
     ler_contratos_continuos,
+    tipo_aditivo_por_qualificacao,
 )
+from src.contratos_aditivos import Aditivo, aditivos_do_registro
 from src.contratos_continuos_cadastro import como_dataframe, novo_contrato
 from src.execucao_ne_utils import saldo_por_ne
 from src.necessidade_empenho import calcular_necessidade_empenho
@@ -624,6 +628,92 @@ class TestComContratosGov(unittest.TestCase):
                        "vigencia_fim_contratosgov", "diverge_vigencia", "qtd_termos", "qtd_aditivos_gov",
                        "valor_parcela_contratosgov"):
             self.assertIn(coluna, resultado.columns)
+
+
+class TestTipoDoAditivoPorQualificacao(unittest.TestCase):
+    def test_tipo_por_qualificacao(self):
+        casos = {
+            "VIGÊNCIA; REAJUSTE": "REAJUSTE",
+            "VIGÊNCIA": "PRORROGACAO",
+            "ACRÉSCIMO / SUPRESSÃO": "ACRESCIMO_SUPRESSAO",
+            "INFORMATIVO; ACRÉSCIMO / SUPRESSÃO; VIGÊNCIA": "PRORROGACAO",
+            "INFORMATIVO": "OUTRO",
+            "": "OUTRO",
+            None: "OUTRO",
+            pd.NA: "OUTRO",
+        }
+        for qualificacao, esperado in casos.items():
+            with self.subTest(qualificacao=qualificacao):
+                self.assertEqual(tipo_aditivo_por_qualificacao(qualificacao), esperado)
+
+
+@unittest.skipUnless(FIXTURE_CONTRATOSGOV.exists(), f"Fixture ausente em {FIXTURE_CONTRATOSGOV}")
+class TestAditivosDoGov(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.contratos, cls.termos, cls.empenhos = _gov()
+
+    def _termos(self, contrato_id: str) -> pd.DataFrame:
+        return self.termos[self.termos["contrato_id"] == contrato_id]
+
+    def _numeros_pendentes(self, contrato_id: str, aditivos: list[Aditivo]) -> list[str]:
+        return list(aditivos_pendentes(aditivos, self._termos(contrato_id))["numero"])
+
+    def test_pendentes_do_118872_sem_aditivos_nativos(self):
+        self.assertEqual(
+            self._numeros_pendentes("118872", []), ["00001/2022", "00002/2023", "00003/2024", "00004/2025"]
+        )
+
+    def test_registrado_por_numero_normalizado(self):
+        nativos = aditivos_do_registro([{"numero": "1/2022", "tipo": "REAJUSTE", "situacao": "ASSINADO", "data_inicio": "2022-10-17"}])
+        self.assertEqual(self._numeros_pendentes("118872", nativos), ["00002/2023", "00003/2024", "00004/2025"])
+
+    def test_registrado_por_data_de_assinatura(self):
+        nativos = aditivos_do_registro(
+            [{"numero": "TA", "tipo": "PRORROGACAO", "situacao": "ASSINADO", "data_inicio": "2023-10-18",
+              "data_assinatura": "2023-10-17"}]
+        )
+        self.assertEqual(self._numeros_pendentes("118872", nativos), ["00001/2022", "00003/2024", "00004/2025"])
+
+    def test_apostilamento_e_contrato_nao_sao_aditivos(self):
+        self.assertEqual(
+            self._numeros_pendentes("18940", []), ["00001/2019", "00002/2021", "00003/2022", "00004/2024"]
+        )
+
+    def test_aditivo_sugerido_reajuste(self):
+        termo = self._termos("118872").set_index("numero").loc["00004/2025"].rename("00004/2025")
+        termo["numero"] = "00004/2025"
+        self.assertEqual(
+            aditivo_sugerido(termo),
+            Aditivo(
+                numero="00004/2025", tipo="REAJUSTE", situacao="ASSINADO", data_inicio=date(2025, 10, 18),
+                data_assinatura=date(2025, 9, 16), valor_mensal=None, vigencia_fim=date(2026, 10, 17), itens=None,
+            ),
+        )
+
+    def test_aditivo_sugerido_sem_data_inicio_usa_assinatura(self):
+        termo = self._termos("18940").query("numero == '00001/2019'").iloc[0]
+        sugerido = aditivo_sugerido(termo)
+        self.assertEqual(sugerido.tipo, "PRORROGACAO")
+        self.assertEqual(sugerido.data_inicio, date(2019, 11, 28))
+        self.assertIsNone(sugerido.valor_mensal)
+
+    def test_aditivo_sugerido_sem_nenhuma_data_deixa_inicio_nulo(self):
+        termo = pd.Series(
+            {"numero": "00009/2026", "qualificacao_termo": "VIGÊNCIA", "data_assinatura": None,
+             "data_inicio_novo_valor": None, "vigencia_fim": None}
+        )
+        sugerido = aditivo_sugerido(termo)
+        self.assertIsNone(sugerido.data_inicio)
+        self.assertIsNone(sugerido.vigencia_fim)
+
+    def test_com_contratosgov_conta_pendentes(self):
+        df = com_contratosgov(
+            _cadastro({"contrato_numero": "29/2021", "ne_curta": "2025NE000046"}, {"contrato_numero": "99/2026"}),
+            self.contratos, self.termos, self.empenhos,
+        )
+        self.assertEqual(df.loc[0, "qtd_aditivos_pendentes"], 4)
+        self.assertTrue(pd.isna(df.loc[1, "qtd_aditivos_pendentes"]))
 
 
 if __name__ == "__main__":

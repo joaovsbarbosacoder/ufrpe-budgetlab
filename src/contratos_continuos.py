@@ -45,6 +45,7 @@ import pandas as pd
 from src.cache_bases import em_cache
 from src.leitura_excel import motor_excel
 
+from src.contratos_aditivos import Aditivo
 from src.contratos_pagamentos import normalizar_numero_contrato
 from src.execucao_ne_utils import (
     indice_liquidado_por_ne_curta,
@@ -402,7 +403,7 @@ TIPO_TERMO_ADITIVO = "Termo Aditivo"
 _COLUNAS_CONTRATOSGOV = (
     "contratosgov_id", "ligacao_por", "situacao_conciliacao", "situacao_vigencia_gov",
     "vigencia_fim_contratosgov", "diverge_vigencia", "qtd_termos", "qtd_aditivos_gov",
-    "valor_parcela_contratosgov",
+    "qtd_aditivos_pendentes", "valor_parcela_contratosgov",
 )
 
 
@@ -503,8 +504,10 @@ def com_contratosgov(
         errors="coerce",
     )
 
+    aditivos_nativos = resultado["aditivos"] if "aditivos" in resultado.columns else pd.Series([[]] * len(resultado), index=resultado.index)
+
     saidas: dict[str, list] = {coluna: [] for coluna in _COLUNAS_CONTRATOSGOV}
-    for (_, ligacao), vigencia in zip(ligacoes.iterrows(), vigencia_cadastro):
+    for (_, ligacao), vigencia, aditivos in zip(ligacoes.iterrows(), vigencia_cadastro, aditivos_nativos):
         contrato_id = ligacao["contratosgov_id"]
         if contrato_id is None or pd.isna(contrato_id):  # `iterrows` troca None por NaN
             situacao = "conflito" if ligacao["conflito"] else "sem_par_no_contratosgov"
@@ -530,6 +533,9 @@ def com_contratosgov(
                 "diverge_vigencia": diverge,
                 "qtd_termos": int(qtd_termos.get(contrato_id, 0)),
                 "qtd_aditivos_gov": int(qtd_aditivos.get(contrato_id, 0)),
+                "qtd_aditivos_pendentes": len(
+                    aditivos_pendentes(aditivos, termos[termos["contrato_id"].astype(str) == contrato_id])
+                ),
                 "valor_parcela_contratosgov": pd.NA if parcela is None or pd.isna(parcela) else float(parcela),
             }
         for coluna in _COLUNAS_CONTRATOSGOV:
@@ -543,5 +549,77 @@ def com_contratosgov(
     resultado["diverge_vigencia"] = pd.array(saidas["diverge_vigencia"], dtype="boolean")
     resultado["qtd_termos"] = pd.array(saidas["qtd_termos"], dtype="Int64")
     resultado["qtd_aditivos_gov"] = pd.array(saidas["qtd_aditivos_gov"], dtype="Int64")
+    resultado["qtd_aditivos_pendentes"] = pd.array(saidas["qtd_aditivos_pendentes"], dtype="Int64")
     resultado["valor_parcela_contratosgov"] = pd.array(saidas["valor_parcela_contratosgov"], dtype="Float64")
     return resultado
+
+
+def tipo_aditivo_por_qualificacao(qualificacao: object) -> str:
+    """Tipo do aditivo nativo (`src.contratos_aditivos.TIPOS`) sugerido pela `qualificacao_termo` do gov
+    ("VIGÊNCIA; REAJUSTE"): REAJUSTE se houver reajuste (muda o valor); senão PRORROGACAO se houver
+    vigência; senão ACRESCIMO_SUPRESSAO; senão OUTRO (inclui só "INFORMATIVO" e vazio). Um termo com
+    várias qualificações vira UM aditivo — é só sugestão, o usuário ajusta antes de salvar."""
+
+    texto = _normalizar(qualificacao)
+    if "REAJUSTE" in texto:
+        return "REAJUSTE"
+    if "VIGENCIA" in texto:
+        return "PRORROGACAO"
+    if "ACRESCIMO" in texto:
+        return "ACRESCIMO_SUPRESSAO"
+    return "OUTRO"
+
+
+def _data_ou_none(valor: object) -> date | None:
+    if valor is None or pd.isna(valor):
+        return None
+    if isinstance(valor, pd.Timestamp):
+        return valor.date()
+    return valor
+
+
+def _chave_numero_termo(numero: object) -> str:
+    """Forma comparável do número de um termo/aditivo: `normalizar_numero_contrato` quando o texto segue
+    "<número>/<ano>" ("00001/2022" == "1/2022"); senão o texto aparado em maiúsculas (o número do
+    aditivo nativo é texto livre)."""
+
+    normalizado = normalizar_numero_contrato(numero)
+    if normalizado:
+        return normalizado
+    return "" if numero is None or pd.isna(numero) else str(numero).strip().upper()
+
+
+def aditivos_pendentes(aditivos: list[Aditivo], termos_do_contrato: pd.DataFrame) -> pd.DataFrame:
+    """Termos aditivos do gov (só `tipo == "Termo Aditivo"` — apostilamento, rescisão e o próprio
+    contrato nunca contam) que não têm aditivo nativo correspondente. Um termo está REGISTRADO se algum
+    aditivo nativo tem o mesmo número (`_chave_numero_termo`) ou a mesma `data_assinatura`. O casamento é
+    heurístico (número nativo é texto livre): serve para SUGERIR o registro, nunca para gravar sozinho."""
+
+    do_gov = termos_do_contrato[termos_do_contrato["tipo"] == TIPO_TERMO_ADITIVO]
+    numeros = {_chave_numero_termo(a.numero) for a in aditivos}
+    datas = {a.data_assinatura for a in aditivos if a.data_assinatura is not None}
+    registrado = [
+        _chave_numero_termo(numero) in numeros or _data_ou_none(assinatura) in datas
+        for numero, assinatura in zip(do_gov["numero"], do_gov["data_assinatura"])
+    ]
+    return do_gov[[not r for r in registrado]]
+
+
+def aditivo_sugerido(termo: pd.Series) -> Aditivo:
+    """Aditivo nativo sugerido a partir de um termo aditivo do gov: `tipo` por qualificação, situação
+    ASSINADO, `data_inicio` = `data_inicio_novo_valor` (senão `data_assinatura`; nula se nenhuma das duas —
+    `validar_aditivos` recusa ao salvar, o usuário preenche), `vigencia_fim` do termo. `valor_mensal`
+    SEMPRE nulo: a parcela do gov é do contrato inteiro, Contínuos traz só a parcela da ação 20RK."""
+
+    assinatura = _data_ou_none(termo["data_assinatura"])
+    inicio = _data_ou_none(termo["data_inicio_novo_valor"]) or assinatura
+    return Aditivo(
+        numero=str(termo["numero"]),
+        tipo=tipo_aditivo_por_qualificacao(termo["qualificacao_termo"]),
+        situacao="ASSINADO",
+        data_inicio=inicio,
+        data_assinatura=assinatura,
+        valor_mensal=None,
+        vigencia_fim=_data_ou_none(termo["vigencia_fim"]),
+        itens=None,
+    )
