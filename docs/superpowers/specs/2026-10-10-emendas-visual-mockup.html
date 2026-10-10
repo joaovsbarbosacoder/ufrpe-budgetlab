@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emendas — proposta visual</title>
+<style>
+  :root {
+    --bg: #F3F6FB; --surface: #FFFFFF; --border: #DCE3EE; --text: #0E2238; --muted: #5C6B80; --faint: #8A97A9;
+    --accent: #1D5FD1; --accent-soft: #E6EEFC; --navy: #0B3A66;
+    --ok: #12804A; --ok-soft: #E3F5EB; --warn: #B45F06; --warn-soft: #FDF0DC; --bad: #B3261E; --bad-soft: #FBE7E5;
+    --neutral-soft: #EDF1F7; --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 "Segoe UI", system-ui, sans-serif; }
+  .nota { background: #FFF8E1; border-bottom: 1px solid #F0DFA6; padding: 8px 16px; font-size: 13px; color: #6B5300; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 16px 60px; }
+  h1 { font-size: 26px; margin: 0 0 2px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: 14px; }
+  .seg { display: inline-flex; background: var(--neutral-soft); border-radius: 999px; padding: 4px; gap: 4px; margin-bottom: 18px; }
+  .seg button { border: 0; background: transparent; padding: 8px 18px; border-radius: 999px; font: inherit; font-weight: 600; color: var(--muted); cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--surface); color: var(--accent); box-shadow: 0 1px 3px rgba(14,34,56,.15); }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 14px; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .grow { flex: 1 1 auto; }
+  .label { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 6px 0 16px; }
+  .kpi .v { font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+  .kpi .l { font-size: 12px; color: var(--muted); }
+  .chip { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--neutral-soft); color: var(--muted); border: 1px solid var(--border); white-space: nowrap; }
+  .chip.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+  .chip.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+  .chip.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+  .chip.info { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+  button.primary { background: var(--accent); color: #fff; border: 0; border-radius: 10px; padding: 9px 16px; font: inherit; font-weight: 600; cursor: pointer; }
+  button.primary:disabled { background: #AEBBD0; cursor: not-allowed; }
+  button.ghost { background: var(--surface); color: var(--accent); border: 1px solid var(--border); border-radius: 10px; padding: 7px 14px; font: inherit; font-weight: 600; cursor: pointer; }
+  button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  select, input[type=text], input[type=number], textarea { font: inherit; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: #fff; color: var(--text); width: 100%; }
+  /* tabela de registro */
+  .reg { width: 100%; border-collapse: collapse; }
+  .reg th { text-align: left; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  .reg td { padding: 11px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  .reg tr.linha { cursor: pointer; }
+  .reg tr.linha:hover td { background: #F8FAFD; }
+  .reg td.num, .reg th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .tit { font-weight: 600; } .sub2 { color: var(--muted); font-size: 12.5px; }
+  .bar { height: 7px; background: var(--neutral-soft); border-radius: 99px; overflow: hidden; min-width: 90px; }
+  .bar > i { display: block; height: 100%; background: var(--accent); border-radius: 99px; }
+  .bar.full > i { background: var(--ok); }
+  .detalhe td { background: #F8FAFD; padding: 4px 10px 14px 28px; }
+  .mini { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .mini th { text-align: left; font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .05em; padding: 6px 8px; }
+  .mini td { padding: 6px 8px; border-top: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  .mini .n { text-align: right; }
+  .alerta { border-left: 5px solid var(--warn); background: #FFFCF5; }
+  .alerta h2 { margin: 0 0 4px; font-size: 16px; }
+  .vals { display: flex; gap: 22px; flex-wrap: wrap; margin: 10px 0; }
+  .vals div b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+  /* maquete "hoje" */
+  .hoje .emenda { margin-bottom: 14px; }
+  .hoje .head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .hoje .big { font-size: 20px; font-weight: 700; }
+  .hoje table { margin-top: 10px; }
+  .dim { opacity: .98; }
+  /* dialogo */
+  dialog { border: 0; border-radius: 16px; padding: 0; width: min(560px, 92vw); box-shadow: 0 20px 60px rgba(14,34,56,.35); }
+  dialog::backdrop { background: rgba(14,34,56,.45); }
+  .dlg { padding: 22px 24px; }
+  .dlg h3 { margin: 0 0 4px; font-size: 19px; }
+  .opt { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--border); border-radius: 12px; padding: 11px 12px; margin: 8px 0; cursor: pointer; }
+  .opt:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+  .opt input { margin-top: 4px; }
+  .opt small { display: block; color: var(--muted); }
+  .campo { margin: 12px 0; } .campo label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .ajuda { font-size: 12.5px; color: var(--muted); }
+  .erro { color: var(--bad); font-size: 12.5px; min-height: 1em; }
+  details.decisoes summary { cursor: pointer; font-weight: 600; }
+  .sr { position: absolute; left: -9999px; }
+  .dec { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 10px 0; border-top: 1px solid var(--border); }
+  @media (max-width: 760px) { .col-ocultar { display: none; } h1 { font-size: 22px; } }
+</style>
+</head>
+<body>
+<div class="nota"><b>Proposta de layout — apenas protótipo.</b> Valores reais da base de Emendas (exemplo); nada aqui altera o BudgetLab. A aba “Proposta” é interativa: clique em uma linha para ver os PTRES e em “Resolver” para testar a decisão de dotação.</div>
+<div class="wrap">
+  <h1>Emendas Parlamentares</h1>
+  <p class="sub">Histórico preservado · atualizações 2026+ · execução conciliada por PTRES.</p>
+
+  <div class="seg" role="group" aria-label="Versão da tela">
+    <button type="button" id="b-hoje" aria-pressed="false">Como é hoje</button>
+    <button type="button" id="b-prop" aria-pressed="true">Proposta</button>
+  </div>
+
+  <!-- ============================== COMO É HOJE ============================== -->
+  <section id="v-hoje" class="hoje" hidden>
+    <div class="card"><span class="label">Filtros</span> <span class="sub2">Exercício · Resultado primário · Parlamentar (todos)</span></div>
+    <div class="kpis">
+      <div class="kpi"><div class="v">25</div><div class="l">Emendas</div></div>
+      <div class="kpi"><div class="v">R$ 10.525.108,00</div><div class="l">Dotação atualizada</div></div>
+      <div class="kpi"><div class="v">R$ 7.962.726,79</div><div class="l">Empenhado</div></div>
+      <div class="kpi"><div class="v">R$ 1.800.329,44</div><div class="l">Liquidado</div></div>
+      <div class="kpi"><div class="v">R$ 1.447.991,04</div><div class="l">Pago</div></div>
+    </div>
+    <div class="card">
+      <b>Dotação informada ≠ Dotação Anual por PTRES — 1 PTRES</b>
+      <div class="sub2">Os dois valores são exibidos sem indicar qual está correto: não há regra definida de prevalência. Confira na origem antes de decidir.</div>
+      <table class="mini" style="margin-top:8px"><tr><th>Exercício</th><th>RP</th><th>Emenda</th><th>Parlamentar</th><th>PTRES</th><th class="n">Dotação informada</th><th class="n">Dotação Anual</th><th class="n">Diferença</th></tr>
+      <tr><td>2026</td><td>RP6</td><td>202642780018</td><td>TERESA LEITAO</td><td>261464</td><td class="n">R$ 300.000,00</td><td class="n">R$ 600.000,00</td><td class="n">R$ 300.000,00</td></tr></table>
+      <div class="sub2" style="margin-top:8px"><i>(sem nenhum botão: não há como resolver)</i></div>
+    </div>
+    <div class="card emenda"><div class="head"><div><span class="label" style="color:var(--accent)">RP6 · exercício 2024</span><div class="big">202438130004 — FERNANDO MONTEIRO</div>
+      <span class="chip">PTRES 1</span> <span class="chip">GND 2 VALORES</span> <span class="chip">HISTÓRICO ESTÁTICO</span></div>
+      <div style="text-align:right"><span class="label">Dotação atualizada</span><div class="big" style="color:var(--accent)">R$ 1.500.000,00</div></div></div>
+      <div class="vals"><div><span class="label">Empenhado</span><b>R$ 1.499.408,13</b></div><div><span class="label">Liquidado</span><b>R$ 296.670,00</b></div><div><span class="label">Pago</span><b>R$ 232.324,54</b></div><div><span class="label">PTRES c/ execução</span><b>1 de 1</b></div></div>
+      <table class="mini"><tr><th>PTRES</th><th>GND</th><th>Status</th><th class="n">Dotação</th><th class="n">Empenhado</th><th class="n">Liquidado</th><th class="n">Pago</th></tr>
+      <tr><td>238855</td><td>3, 4</td><td><span class="chip">HISTÓRICO ESTÁTICO</span></td><td class="n">R$ 1.500.000,00</td><td class="n">R$ 1.499.408,13</td><td class="n">R$ 296.670,00</td><td class="n">R$ 232.324,54</td></tr></table></div>
+    <div class="card emenda"><div class="head"><div><span class="label" style="color:var(--accent)">RP6 · exercício 2026</span><div class="big">202641750010 — TULIO GADELHA</div>
+      <span class="chip">PTRES 1</span> <span class="chip">GND 4</span> <span class="chip bad">SEM EXECUÇÃO</span></div>
+      <div style="text-align:right"><span class="label">Dotação atualizada</span><div class="big" style="color:var(--accent)">R$ 1.125.000,00</div></div></div>
+      <div class="vals"><div><span class="label">Empenhado</span><b>—</b></div><div><span class="label">Liquidado</span><b>—</b></div><div><span class="label">Pago</span><b>—</b></div><div><span class="label">PTRES c/ execução</span><b>0 de 1</b></div></div>
+      <table class="mini"><tr><th>PTRES</th><th>GND</th><th>Status</th><th class="n">Dotação</th><th class="n">Empenhado</th><th class="n">Liquidado</th><th class="n">Pago</th></tr>
+      <tr><td>261463</td><td>4</td><td><span class="chip bad">SEM EXECUÇÃO</span></td><td class="n">R$ 1.125.000,00</td><td class="n">—</td><td class="n">—</td><td class="n">—</td></tr></table></div>
+    <div class="card sub2" style="text-align:center">… mais 23 cartões iguais, um embaixo do outro (≈ 8.300 px de rolagem), misturando 2016–2026 e ordenados só por valor.</div>
+  </section>
+
+  <!-- ============================== PROPOSTA ============================== -->
+  <section id="v-prop">
+    <div id="pendencias"></div>
+
+    <div class="card">
+      <div class="row">
+        <div style="min-width:210px"><span class="label">Exercício</span>
+          <select id="f-escopo" aria-label="Exercício">
+            <option value="vivas" selected>2026 em diante (vivas)</option>
+            <option value="todas">Todos (2016–2026)</option>
+            <option value="hist">Histórico (até 2025)</option>
+          </select></div>
+        <div style="min-width:210px"><span class="label">Parlamentar</span>
+          <select id="f-parl" aria-label="Parlamentar"><option value="">Todos</option></select></div>
+        <div class="grow"></div>
+        <button class="ghost" type="button">+ Cadastrar emenda</button>
+      </div>
+    </div>
+
+    <div class="kpis" id="kpis"></div>
+
+    <div class="card" style="padding:6px 8px 10px">
+      <div style="overflow-x:auto">
+      <table class="reg" id="reg">
+        <thead><tr><th>Emenda</th><th class="col-ocultar">Exercício</th><th class="num">Dotação</th><th style="min-width:150px">Executado (empenhado)</th><th class="num col-ocultar">Liquidado</th><th class="num col-ocultar">Pago</th><th>Situação</th></tr></thead>
+        <tbody id="corpo"></tbody>
+      </table></div>
+      <div class="sub2" style="padding:8px 10px" id="rodape"></div>
+    </div>
+
+    <div class="card"><details class="decisoes" id="decisoes"><summary>Decisões de dotação (<span id="n-dec">0</span>)</summary><div id="lista-dec" class="sub2" style="margin-top:8px">Nenhuma decisão registrada.</div></details></div>
+  </section>
+</div>
+
+<dialog id="dlg" aria-labelledby="dlg-t"><form method="dialog" class="dlg" id="form" novalidate>
+  <h3 id="dlg-t">Resolver divergência de dotação</h3>
+  <div class="sub2" id="dlg-sub"></div>
+  <div class="vals">
+    <div><span class="label">Relatório de Emendas</span><b id="d-rel"></b></div>
+    <div><span class="label">Dotação Anual (PTRES)</span><b id="d-anual"></b></div>
+    <div><span class="label">Diferença</span><b id="d-dif"></b></div>
+  </div>
+  <div class="ajuda" id="d-compartilhado">PTRES usado por uma única emenda: a Dotação Anual pode ser adotada.</div>
+  <label class="opt"><input type="radio" name="dec" value="adotar" checked><span><b>Adotar a Dotação Anual</b><small>O total da emenda passa para o valor da Dotação Anual.</small></span></label>
+  <label class="opt"><input type="radio" name="dec" value="manter"><span><b>Manter o relatório</b><small>Nenhum valor muda; a divergência fica marcada como decidida.</small></span></label>
+  <label class="opt"><input type="radio" name="dec" value="informar"><span><b>Informar outro valor</b><small>Zero é válido; vazio não.</small></span></label>
+  <div class="campo" id="c-valor" hidden><label for="i-valor">Valor (R$)</label><input id="i-valor" type="number" min="0" step="0.01" placeholder="ex.: 450000,00"></div>
+  <div class="campo"><label for="i-just">Justificativa <span class="ajuda">(obrigatória, mín. 10 caracteres)</span></label><textarea id="i-just" rows="2" placeholder="Ex.: Dotação ampliada na LOA 2026 conforme Dotação Anual atualizada."></textarea></div>
+  <div class="campo"><label for="i-resp">Responsável <span class="ajuda">(obrigatório)</span></label><input id="i-resp" type="text" placeholder="Nome de quem decide"></div>
+  <div class="erro" id="d-erro" role="alert"></div>
+  <div class="ajuda">A decisão fica registrada (quem, quando, valor anterior e novo), pode ser desfeita, e o valor original do relatório continua guardado.</div>
+  <div class="row" style="justify-content:flex-end; margin-top:14px">
+    <button type="button" class="ghost" id="d-cancel">Cancelar</button>
+    <button type="submit" class="primary" id="d-ok" disabled>Registrar decisão</button>
+  </div>
+</form></dialog>
+
+<script>
+const BRL = n => n == null ? '—' : new Intl.NumberFormat('pt-BR', {style:'currency', currency:'BRL'}).format(n);
+const E = [ // valores reais da base (exemplo)
+ {id:'202641750010', parl:'TULIO GADELHA', ano:2026, dot:1125000, emp:null, liq:null, pago:null, ptres:[{p:'261463',g:'4',dot:1125000,emp:null,liq:null,pago:null,st:'sem'}]},
+ {id:'202632990006', parl:'MENDONCA FILHO', ano:2026, dot:1000000, emp:1000000, liq:null, pago:null, ptres:[{p:'261462',g:'4',dot:0,emp:null,liq:null,pago:null,st:'sem'},{p:'269202',g:'4',dot:1000000,emp:1000000,liq:null,pago:null,st:'exec'}]},
+ {id:'202644470019', parl:'PEDRO CAMPOS', ano:2026, dot:800000, emp:null, liq:null, pago:null, ptres:[{p:'261466',g:'3',dot:800000,emp:null,liq:null,pago:null,st:'sem'}]},
+ {id:'202644140004', parl:'LULA DA FONTE', ano:2026, dot:335000, emp:null, liq:null, pago:null, ptres:[{p:'(ver detalhe)',g:'4',dot:335000,emp:null,liq:null,pago:null,st:'sem'}]},
+ {id:'202642780018', parl:'TERESA LEITAO', ano:2026, dot:300000, emp:null, liq:null, pago:null, ptres:[{p:'261464',g:'—',dot:300000,emp:null,liq:null,pago:null,st:'sem'}], div:{relatorio:300000, anual:600000, ptres:'261464', compartilhado:false}},
+ {id:'202438130004', parl:'FERNANDO MONTEIRO', ano:2024, dot:1500000, emp:1499408.13, liq:296670, pago:232324.54, ptres:[{p:'238855',g:'3, 4',dot:1500000,emp:1499408.13,liq:296670,pago:232324.54,st:'hist'}]},
+ {id:'202041750004', parl:'TULIO GADELHA', ano:2020, dot:800000, emp:800000, liq:null, pago:null, ptres:[{p:'176794',g:'4',dot:800000,emp:800000,liq:null,pago:null,st:'hist'}]},
+ {id:'201630800008', parl:'DANIEL COELHO', ano:2016, dot:500000, emp:500000, liq:17167.91, pago:17167.91, ptres:[{p:'111760',g:'4',dot:0,emp:null,liq:null,pago:null,st:'hist'},{p:'119923',g:'4',dot:500000,emp:500000,liq:17167.91,pago:17167.91,st:'hist'}]},
+ {id:'201932990007', parl:'MENDONCA FILHO', ano:2019, dot:500000, emp:500000, liq:500000, pago:500000, ptres:[{p:'150992',g:'3',dot:500000,emp:500000,liq:500000,pago:500000,st:'hist'}]},
+ {id:'202241750018', parl:'TULIO GADELHA', ano:2022, dot:400000, emp:399903.54, liq:null, pago:null, ptres:[{p:'206135',g:'4',dot:400000,emp:399903.54,liq:null,pago:null,st:'hist'}]},
+ {id:'202338130007', parl:'FERNANDO MONTEIRO', ano:2023, dot:376347, emp:376038.97, liq:4900, pago:null, ptres:[{p:'217658',g:'3, 4',dot:376347,emp:376038.97,liq:4900,pago:null,st:'hist'}]},
+];
+const ORIGINAL_TERESA = 300000;
+let decisoes = []; // {emenda, tipo, de, para, just, resp, quando}
+const $ = s => document.querySelector(s);
+const aberta = new Set();
+
+function situacao(e) {
+  if (e.ano < 2026) return ['Histórico', ''];
+  if (e.emp == null) return ['Aguardando execução', 'info'];
+  const parcial = e.ptres.some(p => p.dot > 0 && p.st === 'sem');
+  return parcial ? ['Execução parcial', 'info'] : ['Executada', 'ok'];
+}
+function filtradas() {
+  const esc = $('#f-escopo').value, par = $('#f-parl').value;
+  return E.filter(e => (esc === 'todas' || (esc === 'vivas' ? e.ano >= 2026 : e.ano < 2026)) && (!par || e.parl === par))
+          .sort((a, b) => b.ano - a.ano || b.dot - a.dot);
+}
+function decisaoAtiva(e) { return decisoes.find(d => d.emenda === e.id && !d.desfeita); }
+function pendente(e) { return e.div && !decisaoAtiva(e); }
+
+function renderPendencias() {
+  const alvo = $('#pendencias'); alvo.innerHTML = '';
+  E.filter(pendente).forEach(e => {
+    const dif = e.div.anual - e.div.relatorio;
+    const d = document.createElement('div'); d.className = 'card alerta';
+    d.innerHTML = `<div class="row"><div class="grow"><h2>⚠ 1 divergência de dotação precisa de decisão</h2>
+      <div class="sub2">Emenda <b>${e.id}</b> · ${e.parl} · PTRES ${e.div.ptres} · exercício ${e.ano}</div>
+      <div class="vals"><div><span class="label">Relatório de Emendas</span><b>${BRL(e.div.relatorio)}</b></div>
+      <div><span class="label">Dotação Anual (PTRES)</span><b>${BRL(e.div.anual)}</b></div>
+      <div><span class="label">Diferença</span><b>${BRL(dif)}</b></div></div></div>
+      <button class="primary" type="button" data-resolver="${e.id}">Resolver</button></div>`;
+    alvo.appendChild(d);
+  });
+}
+function renderKpis() {
+  const f = filtradas(); const soma = k => f.reduce((s, e) => s + (e[k] || 0), 0);
+  const itens = [['Emendas', f.length], ['Dotação atualizada', BRL(soma('dot'))], ['Empenhado', BRL(soma('emp'))], ['Liquidado', BRL(soma('liq'))], ['Pago', BRL(soma('pago'))]];
+  $('#kpis').innerHTML = itens.map(([l, v]) => `<div class="card kpi" style="margin:0"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+}
+function renderTabela() {
+  const f = filtradas(); const corpo = $('#corpo'); corpo.innerHTML = '';
+  f.forEach(e => {
+    const [txt, cls] = situacao(e); const pct = e.dot > 0 && e.emp != null ? Math.min(100, e.emp / e.dot * 100) : 0;
+    const dec = decisaoAtiva(e); const pend = pendente(e);
+    const marcas = (dec ? `<span class="chip ok">dotação decidida</span> ` : '') + (pend ? `<span class="chip warn">divergência pendente</span> ` : '');
+    const orig = dec && dec.tipo !== 'manter' ? `<div class="sub2">relatório: ${BRL(dec.de)}</div>` : '';
+    const tr = document.createElement('tr'); tr.className = 'linha'; tr.tabIndex = 0; tr.dataset.id = e.id;
+    tr.innerHTML = `<td><div class="tit">${e.id} — ${e.parl}</div><div class="sub2">RP6 · ${e.ptres.length} PTRES ${marcas}</div></td>
+      <td class="col-ocultar">${e.ano}</td><td class="num"><b>${BRL(e.dot)}</b>${orig}</td>
+      <td><div class="bar ${pct >= 99 ? 'full' : ''}"><i style="width:${pct}%"></i></div><div class="sub2">${e.emp == null ? '—' : pct.toFixed(0) + '% · ' + BRL(e.emp)}</div></td>
+      <td class="num col-ocultar">${BRL(e.liq)}</td><td class="num col-ocultar">${BRL(e.pago)}</td><td><span class="chip ${cls}">${txt}</span></td>`;
+    corpo.appendChild(tr);
+    if (aberta.has(e.id)) {
+      const d = document.createElement('tr'); d.className = 'detalhe';
+      const linhas = e.ptres.map(p => `<tr><td>${p.p}</td><td>${p.g}</td><td>${p.st === 'exec' ? 'Execução anual' : p.st === 'hist' ? 'Histórico' : 'Sem execução'}</td><td class="n">${BRL(p.dot)}</td><td class="n">${BRL(p.emp)}</td><td class="n">${BRL(p.liq)}</td><td class="n">${BRL(p.pago)}</td></tr>`).join('');
+      d.innerHTML = `<td colspan="7"><table class="mini"><tr><th>PTRES</th><th>GND</th><th>Situação</th><th class="n">Dotação</th><th class="n">Empenhado</th><th class="n">Liquidado</th><th class="n">Pago</th></tr>${linhas}</table></td>`;
+      corpo.appendChild(d);
+    }
+  });
+  $('#rodape').textContent = `Mostrando ${f.length} das 25 emendas da base (o protótipo traz uma amostra). Clique numa linha para ver os PTRES.`;
+}
+function renderDecisoes() {
+  $('#n-dec').textContent = decisoes.filter(d => !d.desfeita).length;
+  const l = $('#lista-dec');
+  if (!decisoes.length) { l.textContent = 'Nenhuma decisão registrada.'; return; }
+  l.innerHTML = decisoes.map((d, i) => `<div class="dec"><div><b>${d.emenda}</b> · ${d.tipo === 'adotar' ? 'Dotação Anual adotada' : d.tipo === 'manter' ? 'Relatório mantido' : 'Valor informado'}
+    ${d.desfeita ? '<span class="chip">desfeita</span>' : '<span class="chip ok">ativa</span>'}<br>${BRL(d.de)} → <b>${BRL(d.para)}</b><br>“${d.just}” — ${d.resp}, ${d.quando}</div>
+    ${d.desfeita ? '' : `<button class="ghost" type="button" data-desfazer="${i}">Desfazer</button>`}</div>`).join('');
+}
+function renderTudo() { renderPendencias(); renderKpis(); renderTabela(); renderDecisoes(); }
+
+/* eventos */
+document.addEventListener('click', ev => {
+  const lin = ev.target.closest('tr.linha'); if (lin) { const id = lin.dataset.id; aberta.has(id) ? aberta.delete(id) : aberta.add(id); renderTabela(); return; }
+  const r = ev.target.closest('[data-resolver]'); if (r) abrirDialogo(E.find(e => e.id === r.dataset.resolver));
+  const u = ev.target.closest('[data-desfazer]'); if (u) {
+    const d = decisoes[+u.dataset.desfazer]; d.desfeita = true; const e = E.find(x => x.id === d.emenda);
+    e.dot = ORIGINAL_TERESA; e.ptres[0].dot = ORIGINAL_TERESA; renderTudo();
+  }
+});
+document.addEventListener('keydown', ev => { if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches('tr.linha')) { ev.preventDefault(); ev.target.click(); } });
+$('#f-escopo').onchange = $('#f-parl').onchange = () => { renderKpis(); renderTabela(); };
+[...new Set(E.map(e => e.parl))].sort().forEach(p => { const o = document.createElement('option'); o.value = o.textContent = p; $('#f-parl').appendChild(o); });
+
+/* dialogo */
+let alvo = null;
+function validar() {
+  const tipo = document.querySelector('input[name=dec]:checked').value;
+  const just = $('#i-just').value.trim(), resp = $('#i-resp').value.trim(), val = $('#i-valor').value;
+  let erro = '';
+  if (tipo === 'informar' && (val === '' || +val < 0)) erro = 'Informe um valor (zero é válido; vazio não).';
+  else if (just.length < 10) erro = 'A justificativa precisa ter ao menos 10 caracteres.';
+  else if (!resp) erro = 'Informe o responsável.';
+  $('#d-erro').textContent = (just || resp || val) ? erro : '';
+  $('#d-ok').disabled = !!erro;
+}
+function abrirDialogo(e) {
+  alvo = e; $('#form').reset(); $('#c-valor').hidden = true;
+  $('#dlg-sub').innerHTML = `Emenda <b>${e.id}</b> · ${e.parl} · PTRES ${e.div.ptres} · exercício ${e.ano}`;
+  $('#d-rel').textContent = BRL(e.div.relatorio); $('#d-anual').textContent = BRL(e.div.anual); $('#d-dif').textContent = BRL(e.div.anual - e.div.relatorio);
+  $('#d-erro').textContent = ''; $('#d-ok').disabled = true; $('#dlg').showModal();
+}
+document.querySelectorAll('input[name=dec]').forEach(r => r.onchange = () => { $('#c-valor').hidden = r.value !== 'informar' || !r.checked; validar(); });
+['#i-just', '#i-resp', '#i-valor'].forEach(s => $(s).oninput = validar);
+$('#d-cancel').onclick = () => $('#dlg').close();
+$('#form').onsubmit = ev => {
+  ev.preventDefault(); validar(); if ($('#d-ok').disabled) return;
+  const tipo = document.querySelector('input[name=dec]:checked').value;
+  const para = tipo === 'adotar' ? alvo.div.anual : tipo === 'manter' ? alvo.div.relatorio : +$('#i-valor').value;
+  decisoes.unshift({emenda: alvo.id, tipo, de: alvo.div.relatorio, para, just: $('#i-just').value.trim(), resp: $('#i-resp').value.trim(), quando: new Date().toLocaleString('pt-BR')});
+  alvo.dot = para; alvo.ptres[0].dot = para; $('#dlg').close(); $('#decisoes').open = true; renderTudo();
+};
+
+/* alternar versões */
+function mostrar(v) { $('#v-hoje').hidden = v !== 'hoje'; $('#v-prop').hidden = v !== 'prop'; $('#b-hoje').setAttribute('aria-pressed', v === 'hoje'); $('#b-prop').setAttribute('aria-pressed', v === 'prop'); }
+$('#b-hoje').onclick = () => mostrar('hoje'); $('#b-prop').onclick = () => mostrar('prop');
+renderTudo();
+</script>
+</body>
+</html>

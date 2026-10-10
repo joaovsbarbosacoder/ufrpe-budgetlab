@@ -360,6 +360,27 @@ novo evento, sem apagar o original. Se um relatório posterior passar a trazer
 o mesmo `(exercício, RP, PTRES)`, o dado oficial absorve o vínculo manual sem
 duplicar a execução; conflitos com outra emenda permanecem explícitos.
 
+**Decisão de dotação.** Quando o valor do relatório diverge da Dotação Anual do
+PTRES, a divergência pode ser resolvida na própria página: adotar a Dotação
+Anual, manter o valor do relatório ou informar outro valor, sempre com
+justificativa (mín. 10 caracteres) e responsável. A decisão é um evento
+imutável em `data/emendas/ajustes_dotacao/` (desfazer acrescenta novo evento);
+o valor original do relatório nunca é alterado. Se o relatório mudar depois, a
+decisão fica "obsoleta" e a divergência volta a pendente. "Adotar" é bloqueada
+quando o PTRES tem mais de uma emenda.
+
+**Acompanhamento por emenda.** Cada emenda (de qualquer exercício) aceita
+status de tramitação com data, observação e responsável (lista sugerida +
+"Outro"), além de objeto e destinatário manuais, em
+`data/emendas/acompanhamento/` (eventos imutáveis; status registrado por
+engano é cancelado com motivo, não apagado). A lista de status é uma proposta
+a validar com a área; não há ordem imposta entre status e "responsável" é
+texto livre.
+
+**Visual.** Registro compacto (uma linha por emenda, detalhe na própria linha),
+exercício 2026+ por padrão, filtro/coluna de Tramitação; vermelho só para
+problema real.
+
 O contrato completo está em `docs/base_emendas_acompanhamento.md`.
 
 ### Dotação Orçamentária
