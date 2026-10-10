@@ -29,6 +29,17 @@ Para deixar gravado no seu usuário do Windows (vale nas próximas sessões):
 [Environment]::SetEnvironmentVariable("INLABS_SENHA", "sua senha", "User")
 ```
 
+Para não deixar a senha no histórico do PowerShell, prefira pedi-la em campo oculto:
+
+```powershell
+[Environment]::SetEnvironmentVariable("INLABS_EMAIL", (Read-Host "E-mail do INLABS"), "User")
+$s = Read-Host "Senha do INLABS" -AsSecureString
+[Environment]::SetEnvironmentVariable("INLABS_SENHA", [System.Net.NetworkCredential]::new("", $s).Password, "User")
+```
+
+O mesmo passo a passo está na própria página **Diário Oficial (DOU)**, no quadro
+"Como configurar o login do INLABS" (`dou_inlabs.MANUAL_CONFIGURACAO_LOGIN`).
+
 Gravadas assim, o BudgetLab as lê direto do perfil do usuário do Windows,
 mesmo que o sistema tenha sido aberto antes (o Windows só repassa variáveis
 novas a programas abertos depois de sair e entrar na conta) — basta reiniciar o

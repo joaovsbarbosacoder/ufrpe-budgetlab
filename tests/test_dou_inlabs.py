@@ -21,6 +21,7 @@ from unittest import mock
 import pandas as pd
 import requests
 
+from src import dou_inlabs
 from src.dou_inlabs import (
     ARQUIVO_MANIFESTO,
     COLUNAS,
@@ -64,6 +65,14 @@ def _resposta(status: int, conteudo: bytes = b"") -> mock.Mock:
     resposta.status_code = status
     resposta.content = conteudo
     return resposta
+
+
+class ManualLoginTest(unittest.TestCase):
+    def test_manual_cita_as_variaveis_e_pede_a_senha_em_campo_oculto(self):
+        manual = dou_inlabs.MANUAL_CONFIGURACAO_LOGIN
+        self.assertIn(dou_inlabs.VARIAVEL_EMAIL, manual)
+        self.assertIn(dou_inlabs.VARIAVEL_SENHA, manual)
+        self.assertIn("-AsSecureString", manual)
 
 
 class LeituraXmlTest(unittest.TestCase):

@@ -640,6 +640,9 @@ def _migrar_execucao_tg_para_lancamento(conexao: sqlite3.Connection) -> None:
     conexao.execute(f"ALTER TABLE execucao_tg RENAME TO {destino}")
 
 
+TIMEOUT_BLOQUEIO_SEGUNDOS = 30
+
+
 def conectar(caminho: str | Path = CAMINHO_BANCO_PADRAO) -> sqlite3.Connection:
     """Abre (criando se necessário) o banco de TEDs, com o schema já aplicado.
 
@@ -650,7 +653,9 @@ def conectar(caminho: str | Path = CAMINHO_BANCO_PADRAO) -> sqlite3.Connection:
     if caminho != ":memory:":
         Path(caminho).parent.mkdir(parents=True, exist_ok=True)
 
-    conexao = sqlite3.connect(caminho)
+    # O app roda em vários servidores/sessões Streamlit sobre o mesmo arquivo (journal "delete": um
+    # escritor bloqueia os demais); o padrão do sqlite3 (5 s) estoura com "database is locked".
+    conexao = sqlite3.connect(caminho, timeout=TIMEOUT_BLOQUEIO_SEGUNDOS)
     conexao.execute("PRAGMA foreign_keys = ON")
     _migrar_execucao_tg_para_lancamento(conexao)
     conexao.executescript(_DDL)

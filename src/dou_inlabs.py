@@ -354,6 +354,29 @@ def salvar_termos(termos: Iterable[str], refinar: Iterable[str] = (), diretorio:
 # --- Rede -----------------------------------------------------------------------------------
 
 
+MANUAL_CONFIGURACAO_LOGIN = """**1. Conta no INLABS.** O acesso é gratuito e pessoal: crie a conta em https://inlabs.in.gov.br (se já tem, confirme que consegue entrar por lá com o mesmo e-mail e senha).
+
+**2. Gravar e-mail e senha no seu usuário do Windows.** Abra o **PowerShell** e cole os dois comandos abaixo, um de cada vez. A senha é pedida em campo oculto, então não fica no histórico nem na tela, e é gravada só no seu perfil do Windows (nunca no código nem no git).
+
+```powershell
+[Environment]::SetEnvironmentVariable("INLABS_EMAIL", (Read-Host "E-mail do INLABS"), "User")
+```
+
+```powershell
+$s = Read-Host "Senha do INLABS" -AsSecureString
+[Environment]::SetEnvironmentVariable("INLABS_SENHA", [System.Net.NetworkCredential]::new("", $s).Password, "User")
+```
+
+**3. Reiniciar o BudgetLab.** Feche o servidor e abra de novo. Não precisa sair da conta do Windows: o sistema lê as variáveis direto do seu perfil.
+
+**4. Conferir.** Ao recarregar esta página, o aviso de credenciais some e o botão **Baixar atualizações do DOU** fica habilitado.
+
+**Trocar a senha depois:** repita o passo 2 com a nova senha e reinicie o BudgetLab.
+
+**Se continuar o aviso:** confira se o e-mail e a senha foram digitados sem erro (rode o passo 2 de novo) e se o BudgetLab foi mesmo reiniciado. Se o botão habilitar mas o download falhar com erro de login, a conta ou a senha do INLABS está incorreta.
+"""
+
+
 def _variavel_do_usuario_windows(nome: str) -> str:
     """Variável gravada no perfil do usuário do Windows (`HKCU\\Environment`). Um processo só
     recebe essas variáveis no ambiente se foi aberto depois que o Explorer as recarregou —

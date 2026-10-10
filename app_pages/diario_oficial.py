@@ -413,6 +413,9 @@ if not credenciais_ok:
         "warning",
     )
 
+with st.expander("Como configurar o login do INLABS (passo a passo)", expanded=not credenciais_ok):
+    st.markdown(dou_inlabs.MANUAL_CONFIGURACAO_LOGIN)
+
 if not baixados:
     st.info("Nenhum dia baixado ainda.")
     st.stop()
