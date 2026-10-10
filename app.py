@@ -99,7 +99,7 @@ page = st.navigation(
                 icon="📖",
             ),
         ],
-        # Contratos Contínuos e Contratos Vigência agrupadas sob um cabeçalho "Contratos"
+        # Contratos e Contratos Contínuos agrupadas sob um cabeçalho "Contratos"
         # (pedido explícito). "Contratos — Pagamentos" foi tirada do menu por pedido explícito
         # (código mantido em app_pages/contratos_pagamentos.py e
         # src/contratos_pagamentos.py, pronta pra reativar bastando devolver o st.Page abaixo).
@@ -110,11 +110,6 @@ page = st.navigation(
                 "app_pages/contratos_continuos.py",
                 title="Contratos Contínuos",
                 icon="🤝",
-            ),
-            st.Page(
-                "app_pages/contratos_vigencia.py",
-                title="Contratos — Vigência",
-                icon="📅",
             ),
         ],
         # Acompanhamento de TEDs — 6 páginas (layout adaptado de um handoff de design, ver
@@ -210,7 +205,7 @@ page = st.navigation(
     position="sidebar",
     # `expanded=False` (padrão do Streamlit) trunca a lista de páginas a partir de 12 e coloca
     # o resto atrás de um botão "View N more" — passamos de 12 pra 14 páginas ao adicionar
-    # Emendas Parlamentares/Alertas Gerenciais e isso escondeu Contratos — Vigência, Minhas
+    # Emendas Parlamentares/Alertas Gerenciais e isso escondeu Minhas
     # Demandas, Proposta Consolidada e Atualizar Planilhas sem nenhum aviso. `True` mantém
     # todas sempre visíveis na navegação lateral persistente.
     expanded=True,

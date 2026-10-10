@@ -18,7 +18,6 @@ from pandas.testing import assert_frame_equal
 from src.bolsas_auxilios import ler_bolsas_auxilios
 from src.contratos_continuos import ler_contratos_continuos
 from src.contratos_pagamentos import ler_pagamentos
-from src.contratos_vigencia import ler_contratos_vigencia
 from src.execucao_anual import ler_execucao_anual
 from src.leitura_excel import MOTOR_RAPIDO, VARIAVEL_AMBIENTE, motor_excel
 from src.liquidacao_competencia import ler_liquidacao_competencia
@@ -76,28 +75,6 @@ class TestParidade(unittest.TestCase):
             with self.subTest(leitor=leitor.__name__, arquivo=arquivo):
                 padrao, rapido = _pelos_dois(leitor, arquivo)
                 assert_frame_equal(padrao, rapido, check_dtype=True, check_exact=True)
-
-    def test_vigencia_identica_fora_a_data_invalida(self):
-        padrao, rapido = _pelos_dois(ler_contratos_vigencia, "contratos_vigencia_2026-08-15.xlsx")
-        assert_frame_equal(
-            padrao.drop(columns="data_assinatura_raw"), rapido.drop(columns="data_assinatura_raw"),
-            check_dtype=True, check_exact=True,
-        )
-
-    def test_data_invalida_preservada(self):
-        # célula Q1115 da fixture: 6705886 marcado como data (fora do intervalo) — o openpyxl descarta,
-        # o calamine guarda o número bruto; a data interpretada continua nula nos dois
-        padrao, rapido = _pelos_dois(ler_contratos_vigencia, "contratos_vigencia_2026-08-15.xlsx")
-        diferentes = padrao.index[
-            padrao["data_assinatura_raw"].astype(str) != rapido["data_assinatura_raw"].astype(str)
-        ]
-        diferentes = [i for i in diferentes if not (pd.isna(padrao.at[i, "data_assinatura_raw"]) and pd.isna(rapido.at[i, "data_assinatura_raw"]))]
-        self.assertEqual(len(diferentes), 1)
-        indice = diferentes[0]
-        self.assertTrue(pd.isna(padrao.at[indice, "data_assinatura_raw"]))
-        self.assertEqual(float(rapido.at[indice, "data_assinatura_raw"]), 6705886.0)
-        self.assertTrue(pd.isna(padrao.at[indice, "data_assinatura"]))
-        self.assertTrue(pd.isna(rapido.at[indice, "data_assinatura"]))
 
 
 if __name__ == "__main__":

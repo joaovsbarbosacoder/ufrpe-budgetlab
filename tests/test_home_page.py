@@ -26,7 +26,7 @@ class HomePageTests(unittest.TestCase):
         self.assertEqual(app.title[0].value, "Visão geral")
         self.assertEqual(len(app.metric), 4)
         self.assertTrue(any("Bases disponíveis" in metric.label for metric in app.metric))
-        self.assertTrue(any(str(metric.value).endswith("de 8") for metric in app.metric))
+        self.assertTrue(any(str(metric.value).endswith("de 7") for metric in app.metric))
 
         links = [link.label for link in app.get("page_link")]
         self.assertIn("Consulta de empenhos", links)

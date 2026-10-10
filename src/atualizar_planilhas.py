@@ -1,5 +1,5 @@
 """Atualização das planilhas de trabalho sem reimportação versionada (Contratos Contínuos,
-Bolsas e Auxílios, Contratos — Vigência, Contratos — Pagamentos, Liquidação por Competência)
+Bolsas e Auxílios, Contratos — Pagamentos, Liquidação por Competência)
 — ver AGENTS.md, seção "Fixtures de teste vs. dados de trabalho".
 
 Execução Mensal SAIU desta lista em 21/09/2026 (pedido explícito do usuário) — migrou para a
@@ -11,7 +11,7 @@ cada base só para validar layout, nunca reimplementa a leitura), não interface
 Streamlit — ver `app_pages/atualizar_planilhas.py` para a UI).
 
 Diferente de `src/importacao_versionada.py`/`src/ui_reimportacao.py` (Dotação/Execução
-Anual): essas 6 bases não têm manifesto nem detecção de delta/retroatividade — são planilhas
+Anual): essas bases não têm manifesto nem detecção de delta/retroatividade — são planilhas
 de trabalho mantidas manualmente, substituídas inteiras a cada atualização, sem aviso prévio
 de layout (ver AGENTS.md). `substituir_planilha` só faz duas coisas: valida o arquivo novo
 com o leitor da própria base antes de aceitar (nunca adivinha um layout novo — se o leitor
@@ -36,7 +36,6 @@ import pandas as pd
 from src.bolsas_auxilios import ler_bolsas_auxilios
 from src.contratos_continuos import ler_contratos_continuos
 from src.contratos_pagamentos import ler_pagamentos
-from src.contratos_vigencia import ler_contratos_vigencia
 from src.liquidacao_competencia import ler_liquidacao_competencia
 
 DIRETORIO_DADOS_BRUTOS = Path("data/raw")
@@ -51,7 +50,7 @@ class EspecificacaoBase:
     validar: Callable[[Path], pd.DataFrame]
 
 
-#: as 5 planilhas de trabalho sem reimportação versionada (ver docstring do módulo).
+#: as 4 planilhas de trabalho sem reimportação versionada (ver docstring do módulo).
 #: "Contratos — Pagamentos" não tem página de análise no menu hoje (tirada por pedido
 #: explícito, ver app.py), mas continua entrando aqui — ainda alimenta "Meses Pagos" em
 #: Contratos Contínuos, então precisa poder ser atualizada mesmo sem tela própria.
@@ -69,13 +68,6 @@ ESPECIFICACOES: dict[str, EspecificacaoBase] = {
         caminho=DIRETORIO_DADOS_BRUTOS / "BOLSAS E AUXÍLIOS 2026 - AGO A DEZ.xlsx",
         extensao="xlsx",
         validar=ler_bolsas_auxilios,
-    ),
-    "contratos_vigencia": EspecificacaoBase(
-        chave="contratos_vigencia",
-        nome="Contratos — Vigência",
-        caminho=DIRETORIO_DADOS_BRUTOS / "CONTRATOS UFRPE - BASE_CONTRATOS.xlsx",
-        extensao="xlsx",
-        validar=ler_contratos_vigencia,
     ),
     "contratos_pagamentos": EspecificacaoBase(
         chave="contratos_pagamentos",

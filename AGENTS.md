@@ -80,21 +80,20 @@ informado à proposta mais recente antes de implementar.
 - Priorize rastreabilidade e possibilidade de reconciliação com a base
   original.
 
-## Fixtures de teste vs. dados de trabalho (Contratos Contínuos, Bolsas, Contratos — Vigência/Pagamentos)
+## Fixtures de teste vs. dados de trabalho (Contratos Contínuos, Bolsas, Contratos — Pagamentos)
 
 `data/raw/SERVIÇOS CONTÍNUOS - 2026 - AGO A DEZ.xlsm`,
-`data/raw/BOLSAS E AUXÍLIOS 2026 - AGO A DEZ.xlsx`,
-`data/raw/CONTRATOS UFRPE - BASE_CONTRATOS.xlsx` e
+`data/raw/BOLSAS E AUXÍLIOS 2026 - AGO A DEZ.xlsx` e
 `data/raw/CONTRATOS - CONTROLE 2020 - Pagamentos.xlsx` são planilhas de
 trabalho mantidas manualmente (sem manifesto versionado como
 Dotação/Execução Anual) — serão substituídas em atualizações futuras, sem
 aviso prévio de layout.
 
-Os testes de `src/contratos_continuos.py`, `src/bolsas_auxilios.py`,
-`src/contratos_vigencia.py` e `src/contratos_pagamentos.py` **não** leem de
+Os testes de `src/contratos_continuos.py`, `src/bolsas_auxilios.py` e
+`src/contratos_pagamentos.py` **não** leem de
 `data/raw/`: leem de fixtures congeladas em `tests/fixtures/`
 (`contratos_continuos_2026-08-13.xlsm`, `bolsas_auxilios_2026-08-13.xlsx`,
-`contratos_vigencia_2026-08-15.xlsx`, `contratos_pagamentos_2026-08-15.xlsx`),
+`contratos_pagamentos_2026-08-15.xlsx`),
 desacopladas de propósito. A fixture de pagamentos é *reduzida* às 8 abas
 mensais de 2026 realmente lidas (a planilha de origem tem ~90 abas e 7,8 MB —
 a maioria fora de escopo; ver docstring de `src/contratos_pagamentos.py` e de

@@ -57,7 +57,7 @@ Esquema aprovado antes da implementação original (ver histórico da conversa):
     linha agregada informativa ("+ N empenhos abaixo do corte, somando R$X"), não uma segunda
     tabela.
   * Detalhe do empenho abre num pop-up (`@st.dialog`, mesmo padrão de
-    `contratos_vigencia.py::_abrir_detalhe`), acionado por um botão "Ver" por linha — pedido
+    `@st.dialog` do Streamlit), acionado por um botão "Ver" por linha — pedido
     explícito de ajuste: a primeira versão usava seleção de linha em `st.dataframe` com o
     detalhe renderizado abaixo, que não ficou claro como resposta ao clique; o pop-up deixa
     inequívoco que o clique funcionou, sem navegar para aba/página separada.
@@ -236,7 +236,7 @@ def _abrir_detalhe(dataframe: pd.DataFrame, linha: pd.Series) -> None:
     aba (pedido explícito — nem inline role-abaixo, nem aba/página separada). Mesmo conjunto de
     campos do painel de detalhe de `consulta_empenhos.py::_render_detalhe` (dimensões
     constantes por NE, ver `tesouro_execucao_mensal.py::_DIMENSOES_CONSTANTES_POR_NE`), mesmo
-    padrão de `@st.dialog` já usado em `contratos_vigencia.py::_abrir_detalhe` — sem
+    padrão de `@st.dialog` do Streamlit — sem
     reaproveitar as classes CSS `.ce-*` daquela página (específicas dela), só com os widgets
     nativos do Streamlit."""
 

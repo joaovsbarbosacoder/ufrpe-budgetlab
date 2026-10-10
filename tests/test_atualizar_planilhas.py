@@ -1,7 +1,7 @@
 """Testes de src/atualizar_planilhas.py — validação de layout antes de aceitar, backup da
 versão anterior com carimbo de data/hora, e nenhuma escrita quando a validação falha.
 
-Usa as fixtures congeladas das 5 bases (4 delas em AGENTS.md; Liquidação por Competência tem
+Usa as fixtures congeladas das 4 bases (3 delas em AGENTS.md; Liquidação por Competência tem
 a própria nota equivalente em tests/test_liquidacao_competencia.py), mas todo teste que grava
 arquivo constrói seu próprio `EspecificacaoBase` apontando pra um diretório temporário — nunca
 pra `data/raw/` real, mesmo reaproveitando `ESPECIFICACOES` só para os testes de estrutura.
@@ -42,13 +42,13 @@ def _variante_bolsas_com_layout_invalido(caminho: Path, destino: Path) -> Path:
 
 
 class TestEspecificacoes(unittest.TestCase):
-    """As 5 bases sem reimportação versionada precisam estar cadastradas — ver AGENTS.md,
+    """As 4 bases sem reimportação versionada precisam estar cadastradas — ver AGENTS.md,
     seção "Fixtures de teste vs. dados de trabalho"."""
 
-    def test_cinco_bases_cadastradas(self):
-        self.assertEqual(len(ESPECIFICACOES), 5)
+    def test_quatro_bases_cadastradas(self):
+        self.assertEqual(len(ESPECIFICACOES), 4)
         for chave in (
-            "contratos_continuos", "bolsas_auxilios", "contratos_vigencia",
+            "contratos_continuos", "bolsas_auxilios",
             "contratos_pagamentos", "liquidacao_competencia",
         ):
             self.assertIn(chave, ESPECIFICACOES)

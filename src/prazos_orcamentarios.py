@@ -18,7 +18,7 @@ Antecedência do alerta é por prazo, não um limiar fixo global: cada prazo tem
 gostaria de estar recebendo alertas"), porque prazos diferentes pedem antecedências
 diferentes (ex.: uma licitação precisa de meses de aviso; uma tarefa simples, de dias). Por
 isso a classificação aqui é própria (`_classificar`), não mais
-`src.contratos_vigencia.classificar_criticidade` (que usa uma régua fixa de 60/120 dias —
+o antigo `classificar_criticidade` de Contratos — Vigência (régua fixa de 60/120 dias —
 fazia sentido só enquanto a criticidade não era configurável por item). Reconfirmado em
 10/09/2026 ao adotar o layout "Gerenciamento de Prazos" (`LAYOUT.md` anexado pelo usuário,
 que sugeria um limiar fixo de 7 dias): o usuário optou por MANTER a antecedência própria por

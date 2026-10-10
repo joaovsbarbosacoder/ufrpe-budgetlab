@@ -123,8 +123,7 @@ Liquidado vem da base Liquidação por Competência quando ela está disponível
 tem correspondência, os campos de comparação ficam nulos, nunca zero.
 
 **Campos de período (sempre do cadastro).** Status (`ATIVO`, `VENCIDO` ou `SUSPENSO`), Vigência
-(fim), Início da Execução (por data ou pelo botão de mês), Data da Suspensão e Meses no Ano. Não há cruzamento com a
-base "Contratos — Vigência". A regra comum (`src/necessidade_empenho.py::meses_vigentes_no_exercicio`):
+(fim), Início da Execução (por data ou pelo botão de mês), Data da Suspensão e Meses no Ano. A regra comum (`src/necessidade_empenho.py::meses_vigentes_no_exercicio`):
 
 - `SUSPENSO` **com Data da Suspensão** vale até a véspera dela, como um fim de vigência (mês final
   proporcional); a partir da data, nada de necessidade, projeção ou sugestão de reforço. `SUSPENSO`
@@ -277,8 +276,7 @@ quando informada.
 ### Contratos (Contratos.gov.br)
 
 A página **Contratos** é um cadastro dos contratos da UG 153165 montado a partir da API pública do
-Contratos.gov.br (somente leitura, sem credencial), independente de Contratos Contínuos e de
-Contratos — Vigência. Recorte: instrumentos do tipo "Contrato", todos os anos, ativos e inativos
+Contratos.gov.br (somente leitura, sem credencial), independente de Contratos Contínuos. Recorte: instrumentos do tipo "Contrato", todos os anos, ativos e inativos
 (empenhos substitutivos ficam fora). Detalhes (endpoints, formato, regras de conversão) em
 `docs/contratosgov.md`.
 
