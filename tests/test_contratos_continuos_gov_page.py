@@ -243,3 +243,20 @@ def test_ocultar_parcela_zero_esconde_so_o_que_tem_zero_declarado(com_gov):
     _contem(html, "00021/2017")  # parcela 10.354.305,17 no gov
     assert "00021/2023" not in html  # parcela 0,00 no gov
     _contem(_legendas(app), "Mostrando 1 de 2 candidato(s)")
+
+
+def test_busca_e_filtro_persistem_ao_abrir_a_janela_de_inclusao(com_gov, tmp_path):
+    # quem inclui vários contratos seguidos não perde a busca: os controles têm `key` (por exercício) e
+    # continuam renderizados quando a janela "Novo contrato" abre. Nada é gravado ao abrir.
+    antes = _conteudo_do_cadastro(tmp_path)
+    app = _abrir()
+    next(t for t in app.text_input if t.label == "Buscar candidato").set_value("rio ave").run()
+    next(c for c in app.checkbox if c.label == ROTULO_ZERO).check().run()
+    _incluir(app, "18940")  # abre a janela pré-preenchida (o clique reexecuta a página)
+    assert _campo(app, "Nº do contrato").value == "21/2017"
+    busca = next(t for t in app.text_input if t.label == "Buscar candidato")
+    assert busca.value == "rio ave"
+    assert next(c for c in app.checkbox if c.label == ROTULO_ZERO).value is True
+    # a chave leva o exercício em tela (`source_key`): outro exercício = widgets novos, no padrão
+    assert busca.key == "cc_gov_busca_2026"
+    assert _conteudo_do_cadastro(tmp_path) == antes
