@@ -187,7 +187,7 @@ from src.contratos_continuos_cadastro import (
     duplicar_exercicio,
     excluir_contrato,
     excluir_exercicio,
-    novo_contrato,
+    novo_contrato_do_formulario,
     salvar_contrato,
 )
 from src.contratos_pagamentos import MESES_ORDEM, meses_pagos_por_contrato, ler_pagamentos
@@ -1016,7 +1016,10 @@ def _dialogo_novo_contrato(ano_exercicio: int, source_key: str, valores: dict | 
         )
         # meses_no_ano: total de meses que o contrato é pago no exercício — 12 por padrão (contrato
         # "contínuo" de verdade), menor para um contrato que só roda parte do ano.
-        meses_no_ano = p3.number_input("Meses no ano", min_value=1, max_value=12, value=12)
+        meses_no_ano = p3.number_input(
+            "Meses no ano", min_value=1, max_value=12, value=None, placeholder="12",
+            help="Em branco vale 12 (contrato contínuo o ano inteiro); menos, se só roda parte do ano.",
+        )
         p4, _ = st.columns([1, 2])
         data_suspensao = p4.date_input(
             "Data da suspensão — opcional", value=None, format="DD/MM/YYYY",
@@ -1037,18 +1040,19 @@ def _dialogo_novo_contrato(ano_exercicio: int, source_key: str, valores: dict | 
         _secao("Empenho e valores")
         e1, e2, e3 = st.columns(3)
         ne_curta = e1.text_input("NE (opcional)", value=valores.get("ne_curta") or "", placeholder="ex. 2026NE000999")
-        despesa_mensal = e2.number_input("Despesa mensal (R$)", min_value=0.0, step=100.0)
-        valor_empenhado = e3.number_input("Valor empenhado (R$)", min_value=0.0, step=100.0)
+        # em branco = sem dado (nulo), não zero — decisão do usuário (10/2026); o zero precisa ser digitado
+        despesa_mensal = e2.number_input("Despesa mensal (R$)", min_value=0.0, step=100.0, value=None, placeholder="em branco")
+        valor_empenhado = e3.number_input("Valor empenhado (R$)", min_value=0.0, step=100.0, value=None, placeholder="em branco")
         e4, e5, e6 = st.columns(3)
-        saldo_colado = e4.number_input("Saldo colado na planilha (R$)", min_value=0.0, step=100.0)
-        meses_empenhados = e5.number_input("Meses empenhados", min_value=0.0, step=0.1)
-        meses_liquidados = e6.number_input("Meses liquidados", min_value=0.0, step=0.1)
+        saldo_colado = e4.number_input("Saldo colado na planilha (R$)", min_value=0.0, step=100.0, value=None, placeholder="em branco")
+        meses_empenhados = e5.number_input("Meses empenhados", min_value=0.0, step=0.1, value=None, placeholder="em branco")
+        meses_liquidados = e6.number_input("Meses liquidados", min_value=0.0, step=0.1, value=None, placeholder="em branco")
 
         if st.form_submit_button("Adicionar contrato", type="primary", icon=":material/add:"):
             if not numero or not fornecedor:
                 st.error("Informe ao menos o número do contrato e o fornecedor.")
             else:
-                registro = novo_contrato(
+                registro = novo_contrato_do_formulario(
                     contrato_numero=numero, ano_contrato=ano, status_contrato=status,
                     processo_contratacao=processo_contratacao.strip() or None,
                     processo_empenho=processo_empenho.strip() or None,

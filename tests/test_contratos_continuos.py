@@ -708,12 +708,33 @@ class TestAditivosDoGov(unittest.TestCase):
             ),
         )
 
-    def test_aditivo_sugerido_sem_data_inicio_usa_assinatura(self):
-        termo = self._termos("18940").query("numero == '00001/2019'").iloc[0]
-        sugerido = aditivo_sugerido(termo)
+    def _termo(self, contrato_id: str, numero: str) -> pd.Series:
+        return self._termos(contrato_id).query(f"numero == '{numero}'").iloc[0]
+
+    def test_prorrogacao_comeca_na_vigencia_do_termo(self):
+        # decisão do usuário (10/2026): a prorrogação vale a partir do início da VIGÊNCIA do termo, não da assinatura
+        sugerido = aditivo_sugerido(self._termo("18940", "00001/2019"))
         self.assertEqual(sugerido.tipo, "PRORROGACAO")
-        self.assertEqual(sugerido.data_inicio, date(2019, 11, 28))
+        self.assertEqual(sugerido.data_inicio, date(2019, 11, 29))  # vigência; a assinatura foi em 28/11/2019
+        self.assertEqual(sugerido.data_assinatura, date(2019, 11, 28))
         self.assertIsNone(sugerido.valor_mensal)
+        solta = aditivo_sugerido(self._termo("220038", "00002/2025"))  # assinado 02/10, vigência desde 04/10
+        self.assertEqual((solta.tipo, solta.data_inicio), ("PRORROGACAO", date(2025, 10, 4)))
+
+    def test_reajuste_continua_pela_data_do_novo_valor_ou_assinatura(self):
+        com_data = aditivo_sugerido(self._termo("118872", "00004/2025"))
+        self.assertEqual((com_data.tipo, com_data.data_inicio), ("REAJUSTE", date(2025, 10, 18)))
+        # sem data do novo valor: a assinatura — não a vigência_inicio do termo (aqui 2017, a do contrato original)
+        sem_data = aditivo_sugerido(self._termo("18940", "00002/2021"))
+        self.assertEqual((sem_data.tipo, sem_data.data_inicio), ("REAJUSTE", date(2021, 8, 19)))
+
+    def test_prorrogacao_sem_vigencia_inicio_cai_na_data_do_novo_valor_e_na_assinatura(self):
+        base = {"numero": "00009/2026", "qualificacao_termo": "VIGÊNCIA", "data_assinatura": date(2026, 1, 5),
+                "vigencia_fim": date(2027, 1, 4), "vigencia_inicio": None, "data_inicio_novo_valor": date(2026, 1, 8)}
+        self.assertEqual(aditivo_sugerido(pd.Series(base)).data_inicio, date(2026, 1, 8))
+        self.assertEqual(aditivo_sugerido(pd.Series({**base, "data_inicio_novo_valor": None})).data_inicio, date(2026, 1, 5))
+        sem_coluna = {c: v for c, v in base.items() if c != "vigencia_inicio"}  # termo sem a coluna
+        self.assertEqual(aditivo_sugerido(pd.Series(sem_coluna)).data_inicio, date(2026, 1, 8))
 
     def test_termo_sem_numero_usa_o_id_do_termo_e_nao_duplica(self):
         termo = pd.Series(

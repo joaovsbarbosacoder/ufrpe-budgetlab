@@ -203,7 +203,9 @@ def test_incluir_abre_janela_pre_preenchida_sem_gravar(com_gov, tmp_path):
     assert _campo(app, "Vigência (fim) — opcional").value == date(2027, 5, 28)
     for campo_manual in ("Ação", "PTRES", "UGR", "NE (opcional)", "ND", "PI"):  # NE não escolhida: tudo em branco
         assert _campo(app, campo_manual).value == "", campo_manual
-    assert _campo(app, "Despesa mensal (R$)").value == 0.0  # padrão do formulário, não vem do gov
+    for numerico in ("Despesa mensal (R$)", "Valor empenhado (R$)", "Saldo colado na planilha (R$)",
+                     "Meses empenhados", "Meses liquidados", "Meses no ano"):
+        assert _campo(app, numerico).value is None, numerico  # em branco: não vem do gov e não é zero
     assert _conteudo_do_cadastro(tmp_path) == antes
 
 

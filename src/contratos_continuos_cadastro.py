@@ -161,6 +161,22 @@ def novo_contrato(**campos: object) -> dict:
     return novo_registro(**base)
 
 
+def novo_contrato_do_formulario(**campos: object) -> dict:
+    """`novo_contrato` para o que vem do formulário "Novo contrato": o que não foi preenchido fica em BRANCO
+    (decisão do usuário, 10/2026) — texto vazio ou só espaços vira `None` (e o preenchido é aparado) e número
+    não digitado chega aqui como `None` e assim é gravado, nunca como zero (nulo ≠ zero). Zero digitado de
+    propósito continua zero. Campo `None` NÃO cai no padrão de exercício novo de `novo_contrato`
+    (`CAMPOS_EXECUCAO_PADRAO`): "sem dado" é diferente de 0,00. `meses_no_ano` em branco continua valendo 12
+    nas contas (padrão de contrato contínuo, ver `como_dataframe`)."""
+
+    limpos = {}
+    for chave, valor in campos.items():
+        if isinstance(valor, str):
+            valor = valor.strip() or None
+        limpos[chave] = valor
+    return novo_contrato(**limpos)
+
+
 def salvar_contrato(ano: int, contrato: dict) -> Path:
     return _salvar(DIRETORIO_PADRAO, ano, contrato)
 

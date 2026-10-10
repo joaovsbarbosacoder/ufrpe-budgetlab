@@ -187,15 +187,17 @@ com erro de leitura) a tela segue como antes, com aviso.
   "Contratos.gov" mostra o histórico de termos e um botão "Registrar aditivo do gov" por pendente, que só
   **pré-preenche a aba Aditivos**: nada é gravado até clicar em Salvar. O tipo sugerido vem da qualificação do
   termo (REAJUSTE > VIGÊNCIA > ACRÉSCIMO/SUPRESSÃO; um termo com várias qualificações vira um aditivo) e é
-  editável. **O valor mensal não é importado**: a parcela do gov é do contrato inteiro e Contínuos traz a
+  editável. A **prorrogação** começa na vigência do termo (`vigencia_inicio`); reajuste e demais, na data do novo
+  valor (senão, na assinatura). **O valor mensal não é importado**: a parcela do gov é do contrato inteiro e Contínuos traz a
   parcela da ação 20RK (por isso ela aparece só como referência, nunca comparada).
 - **Novos no Contratos.gov** (`candidatos_novos`): todos os contratos vigentes ou a iniciar que ainda não têm
   registro no exercício em tela (o gov não informa se o contrato é contínuo — a escolha é sua). Contrato sem
   vigência ou envolvido em conflito de ligação fica "em dúvida", sem botão. "Incluir" abre a janela "Novo
   contrato" preenchida só com o que o gov tem (número, ano, fornecedor, CNPJ/CPF, vigência e, se escolher a
   NE, a NE, a natureza de despesa, o plano interno e a fonte dela); ação, PTRES e UGR ficam em branco.
-  Despesa mensal, empenhado, saldo e meses ficam **no padrão do formulário "Novo contrato"** (0,00 e 12 meses no
-  ano) — é um zero do formulário, não ausência de dado: preencha antes de salvar. Só grava em "Adicionar contrato".
+  O formulário "Novo contrato" deixa **em branco** (nulo, nunca zero) tudo que não foi preenchido — despesa
+  mensal, empenhado, saldo, meses empenhados/liquidados e os textos (`novo_contrato_do_formulario`); um zero
+  digitado continua zero, e "Meses no ano" em branco vale 12 nas contas. Só grava em "Adicionar contrato".
 
 **Necessidade de Empenho até Dezembro (card "Resumo Consolidado").** É o que falta empenhar
 para cobrir os meses do exercício: despesa mensal × meses restantes, nunca negativa, em que

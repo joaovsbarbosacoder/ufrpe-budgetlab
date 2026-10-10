@@ -231,5 +231,47 @@ class TestAditivosNoCadastro(unittest.TestCase):
         self.assertEqual(copiado["aditivos"][1]["situacao"], "PREVISTO")
 
 
+class TestNovoContratoDoFormulario(unittest.TestCase):
+    """Decisão do usuário (10/2026): o "Novo contrato" deixa em BRANCO o que não foi preenchido — nunca grava
+    zero nem texto vazio no lugar de "sem dado" (nulo ≠ zero). Um zero digitado de propósito continua zero."""
+
+    def _registro(self, **campos):
+        padrao = dict(
+            contrato_numero="21/2017", fornecedor="RIO AVE", ano_contrato=2017, status_contrato="ATIVO",
+            fornecedor_cnpj_cpf="", tipo_despesa="", unidade_cod="", acao_cod="", ptres="", natureza_despesa_cod="",
+            ugr_cod="", pi_cod="", ne_curta=None, despesa_mensal=None, valor_empenhado=None,
+            saldo_colado_planilha=None, meses_empenhados=None, meses_liquidados=None, meses_no_ano=None,
+        )
+        padrao.update(campos)
+        return cadastro.novo_contrato_do_formulario(**padrao)
+
+    def test_campos_numericos_nao_preenchidos_ficam_nulos(self) -> None:
+        registro = self._registro()
+        for campo in ("despesa_mensal", "valor_empenhado", "saldo_colado_planilha", "meses_empenhados",
+                      "meses_liquidados", "meses_no_ano"):
+            self.assertIsNone(registro[campo], campo)
+
+    def test_textos_vazios_ou_so_espacos_ficam_nulos_e_os_preenchidos_sao_aparados(self) -> None:
+        registro = self._registro(acao_cod="  ", ptres="", pi_cod=" M20RKG01SCN ", fornecedor_cnpj_cpf="05340639000130")
+        self.assertIsNone(registro["acao_cod"])
+        self.assertIsNone(registro["ptres"])
+        self.assertEqual(registro["pi_cod"], "M20RKG01SCN")
+        self.assertEqual(registro["fornecedor_cnpj_cpf"], "05340639000130")  # texto, zeros preservados
+
+    def test_zero_digitado_continua_zero(self) -> None:
+        registro = self._registro(despesa_mensal=0.0, meses_empenhados=0.0, valor_empenhado=0.0)
+        self.assertEqual((registro["despesa_mensal"], registro["meses_empenhados"], registro["valor_empenhado"]), (0.0, 0.0, 0.0))
+
+    def test_valores_preenchidos_passam_como_estao(self) -> None:
+        registro = self._registro(despesa_mensal=1250.5, meses_no_ano=6, fonte_cod="1000000000")
+        self.assertEqual((registro["despesa_mensal"], registro["meses_no_ano"], registro["fonte_cod"]), (1250.5, 6, "1000000000"))
+
+    def test_registro_em_branco_vira_dataframe_sem_quebrar(self) -> None:
+        dataframe = cadastro.como_dataframe([self._registro()], 2026)
+        self.assertEqual(len(dataframe), 1)
+        self.assertTrue(pd.isna(dataframe.loc[0, "despesa_mensal"]))
+        self.assertTrue(pd.isna(dataframe.loc[0, "valor_a_empenhar"]))  # sem dado, não "R$ 0"
+
+
 if __name__ == "__main__":
     unittest.main()

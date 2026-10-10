@@ -630,15 +630,23 @@ def aditivos_pendentes(aditivos: list[Aditivo], termos_do_contrato: pd.DataFrame
 
 def aditivo_sugerido(termo: pd.Series) -> Aditivo:
     """Aditivo nativo sugerido a partir de um termo aditivo do gov: `tipo` por qualificação, situação
-    ASSINADO, `data_inicio` = `data_inicio_novo_valor` (senão `data_assinatura`; nula se nenhuma das duas —
-    `validar_aditivos` recusa ao salvar, o usuário preenche), `vigencia_fim` do termo. `valor_mensal`
-    SEMPRE nulo: a parcela do gov é do contrato inteiro, Contínuos traz só a parcela da ação 20RK."""
+    ASSINADO, `vigencia_fim` do termo. `data_inicio` (decisão do usuário, 10/2026): PRORROGAÇÃO vale a partir
+    do início da VIGÊNCIA do termo (`vigencia_inicio`; sem ela, `data_inicio_novo_valor`, depois a assinatura);
+    os demais tipos (reajuste etc.) a partir de `data_inicio_novo_valor`, senão da assinatura — a
+    `vigencia_inicio` de um termo de reajuste pode ser a do contrato original. Nula se nada existir —
+    `validar_aditivos` recusa ao salvar e o usuário preenche. `valor_mensal` SEMPRE nulo: a parcela do gov é do
+    contrato inteiro, Contínuos traz só a parcela da ação 20RK."""
 
     assinatura = _data_ou_none(termo["data_assinatura"])
-    inicio = _data_ou_none(termo["data_inicio_novo_valor"]) or assinatura
+    tipo = tipo_aditivo_por_qualificacao(termo["qualificacao_termo"])
+    inicio_do_novo_valor = _data_ou_none(termo["data_inicio_novo_valor"])
+    if tipo == "PRORROGACAO":
+        inicio = _data_ou_none(termo.get("vigencia_inicio")) or inicio_do_novo_valor or assinatura
+    else:
+        inicio = inicio_do_novo_valor or assinatura
     return Aditivo(
         numero=numero_do_termo(termo),
-        tipo=tipo_aditivo_por_qualificacao(termo["qualificacao_termo"]),
+        tipo=tipo,
         situacao="ASSINADO",
         data_inicio=inicio,
         data_assinatura=assinatura,
