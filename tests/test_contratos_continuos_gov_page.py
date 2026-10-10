@@ -199,3 +199,47 @@ def test_contrato_sem_empenhos_pode_ser_incluido(com_gov):
     assert _campo(app, "Nº do contrato").value == "21/2023"
     assert _campo(app, "CNPJ/CPF").value == "00000000191"  # zeros preservados
     assert _campo(app, "NE (opcional)").value == ""
+
+
+# --- filtro da lista de candidatos (busca + ocultar parcela zero) ---------------------------------------
+ROTULO_ZERO = "Ocultar contratos com parcela R$ 0 no gov"
+
+
+def _rotulo_do_bloco(app: AppTest) -> str:
+    return next(e.label for e in app.expander if e.label.startswith("Novos no Contratos.gov"))
+
+
+def _legendas(app: AppTest) -> str:
+    return " ".join(c.value for c in app.caption)
+
+
+def test_filtros_comecam_sem_efeito(com_gov):
+    app = _abrir()
+    assert next(c for c in app.checkbox if c.label == ROTULO_ZERO).value is False
+    assert next(t for t in app.text_input if t.label == "Buscar candidato").value == ""
+    html = _html(app)
+    _contem(html, "00021/2017")
+    _contem(html, "00021/2023")
+    assert "candidato(s)." not in _legendas(app)  # nenhuma legenda "Mostrando X de N candidato(s)"
+
+
+def test_busca_reduz_so_o_que_e_mostrado(com_gov):
+    app = _abrir()
+    rotulo = _rotulo_do_bloco(app)
+    next(t for t in app.text_input if t.label == "Buscar candidato").set_value("rio ave").run()
+    assert not app.exception, [e.value for e in app.exception]
+    html = _html(app)
+    _contem(html, "00021/2017")
+    assert "00021/2023" not in html
+    _contem(_legendas(app), "Mostrando 1 de 2 candidato(s)")
+    assert _rotulo_do_bloco(app) == rotulo  # a contagem do rótulo é a de candidatos, não a do filtro
+
+
+def test_ocultar_parcela_zero_esconde_so_o_que_tem_zero_declarado(com_gov):
+    app = _abrir()
+    next(c for c in app.checkbox if c.label == ROTULO_ZERO).check().run()
+    assert not app.exception, [e.value for e in app.exception]
+    html = _html(app)
+    _contem(html, "00021/2017")  # parcela 10.354.305,17 no gov
+    assert "00021/2023" not in html  # parcela 0,00 no gov
+    _contem(_legendas(app), "Mostrando 1 de 2 candidato(s)")

@@ -33,6 +33,7 @@ Contrato público:
     com_contratosgov(df, contratos, termos, empenhos) -> pd.DataFrame   (ligação/conciliação com o gov)
     candidatos_novos(df, contratos, empenhos) -> (candidatos, em_duvida)   (contratos do gov ausentes)
     registro_novo_do_gov(candidato, ne=None) -> dict   (argumentos de `novo_contrato`)
+    filtrar_candidatos(candidatos, busca="", ocultar_parcela_zero=False) -> pd.DataFrame   (só o que é mostrado)
 """
 
 from __future__ import annotations
@@ -751,3 +752,35 @@ def registro_novo_do_gov(candidato: pd.Series, ne: str | None = None) -> dict:
         "pi_cod": None if selecionada is None else _codigo_antes_do_hifen(selecionada["plano_interno"]),
         "fonte_cod": None if selecionada is None else _codigo_antes_do_hifen(selecionada["fonte_recurso"]),
     }
+
+
+def filtrar_candidatos(
+    candidatos: pd.DataFrame, busca: str = "", ocultar_parcela_zero: bool = False
+) -> pd.DataFrame:
+    """Reduz o que a tela MOSTRA da lista de `candidatos_novos` — não decide quem é candidato nem altera a
+    entrada. `busca` (sem acento e sem diferenciar caixa; vazia = tudo) procura no número do gov
+    ("00021/2017"), no número no formato de Contínuos ("21/2017"), no fornecedor e no CNPJ/CPF.
+    `ocultar_parcela_zero` esconde só o contrato cuja `valor_parcela` do gov é ZERO declarado: parcela nula
+    (sem dado) continua aparecendo — nulo não é zero. Mantém a ordem e as colunas."""
+
+    mascara = pd.Series(True, index=candidatos.index)
+    termo = _normalizar(busca)
+    if termo:
+        mascara &= pd.Series(
+            [
+                any(
+                    termo in _normalizar(campo)
+                    for campo in (numero, numero_no_formato_continuos(numero), nome, documento)
+                )
+                for numero, nome, documento in zip(
+                    candidatos["numero"], candidatos["fornecedor_nome"], candidatos["fornecedor_documento"]
+                )
+            ],
+            index=candidatos.index,
+        )
+    if ocultar_parcela_zero:
+        mascara &= pd.Series(
+            [not (parcela is not None and not pd.isna(parcela) and parcela == 0) for parcela in candidatos["valor_parcela"]],
+            index=candidatos.index,
+        )
+    return candidatos[mascara]

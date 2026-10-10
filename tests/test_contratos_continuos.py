@@ -41,6 +41,7 @@ from src.contratos_continuos import (
     com_efeitos_da_suspensao,
     com_meses_pagos,
     com_saldo_execucao,
+    filtrar_candidatos,
     ler_contratos_continuos,
     numero_no_formato_continuos,
     registro_novo_do_gov,
@@ -814,6 +815,63 @@ class TestCandidatosNovos(unittest.TestCase):
 
     def test_registro_aceito_por_novo_contrato(self):
         novo_contrato(**registro_novo_do_gov(self._candidato("1004328"), "2026NE000522"))
+
+
+@unittest.skipUnless(FIXTURE_CONTRATOSGOV.exists(), f"Fixture ausente em {FIXTURE_CONTRATOSGOV}")
+class TestFiltrarCandidatos(unittest.TestCase):
+    """`filtrar_candidatos` (busca + ocultar parcela zero) só reduz o que é MOSTRADO: não altera a entrada nem
+    muda quem é candidato. Parcela nula (sem dado) nunca é tratada como zero."""
+
+    @classmethod
+    def setUpClass(cls):
+        contratos, _termos, empenhos = _gov()
+        cls.candidatos, _ = candidatos_novos(_cadastro(), contratos, empenhos)  # os 4 vigentes
+
+    def _ids(self, **filtros) -> list[str]:
+        return list(filtrar_candidatos(self.candidatos, **filtros)["contrato_id"])
+
+    def test_sem_filtro_devolve_todos_na_mesma_ordem(self):
+        todos = list(self.candidatos["contrato_id"])
+        self.assertEqual(self._ids(), todos)
+        self.assertEqual(self._ids(busca="   "), todos)
+        self.assertEqual(len(todos), 4)
+
+    def test_busca_por_numero_do_gov_ou_do_cadastro(self):
+        self.assertEqual(self._ids(busca="21/2017"), ["18940"])
+        self.assertEqual(self._ids(busca="00021/2017"), ["18940"])
+
+    def test_busca_por_fornecedor_sem_diferenciar_caixa(self):
+        self.assertEqual(self._ids(busca="tekis"), ["118872"])
+        self.assertEqual(self._ids(busca="  RIO AVE "), ["18940"])
+
+    def test_busca_por_documento(self):
+        self.assertEqual(self._ids(busca="05340639"), ["1004328"])
+
+    def test_busca_sem_resultado_devolve_vazio_com_as_mesmas_colunas(self):
+        resultado = filtrar_candidatos(self.candidatos, busca="nao existe")
+        self.assertEqual(len(resultado), 0)
+        self.assertEqual(list(resultado.columns), list(self.candidatos.columns))
+
+    def test_ocultar_parcela_zero(self):
+        self.assertNotIn("220038", self._ids(ocultar_parcela_zero=True))  # parcela 0,00 no gov
+        self.assertEqual(len(self._ids(ocultar_parcela_zero=True)), 3)
+        self.assertIn("220038", self._ids(ocultar_parcela_zero=False))
+
+    def test_parcela_nula_nao_e_zero(self):
+        candidatos = self.candidatos.copy()
+        candidatos["valor_parcela"] = candidatos["valor_parcela"].astype(object)
+        candidatos.loc[candidatos["contrato_id"] == "220038", "valor_parcela"] = None
+        ids = list(filtrar_candidatos(candidatos, ocultar_parcela_zero=True)["contrato_id"])
+        self.assertIn("220038", ids)
+
+    def test_busca_e_parcela_zero_combinadas(self):
+        self.assertEqual(self._ids(busca="21/2023", ocultar_parcela_zero=True), [])
+        self.assertEqual(self._ids(busca="21/2023"), ["220038"])
+
+    def test_nao_altera_a_entrada(self):
+        antes = self.candidatos.copy(deep=True)
+        filtrar_candidatos(self.candidatos, busca="rio", ocultar_parcela_zero=True)
+        pd.testing.assert_frame_equal(self.candidatos, antes)
 
 
 if __name__ == "__main__":

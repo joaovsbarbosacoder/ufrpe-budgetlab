@@ -174,6 +174,7 @@ from src.contratos_continuos import (
     aditivos_pendentes,
     candidatos_novos,
     com_contratosgov,
+    filtrar_candidatos,
     registro_novo_do_gov,
     situacao_contrato,
 )
@@ -1074,7 +1075,23 @@ def _render_novos_contratosgov(
             "o que o gov tem; nada é gravado até “Adicionar contrato”. A parcela do gov é só referência (contrato "
             "inteiro, não a parcela da ação 20RK)."
         )
-        for _, candidato in candidatos.iterrows():
+        # busca e "ocultar parcela zero" só reduzem o que é MOSTRADO (`filtrar_candidatos`): quem é candidato e a
+        # contagem do rótulo acima não mudam. Começam sem efeito.
+        visiveis = candidatos
+        if not candidatos.empty:
+            coluna_busca, coluna_zero = st.columns([3, 2], vertical_alignment="bottom")
+            busca = coluna_busca.text_input(
+                "Buscar candidato", key=f"cc_gov_busca_{source_key}", placeholder="Número, fornecedor ou CNPJ/CPF"
+            )
+            ocultar_zero = coluna_zero.checkbox(
+                "Ocultar contratos com parcela R$ 0 no gov", value=False, key=f"cc_gov_ocultar_zero_{source_key}",
+                help="Esconde só quem tem parcela zero declarada no gov (acordos de cessão/cooperação, em geral). "
+                     "Parcela sem dado continua aparecendo.",
+            )
+            visiveis = filtrar_candidatos(candidatos, busca, ocultar_zero)
+            if len(visiveis) != len(candidatos):
+                st.caption(f"Mostrando {len(visiveis)} de {len(candidatos)} candidato(s).")
+        for _, candidato in visiveis.iterrows():
             contrato_id = candidato["contrato_id"]
             coluna_info, coluna_ne, coluna_botao = st.columns([4, 2, 1], vertical_alignment="center")
             parcela = _brl(float(candidato["valor_parcela"])) if pd.notna(candidato["valor_parcela"]) else "sem dado"
