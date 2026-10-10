@@ -273,5 +273,25 @@ class TestNovoContratoDoFormulario(unittest.TestCase):
         self.assertTrue(pd.isna(dataframe.loc[0, "valor_a_empenhar"]))  # sem dado, não "R$ 0"
 
 
+class CamposDeReajusteTests(unittest.TestCase):
+    """Configuração da estimativa de reajuste (11/10/2026): três campos opcionais do contrato."""
+
+    def test_campos_sao_gravados_copiados_ao_duplicar_e_zero_nao_vira_nulo(self) -> None:
+        registro = cadastro.novo_contrato(
+            contrato_numero="01/2026", reajuste_indice="IPCA", reajuste_percentual_manual=0.0,
+            reajuste_data_base_manual="2027-06-01",
+        )
+        self.assertEqual(registro["reajuste_indice"], "IPCA")
+        self.assertEqual(registro["reajuste_percentual_manual"], 0.0)  # zero informado ≠ ausente
+        self.assertEqual(registro["reajuste_data_base_manual"], "2027-06-01")
+        self.assertIn("reajuste_indice", cadastro.CAMPOS_IDENTIDADE)
+
+    def test_contrato_sem_configuracao_fica_nulo(self) -> None:
+        registro = cadastro.novo_contrato(contrato_numero="02/2026")
+        self.assertIsNone(registro["reajuste_indice"])
+        self.assertIsNone(registro["reajuste_percentual_manual"])
+        self.assertIsNone(registro["reajuste_data_base_manual"])
+
+
 if __name__ == "__main__":
     unittest.main()

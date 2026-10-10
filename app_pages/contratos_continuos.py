@@ -268,6 +268,7 @@ from src.ui_cadastro import (
 )
 from src.ui_cadastro import css as css_cadastro
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
+from src.ui_reajuste import render_estimativa_reajuste
 from src.ui_theme import render_page_header
 
 DIRETORIO_DADOS_BRUTOS = Path("data/raw")
@@ -1977,9 +1978,11 @@ dataframe = tabela_contratos(
 # Integração com o Contratos.gov.br (10/2026): ligação por NE (depois número + CNPJ/CPF), conciliação de
 # vigência e aditivos sem registro. Complemento opcional, em memória — ver `com_contratosgov`.
 termos_gov = None
+_inicio_por_gov: dict = {}
 _gov = _carregar_gov(_referencia_gov())
 if _gov is not None:
     _contratos_gov, termos_gov, _empenhos_gov = _gov
+    _inicio_por_gov = dict(zip(_contratos_gov["contrato_id"].astype(str), _contratos_gov["vigencia_inicio"]))
     dataframe = com_contratosgov(dataframe, _contratos_gov, termos_gov, _empenhos_gov)
     _candidatos_gov, _em_duvida_gov = candidatos_novos(dataframe, _contratos_gov, _empenhos_gov)
     _render_novos_contratosgov(_candidatos_gov, _em_duvida_gov, ano_selecionado, source_key)
@@ -2058,6 +2061,11 @@ _render_relatorio_necessidade(
 _render_relatorio_projecao_execucao(
     filtrado, liquidacao_competencia_por_mes, source_key, ano_selecionado, manifesto_execucao_mensal,
     via_competencia=indice_liquidado_competencia is not None,
+)
+# Estimativa de reajuste por competência (11/10/2026): cenário separado, só lê os contratos do exercício.
+render_estimativa_reajuste(
+    filtrado, registros, [r for _ano in anos_disponiveis() for r in carregar_contratos(_ano)], ano_selecionado,
+    liquidacao_competencia_por_mes, _inicio_por_gov, source_key, _referencia_gov(),
 )
 if indice_liquidado_competencia is not None:
     _render_empenhado_liquidado(
