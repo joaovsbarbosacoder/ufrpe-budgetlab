@@ -610,8 +610,11 @@ e **Refinar** (opcional: também precisa citar algum destes — ex.: "pregão" t
 só os pregões da UFRPE, não os do país inteiro). As duas listas são salvas em
 `data/dou/termos.json` a cada mudança (fora do git, incluídas no backup) e
 "Restaurar termos padrão" volta aos padrões. Um termo novo alcança também os
-dias já baixados, sem novo download. Filtros por período e seção; link para a
-página no DOU.
+dias já baixados, sem novo download. Período por atalhos (7 dias, 30 dias, mês
+atual, tudo ou datas livres) e seção. O resultado traz um resumo (dias com
+ocorrência, divisão por seção, termo mais frequente) e as matérias em cartões
+agrupados por dia — com os termos destacados no trecho que casou e link para a
+página no DOU —, ou em tabela; ordenação por data e exportação em CSV do recorte.
 
 Exige conta pessoal no INLABS, com credenciais só em variáveis de ambiente —
 a página não pede nem guarda senha. Os ZIPs ficam intactos em

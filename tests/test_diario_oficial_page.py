@@ -77,6 +77,12 @@ class DiarioOficialPageTests(unittest.TestCase):
     def _botao(self, app: AppTest):
         return next(b for b in app.button if b.label == "Baixar atualizações do DOU")
 
+    def _tabela(self, app: AppTest):
+        """Alterna a exibição para "Tabela" e devolve o DataFrame (o padrão é "Cartões")."""
+        app.segmented_control(key="dou_visao").set_value("Tabela").run()
+        self.assertEqual(len(app.exception), 0)
+        return app.dataframe[0].value
+
     def _textos(self, app: AppTest) -> str:
         partes = [m.value for m in app.markdown] + [s.value for s in app.subheader]
         partes += [e.value for e in (*app.warning, *app.error, *app.success, *app.info)]
@@ -95,12 +101,33 @@ class DiarioOficialPageTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertFalse(self._botao(app).disabled)
         self.assertIn("2 matéria(s) encontrada(s)", self._textos(app))
-        tabela = app.dataframe[0].value
+        tabela = self._tabela(app)
         self.assertEqual(set(tabela["Identificação"]), {
             "EXTRATO DE CONTRATO Nº 12/2026 - UASG 153165",
             "PORTARIA SOF Nº 99, DE 7 DE OUTUBRO DE 2026",
         })
         self.assertNotIn(SENHA, self._textos(app))
+
+    def test_cartoes_agrupados_por_dia_com_termos_destacados(self):
+        _preparar_dia(self.raiz)
+        app = self._abrir()
+        self.assertEqual(len(app.exception), 0)
+        texto = self._textos(app)
+        self.assertEqual(texto.count('class="dou-card"'), 2)
+        self.assertIn("quinta-feira, 08/10/2026".capitalize(), texto)
+        self.assertIn("2 matéria(s)", texto)
+        self.assertIn("<mark>", texto)
+        self.assertIn("Abrir no DOU", texto)
+        self.assertEqual(len(app.dataframe), 0)
+
+    def test_atalho_de_periodo_personalizado_mostra_datas(self):
+        _preparar_dia(self.raiz)
+        app = self._abrir()
+        self.assertEqual(len(app.date_input), 0)
+        app.segmented_control(key="dou_atalho").set_value("Personalizado").run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(len(app.date_input), 1)
+        self.assertIn("2 matéria(s) encontrada(s)", self._textos(app))
 
     def test_termo_novo_alcanca_dias_ja_baixados(self):
         _preparar_dia(self.raiz)
@@ -108,12 +135,12 @@ class DiarioOficialPageTests(unittest.TestCase):
         app.multiselect(key="dou_termos").set_value(["licitação"]).run()
         self.assertEqual(len(app.exception), 0)
         self.assertIn("1 matéria(s) encontrada(s)", self._textos(app))
-        self.assertEqual(list(app.dataframe[0].value["Termos"]), ["licitação"])
+        self.assertEqual(list(self._tabela(app)["Termos"]), ["licitação"])
 
     def test_filtro_de_secao(self):
         _preparar_dia(self.raiz)
         app = self._abrir()
-        app.multiselect(key="dou_secoes").set_value(["DO1"]).run()
+        app.segmented_control(key="dou_secoes").set_value(["DO1"]).run()
         self.assertIn("1 matéria(s) encontrada(s)", self._textos(app))
 
     def test_botao_baixa_e_mostra_resumo(self):
@@ -151,7 +178,7 @@ class DiarioOficialPageTests(unittest.TestCase):
         app.multiselect(key="dou_refinar").set_value(["limpeza"]).run()
         self.assertEqual(len(app.exception), 0)
         self.assertIn("1 matéria(s) encontrada(s)", self._textos(app))
-        self.assertIn("limpeza", app.dataframe[0].value["Termos"].iloc[0])
+        self.assertIn("limpeza", self._tabela(app)["Termos"].iloc[0])
 
     def test_termos_salvos_valem_na_proxima_sessao(self):
         _preparar_dia(self.raiz)
