@@ -248,6 +248,28 @@ relatorio_com_vinculos = compor_relatorio_com_vinculos(
 ).relatorio
 ```
 
+## 9.1 Decisão de dotação e acompanhamento manual
+
+Camadas de eventos JSON imutáveis (um arquivo por ação, gravação atômica,
+`versao_schema` 1; arquivo ilegível levanta erro), sem alterar a base importada:
+
+| Diretório | Módulo | Conteúdo |
+|---|---|---|
+| `data/emendas/ajustes_dotacao/` | `src/ajustes_dotacao_emendas.py` | decisões sobre divergência de dotação e seu desfazimento |
+| `data/emendas/acompanhamento/` | `src/acompanhamento_emendas.py` | status de tramitação, cancelamentos, objeto e destinatário |
+
+Regras: decisão ∈ {adotar Dotação Anual, manter relatório, informar valor};
+justificativa ≥ 10 caracteres e responsável obrigatórios. Estado da decisão:
+`ativa`, `obsoleta` (relatório mudou) ou `sem_efeito` (desfeita);
+`sem_efeito` prevalece sobre `obsoleta`. `adotar` é bloqueada se o PTRES tem
+mais de uma emenda. Status: data futura recusada, retroativa aceita; evento
+cancelado permanece no histórico. Complemento: retrato completo, vazio vira
+nulo, objeto ≤ 500 e destinatário ≤ 200 caracteres. Registros cuja emenda não
+existe mais são listados como órfãos.
+
+Dúvidas abertas: comparação por emenda contra a Dotação Anual do PTRES inteiro
+pode gerar falsa divergência com PTRES compartilhado.
+
 ## 10. Arquivos
 
 | Arquivo | Papel |
