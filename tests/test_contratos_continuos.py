@@ -36,11 +36,14 @@ from src.contratos_continuos import (
     SITUACOES_CONCILIACAO,
     aditivo_sugerido,
     aditivos_pendentes,
+    candidatos_novos,
     com_contratosgov,
     com_efeitos_da_suspensao,
     com_meses_pagos,
     com_saldo_execucao,
     ler_contratos_continuos,
+    numero_no_formato_continuos,
+    registro_novo_do_gov,
     tipo_aditivo_por_qualificacao,
 )
 from src.contratos_aditivos import Aditivo, aditivos_do_registro
@@ -714,6 +717,103 @@ class TestAditivosDoGov(unittest.TestCase):
         )
         self.assertEqual(df.loc[0, "qtd_aditivos_pendentes"], 4)
         self.assertTrue(pd.isna(df.loc[1, "qtd_aditivos_pendentes"]))
+
+
+class TestNumeroNoFormatoContinuos(unittest.TestCase):
+    def test_formatos(self):
+        casos = {
+            "00013/2026": "13/2026", "00002/2026": "02/2026", "00018/2014": "18/2014",
+            "SN/2026": "SN/2026", "ABC": "ABC", None: None,
+        }
+        for numero_gov, esperado in casos.items():
+            with self.subTest(numero_gov=numero_gov):
+                self.assertEqual(numero_no_formato_continuos(numero_gov), esperado)
+
+
+@unittest.skipUnless(FIXTURE_CONTRATOSGOV.exists(), f"Fixture ausente em {FIXTURE_CONTRATOSGOV}")
+class TestCandidatosNovos(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.contratos, cls.termos, cls.empenhos = _gov()
+
+    def _candidatos(self, *registros: dict, contratos=None):
+        return candidatos_novos(
+            _cadastro(*registros), self.contratos if contratos is None else contratos, self.empenhos
+        )
+
+    def test_com_um_registro_ligado(self):
+        candidatos, em_duvida = self._candidatos({"contrato_numero": "13/2026", "ne_curta": "2026NE000522"})
+        self.assertEqual(list(candidatos["contrato_id"]), ["118872", "18940", "220038"])  # por vigência crescente
+        self.assertEqual(len(em_duvida), 0)
+        self.assertTrue(candidatos["motivo"].str.len().gt(0).all())
+
+    def test_cadastro_vazio_lista_os_quatro_vigentes(self):
+        candidatos, _ = self._candidatos()
+        self.assertEqual(set(candidatos["contrato_id"]), {"1004328", "118872", "18940", "220038"})
+        self.assertNotIn("71912", set(candidatos["contrato_id"]))  # inativo
+        self.assertNotIn("7925", set(candidatos["contrato_id"]))  # encerrado
+
+    def test_conflito_vai_para_duvida(self):
+        candidatos, em_duvida = self._candidatos(
+            {"contrato_numero": "13/2026", "fornecedor_cnpj_cpf": "05340639000130", "ne_curta": "2025NE000046"}
+        )
+        self.assertEqual(set(em_duvida["contrato_id"]), {"1004328", "118872"})
+        self.assertTrue(em_duvida["motivo"].str.contains("conflito").all())
+        self.assertEqual(set(candidatos["contrato_id"]), {"18940", "220038"})
+
+    def test_sem_vigencia_vai_para_duvida(self):
+        contratos = self.contratos.copy()
+        contratos.loc[contratos["contrato_id"] == "220038", ["situacao_vigencia", "vigencia_fim"]] = ["sem_vigencia", None]
+        candidatos, em_duvida = self._candidatos(contratos=contratos)
+        self.assertEqual(list(em_duvida["contrato_id"]), ["220038"])
+        self.assertIn("sem vigência", em_duvida.iloc[0]["motivo"])
+        self.assertNotIn("220038", set(candidatos["contrato_id"]))
+
+    def test_varios_registros_do_mesmo_contrato_nao_duplicam(self):
+        candidatos, _ = self._candidatos(
+            {"contrato_numero": "13/2026", "ne_curta": "2026NE000522"},
+            {"contrato_numero": "13/2026", "ne_curta": "2026NE000523"},
+        )
+        ids = list(candidatos["contrato_id"])
+        self.assertNotIn("1004328", ids)
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_documento_preserva_zeros(self):
+        candidatos, _ = self._candidatos()
+        documento = candidatos.set_index("contrato_id").loc["220038", "fornecedor_documento"]
+        self.assertEqual(documento, "00000000191")
+
+    def _candidato(self, contrato_id: str) -> pd.Series:
+        candidatos, _ = self._candidatos()
+        return candidatos[candidatos["contrato_id"] == contrato_id].iloc[0]
+
+    def test_registro_novo_do_gov_com_ne(self):
+        registro = registro_novo_do_gov(self._candidato("1004328"), "2026NE000522")
+        self.assertEqual(registro["contrato_numero"], "13/2026")
+        self.assertEqual(registro["ano_contrato"], 2026)
+        self.assertEqual(registro["fornecedor_cnpj_cpf"], "05340639000130")
+        self.assertEqual(registro["vigencia_fim"], pd.Timestamp("2027-09-10"))
+        self.assertEqual(registro["status_contrato"], "ATIVO")
+        self.assertEqual(registro["ne_curta"], "2026NE000522")
+        self.assertEqual(registro["natureza_despesa_cod"], "339039")
+        self.assertEqual(registro["pi_cod"], "M20RKG01SCN")
+        self.assertEqual(registro["fonte_cod"], "1000000000")
+        for ausente in ("acao_cod", "ptres", "ugr_cod", "despesa_mensal", "meses_empenhados", "meses_liquidados"):
+            self.assertNotIn(ausente, registro)
+
+    def test_registro_novo_do_gov_sem_ne_e_contrato_sem_empenhos(self):
+        for contrato_id in ("1004328", "220038"):
+            with self.subTest(contrato_id=contrato_id):
+                registro = registro_novo_do_gov(self._candidato(contrato_id))
+                for campo in ("ne_curta", "natureza_despesa_cod", "pi_cod", "fonte_cod"):
+                    self.assertIsNone(registro[campo])
+
+    def test_ne_de_outro_contrato_levanta(self):
+        with self.assertRaises(ValueError):
+            registro_novo_do_gov(self._candidato("1004328"), "2025NE000046")
+
+    def test_registro_aceito_por_novo_contrato(self):
+        novo_contrato(**registro_novo_do_gov(self._candidato("1004328"), "2026NE000522"))
 
 
 if __name__ == "__main__":

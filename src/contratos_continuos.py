@@ -31,6 +31,8 @@ Contrato público:
     com_efeitos_da_suspensao(df) -> pd.DataFrame
     situacao_contrato(status, vigencia_fim_efetiva, necessidade, hoje) -> (texto, tom)
     com_contratosgov(df, contratos, termos, empenhos) -> pd.DataFrame   (ligação/conciliação com o gov)
+    candidatos_novos(df, contratos, empenhos) -> (candidatos, em_duvida)   (contratos do gov ausentes)
+    registro_novo_do_gov(candidato, ne=None) -> dict   (argumentos de `novo_contrato`)
 """
 
 from __future__ import annotations
@@ -623,3 +625,129 @@ def aditivo_sugerido(termo: pd.Series) -> Aditivo:
         vigencia_fim=_data_ou_none(termo["vigencia_fim"]),
         itens=None,
     )
+
+
+def numero_no_formato_continuos(numero_gov: object) -> str | None:
+    """Número do contrato do gov ("00013/2026") no formato usado no cadastro de Contínuos ("13/2026"; ao
+    menos 2 dígitos no número: "00002/2026" → "02/2026"). Texto fora do padrão "<número>/<ano>" volta como
+    veio, aparado; nulo → `None`. É só uma convenção de apresentação: o usuário edita na janela."""
+
+    if numero_gov is None or pd.isna(numero_gov):
+        return None
+    normalizado = normalizar_numero_contrato(numero_gov)
+    if normalizado is None:
+        return str(numero_gov).strip() or None
+    parte_numero, _, parte_ano = normalizado.partition("/")
+    return f"{parte_numero.zfill(2) if parte_numero.isdigit() else parte_numero}/{parte_ano}"
+
+
+_COLUNAS_CANDIDATO = (
+    "contrato_id", "numero", "ano_contrato", "fornecedor_nome", "fornecedor_documento", "objeto", "categoria",
+    "vigencia_fim", "situacao_vigencia", "valor_parcela", "nes", "motivo",
+)
+
+
+def candidatos_novos(
+    df: pd.DataFrame, contratos: pd.DataFrame, empenhos: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Contratos do Contratos.gov.br ainda sem registro no cadastro de Contínuos em tela (mesma ligação de
+    `com_contratosgov`; um contrato ligado por qualquer registro — inclusive vários, uma NE cada — não
+    aparece). Devolve `(candidatos, em_duvida)`:
+
+    * candidato: `situacao_vigencia` "vigente" ou "a_iniciar" (decisão do usuário: todos os vigentes ausentes
+      — o gov não tem o campo "contínuo");
+    * em dúvida: "sem_vigencia" (sem datas) e todo contrato citado num conflito de ligação (NE e número
+      apontando contratos diferentes etc.) — sem botão de inclusão, com o `motivo`.
+
+    Encerrados e inativos ficam de fora. Ordenado por `vigencia_fim` crescente. `nes` traz, por contrato, a
+    lista de `{"ne", "natureza_despesa", "plano_interno", "fonte_recurso"}` com os textos do gov. O
+    `valor_parcela` é só referência (contrato inteiro; Contínuos traz a parcela da ação 20RK)."""
+
+    ligacoes = _resolver_ligacoes(df, contratos, empenhos)
+    ligados = {str(i) for i in ligacoes["contratosgov_id"].dropna()}
+    em_conflito = set().union(*ligacoes["envolvidos"]) if len(ligacoes) else set()
+
+    nes_por_contrato: dict[str, list[dict]] = {}
+    for registro in empenhos.to_dict("records"):
+        nes_por_contrato.setdefault(str(registro["contrato_id"]), []).append(
+            {chave: registro[chave] for chave in ("ne", "natureza_despesa", "plano_interno", "fonte_recurso")}
+        )
+
+    candidatos, em_duvida = [], []
+    for contrato in contratos.to_dict("records"):
+        contrato_id = str(contrato["contrato_id"])
+        if contrato_id in ligados:
+            continue
+        situacao = contrato["situacao_vigencia"]
+        if contrato_id in em_conflito:
+            motivo, destino = "conflito de ligação: NE e número/CNPJ apontam contratos diferentes", em_duvida
+        elif situacao == "sem_vigencia":
+            motivo, destino = "sem vigência no Contratos.gov", em_duvida
+        elif situacao in ("vigente", "a_iniciar"):
+            motivo = f"{'vigente' if situacao == 'vigente' else 'a iniciar'} no Contratos.gov, ausente do cadastro"
+            destino = candidatos
+        else:
+            continue
+        fim = contrato["vigencia_fim"]
+        destino.append(
+            {
+                "contrato_id": contrato_id,
+                "numero": contrato["numero"],
+                "ano_contrato": contrato["ano_contrato"],
+                "fornecedor_nome": contrato["fornecedor_nome"],
+                "fornecedor_documento": contrato["fornecedor_documento"],
+                "objeto": contrato["objeto"],
+                "categoria": contrato["categoria"],
+                "vigencia_fim": None if fim is None or pd.isna(fim) else fim,
+                "situacao_vigencia": situacao,
+                "valor_parcela": contrato["valor_parcela"],
+                "nes": nes_por_contrato.get(contrato_id, []),
+                "motivo": motivo,
+            }
+        )
+
+    def _montar(linhas: list[dict]) -> pd.DataFrame:
+        linhas = sorted(linhas, key=lambda l: (l["vigencia_fim"] is None, l["vigencia_fim"] or date.max))
+        return pd.DataFrame(linhas, columns=list(_COLUNAS_CANDIDATO)).reset_index(drop=True)
+
+    return _montar(candidatos), _montar(em_duvida)
+
+
+def _codigo_antes_do_hifen(texto: object) -> str | None:
+    """Código de "339039 - OUTROS SERVICOS..." / "M20RKG01SCN - GESTAO..." (texto antes de " - ");
+    sem hífen, o texto inteiro ("1000000000"). Sempre texto, zeros preservados; nulo/vazio → `None`."""
+
+    if texto is None or pd.isna(texto):
+        return None
+    codigo = str(texto).split(" - ", 1)[0].strip()
+    return codigo or None
+
+
+def registro_novo_do_gov(candidato: pd.Series, ne: str | None = None) -> dict:
+    """Argumentos de `src.contratos_continuos_cadastro.novo_contrato` para incluir um candidato de
+    `candidatos_novos`, só com o que o Contratos.gov tem: número (`numero_no_formato_continuos`), ano,
+    fornecedor, CNPJ/CPF (texto, como veio), `vigencia_fim`, status ATIVO e — se `ne` for informada —
+    NE, natureza de despesa, plano interno e fonte dessa NE. Ação, PTRES, UGR, despesa mensal e meses não
+    existem no gov: ficam fora (nulos, nunca zero). NE que não pertence ao contrato levanta `ValueError`."""
+
+    selecionada = None
+    if ne is not None:
+        chave = _ne_normalizada(ne)
+        selecionada = next((n for n in candidato["nes"] if _ne_normalizada(n["ne"]) == chave), None)
+        if selecionada is None:
+            raise ValueError(f"A NE {ne!r} não pertence ao contrato {candidato['numero']} do Contratos.gov.")
+
+    fim = candidato["vigencia_fim"]
+    ano = candidato["ano_contrato"]
+    return {
+        "contrato_numero": numero_no_formato_continuos(candidato["numero"]),
+        "ano_contrato": None if ano is None or pd.isna(ano) else int(ano),
+        "fornecedor": candidato["fornecedor_nome"],
+        "fornecedor_cnpj_cpf": candidato["fornecedor_documento"],
+        "vigencia_fim": None if fim is None or pd.isna(fim) else pd.Timestamp(fim),
+        "status_contrato": "ATIVO",
+        "ne_curta": None if selecionada is None else selecionada["ne"],
+        "natureza_despesa_cod": None if selecionada is None else _codigo_antes_do_hifen(selecionada["natureza_despesa"]),
+        "pi_cod": None if selecionada is None else _codigo_antes_do_hifen(selecionada["plano_interno"]),
+        "fonte_cod": None if selecionada is None else _codigo_antes_do_hifen(selecionada["fonte_recurso"]),
+    }
