@@ -19,6 +19,8 @@ from src import acompanhamento_emendas as acomp
 from src import ajustes_dotacao_emendas as ajustes
 from src.acompanhamento_emendas import STATUS_OUTRO, STATUS_SUGERIDOS, ErroAcompanhamento
 from src.ajustes_dotacao_emendas import ErroAjusteDotacao, ptres_com_uma_emenda
+from src.ui_cadastro import celula_principal, celula_suave, celula_valor, chip
+from src.ui_cadastro import css as css_cadastro
 from src.design_tokens import (
     ACCENT,
     ACCENT_LINE,
@@ -112,7 +114,9 @@ _CAMPOS_FILTRO_EMENDAS = {
     "ano": "emendas_filtro_ano",
     "resultado_primario_cod": "emendas_filtro_rp",
     "parlamentar": "emendas_filtro_parlamentar",
+    "tramitacao": "emendas_filtro_tramitacao",
 }
+TRAMITACAO_SEM_STATUS = "Sem status"
 
 
 def _opcoes_filtro(dataframe: pd.DataFrame, campo: str) -> list[str]:
@@ -179,9 +183,22 @@ def _resumo_tupla(valores: object) -> str:
 _ROTULOS_ORIGEM = {
     "relatorio_estatico": ("Histórico estático", TEXT_MUTED, "rgba(147,161,184,0.14)"),
     "execucao_anual": ("Execução Anual", POSITIVE, "rgba(34,197,94,0.14)"),
-    "execucao_anual_parcial": ("Execução parcial", WARNING, "rgba(245,165,36,0.14)"),
-    "sem_execucao": ("Sem execução", NEGATIVE, "rgba(240,87,107,0.14)"),
+    "execucao_anual_parcial": ("Execução parcial", ACCENT, "rgba(9,105,218,0.12)"),
+    # ainda sem execução é o estado NORMAL de uma emenda recente — azul, não vermelho (10/2026)
+    "sem_execucao": ("Aguardando execução", ACCENT, "rgba(9,105,218,0.12)"),
 }
+
+CSS_REGISTRO = f"""
+<style>
+.em-bar {{ height: 7px; background: {TRACK}; border-radius: 99px; overflow: hidden; }}
+.em-bar > i {{ display: block; height: 100%; background: {ACCENT}; border-radius: 99px; }}
+.em-bar.cheia > i {{ background: {POSITIVE}; }}
+.st-key-em_registro_scroll {{ max-height: 760px; overflow-y: auto; padding-right: 8px; }}
+[class*="st-key-em_painel_"] {{ background: rgba(9,105,218,0.04); border: 1px solid {BORDER_SOFT}; border-radius: 16px;
+    padding: 14px 16px 6px; margin: 2px 0 14px; }}
+[class*="st-key-em_painel_"] .em-card {{ margin-bottom: 14px; }}
+</style>
+"""
 
 
 def _badge(rotulo: str, cor: str, fundo: str) -> str:
@@ -338,7 +355,7 @@ def _render_card_emenda(linha, vinculos_da_emenda: pd.DataFrame, status_atual: s
     )
     tags_html = "".join(
         [
-            f'<span class="em-tag">PTRES {ptres_total}</span>',
+            f'<span class="em-tag">PTRES {_juntar_codigos(linha.ptres) if ptres_total == 1 else ptres_total}</span>',
             f'<span class="em-tag">GND {_resumo_tupla(linha.gnds)}</span>',
             _badge_origem(linha.origem_valores),
             *(['<span class="em-tag">dotação decidida</span>'] if decidida else []),
@@ -351,6 +368,16 @@ def _render_card_emenda(linha, vinculos_da_emenda: pd.DataFrame, status_atual: s
             f'<div class="em-metric-label">Relatório: {_esc(_valor_brl(linha.dotacao_relatorio))}</div>'
         )
     linhas_html = "".join(_html_linha_ptres(row) for row in vinculos_da_emenda.itertuples())
+    # com um só PTRES a tabela repetiria exatamente os números do cabeçalho do cartão (10/2026)
+    bloco_ptres = (
+        '<div class="em-scroll"><div class="em-head">'
+        '<span>PTRES</span><span>GND</span><span>Status</span>'
+        '<span style="text-align:right">Dotação</span><span style="text-align:right">Empenhado</span>'
+        '<span style="text-align:right">Liquidado</span><span style="text-align:right">Pago</span>'
+        f'</div>{linhas_html}</div>'
+        if ptres_total > 1
+        else ""
+    )
 
     st.markdown(
         f"""
@@ -386,16 +413,7 @@ def _render_card_emenda(linha, vinculos_da_emenda: pd.DataFrame, status_atual: s
             </div>
           </div>
           {_html_dotacao_anual(linha)}
-          <div class="em-scroll">
-            <div class="em-head">
-              <span>PTRES</span><span>GND</span><span>Status</span>
-              <span style="text-align:right">Dotação</span>
-              <span style="text-align:right">Empenhado</span>
-              <span style="text-align:right">Liquidado</span>
-              <span style="text-align:right">Pago</span>
-            </div>
-            {linhas_html}
-          </div>
+          {bloco_ptres}
         </div>
         """,
         unsafe_allow_html=True,
@@ -488,6 +506,8 @@ render_page_header(
     "Histórico preservado · atualizações 2026+ · execução conciliada por PTRES.",
 )
 _inject_css()
+st.markdown(css_cadastro(), unsafe_allow_html=True)
+st.markdown(CSS_REGISTRO, unsafe_allow_html=True)
 
 manifesto_emendas = ManifestoEmendas.atual()
 if manifesto_emendas is None:
@@ -570,10 +590,23 @@ with st.container(horizontal=True):
         _dialog_cadastro_manual()
 
 emendas = resultado.emendas.copy()
+# status atual da tramitação (manual) como coluna, para filtrar e mostrar no registro
+emendas["tramitacao"] = [
+    getattr(status_por_chave.get((int(ano), str(rp), str(numero))), "status", TRAMITACAO_SEM_STATUS)
+    for ano, rp, numero in zip(emendas["ano"], emendas["resultado_primario_cod"], emendas["emenda_numero"])
+]
+
+# primeira abertura: só o exercício vigente (2026 em diante); o histórico fica a um clique (limpar o filtro)
+if "emendas_filtro_ano_inicializado" not in st.session_state:
+    st.session_state["emendas_filtro_ano_inicializado"] = True
+    if _CAMPOS_FILTRO_EMENDAS["ano"] not in st.session_state:
+        vigentes = [ano for ano in _opcoes_filtro(emendas, "ano") if int(ano) >= ANO_INICIO_ATUALIZACAO]
+        if vigentes:
+            st.session_state[_CAMPOS_FILTRO_EMENDAS["ano"]] = vigentes
 
 with st.container(border=True):
     st.markdown("**Filtros**")
-    col_ano, col_rp, col_parlamentar = st.columns(3)
+    col_ano, col_rp, col_parlamentar, col_tramitacao = st.columns(4)
     selecoes_persistidas = _selecoes_persistidas()
 
     with col_ano:
@@ -609,6 +642,17 @@ with st.container(border=True):
             key=_CAMPOS_FILTRO_EMENDAS["parlamentar"],
             placeholder="Todos",
         )
+    with col_tramitacao:
+        opcoes_tramitacao = _opcoes_filtro(
+            _opcoes_disponiveis(emendas, selecoes_persistidas, "tramitacao"), "tramitacao"
+        )
+        _sanear_persistido(_CAMPOS_FILTRO_EMENDAS["tramitacao"], opcoes_tramitacao)
+        tramitacoes_selecionadas = st.multiselect(
+            "Tramitação",
+            options=opcoes_tramitacao,
+            key=_CAMPOS_FILTRO_EMENDAS["tramitacao"],
+            placeholder="Todas",
+        )
 
 filtradas = emendas
 if anos_selecionados:
@@ -617,7 +661,17 @@ if rps_selecionados:
     filtradas = filtradas[filtradas["resultado_primario_cod"].isin(rps_selecionados)]
 if parlamentares_selecionados:
     filtradas = filtradas[filtradas["parlamentar"].isin(parlamentares_selecionados)]
+if tramitacoes_selecionadas:
+    filtradas = filtradas[filtradas["tramitacao"].isin(tramitacoes_selecionadas)]
 filtradas = filtradas.copy()
+
+if anos_selecionados and all(int(ano) >= ANO_INICIO_ATUALIZACAO for ano in anos_selecionados):
+    historicas_ocultas = int((emendas["ano"] < ANO_INICIO_ATUALIZACAO).sum())
+    if historicas_ocultas:
+        st.caption(
+            f"{historicas_ocultas} emenda(s) de exercícios anteriores a {ANO_INICIO_ATUALIZACAO} ocultas pelo "
+            "filtro de Exercício — remova o filtro para ver o histórico."
+        )
 
 with st.container(horizontal=True):
     st.metric("Emendas", f"{len(filtradas):,}".replace(",", "."), border=True)
@@ -972,31 +1026,140 @@ _render_divergencias_dotacao(filtradas, resultado.vinculos, decisoes_dotacao)
 _render_decisoes_dotacao(decisoes_dotacao)
 _render_orfaos(orfaos_acompanhamento)
 
+REGISTRO_PROPORCOES = [3.3, 0.9, 1.55, 2.0, 1.3, 1.3, 2.0, 1.0]
+REGISTRO_CABECALHOS = [
+    ("Emenda / Parlamentar", False), ("Exercício", False), ("Dotação", True), ("Executado (empenhado)", False),
+    ("Liquidado", True), ("Pago", True), ("Situação", False), ("Ações", False),
+]
+#: origem dos valores -> (texto, tom) do chip de situação. Vermelho só para problema real; "aguardando execução"
+#: é o estado normal de uma emenda recente.
+SITUACAO_POR_ORIGEM = {
+    "relatorio_estatico": ("Histórico", "neutro"),
+    "sem_execucao": ("Aguardando execução", "info"),
+    "execucao_anual_parcial": ("Execução parcial", "info"),
+    "execucao_anual": ("Em execução", "ok"),
+}
+
+
+def _alternar_detalhe(chave_texto: str) -> None:
+    """`on_click` do botão "Detalhes"/"Fechar": roda ANTES de a página ser redesenhada, então o rótulo do botão já
+    sai certo (alternar depois de desenhar o botão deixava o rótulo uma interação atrasado)."""
+
+    abertas = st.session_state.setdefault("em_abertas", [])
+    if chave_texto in abertas:
+        abertas.remove(chave_texto)
+    else:
+        abertas.append(chave_texto)
+
+
+def _celula_execucao(empenhada: object, dotacao: object) -> str:
+    """Barra de execução (empenhado ÷ dotação). Sem empenhado ou sem dotação positiva: sem barra preenchida e o
+    valor (ou "—") — nulo nunca vira 0%."""
+
+    if pd.isna(empenhada) or pd.isna(dotacao) or float(dotacao) <= 0:
+        texto = "—" if pd.isna(empenhada) else _valor_brl(empenhada)
+        percentual = 0.0
+    else:
+        percentual = min(100.0, float(empenhada) / float(dotacao) * 100)
+        texto = f"{percentual:.0f}% · {_valor_brl(empenhada)}"
+    cheia = " cheia" if percentual >= 99.5 else ""
+    return (
+        f'<div class="em-bar{cheia}"><i style="width:{percentual:.0f}%"></i></div>'
+        f'<div class="cad-sub">{_esc(texto)}</div>'
+    )
+
+
+def _render_registro(
+    filtradas: pd.DataFrame, vinculos: pd.DataFrame, status_por_chave: dict, complemento_por_chave: dict,
+    tramitacao: pd.DataFrame,
+) -> None:
+    """Registro compacto de emendas (uma linha por emenda, no padrão de `src/ui_cadastro` usado em Contratos
+    Contínuos). "Detalhes" abre, na própria linha, o cartão com os PTRES (se houver mais de um), as decisões de
+    dotação e o acompanhamento. Mesmos números do cartão antigo; só a apresentação mudou."""
+
+    ordenadas = filtradas.sort_values(["ano", "dotacao_atualizada"], ascending=[False, False], na_position="last")
+    abertas = st.session_state.setdefault("em_abertas", [])
+    st.markdown('<div class="cad-secao-titulo">Registro de emendas</div>', unsafe_allow_html=True)
+    with st.container(key="cad_registro"):
+        st.markdown(
+            f'<div class="cad-contagem">{len(ordenadas)} emenda(s) · '
+            f'{_esc(_valor_brl(_total(ordenadas["dotacao_atualizada"])))} de dotação</div>',
+            unsafe_allow_html=True,
+        )
+        for coluna, (texto, direita) in zip(st.columns(REGISTRO_PROPORCOES), REGISTRO_CABECALHOS):
+            coluna.markdown(
+                f'<div class="cad-cabecalho{" direita" if direita else ""}">{texto}</div>', unsafe_allow_html=True
+            )
+        with st.container(key="em_registro_scroll"):
+            for linha in ordenadas.itertuples():
+                chave = (int(linha.ano), str(linha.resultado_primario_cod), str(linha.emenda_numero))
+                chave_texto = f"{chave[0]}_{chave[1]}_{chave[2]}"
+                vinculos_da_emenda = vinculos[
+                    (vinculos["ano"] == linha.ano)
+                    & (vinculos["resultado_primario_cod"] == linha.resultado_primario_cod)
+                    & (vinculos["emenda_numero"] == linha.emenda_numero)
+                    & (vinculos["autor_emenda"] == linha.autor_emenda)
+                    & (vinculos["parlamentar"] == linha.parlamentar)
+                ]
+                status_emenda = status_por_chave.get(chave)
+                status_texto = getattr(status_emenda, "status", None)
+                pendente = bool(getattr(linha, "dotacao_divergencia_pendente", getattr(linha, "dotacao_divergente", False)))
+                decidida = (
+                    "dotacao_decisao_estado" in vinculos_da_emenda.columns
+                    and bool(vinculos_da_emenda["dotacao_decisao_estado"].eq("ativa").fillna(False).any())
+                )
+                texto_situacao, tom = SITUACAO_POR_ORIGEM.get(str(linha.origem_valores), (str(linha.origem_valores), "neutro"))
+                parlamentar = "(não informado)" if pd.isna(linha.parlamentar) else linha.parlamentar
+                ptres_total = int(linha.ptres_total)
+                subtitulo = f"RP{linha.resultado_primario_cod} · " + (
+                    f"PTRES {_juntar_codigos(linha.ptres)}" if ptres_total == 1 else f"{ptres_total} PTRES"
+                )
+                with st.container(key=f"cad_linha_{chave_texto}"):
+                    cel = st.columns(REGISTRO_PROPORCOES, vertical_alignment="center")
+                    cel[0].markdown(celula_principal(f"{linha.emenda_numero} — {parlamentar}", subtitulo), unsafe_allow_html=True)
+                    cel[1].markdown(celula_suave(int(linha.ano)), unsafe_allow_html=True)
+                    dotacao_html = celula_valor(linha.dotacao_atualizada)
+                    if decidida and hasattr(linha, "dotacao_relatorio"):
+                        dotacao_html += (
+                            f'<div class="cad-sub" style="text-align:right">relatório: {_esc(_valor_brl(linha.dotacao_relatorio))}</div>'
+                        )
+                    cel[2].markdown(dotacao_html, unsafe_allow_html=True)
+                    cel[3].markdown(_celula_execucao(linha.empenhada, linha.dotacao_atualizada), unsafe_allow_html=True)
+                    cel[4].markdown(celula_valor(linha.liquidada), unsafe_allow_html=True)
+                    cel[5].markdown(celula_valor(linha.paga), unsafe_allow_html=True)
+                    chips = chip(texto_situacao, tom)
+                    if pendente:
+                        chips += " " + chip("Divergência de dotação", "warn")
+                    elif decidida:
+                        chips += " " + chip("Dotação decidida", "ok")
+                    cel[6].markdown(
+                        chips + f'<div class="cad-sub">Tramitação: {_esc(status_texto or "—")}</div>', unsafe_allow_html=True
+                    )
+                    with cel[7]:
+                        with st.container(key=f"cad_acoes_{chave_texto}"):
+                            st.button(
+                                "Fechar" if chave_texto in abertas else "Detalhes", key=f"em_detalhe_{chave_texto}",
+                                use_container_width=True, on_click=_alternar_detalhe, args=(chave_texto,),
+                            )
+                if chave_texto in abertas:
+                    with st.container(key=f"em_painel_{chave_texto}"):
+                        _render_card_emenda(linha, vinculos_da_emenda, status_texto)
+                        _render_acompanhamento(
+                            linha,
+                            tramitacao[
+                                (tramitacao["ano"] == chave[0])
+                                & (tramitacao["resultado_primario_cod"] == chave[1])
+                                & (tramitacao["emenda_numero"] == chave[2])
+                            ],
+                            complemento_por_chave.get(chave),
+                            status_texto,
+                        )
+
+
 if filtradas.empty:
     st.info("Nenhuma emenda corresponde aos filtros selecionados.")
 else:
-    ordenadas = filtradas.sort_values("dotacao_atualizada", ascending=False, na_position="last")
-    for linha in ordenadas.itertuples():
-        vinculos_da_emenda = resultado.vinculos[
-            (resultado.vinculos["ano"] == linha.ano)
-            & (resultado.vinculos["resultado_primario_cod"] == linha.resultado_primario_cod)
-            & (resultado.vinculos["emenda_numero"] == linha.emenda_numero)
-            & (resultado.vinculos["autor_emenda"] == linha.autor_emenda)
-            & (resultado.vinculos["parlamentar"] == linha.parlamentar)
-        ]
-        chave_emenda = (int(linha.ano), str(linha.resultado_primario_cod), str(linha.emenda_numero))
-        status_emenda = status_por_chave.get(chave_emenda)
-        _render_card_emenda(linha, vinculos_da_emenda, getattr(status_emenda, "status", None))
-        _render_acompanhamento(
-            linha,
-            tramitacao[
-                (tramitacao["ano"] == chave_emenda[0])
-                & (tramitacao["resultado_primario_cod"] == chave_emenda[1])
-                & (tramitacao["emenda_numero"] == chave_emenda[2])
-            ],
-            complemento_por_chave.get(chave_emenda),
-            getattr(status_emenda, "status", None),
-        )
+    _render_registro(filtradas, resultado.vinculos, status_por_chave, complemento_por_chave, tramitacao)
 
 st.caption(
     f"Base de Emendas: {manifesto_emendas.rotulo} · hash "
