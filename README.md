@@ -123,8 +123,7 @@ Liquidado vem da base Liquidação por Competência quando ela está disponível
 tem correspondência, os campos de comparação ficam nulos, nunca zero.
 
 **Campos de período (sempre do cadastro).** Status (`ATIVO`, `VENCIDO` ou `SUSPENSO`), Vigência
-(fim), Início da Execução (por data ou pelo botão de mês), Data da Suspensão e Meses no Ano. Não há cruzamento com a
-base "Contratos — Vigência". A regra comum (`src/necessidade_empenho.py::meses_vigentes_no_exercicio`):
+(fim), Início da Execução (por data ou pelo botão de mês), Data da Suspensão e Meses no Ano. A regra comum (`src/necessidade_empenho.py::meses_vigentes_no_exercicio`):
 
 - `SUSPENSO` **com Data da Suspensão** vale até a véspera dela, como um fim de vigência (mês final
   proporcional); a partir da data, nada de necessidade, projeção ou sugestão de reforço. `SUSPENSO`
@@ -169,6 +168,36 @@ mês e dia a dia, o valor em vigor (reajuste no meio do mês é proporcional aos
   contrato" não tem aditivos (cadastrados depois, ao editar). Para um contrato que **já teve o reajuste
   digitado por cima** de "Despesa mensal", volte o campo ao valor antigo e lance o aditivo com o novo — o
   sistema não faz essa troca sozinho.
+
+**Integração com o Contratos.gov.br (10/2026, `src/contratos_continuos.py`).** A tela cruza cada registro do
+cadastro com a fotografia atual do Contratos.gov.br (tabelas `contratos`, `termos` e `empenhos` de
+`src/contratos_cadastro.py`), em memória: nada é gravado e a fotografia nunca é alterada. Sem fotografia (ou
+com erro de leitura) a tela segue como antes, com aviso.
+
+- **Ligação** (`com_contratosgov`): primeiro pela **NE** (`ne_curta` do cadastro = `ne` dos empenhos do gov, mesmo
+  formato); depois por número normalizado + CNPJ/CPF (só dígitos; número sem CNPJ/CPF não liga). NE e número
+  apontando contratos diferentes, ou NE em mais de um contrato, é `conflito` e nada do gov é aplicado. Vários
+  registros (uma NE cada) podem ligar ao mesmo contrato do gov.
+- **Conciliação de vigência:** `vigencia_fim_efetiva` do cadastro (já com os aditivos nativos) contra a vigência
+  do gov, igualdade exata de data. Falta de data ou de par nunca vira divergência. A linha do registro mostra
+  "Gov: vigência confere/diverge", "sem par no Contratos.gov" ou "conflito de ligação".
+- **Aditivos do gov sem registro** (`aditivos_pendentes`): só `Termo Aditivo` conta (apostilamento e rescisão
+  não). Um termo está registrado se um aditivo nativo tem o mesmo número normalizado ou a mesma data de
+  assinatura — **casamento heurístico**, porque o número nativo é texto livre. Na janela de edição, a seção
+  "Contratos.gov" mostra o histórico de termos e um botão "Registrar aditivo do gov" por pendente, que só
+  **pré-preenche a aba Aditivos**: nada é gravado até clicar em Salvar. O tipo sugerido vem da qualificação do
+  termo (REAJUSTE > VIGÊNCIA > ACRÉSCIMO/SUPRESSÃO; um termo com várias qualificações vira um aditivo) e é
+  editável. A **prorrogação** começa na vigência do termo (`vigencia_inicio`); reajuste e demais, na data do novo
+  valor (senão, na assinatura). **O valor mensal não é importado**: a parcela do gov é do contrato inteiro e Contínuos traz a
+  parcela da ação 20RK (por isso ela aparece só como referência, nunca comparada).
+- **Novos no Contratos.gov** (`candidatos_novos`): todos os contratos vigentes ou a iniciar que ainda não têm
+  registro no exercício em tela (o gov não informa se o contrato é contínuo — a escolha é sua). Contrato sem
+  vigência ou envolvido em conflito de ligação fica "em dúvida", sem botão. "Incluir" abre a janela "Novo
+  contrato" preenchida só com o que o gov tem (número, ano, fornecedor, CNPJ/CPF, vigência e, se escolher a
+  NE, a NE, a natureza de despesa, o plano interno e a fonte dela); ação, PTRES e UGR ficam em branco.
+  O formulário "Novo contrato" deixa **em branco** (nulo, nunca zero) tudo que não foi preenchido — despesa
+  mensal, empenhado, saldo, meses empenhados/liquidados e os textos (`novo_contrato_do_formulario`); um zero
+  digitado continua zero, e "Meses no ano" em branco vale 12 nas contas. Só grava em "Adicionar contrato".
 
 **Necessidade de Empenho até Dezembro (card "Resumo Consolidado").** É o que falta empenhar
 para cobrir os meses do exercício: despesa mensal × meses restantes, nunca negativa, em que
@@ -221,6 +250,17 @@ registro) projetam o restante. Mostra, por NE, a despesa projetada pela execuç�
 liquidação muito abaixo do cadastrado (fator < 0,5) ou acima do contrato (execução > 1,03). A diferença para o
 contratado é tratada como execução abaixo do contratado (decisão do usuário). Contrato sem NE fica de fora.
 
+**Projeção pela execução em Bolsas e Auxílios (07/10/2026).** O mesmo relatório (mesma regra do fator e da
+projeção, PDF e Excel) tem seção própria na página de Bolsas, abaixo do Resumo Consolidado, com os rótulos da
+base (Programa, Processo, Situação). Só o custo do mês tem regra própria, em `src/projecao_execucao_bolsas.py`:
+valor mensal do cadastro em `meses_no_ano` meses seguidos a partir do **início da execução**, até dezembro.
+Início, nesta ordem: o informado no cadastro; o primeiro mês do exercício com liquidação positiva por
+competência da NE (o empenho costuma sair em janeiro, mas a bolsa pode começar a pagar depois); o mês do
+primeiro empenho; janeiro. O Relatório de Reforço continua usando o início pelo primeiro empenho. Saldo e
+empenhado vêm da Execução Mensal, com os da planilha como reserva; a necessidade comparada é a do Resumo
+Consolidado. Programas que dividem uma NE somam numa linha. Sem a escolha de contrato antecessor. Programa
+sem NE fica de fora (contado nos avisos).
+
 A necessidade do card (por empenho) e a projeção da grade (por calendário, a partir do gasto)
 são **métodos diferentes** e seus totais não coincidem por definição; o Resumo por NE traz as
 duas colunas e o relatório avisa a diferença.
@@ -262,6 +302,35 @@ Limites conhecidos: contrato prorrogado com a data de fim desatualizada no cadas
 projeção até a data ser corrigida no card; a competência dos últimos meses costuma estar
 defasada, o que afeta o saldo e o realizado desses meses; a data de início só é considerada
 quando informada.
+
+### Contratos (Contratos.gov.br)
+
+A página **Contratos** é um cadastro dos contratos da UG 153165 montado a partir da API pública do
+Contratos.gov.br (somente leitura, sem credencial). A integração com Contratos Contínuos (conciliação de
+vigência, aditivos e contratos novos) está descrita na seção Contratos Contínuos. Recorte: instrumentos do tipo "Contrato", todos os anos, ativos e inativos
+(empenhos substitutivos ficam fora). Detalhes (endpoints, formato, regras de conversão) em
+`docs/contratosgov.md`.
+
+- **Fotografia versionada.** Cada atualização confirmada grava um JSON imutável em
+  `data/raw/contratosgov/` (hash no nome, nunca sobrescrito) e um manifesto em `data/manifestos/`;
+  a página sempre lê a fotografia atual e mostra o histórico de atualizações. Nada é consultado na
+  rede ao abrir a página.
+- **Atualização incremental, com prévia.** O botão "Consultar agora" reconsulta o detalhe (termos e
+  NEs) só de vigentes, a iniciar, novos e alterados; os demais reaproveitam a fotografia anterior
+  (ou "atualização completa" reconsulta todos). A prévia mostra o delta (contratos, termos, vigência,
+  valor global, NEs); remoção de contrato, termo ou NE exige "Estou ciente da remoção". A gravação é
+  tudo ou nada e uma falha de API mantém a fotografia anterior.
+- **Vigência calculada pelas datas.** A `situacao` da API não é confiável (muitos "Ativo" já vencidos),
+  então a situação (vigente, a iniciar, encerrado, inativo) sai das datas, com a data de referência
+  de hoje.
+- **Complementos manuais.** O valor mensal (a parcela da API não é confiável, e nenhuma derivação é
+  presumida) e as observações são digitados no detalhe e gravados à parte em
+  `data/contratos/complementos.json`; a atualização nunca os altera, e o complemento de contrato
+  ausente da API é preservado. Nulo, zero e negativo são sempre distintos; códigos e CNPJ/CPF ficam
+  como texto, com zeros iniciais.
+- **Fixture congelada.** Os testes leem `tests/fixtures/contratosgov_2026-10-08.json` (CPFs de
+  pessoa física anonimizados), nunca de `data/`; ela não é sobrescrita automaticamente — o
+  procedimento para atualizá-la deliberadamente está em `docs/contratosgov.md`.
 
 ### Emendas Parlamentares
 
@@ -325,6 +394,94 @@ colunas da tabela e nos totais de rodapé de cada cartão, todos somados
 isoladamente. Valor nulo (célula ausente na origem) aparece como "—"; valor
 zero aparece como `0` — os dois estados nunca são confundidos. O seletor de
 Ano marca o exercício em andamento com "⏳".
+
+### Resultado Orçamentário
+
+A página **Resultado Orçamentário** (menu, logo depois de "Limite de Empenho") responde se a dotação
+das células orçamentárias escolhidas pelo usuário **cobre** o que ainda falta empenhar no exercício. Ela
+só **lê** as contas existentes (Necessidade, Projeção pela Execução, Limite de Empenho); nada é alterado.
+Bases: Dotação Anual, Execução Mensal, Contratos Contínuos e Bolsas e Auxílios. Despesas de Pessoal fica
+fora por enquanto.
+
+**Fórmula (bolsão).** A soma das células marcadas é confrontada com a soma das despesas; não há
+confronto célula a célula:
+
+```text
+Resultado = Dotação Atualizada (células) − Empenhado nas células (Execução Mensal) − Necessidade de empenho
+```
+
+O sinal dá o rótulo: positivo é **Superávit**, negativo é **Déficit**.
+
+**Célula orçamentária.** Mesma granularidade do Limite de Empenho, com a Fonte de Recursos Detalhada
+acrescentada: Iduso, Resultado Primário, Ação de Governo, PTRES, Plano Orçamentário, Grupo de Despesa e
+Fonte Detalhada (7 códigos). Os códigos são texto, com zeros à esquerda preservados. A Fonte Detalhada é
+`fonte_recursos_detalhada_codigo` na Dotação Anual e `fonte_recursos_detalhada_cod` na Execução Mensal
+(mesmo formato de 10 dígitos); por isso `valor_empenhado_por_bloco` passou a carregar essa dimensão
+(mudança aditiva, nenhum valor muda).
+
+**Empenhado em cinco linhas.** O empenhado das células marcadas vem da Execução Mensal, por célula, e é
+dividido por origem, cada NE contada uma única vez: **Contratos Contínuos** (NE no cadastro de contratos),
+**Bolsas e Auxílios** (NE no cadastro de bolsas) e, para o resto, pelo elemento de despesa (pedido de
+08/10/2026): **Despesas de Exercícios Anteriores (elemento 92)**, **Material de Consumo (elemento 30)** e
+**Outros empenhos** (os demais elementos). Contrato e Bolsa têm prioridade sobre o elemento; uma NE com mais
+de um elemento se divide entre as linhas pelo valor de cada elemento. Se a NE está nos dois
+cadastros, fica em Contratos e gera o aviso "NE em Contratos e em Bolsas — conferir". Cada linha expande em
+uma tabela por NE. A **conferência** `soma das linhas = Empenhado total das células` aparece
+sempre, e a diferença é exibida quando a diferença é de R$ 0,01 ou mais. NE de contrato ou bolsa em célula não marcada não
+entra no empenhado (a necessidade dela continua entrando).
+
+**Necessidade de empenho.** Contratos e Bolsas usam a **projeção pela execução**
+(`necessidade_execucao` de `src/relatorio_projecao_execucao.py`), somando **todas** as NEs do relatório,
+mesmo as de células não marcadas, porque no bolsão a necessidade precisa ser coberta pelos recursos
+escolhidos. A projeção é **sem contrato antecessor**: na página de Contratos o antecessor é escolhido a cada
+emissão e não é gravado, então aqui uma NE sem histórico tem fator 1 (valor mensal cheio). A diferença
+aparece em uma nota na página. Se `data/raw/Liquidação por Competência.xlsx` não existir, a projeção não
+pode ser calculada: a necessidade de Contratos e Bolsas fica **indisponível** (não zero) e o resultado é
+marcado como incompleto.
+Se o exercício não tem arquivo de cadastro de Contratos/Bolsas (`anos_disponiveis()`), a necessidade dessa
+base aparece como indisponível e o resultado fica incompleto: arquivo ausente não é tratado como lista
+vazia (decisão 08/10/2026).
+Item sem valor mensal cadastrado (custo nulo nos 12 meses, como em uma bolsa sem valor): o relatório
+Projeção pela Execução mostra a necessidade dessa NE como "—" (não 0), fora dos totais e com aviso, e aqui a
+necessidade da base fica indisponível, com o resultado incompleto (08/10/2026). Em Contratos Contínuos a
+despesa mensal nula ainda vira 0 antes do relatório (soma dos itens em `necessidade_por_ne`), então esse
+caso ainda não é sinalizado para contratos.
+
+**Contratos e bolsas sem NE** ficam **fora da conta** e aparecem só nos avisos (quantidade e valor
+contratual, como informação). Entram sozinhos quando a NE for incluída no cadastro ou o status do contrato
+mudar. Exceção (08/10/2026): **contrato sem NE com status ATIVO entra** na necessidade de Contratos pela
+necessidade contratual (Resumo Consolidado), com aviso, e aparece no detalhe como "sem NE (contrato
+ativo)". Status ausente não conta como ativo; bolsa sem NE continua fora.
+
+Na seção de células, os grupos de cada Ação começam **recolhidos** ("Ver células"; abrem sozinhos só durante
+uma busca), e a opção **Mostrar só as selecionadas** guarda a última escolha em
+`data/resultado_orcamentario/preferencias.json`, valendo depois de atualizar a página.
+
+**Outras despesas previstas.** Cadastro manual (incluir, editar, excluir) para despesas que não são de
+Contratos nem de Bolsas, com **um valor a empenhar por despesa**, sem distribuição mensal. O valor é
+obrigatório e maior que zero; a célula informada é só informativa e não muda o cálculo.
+
+**Persistência.** Aprovada em 08/10/2026: arquivos JSON por exercício em
+`data/resultado_orcamentario/<exercício>/` (`celulas.json` e `despesas_manuais.json`), fora do git
+(`.gitignore`, com `.gitkeep`), gravados de forma atômica. A seleção de células e as despesas sobrevivem a
+atualizar a página e a reiniciar o app. Uma célula gravada que sumiu da Dotação (por exemplo, após
+reimportação) é mantida no arquivo e avisada como "célula selecionada ausente da base". Arquivo ausente
+equivale a nada marcado; arquivo corrompido gera erro visível e a página não grava por cima.
+
+**Nulo não é zero.** Célula marcada sem Dotação Atualizada aparece como "—" e com aviso; não vira zero na
+soma e o resultado é marcado como **incompleto**. O mesmo vale para empenhado nulo em célula marcada.
+Dotação zero ou negativa e empenhado negativo (estorno líquido) entram como estão.
+
+**Avisos e datas.** A página lista contratos e bolsas sem NE, NE compartilhada, NE nos dois cadastros,
+célula ausente, célula sem dotação, diferença na conferência e as datas de extração da Dotação e da
+Execução Mensal, que são independentes.
+
+**Código.** A regra pura está em `src/resultado_orcamentario.py`; a persistência em
+`src/resultado_orcamentario_cadastro.py`; a página em `app_pages/resultado_orcamentario.py`. A montagem
+dos relatórios de projeção de Contratos e Bolsas vive agora em `src/resultado_orcamentario_fontes.py`,
+compartilhada pelas páginas de Contratos Contínuos, de Bolsas e Auxílios e pelo Resultado Orçamentário,
+sem mudar o resultado delas. A especificação completa está em
+`docs/superpowers/specs/2026-10-08-resultado-orcamentario-design.md`.
 
 ### Despesas de Pessoal
 
@@ -404,11 +561,15 @@ drill-down), Conciliação (SIMEC × Tesouro Gerencial), Células NC × NE, Cent
 Importações (assistente de 4 passos: Arquivo → Mapeamento → Validação → Confirmação) e
 Configurações. Dezenove
 alertas estão implementados: empenho associado a mais de um TED; NC sem UG emitente (achado
-real da extração do SIMEC, não do briefing original — a coluna vem vazia em cerca de 41% das
-linhas); e três de conciliação SIMEC (NC líquida e PF líquido dos documentos importados contra os
-totais consolidados, e PF líquido maior que a NC líquida) e seis de validação cadastral e de
+real da extração do SIMEC, não do briefing original — a coluna vem vazia em cerca de 28% das
+NCs; um alerta de gravidade baixa por TED, com a lista das NCs); e três de conciliação SIMEC (NC líquida
+e PF líquido dos documentos importados contra os totais consolidados, e PF líquido maior que a NC
+líquida; comparados só na janela de anos que o consolidado cobre, sem alerta quando o TED não tem
+documento do tipo no extrato ou quando a vigência começa antes do consolidado, e sem decidir por
+documentos sem data) e seis de validação cadastral e de
 vigência (vigência invertida, SIAFI em mais de um TED, TED sem UG descentralizadora, documento
-fora da vigência, TED vencido ainda em execução e TED em execução sem movimentação) e três de
+fora da vigência, TED vencido ainda em execução e TED em execução sem movimentação — esta considera
+também liquidação e pagamento no Tesouro) e três de
 execução por NE no Tesouro Gerencial (liquidado maior que empenhado, pago maior que liquidado e
 valor da NE no SIMEC diferente do empenhado do Tesouro, sempre pelo acumulado da NE) e um de importação
 (o total do rodapé do relatório do SIMEC deve bater com a soma das linhas importadas; no DOC NC e no DOC PF
@@ -417,8 +578,14 @@ código SIAFI na Execução Anual (a linha não é importada e o TED fica fora d
 de 90 dias) e um de célula orçamentária (a célula da NE — PTRES, fonte detalhada, natureza e Plano Interno — não consta
 entre as células das NCs do mesmo TED e exercício, lidas dos relatórios de NC do Tesouro Gerencial; é alerta para
 conferência, nunca conclusão de uso indevido). Os demais alertas previstos no
-briefing original (crédito sem empenho etc.) ficam para uma fase seguinte, fora do
-escopo já aprovado.
+briefing original ficam para uma fase seguinte, fora do escopo já aprovado.
+
+Revisão de 08/10/2026: a reavaliação de alertas fecha sozinha, com justificativa "Regra revisada em
+08/10/2026…" e auditoria, os alertas abertos dos cinco tipos de regra revista que as regras atuais não
+sustentam mais. Na página Conciliação, a seção "Conferir com a planilha de controle" lê a planilha
+`CONTROLE DESC.CREDITOS ATUALIZADA.xlsx` enviada pelo usuário **em memória** (nunca é gravada nem alimenta
+as regras), confere as NCs do SIMEC com ela, oferece o resultado em Excel e permite resolver alertas
+relacionados com justificativa pré-preenchida (só com o clique do usuário). Ver `docs/base_teds.md` §9.1–9.2.
 
 A fonte do Tesouro Gerencial é a mesma extração de Execução Mensal já usada por outra página
 do projeto (`src/tesouro_execucao_mensal.py`) — não uma extração separada. Na página
@@ -441,8 +608,48 @@ nem altera os existentes nem os dados importados, e a execução fica na trilha 
 NE em mais de um TED (recalcula `status_validacao`) nem TED sem SIAFI (depende das linhas rejeitadas de uma
 leitura).
 
+**TEDs de outros órgãos (TransfereGov).** Os TEDs do MEC tramitam no SIMEC; os de outros órgãos (MDA, INCRA,
+MPA, MDS…) tramitam no TransfereGov e entram pela API de dados abertos
+(`https://api.transferegov.gestao.gov.br/ted/`, `src/teds_transferegov.py`), com o botão "Sincronizar com o
+TransfereGov" em Importações. É uma origem separada, em tabelas próprias (`tg_*`): não entra nos totais, na
+conciliação nem nos alertas dos TEDs do SIMEC. Na Lista, o seletor "Origem" mostra esses TEDs (planos de ação
+em que a UFRPE é executora, com termo, NCs e seus eventos, PFs e suas linhas TRF); a Visão geral traz só as
+quantidades. **Nenhum total de NC/PF é calculado:** o significado dos códigos de evento da NC (300300, 300302…)
+e da situação contábil da TRF (TRF003, TRF004…) não foi confirmado, então os valores aparecem sem sinal, ao lado
+do código. As NEs da Execução Mensal com a mesma célula (exercício, PTRES, fonte, natureza e PI) de um evento de
+NC aparecem como indício para conferência, nunca como vínculo. A sincronização é um lote como os demais
+(idempotente pelo SHA-256 da resposta, reversível, JSON bruto guardado em `tg_extracao_bruta`). Validado em
+08/10/2026 com a API real: 53 planos, 93 NCs, 104 eventos, 80 PFs, 84 linhas TRF e 44 NEs com célula
+coincidente, nenhuma delas já vinculada a TED do SIMEC.
+
 O contrato completo (tabelas, chaves e decisões de projeto) está em
 `docs/base_teds.md`.
+
+### Diário Oficial (DOU)
+
+Página que baixa o Diário Oficial da União pelo INLABS (Imprensa Nacional) e
+lista as matérias que citam a UFRPE (`src/dou_inlabs.py`). O botão "Baixar
+atualizações do DOU" consulta só os dias que faltam — do dia seguinte ao último
+consultado até hoje (na primeira vez, os últimos 7 dias; no máximo 30 por
+clique). Dia sem edição fica registrado como consultado, sem erro.
+
+A busca ignora acentos e maiúsculas e tem dois grupos de termos: **Termos de
+busca** (a matéria cita algum deles; padrão: nome, sigla, UG 153165 e UO 26248)
+e **Refinar** (opcional: também precisa citar algum destes — ex.: "pregão" traz
+só os pregões da UFRPE, não os do país inteiro). As duas listas são salvas em
+`data/dou/termos.json` a cada mudança (fora do git, incluídas no backup) e
+"Restaurar termos padrão" volta aos padrões. Um termo novo alcança também os
+dias já baixados, sem novo download. Período por atalhos (7 dias, 30 dias, mês
+atual, tudo ou datas livres) e seção. O resultado traz um resumo (dias com
+ocorrência, divisão por seção, termo mais frequente) e as matérias em cartões
+agrupados por dia — com os termos destacados no trecho que casou e link para a
+página no DOU —, ou em tabela; ordenação por data e exportação em CSV do recorte.
+
+Exige conta pessoal no INLABS, com credenciais só em variáveis de ambiente —
+a página não pede nem guarda senha. Os ZIPs ficam intactos em
+`data/raw/dou/<data>/` com manifesto (sha256), sem banco de dados. Também há
+uso por linha de comando (`python -m src.dou_inlabs AAAA-MM-DD`). Detalhes em
+`docs/dou_inlabs.md`.
 
 ### Limitações atuais
 
@@ -505,6 +712,12 @@ streamlit run app.py
   que o Parquet não devolveria idênticas). Para limpar, basta apagar a pasta. Nos testes o cache fica
   desligado (`tests/conftest.py` define `BUDGETLAB_CACHE_BASES=desligado`): a suíte sempre lê as planilhas
   e não toca na pasta real.
+- **Memória das páginas com bases grandes**: a cada interação o `st.cache_data` devolve cópias das bases
+  (DataFrames inteiros), que ficavam presas em referências circulares — na Consulta de Empenhos a sessão
+  subia de ~1,5 GB para ~7 GB em 30 interações; em Empenhos com Execução Retardada, Limite de Empenho e
+  Despesas de Pessoal, de ~1,5 GB para 5–8 GB em 20. Essas quatro páginas rodam `gc.collect()` no início e
+  no fim de cada execução e ficam estáveis abaixo de 2 GB. As demais páginas medidas (07/10/2026) não
+  acumulam de forma relevante. Os testes de página fazem o mesmo ao fim de cada teste (`tests/conftest.py`).
 
 ### Atalho de inicialização com atualização automática (um único computador)
 
@@ -593,6 +806,7 @@ ufrpe-budgetlab/
 |-- src/
 |   |-- design_tokens.py            # Tokens de cor/tipografia/espaçamento
 |   |-- dotacao_anual_analysis.py   # Filtros e agregações da Dotação Anual
+|   |-- dou_inlabs.py               # Download e filtro do DOU (INLABS)
 |   |-- execucao_anual.py           # Leitura, validação e agregação da Execução Anual (BI PROPLAD)
 |   |-- importacao_dotacao.py       # Especificação da Dotação Anual sobre o núcleo genérico
 |   |-- importacao_emendas.py       # Carga histórica e atualizações 2026+ de Emendas

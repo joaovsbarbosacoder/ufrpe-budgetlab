@@ -16,7 +16,7 @@ Bolsas, DEA e Créditos dependem de critérios de corte ainda não definidos com
 do handoff original). Continuam marcadas como tal na tela, não misturadas com as 2 reais.
 
 Sem `main()`/`st.set_page_config` próprios (`app.py` já chama isso uma única vez — mesmo
-padrão de `app_pages/contratos_vigencia.py`).
+padrão das demais páginas de `app_pages/`).
 """
 
 from __future__ import annotations

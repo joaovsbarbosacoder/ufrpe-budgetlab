@@ -136,12 +136,12 @@ Diferenças deliberadas em relação ao handoff:
 from __future__ import annotations
 
 import html as html_lib
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from src.bolsas_auxilios import com_saldo_execucao
 from src.bolsas_auxilios_cadastro import (
     anos_disponiveis,
     atualizar_programa,
@@ -180,8 +180,14 @@ from src.importacao_execucao_mensal import DIRETORIO_MANIFESTOS_PADRAO as DIRETO
 from src.importacao_execucao_mensal import Manifesto as ManifestoExecucaoMensal
 from src.importacao_execucao_mensal import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO_MENSAL
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
+from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne_e_mes
 from src.necessidade_empenho import calcular_necessidade_empenho, necessidade_ate_dezembro
+from src.relatorio_necessidade_empenho import mes_referencia_do_exercicio
+from src.relatorio_projecao_execucao import ContextoProjecaoExecucao
+from src.relatorio_projecao_execucao import gerar_pdf as gerar_pdf_projecao_execucao
+from src.relatorio_projecao_execucao import gerar_xlsx as gerar_xlsx_projecao_execucao
 from src.relatorio_reforco_empenho import BOLSAS_AUXILIOS as RELATORIO_BOLSAS_AUXILIOS
+from src.resultado_orcamentario_fontes import projecao_bolsas, tabela_bolsas
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_cadastro import (
     aviso_linha_do_tempo,
@@ -206,6 +212,10 @@ COLUNAS_BUSCA = ["processo", "programa_bolsa", "unidade_cod", "acao_cod", "pi_co
 
 SITUACAO_OPCOES = ["ATUALIZADO", "SEM EMPENHO", "NÃO LOCALIZADO"]
 
+#: Liquidação por Competência — só para o relatório "Projeção pela execução" (mesmo arquivo de
+#: `app_pages/contratos_continuos.py`). Ausente: a seção avisa e o resto da página segue igual.
+CAMINHO_LIQUIDACAO_COMPETENCIA = Path("data/raw") / "Liquidação por Competência.xlsx"
+
 
 @st.cache_data(show_spinner="Lendo a linha do tempo mensal...")
 def _cached_linha_do_tempo(caminho_ponteiro: str, sha_manifesto: str) -> pd.DataFrame:
@@ -218,6 +228,17 @@ def _cached_linha_do_tempo(caminho_ponteiro: str, sha_manifesto: str) -> pd.Data
     chave de cache."""
 
     tempo = linha_do_tempo_por_ne(carregar_execucao_mensal_atual())
+    tempo["ne_curta"] = tempo["ne_ccor"].apply(_ne_curta_execucao)
+    return tempo
+
+
+@st.cache_data(show_spinner="Lendo a Liquidação por Competência...")
+def _cached_liquidacao_competencia_por_mes(caminho: str, mtime: float) -> pd.DataFrame:
+    """Liquidado por (NE, mês de competência), com `ne_curta` — entrada do relatório "Projeção pela
+    execução" (mesma leitura de `app_pages/contratos_continuos.py`). `mtime` só participa da chave de
+    cache."""
+
+    tempo = liquidado_por_ne_e_mes(ler_liquidacao_competencia(caminho))
     tempo["ne_curta"] = tempo["ne_ccor"].apply(_ne_curta_execucao)
     return tempo
 
@@ -777,6 +798,66 @@ def _render_resumo_consolidado(
             )
 
 
+def _render_relatorio_projecao_execucao(
+    filtrado: pd.DataFrame, source_key: str, ano_exercicio: int, manifesto: ManifestoExecucaoMensal,
+) -> None:
+    """Botões PDF/Excel do relatório "Projeção pela execução" (pedido de 07/10/2026: o mesmo de Contratos
+    Contínuos, `src/relatorio_projecao_execucao.py`). O custo de cada mês da bolsa vem de
+    `src/projecao_execucao_bolsas.py` (meses do ano a partir do início da execução: o do cadastro ou, no
+    automático, o primeiro mês com liquidação por competência). Sem o contrato
+    antecessor de Contratos. Só LÊ o que a página já calcula; nada do que já existe muda."""
+
+    st.markdown('<div class="cad-secao-titulo">Projeção pela execução</div>', unsafe_allow_html=True)
+    if not CAMINHO_LIQUIDACAO_COMPETENCIA.exists():
+        st.caption(
+            "Indisponível: o relatório mede a execução pela Liquidação por Competência "
+            f"('{CAMINHO_LIQUIDACAO_COMPETENCIA}'), que não foi encontrada."
+        )
+        return
+    modificado_em = CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime
+    try:
+        competencia = _cached_liquidacao_competencia_por_mes(str(CAMINHO_LIQUIDACAO_COMPETENCIA), modificado_em)
+    except Exception as erro:
+        st.caption(f"Indisponível: não foi possível ler a Liquidação por Competência ({erro}).")
+        return
+
+    data_extracao = datetime.fromisoformat(manifesto.data_extracao)
+    mes_referencia = mes_referencia_do_exercicio(data_extracao.date(), ano_exercicio)
+    relatorio, _ = projecao_bolsas(filtrado, competencia, ano_exercicio, mes_referencia)
+    contexto = ContextoProjecaoExecucao(
+        exercicio=ano_exercicio,
+        data_extracao=data_extracao.strftime("%d/%m/%Y"),
+        hash_manifesto=manifesto.sha256[:8],
+        data_emissao=datetime.now().strftime("%d/%m/%Y %H:%M"),
+        origem_competencia=(
+            f"{CAMINHO_LIQUIDACAO_COMPETENCIA.name} · modificado em {datetime.fromtimestamp(modificado_em):%d/%m/%Y %H:%M}"
+        ),
+    )
+    st.caption(
+        "Relatório separado: projeta a despesa até dezembro pelo que cada bolsa de fato liquida (fator de "
+        "execução sobre o valor mensal cadastrado, pela execução dos últimos 6 meses fechados), nos meses do "
+        "ano da bolsa contados a partir do início da execução, e compara com a projeção pelo valor cadastrado "
+        f"e com a Necessidade até dezembro do Resumo Consolidado. Pela execução: necessidade de "
+        f"{formatar_brl(relatorio.total_necessidade_execucao)} (Resumo Consolidado: "
+        f"{formatar_brl(relatorio.total_necessidade_contratual)}). Respeita a busca."
+    )
+    nome_arquivo = f"projecao_execucao_bolsas_auxilios_{ano_exercicio}_{datetime.now():%Y-%m-%d}"
+    col_pdf, col_xlsx = st.columns(2)
+    with col_pdf:
+        st.download_button(
+            "Baixar PDF", data=lambda: gerar_pdf_projecao_execucao(relatorio, contexto),
+            file_name=f"{nome_arquivo}.pdf", mime="application/pdf", type="primary", width="stretch",
+            on_click="ignore", key=f"bls_projexec_pdf_{source_key}",
+        )
+    with col_xlsx:
+        st.download_button(
+            "Baixar Excel", data=lambda: gerar_xlsx_projecao_execucao(relatorio, contexto),
+            file_name=f"{nome_arquivo}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            width="stretch", on_click="ignore", key=f"bls_projexec_xlsx_{source_key}",
+        )
+
+
 def _render_card_dotacao(codigo: object, nome: object, grupo: pd.DataFrame) -> None:
     """Um cartão por Ação de Governo, com uma linha por Plano Orçamentário/PTRES — montagem do HTML em
     `src/ui_cadastro.py::cartao_cobertura_ptres`, compartilhada com `contratos_continuos.py` (layout de 05/10/2026)."""
@@ -950,24 +1031,14 @@ if manifesto_dotacao is not None:
     except Exception:
         dotacao_dimensoes = None
 
-dataframe = com_saldo_execucao(dataframe, por_ne_execucao)
-
-# "Início da Execução" (mês do primeiro empenho de cada NE, auto-detectado da base mensal) e
-# valor empenhado autoritativo — só para a sugestão inicial "por calendário" do Relatório de
-# Reforço (pedido explícito, ver `src.necessidade_empenho.necessidade_ate_mes_vigente`);
-# nenhum outro quadro da página usa essas duas colunas.
 if tempo_por_ne_curta is not None:
     sugestao_inicio_por_ne = primeiro_mes_com_empenho_por_ne(tempo_por_ne_curta)
 else:
     sugestao_inicio_por_ne = pd.Series(dtype="Int64")
-dataframe["valor_empenhado_autoritativo"] = dataframe["valor_empenhado_execucao"].fillna(dataframe["valor_empenhado_tg"])
-# mesmo padrão de fallback do Resumo Consolidado (`_render_resumo_consolidado`) — autoritativo
-# (Execução Mensal) com o valor colado na planilha como reserva. Usado só para evidenciar o
-# saldo na tela do Relatório de Reforço/Anulação (pedido explícito), nenhum outro quadro usa.
-dataframe["saldo_autoritativo"] = dataframe["saldo_execucao"].fillna(dataframe["saldo_colado_planilha"])
-dataframe["inicio_execucao_efetivo"] = dataframe["inicio_execucao_mes"].fillna(
-    dataframe["ne_curta"].map(sugestao_inicio_por_ne)
-)
+# Colunas derivadas (saldo via Execução, autoritativos, início efetivo): montagem compartilhada com o
+# Resultado Orçamentário em `src/resultado_orcamentario_fontes.py` (08/10/2026); os comentários de decisão
+# foram junto.
+dataframe = tabela_bolsas(dataframe, por_ne_execucao, sugestao_inicio_por_ne)
 
 with col_relatorio:
     st.write("")
@@ -1019,6 +1090,7 @@ st.markdown(
 )
 
 _render_resumo_consolidado(filtrado, tempo_por_ne_curta, source_key)
+_render_relatorio_projecao_execucao(filtrado, source_key, ano_selecionado, manifesto_execucao_mensal)
 
 if dotacao_dimensoes is not None:
     st.markdown('<div class="cad-secao-titulo">Cobertura orçamentária por PTRES</div>', unsafe_allow_html=True)

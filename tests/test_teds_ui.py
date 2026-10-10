@@ -17,10 +17,24 @@ from src.teds_ui import (
     atualizar_status_alerta,
     calcular_cobertura_relacionamentos,
     carregar_teds,
+    data_br,
     situacao_conciliacao,
     soma_tg_por_teds,
     vinculos_ne,
 )
+
+class DataBrTests(unittest.TestCase):
+    def test_formata_data_e_data_hora_iso(self):
+        self.assertEqual(data_br('2026-03-05'), '05/03/2026')
+        self.assertEqual(data_br('2026-03-05T14:30:59+00:00', com_hora=True), '05/03/2026 14:30')
+        self.assertEqual(data_br('2026-03-05T14:30:59'), '05/03/2026')
+
+    def test_nulo_vazio_e_texto_nao_data(self):
+        self.assertEqual(data_br(None), '—')
+        self.assertEqual(data_br(''), '—')
+        self.assertEqual(data_br('Em análise'), 'Em análise')
+        self.assertEqual(data_br('05/03/2026'), '05/03/2026')
+
 
 TED_17352 = chave_ted("17352", "1ABDKU")
 TED_17454 = chave_ted("17454", "1ABDKQ")

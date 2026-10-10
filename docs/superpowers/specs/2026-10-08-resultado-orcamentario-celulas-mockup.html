@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seleção de Células</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#F5F8FC; --surface:#FFFFFF; --surface-alt:#F0F5FA; --border:#D3DFEC;
+    --text:#07133D; --muted:#526584; --faint:#7C8DA8;
+    --accent:#0969DA; --accent-soft:rgba(9,105,218,.10); --pos:#0A8F3D; --warn:#C96A00; --neg:#D20A16;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 "Inter","Segoe UI",system-ui,sans-serif}
+  main{max-width:1180px;margin:0 auto;padding:28px 24px 60px}
+  .proto{background:#FFF7E6;border:1px dashed var(--warn);color:#7A4300;border-radius:10px;padding:8px 14px;font-size:13px;margin-bottom:18px}
+  h2{font-size:20px;font-weight:600;margin:0 0 4px}
+  .hint{color:var(--muted);font-size:13px;margin:0 0 14px}
+  .num{font-variant-numeric:tabular-nums;white-space:nowrap}
+
+  .filtros{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+  .filtros input[type=search]{flex:1;min-width:240px;font:inherit;font-size:14px;border:1px solid var(--border);border-radius:8px;padding:8px 12px;background:var(--surface)}
+  .filtros label{font-size:13px;color:var(--muted);display:flex;gap:6px;align-items:center;cursor:pointer}
+  .resumo-sel{margin-left:auto;font-size:13px;color:var(--muted)}
+  .resumo-sel b{color:var(--text)}
+
+  .acao{background:var(--surface);border:1px solid var(--border);border-radius:14px;margin-bottom:12px;overflow:hidden}
+  .acao.tem-sel{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent-soft)}
+  .acao>summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:18px 1fr auto auto;gap:14px;align-items:center;padding:14px 18px}
+  .acao>summary::-webkit-details-marker{display:none}
+  .acao>summary:hover{background:var(--surface-alt)}
+  .chev{color:var(--faint);transition:transform .15s}
+  .acao[open] .chev{transform:rotate(90deg)}
+  .acao .tit{font-weight:600;font-size:15px}
+  .acao .tit .cod{color:var(--accent);margin-right:6px}
+  .acao .sub{font-size:12px;color:var(--muted);margin-top:2px}
+  .acao .sub .pill{display:inline-block;background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:1px 8px;font-weight:600;margin-left:6px}
+  .acao .dot{text-align:right}
+  .acao .dot .l{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+  .acao .dot .v{font-weight:600}
+  .btn{font:inherit;font-size:13px;border:1px solid var(--border);background:var(--surface);color:var(--accent);border-radius:8px;padding:6px 12px;cursor:pointer;white-space:nowrap}
+  .btn:hover{background:var(--accent-soft)}
+
+  .cel{display:grid;grid-template-columns:28px 1fr;gap:10px;padding:12px 18px;border-top:1px solid var(--border)}
+  .cel.sel{background:#F5F9FF}
+  .cel input{width:18px;height:18px;margin-top:2px;accent-color:var(--accent);cursor:pointer}
+  .codigos{display:flex;flex-wrap:wrap;gap:6px;font-size:12px}
+  .chip{background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:1px 7px;color:var(--muted)}
+  .chip b{color:var(--text);font-weight:600}
+  .valores{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) 1.3fr;gap:16px;margin-top:8px;align-items:center}
+  .valores .l{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+  .valores .v{font-weight:600}
+  .valores .v.zero{color:var(--faint);font-weight:500}
+  .barra{height:8px;background:var(--surface-alt);border-radius:4px;overflow:hidden}
+  .barra>i{display:block;height:100%;background:var(--accent)}
+  .barra.alto>i{background:var(--warn)}
+  .barra-l{font-size:12px;color:var(--muted);margin-top:4px}
+
+  .rodape{position:sticky;bottom:0;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px 18px;margin-top:16px;
+    display:flex;gap:24px;align-items:center;flex-wrap:wrap;box-shadow:0 -4px 16px rgba(7,19,61,.06)}
+  .rodape .l{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.06em}
+  .rodape .v{font-weight:600}
+  .rodape .salvar{margin-left:auto;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:9px 18px;font:inherit;font-weight:600;cursor:pointer}
+  .rodape .estado{font-size:12px;color:var(--warn)}
+  .vazio{color:var(--faint);font-size:14px;padding:20px;text-align:center}
+  @media (max-width:760px){.valores{grid-template-columns:1fr 1fr}.acao>summary{grid-template-columns:18px 1fr}.acao .dot,.acao .btn{grid-column:2}}
+</style>
+</head>
+<body>
+<main>
+  <div class="proto">Protótipo só da seção 3. Os valores vêm do seu print, mas a lista está resumida. Teste marcar as células, usar "Marcar todas", a busca e "só selecionadas".</div>
+
+  <h2>3. Células que fazem frente às despesas</h2>
+  <p class="hint">Marque as células da Dotação Anual que entram como recurso. As ações com célula marcada ficam abertas e destacadas.</p>
+
+  <div class="filtros">
+    <input type="search" id="busca" placeholder="Buscar por ação, PTRES, PO ou descrição…">
+    <label><input type="checkbox" id="soSel"> Mostrar só as selecionadas</label>
+    <span class="resumo-sel" id="resumoSel"></span>
+  </div>
+
+  <div id="lista"></div>
+
+  <div class="rodape">
+    <div><div class="l">Dotação selecionada</div><div class="v num" id="tDot"></div></div>
+    <div><div class="l">Empenhado</div><div class="v num" id="tEmp"></div></div>
+    <div><div class="l">Saldo</div><div class="v num" id="tSal"></div></div>
+    <span class="estado" id="estado"></span>
+    <button class="salvar" onclick="salvo=JSON.stringify(sel());render()">Salvar seleção</button>
+  </div>
+</main>
+
+<script>
+const ACOES = {
+  "4002": "ASSISTÊNCIA AO ESTUDANTE DE ENSINO SUPERIOR",
+  "4572": "CAPACITAÇÃO DE SERVIDORES PÚBLICOS FEDERAIS EM PROCESSO DE QUALIFICAÇÃO",
+  "8282": "REESTRUTURAÇÃO E MODERNIZAÇÃO DAS INSTITUIÇÕES FEDERAIS DE ENSINO SUPERIOR",
+  "20RK": "FUNCIONAMENTO DE INSTITUIÇÕES FEDERAIS DE ENSINO SUPERIOR",
+};
+let CEL = [
+  ["20RK","0","2","169898","0000","3","1000000000",42000000,32051000.15,true],
+  ["20RK","0","2","169898","0000","4","1000000000",2150000,1250450.00,false],
+  ["4002","0","2","230400","0002","3","1000000000",8943623,6707523.21,true],
+  ["4002","0","2","230400","0002","4","1000000000",150809,11970,false],
+  ["4002","0","2","230402","0003","3","1000000000",6540326,4633000,false],
+  ["4002","0","2","230404","0004","3","1000000000",40195,26124,false],
+  ["4572","8","2","169899","0000","3","1000000000",21372,11082.44,false],
+  ["8282","8","2","230394","0000","4","1000000000",76653,0,false],
+  ["8282","8","6","261463","0000","4","1000000000",1125000,0,false],
+  ["8282","8","6","261464","0000","4","1000000000",600000,0,false],
+  ["8282","8","6","261465","0000","4","1000000000",335000,0,false],
+  ["8282","8","6","269202","0000","4","1000000000",1000000,1000000,false],
+].map(([acao,iduso,rp,ptres,po,gnd,fonte,dot,emp,s])=>({acao,iduso,rp,ptres,po,gnd,fonte,dot,emp,s}));
+const abertos = new Set(["20RK","4002"]);
+let salvo = JSON.stringify(sel());
+
+function sel(){ return CEL.map((c,i)=>c.s?i:null).filter(i=>i!==null); }
+const brl = v => "R$ " + v.toLocaleString("pt-BR",{minimumFractionDigits:2,maximumFractionDigits:2});
+const esc = s => s.replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function render(){
+  const q = document.getElementById("busca").value.trim().toLowerCase();
+  const soSel = document.getElementById("soSel").checked;
+  const lista = document.getElementById("lista");
+  const grupos = {};
+  CEL.forEach((c,i)=>{
+    const txt = [c.acao,c.ptres,c.po,ACOES[c.acao]].join(" ").toLowerCase();
+    if (q && !txt.includes(q)) return;
+    if (soSel && !c.s) return;
+    (grupos[c.acao] ||= []).push(i);
+  });
+  const ordem = Object.keys(grupos).sort();
+  lista.innerHTML = ordem.length ? "" : '<div class="vazio">Nenhuma célula corresponde ao filtro.</div>';
+  for (const acao of ordem){
+    const idx = grupos[acao], cs = idx.map(i=>CEL[i]);
+    const nSel = cs.filter(c=>c.s).length, dot = cs.reduce((a,c)=>a+c.dot,0);
+    const todas = nSel === cs.length;
+    const d = document.createElement("details");
+    d.className = "acao" + (nSel ? " tem-sel" : "");
+    if (abertos.has(acao) || q || soSel) d.open = true;
+    d.addEventListener("toggle", ()=>{ d.open ? abertos.add(acao) : abertos.delete(acao); });
+    d.innerHTML = `<summary>
+        <span class="chev">▶</span>
+        <div><div class="tit"><span class="cod">${acao}</span>${esc(ACOES[acao])}</div>
+          <div class="sub">${cs.length} célula${cs.length>1?"s":""}${nSel?`<span class="pill">${nSel} selecionada${nSel>1?"s":""}</span>`:""}</div></div>
+        <div class="dot"><div class="l">Dotação da ação</div><div class="v num">${brl(dot)}</div></div>
+        <button class="btn" data-acao="${acao}">${todas?"Desmarcar todas":"Marcar todas"}</button>
+      </summary>` + idx.map(i=>{
+        const c = CEL[i], pct = c.dot ? Math.min(100, c.emp/c.dot*100) : 0;
+        return `<div class="cel${c.s?" sel":""}">
+          <input type="checkbox" data-i="${i}" ${c.s?"checked":""}>
+          <div>
+            <div class="codigos">
+              <span class="chip">PTRES <b>${c.ptres}</b></span><span class="chip">PO <b>${c.po}</b></span>
+              <span class="chip">GND <b>${c.gnd}</b></span><span class="chip">Fonte <b>${c.fonte}</b></span>
+              <span class="chip">IDUSO <b>${c.iduso}</b></span><span class="chip">RP <b>${c.rp}</b></span>
+            </div>
+            <div class="valores">
+              <div><div class="l">Dotação</div><div class="v num">${brl(c.dot)}</div></div>
+              <div><div class="l">Empenhado</div><div class="v num${c.emp?"":" zero"}">${brl(c.emp)}</div></div>
+              <div><div class="l">Saldo</div><div class="v num">${brl(c.dot-c.emp)}</div></div>
+              <div><div class="barra${pct>=90?" alto":""}"><i style="width:${pct.toFixed(1)}%"></i></div>
+                <div class="barra-l">${pct.toLocaleString("pt-BR",{maximumFractionDigits:0})}% empenhado</div></div>
+            </div>
+          </div></div>`;
+      }).join("");
+    lista.appendChild(d);
+  }
+  lista.querySelectorAll("input[data-i]").forEach(cb=>cb.addEventListener("change",e=>{CEL[+e.target.dataset.i].s=e.target.checked;render();}));
+  lista.querySelectorAll("button[data-acao]").forEach(b=>b.addEventListener("click",e=>{
+    e.preventDefault(); const a=b.dataset.acao; const cs=CEL.filter(c=>c.acao===a); const todas=cs.every(c=>c.s);
+    cs.forEach(c=>c.s=!todas); abertos.add(a); render();
+  }));
+  const s = CEL.filter(c=>c.s);
+  const td = s.reduce((a,c)=>a+c.dot,0), te = s.reduce((a,c)=>a+c.emp,0);
+  document.getElementById("tDot").textContent = brl(td);
+  document.getElementById("tEmp").textContent = brl(te);
+  document.getElementById("tSal").textContent = brl(td-te);
+  document.getElementById("resumoSel").innerHTML = `<b>${s.length}</b> de ${CEL.length} células selecionadas`;
+  document.getElementById("estado").textContent = JSON.stringify(sel()) === salvo ? "" : "Alterações não salvas";
+}
+document.getElementById("busca").addEventListener("input", render);
+document.getElementById("soSel").addEventListener("change", render);
+render();
+</script>
+</body>
+</html>

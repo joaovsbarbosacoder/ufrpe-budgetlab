@@ -37,6 +37,8 @@ from src.importacao_execucao_mensal import (
 )
 from src.teds_auditoria import ACAO_ALERTAS_REAVALIADOS, ENTIDADE_ALERTA, registrar_auditoria
 from src.teds_alertas import (
+    candidatos_tipos_revistos,
+    fechar_alertas_obsoletos,
     sincronizar_alertas_execucao_do_ted,
     registrar_alertas_ted_sem_siafi,
     sincronizar_alertas_rodape,
@@ -684,22 +686,30 @@ class ExecucaoMensalNaoImportada(RuntimeError):
 
 @dataclass(frozen=True)
 class ResultadoReavaliacaoAlertas:
-    """Alertas criados por `reavaliar_alertas`, contados por tipo (só os recém-criados)."""
+    """Alertas criados e fechados por `reavaliar_alertas`, contados por tipo (só os recém-criados e os
+    fechados nesta execução). `total` conta só os criados."""
 
     criados_por_tipo: dict[str, int]
+    fechados_por_tipo: dict[str, int] = field(default_factory=dict)
 
     @property
     def total(self) -> int:
         return sum(self.criados_por_tipo.values())
+
+    @property
+    def total_fechados(self) -> int:
+        return sum(self.fechados_por_tipo.values())
 
 
 def reavaliar_alertas(conn: sqlite3.Connection, *, usuario: str | None = None) -> ResultadoReavaliacaoAlertas:
     """Roda todas as verificações de alerta sobre os dados JÁ importados, sem reimportar nada.
 
     Cada importação só dispara os alertas que existiam no código quando ela rodou; uma regra criada
-    depois nunca vê os dados antigos. Aqui as verificações rodam de novo. Só CRIA alertas ausentes
-    (mesma deduplicação por tipo + documento das importações): não fecha nem altera alerta existente
-    e não toca em nenhum dado importado.
+    depois nunca vê os dados antigos. Aqui as verificações rodam de novo e CRIAM os alertas ausentes
+    (mesma deduplicação por tipo + documento das importações). Desde 08/10/2026 (spec §4) ela também
+    FECHA, como "sistema" e com auditoria, os alertas abertos dos tipos de regra revista que as regras
+    atuais não produzem mais (`fechar_alertas_obsoletos`); os demais tipos e os resolvidos manualmente
+    não são alterados. Nenhum dado importado é tocado.
 
     Ficam de fora, de propósito: `sincronizar_alertas_multiplos_teds`, que também recalcula o
     `status_validacao` dos vínculos (é dado derivado, não só alerta), e `registrar_alertas_ted_sem_siafi`,
@@ -719,17 +729,23 @@ def reavaliar_alertas(conn: sqlite3.Connection, *, usuario: str | None = None) -
     for verificar in verificacoes:
         for alerta in verificar(conn):
             criados[alerta.tipo] = criados.get(alerta.tipo, 0) + 1
+    fechados = fechar_alertas_obsoletos(conn, candidatos_tipos_revistos(conn))
     registrar_auditoria(
         conn,
         acao=ACAO_ALERTAS_REAVALIADOS,
         entidade=ENTIDADE_ALERTA,
         entidade_id="reavaliacao",
         valor_anterior=None,
-        valor_novo={"criados": sum(criados.values()), "por_tipo": dict(sorted(criados.items()))},
+        valor_novo={
+            "criados": sum(criados.values()),
+            "por_tipo": dict(sorted(criados.items())),
+            "fechados": sum(fechados.values()),
+            "fechados_por_tipo": fechados,
+        },
         usuario=usuario,
         commit=True,
     )
-    return ResultadoReavaliacaoAlertas(criados_por_tipo=dict(sorted(criados.items())))
+    return ResultadoReavaliacaoAlertas(criados_por_tipo=dict(sorted(criados.items())), fechados_por_tipo=fechados)
 
 
 def status_sincronizacao_execucao_tg(

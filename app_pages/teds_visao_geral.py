@@ -27,6 +27,7 @@ from src.teds_ui import (
     calcular_cobertura_relacionamentos,
     carregar_alertas,
     carregar_teds,
+    data_br,
     conexao,
     cor_estado_ted,
     cor_gravidade,
@@ -41,6 +42,7 @@ from src.teds_ui import (
     rotulo_tipo_alerta,
     soma_tg_por_teds,
 )
+from src.ui_teds_transferegov import render_resumo_visao_geral as render_resumo_transferegov
 from src.ui_theme import render_page_header
 
 injetar_css()
@@ -58,6 +60,7 @@ if teds_df.empty:
         'Nenhum TED importado ainda. Vá em "Importações" (barra lateral) e envie ao menos a '
         "planilha de Execução: Orçamentário e Financeiro."
     )
+    render_resumo_transferegov(conn)
     st.stop()
 
 # ---------------------------------------------------------------------- filtros e ação principal
@@ -186,7 +189,7 @@ else:
                     dash(linha["descricao"]),
                     [badge(f"{contagem_alertas_por_ted.get(linha['chave_ted'], 0)} alerta(s)", cor_gravidade("alta"))],
                     [
-                        ("Fim da vigência", dash(linha["fim_vigencia"])),
+                        ("Fim da vigência", data_br(linha["fim_vigencia"])),
                         ("NC líquida", brl(texto_para_valor(linha["total_nc_descentralizacao"] or "0") - texto_para_valor(linha["total_nc_devolucao"] or "0"))),
                         ("PF líquida", brl(texto_para_valor(linha["total_pf_repasse"] or "0") - texto_para_valor(linha["total_pf_devolucao"] or "0"))),
                     ],
@@ -226,3 +229,7 @@ if cobertura.qtd_documentos_nao_relacionados or cobertura.qtd_documentos_parciai
     )
 else:
     st.success("Todos os documentos de NC e PF importados têm TED identificado.")
+
+# ---------------------------------------------------------------------- TEDs do TransfereGov
+# Base separada (outros órgãos, `src/teds_transferegov.py`): só quantidades, não entra nos KPIs acima.
+render_resumo_transferegov(conn)

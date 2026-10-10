@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cadastro de Contratos — protótipo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* Tokens de src/design_tokens.py */
+  :root{
+    --bg:#F5F8FC; --surface:#FFFFFF; --surface-alt:#F0F5FA; --border:#D3DFEC; --border-soft:#E7EEF6;
+    --text:#07133D; --muted:#526584; --faint:#7C8DA8;
+    --accent:#0969DA; --accent-strong:#0757B8; --accent-soft:rgba(9,105,218,.10);
+    --pos:#0A8F3D; --neg:#D20A16; --warn:#C96A00;
+    --pos-soft:rgba(10,143,61,.11); --neg-soft:rgba(210,10,22,.09); --warn-soft:rgba(201,106,0,.11);
+    --side-top:#0D4268; --side-bottom:#082B49; --side:#0B3557;
+    --side-text:#EAF3FA; --side-muted:#94B7D4; --side-active:#166FCA;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "Inter","Segoe UI",system-ui,sans-serif}
+  .num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+  .app{display:grid;grid-template-columns:250px 1fr;min-height:100vh}
+
+  aside{background:linear-gradient(180deg,var(--side-top),var(--side-bottom));color:var(--side-text);padding:20px 12px}
+  aside .brand{font-weight:700;font-size:17px;padding:0 10px 18px}
+  aside .sec{color:var(--side-muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin:16px 10px 6px}
+  aside a{display:block;color:var(--side-text);text-decoration:none;padding:7px 10px;border-radius:8px;font-size:14px}
+  aside a.active{background:var(--side-active);box-shadow:inset 3px 0 0 #8CC7FF}
+  aside a.new::after{content:"novo";font-size:10px;background:#8CC7FF;color:var(--side);border-radius:6px;padding:1px 6px;margin-left:8px;font-weight:600}
+
+  main{padding:28px 36px 60px;max-width:1280px}
+  .proto{background:#FFF7E6;border:1px dashed var(--warn);color:#7A4300;border-radius:10px;padding:8px 14px;font-size:13px;margin-bottom:18px}
+  .head{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;flex-wrap:wrap}
+  h1{font-size:30px;margin:0 0 4px;font-weight:600}
+  .sub{color:var(--muted);margin:0}
+  h2{font-size:19px;font-weight:600;margin:0}
+  h3{font-size:15px;font-weight:600;margin:0 0 10px}
+  .hint{color:var(--muted);font-size:13px;margin:4px 0 0}
+
+  .btn{font:inherit;font-weight:600;border-radius:9px;padding:9px 16px;cursor:pointer;border:1px solid var(--border);background:var(--surface);color:var(--text)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent-strong)}
+  .btn.danger{background:var(--neg);border-color:var(--neg);color:#fff}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .src{font-size:12px;color:var(--faint);text-align:right;margin-top:6px}
+
+  /* Abas da página */
+  .ptabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin:22px 0 18px}
+  .ptabs button{font:inherit;background:none;border:none;padding:10px 14px;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;font-weight:500}
+  .ptabs button.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+  .view{display:none} .view.on{display:block}
+
+  /* Cartão-resumo */
+  .resumo{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+  .resumo .faixa{background:linear-gradient(90deg,var(--side),var(--side-active));color:#fff;padding:12px 18px;display:flex;justify-content:space-between;font-size:13px}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr)}
+  .ind{padding:14px 18px;border-right:1px solid var(--border-soft)}
+  .ind:last-child{border-right:none}
+  .ind .lbl{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+  .ind .val{font-size:24px;font-weight:600;margin-top:4px}
+  .ind .foot{font-size:12px;color:var(--faint)}
+
+  /* Registro */
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:16px 18px;margin-top:16px}
+  .stabs{display:flex;gap:6px;flex-wrap:wrap}
+  .stabs span{font-size:13px;border:1px solid var(--border);border-radius:999px;padding:5px 12px;cursor:pointer;color:var(--muted);background:var(--surface)}
+  .stabs span.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-strong);font-weight:600}
+  .stabs b{font-weight:600;margin-left:4px}
+  .filtros{display:flex;gap:10px;margin:14px 0 6px;flex-wrap:wrap}
+  input[type=text],select,textarea{font:inherit;color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;background:var(--surface)}
+  input.busca{flex:1;min-width:240px}
+
+  table{width:100%;border-collapse:collapse}
+  .tw{overflow-x:auto} .tw table{min-width:860px}
+  th{font-size:12px;font-weight:600;color:var(--muted);text-align:left;border-bottom:1px solid var(--border);padding:8px;text-transform:uppercase;letter-spacing:.04em}
+  td{border-bottom:1px solid var(--border-soft);padding:10px 8px;vertical-align:middle}
+  tr.click{cursor:pointer} tr.click:hover td{background:var(--surface-alt)}
+  .t1{font-weight:600} .t2{font-size:12px;color:var(--muted)}
+  .chip{display:inline-block;font-size:12px;font-weight:600;border-radius:999px;padding:2px 10px;white-space:nowrap}
+  .chip.pos{background:var(--pos-soft);color:var(--pos)} .chip.neg{background:var(--neg-soft);color:var(--neg)}
+  .chip.warn{background:var(--warn-soft);color:var(--warn)} .chip.mute{background:var(--surface-alt);color:var(--muted)}
+  .chip.acc{background:var(--accent-soft);color:var(--accent-strong)}
+  .cat{font-size:12px;color:var(--muted);background:var(--surface-alt);border-radius:6px;padding:2px 8px;white-space:nowrap}
+  .manual{font-size:10px;font-weight:700;color:var(--accent-strong);background:var(--accent-soft);border-radius:4px;padding:1px 5px;margin-left:6px;vertical-align:middle}
+  .nulo{color:var(--faint)}
+  .pag{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;padding-top:10px}
+
+  /* Detalhe (janela) */
+  .overlay{position:fixed;inset:0;background:rgba(7,19,61,.35);display:none;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto;z-index:5}
+  .overlay.on{display:flex}
+  .dialog{background:var(--surface);border-radius:16px;max-width:980px;width:100%;box-shadow:0 20px 60px rgba(7,19,61,.25)}
+  .dhead{padding:18px 22px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;gap:16px}
+  .dhead .x{background:none;border:none;font-size:22px;color:var(--muted);cursor:pointer;line-height:1}
+  .dbody{padding:18px 22px 22px}
+  .dl{display:grid;grid-template-columns:repeat(3,1fr);gap:12px 20px;margin-bottom:20px}
+  .dl div .lbl{font-size:12px;color:var(--muted)} .dl div .v{font-weight:500}
+  .sec2{margin-top:22px}
+  .sec2 h3 small{font-weight:400;color:var(--faint);margin-left:6px}
+  .timeline{border-left:2px solid var(--border);margin-left:6px;padding-left:18px}
+  .ev{position:relative;padding:0 0 14px}
+  .ev::before{content:"";position:absolute;left:-25px;top:4px;width:10px;height:10px;border-radius:50%;background:var(--surface);border:2px solid var(--accent)}
+  .ev.ini::before{background:var(--accent)}
+  .ev .l1{display:flex;justify-content:space-between;gap:10px}
+  .ev .l2{font-size:12px;color:var(--muted)}
+  .compl{background:var(--surface-alt);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+  .compl .row{display:grid;grid-template-columns:220px 1fr;gap:14px;align-items:start}
+  .compl label{font-size:12px;color:var(--muted);display:block;margin-bottom:4px}
+  .compl textarea{width:100%;min-height:62px;resize:vertical}
+  .compl .acts{display:flex;justify-content:space-between;align-items:center;margin-top:10px;font-size:12px;color:var(--faint)}
+  tfoot td{font-weight:600;border-top:2px solid var(--border)}
+
+  /* Atualizar */
+  .passos{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .passo{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px}
+  .passo b{display:block;font-size:12px;color:var(--accent-strong);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+  .opts{display:flex;gap:18px;align-items:center;margin:16px 0}
+  .prog{height:8px;background:var(--surface-alt);border-radius:4px;overflow:hidden;margin:6px 0}
+  .prog i{display:block;height:100%;width:100%;background:var(--pos)}
+  .delta{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:14px 0}
+  .dcard{border:1px solid var(--border);border-radius:12px;padding:12px 14px;background:var(--surface)}
+  .dcard .n{font-size:22px;font-weight:600}
+  .dcard.neg{border-color:var(--neg);background:#FDF2F2}
+  .dcard .lbl{font-size:12px;color:var(--muted)}
+  details.dd{border:1px solid var(--border);border-radius:10px;margin-top:8px;background:var(--surface)}
+  details.dd summary{cursor:pointer;padding:10px 14px;font-weight:600;display:flex;justify-content:space-between}
+  details.dd .in{padding:0 14px 12px}
+  .alerta{border:1px solid var(--neg);background:#FDF2F2;border-radius:12px;padding:12px 16px;margin-top:16px;color:#7A0A10}
+  .alerta label{display:flex;gap:8px;align-items:center;margin-top:8px;font-weight:600;color:var(--text)}
+  .confirm{display:flex;justify-content:flex-end;gap:10px;margin-top:16px}
+  .vazia{border:1px dashed var(--border);border-radius:14px;padding:28px;text-align:center;color:var(--muted);background:var(--surface)}
+  .antes{text-decoration:line-through;color:var(--faint)}
+
+  @media (max-width:900px){
+    .app{grid-template-columns:1fr} aside{display:none} main{padding:20px 16px}
+    .grid4,.delta,.passos,.dl{grid-template-columns:1fr 1fr} .compl .row{grid-template-columns:1fr}
+    .tw{overflow-x:auto}
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="brand">UFRPE BudgetLab</div>
+    <div class="sec">Planejamento</div>
+    <a href="#">Visão geral</a>
+    <a href="#">Dotação Orçamentária</a>
+    <a href="#">Resultado Orçamentário</a>
+    <div class="sec">Operação</div>
+    <a href="#">Execução Orçamentária</a>
+    <a href="#">Contratos Contínuos</a>
+    <a href="#" class="active new">Contratos</a>
+    <a href="#">Bolsas e Auxílios</a>
+    <a href="#">Emendas Parlamentares</a>
+    <div class="sec">Controle</div>
+    <a href="#">Prazos</a>
+    <a href="#">Alertas Gerenciais</a>
+  </aside>
+
+  <main>
+    <div class="proto">Protótipo de layout — cadastro de Contratos a partir do Contratos.gov.br. Contagens da consulta real de 08/10/2026; demais valores ilustrativos. Spec: <code>2026-10-08-contratosgov-cadastro-design.md</code>.</div>
+
+    <div class="head">
+      <div>
+        <h1>Contratos</h1>
+        <p class="sub">Cadastro da UG 153165 — UFRPE, a partir do Contratos.gov.br.</p>
+      </div>
+      <div>
+        <button class="btn primary" onclick="aba('atualizar')">Atualizar do Contratos.gov.br</button>
+        <div class="src">Fotografia atual: 08/10/2026 09:42 · <code>a3f9c2e81b04</code></div>
+      </div>
+    </div>
+
+    <div class="ptabs">
+      <button data-v="cadastro" class="on" onclick="aba('cadastro')">Cadastro</button>
+      <button data-v="atualizar" onclick="aba('atualizar')">Atualizar</button>
+      <button data-v="historico" onclick="aba('historico')">Histórico de atualizações</button>
+    </div>
+
+    <!-- ===================== CADASTRO ===================== -->
+    <section class="view on" id="v-cadastro">
+      <div class="resumo">
+        <div class="faixa"><span>Contratos da UFRPE no Contratos.gov.br</span><span>Vigência calculada pelas datas — não pelo campo "situação" da API</span></div>
+        <div class="grid4">
+          <div class="ind"><div class="lbl">Contratos</div><div class="val">220</div><div class="foot">210 ativos + 10 inativos na API</div></div>
+          <div class="ind"><div class="lbl">Vigentes</div><div class="val">43</div><div class="foot">em 08/10/2026</div></div>
+          <div class="ind"><div class="lbl">Vencem em 90 dias</div><div class="val" style="color:var(--warn)">6</div><div class="foot">até 06/01/2027</div></div>
+          <div class="ind"><div class="lbl">Valor global vigentes</div><div class="val">R$ 48,7 mi</div><div class="foot">soma do valor global atual</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="stabs">
+          <span class="on">Vigentes<b>43</b></span>
+          <span>A iniciar<b>2</b></span>
+          <span>Encerrados<b>165</b></span>
+          <span>Inativos<b>10</b></span>
+          <span>Todos<b>220</b></span>
+        </div>
+        <div class="filtros">
+          <input class="busca" type="text" placeholder="Buscar por nº do contrato, fornecedor, CNPJ, processo ou objeto">
+          <select><option>Todas as categorias</option><option>Serviços</option><option>Mão de Obra</option><option>Informática (TIC)</option><option>Obras</option><option>Serviços de Engenharia</option><option>Compras</option><option>A definir</option></select>
+          <select><option>Ordenar: vencimento mais próximo</option><option>Maior valor global</option><option>Nº do contrato</option></select>
+        </div>
+        <div class="tw">
+        <table>
+          <thead><tr>
+            <th>Contrato / fornecedor</th><th>Categoria</th><th>Vigência</th>
+            <th class="num">Valor global</th><th class="num">Valor mensal</th><th class="num">Termos</th><th class="num">NEs</th>
+          </tr></thead>
+          <tbody>
+            <tr class="click" onclick="abrir()">
+              <td><div class="t1">00021/2017</div><div class="t2">Empresa de Serviços Terceirizados Ltda · 12.345.678/0001-90</div></td>
+              <td><span class="cat">Mão de Obra</span></td>
+              <td>até 28/05/2027 <span class="chip pos">232 dias</span></td>
+              <td class="num">R$ 10.354.305,17</td>
+              <td class="num">R$ 862.858,76<span class="manual">MANUAL</span></td>
+              <td class="num">6</td><td class="num">4</td>
+            </tr>
+            <tr class="click" onclick="abrir()">
+              <td><div class="t1">00013/2026</div><div class="t2">Prime Consultoria e Assessoria Empresarial Ltda · 05.340.639/0001-30</div></td>
+              <td><span class="cat">Serviços</span></td>
+              <td>até 10/09/2027 <span class="chip pos">337 dias</span></td>
+              <td class="num">R$ 830.906,44</td>
+              <td class="num nulo">—</td>
+              <td class="num">1</td><td class="num">2</td>
+            </tr>
+            <tr class="click" onclick="abrir()">
+              <td><div class="t1">00034/2021</div><div class="t2">Companhia de Limpeza Exemplo S.A. · 98.765.432/0001-10</div></td>
+              <td><span class="cat">Mão de Obra</span></td>
+              <td>até 30/11/2026 <span class="chip warn">53 dias</span></td>
+              <td class="num">R$ 7.218.400,00</td>
+              <td class="num">R$ 601.533,33<span class="manual">MANUAL</span></td>
+              <td class="num">5</td><td class="num">3</td>
+            </tr>
+            <tr class="click" onclick="abrir()">
+              <td><div class="t1">00010/2022</div><div class="t2">Tecnologia Exemplo Ltda · 11.222.333/0001-44</div></td>
+              <td><span class="cat">Informática (TIC)</span></td>
+              <td>até 22/10/2026 <span class="chip neg">14 dias</span></td>
+              <td class="num">R$ 412.000,00</td>
+              <td class="num nulo">—</td>
+              <td class="num">4</td><td class="num">0</td>
+            </tr>
+            <tr class="click" onclick="abrir()">
+              <td><div class="t1">00003/2023</div><div class="t2">Construtora Exemplo Ltda · 22.333.444/0001-55</div></td>
+              <td><span class="cat">Obras</span></td>
+              <td>até 15/03/2027 <span class="chip pos">158 dias</span></td>
+              <td class="num">R$ 3.905.112,80</td>
+              <td class="num nulo">—</td>
+              <td class="num">3</td><td class="num">5</td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+        <div class="pag"><span>Mostrando 5 de 43 · clique numa linha para ver o detalhe</span><span>Valor mensal: só complemento manual (a API não traz parcela confiável)</span></div>
+      </div>
+    </section>
+
+    <!-- ===================== ATUALIZAR ===================== -->
+    <section class="view" id="v-atualizar">
+      <h2>Atualizar do Contratos.gov.br</h2>
+      <p class="hint">Consulta só de leitura. Nada é gravado antes de você confirmar; a fotografia anterior continua valendo se algo falhar.</p>
+
+      <div class="passos" style="margin-top:14px">
+        <div class="passo"><b>1 · Lista</b>Contratos ativos e inativos da UG 153165 (2 chamadas).</div>
+        <div class="passo"><b>2 · Detalhe</b>Termos e NEs dos vigentes, novos e alterados; os demais reaproveitam a fotografia anterior.</div>
+        <div class="passo"><b>3 · Prévia</b>O que mudou desde a última fotografia. Confirme para gravar.</div>
+      </div>
+
+      <div class="opts">
+        <button class="btn primary">Consultar agora</button>
+        <label><input type="checkbox"> Atualização completa (reconsultar todos os 220 — ~440 chamadas)</label>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between"><b>Consulta concluída</b><span class="t2">96 chamadas · 1 min 12 s</span></div>
+        <div class="prog"><i></i></div>
+        <div class="t2">Detalhe reconsultado: 46 contratos (43 vigentes, 2 a iniciar, 1 novo) · reaproveitado: 174</div>
+
+        <h3 style="margin-top:18px">Prévia — o que muda em relação a 01/10/2026 14:10</h3>
+        <div class="delta">
+          <div class="dcard"><div class="lbl">Contratos novos</div><div class="n">1</div></div>
+          <div class="dcard"><div class="lbl">Termos novos (aditivos / apostilamentos)</div><div class="n">2</div></div>
+          <div class="dcard"><div class="lbl">Vigência alterada</div><div class="n">1</div></div>
+          <div class="dcard"><div class="lbl">Valor global alterado</div><div class="n">2</div></div>
+          <div class="dcard"><div class="lbl">NEs novas · NEs com valores movimentados</div><div class="n">5 · 31</div></div>
+          <div class="dcard neg"><div class="lbl">Removidos (contrato, termo ou NE)</div><div class="n" style="color:var(--neg)">1</div></div>
+        </div>
+
+        <details class="dd" open><summary><span>Contratos novos (1)</span><span class="t2">▾</span></summary><div class="in">
+          <table><tr><td><span class="t1">00013/2026</span> · Prime Consultoria e Assessoria Empresarial Ltda</td><td>10/09/2026 – 10/09/2027</td><td class="num">R$ 830.906,44</td></tr></table>
+        </div></details>
+        <details class="dd"><summary><span>Termos novos (2)</span><span class="t2">▸</span></summary><div class="in">
+          <table>
+            <tr><td><span class="t1">00034/2021</span> · Termo Aditivo 00005/2026</td><td>assinado 02/10/2026</td><td>prorroga até 30/11/2027</td></tr>
+            <tr><td><span class="t1">00021/2017</span> · Termo de Apostilamento 00005/2026</td><td>assinado 03/10/2026</td><td>novo valor global</td></tr>
+          </table>
+        </div></details>
+        <details class="dd"><summary><span>Vigência e valor alterados (3)</span><span class="t2">▸</span></summary><div class="in">
+          <table>
+            <tr><td class="t1">00034/2021</td><td>Fim da vigência</td><td><span class="antes">30/11/2026</span> → 30/11/2027</td></tr>
+            <tr><td class="t1">00034/2021</td><td>Valor global</td><td class="num"><span class="antes">R$ 7.218.400,00</span> → R$ 7.650.900,00</td></tr>
+            <tr><td class="t1">00021/2017</td><td>Valor global</td><td class="num"><span class="antes">R$ 10.354.305,17</span> → R$ 10.611.040,22</td></tr>
+          </table>
+        </div></details>
+        <details class="dd"><summary><span>NEs novas (5)</span><span class="t2">▸</span></summary><div class="in t2">153165152392026NE000522, 153165152392026NE000523, …</div></details>
+
+        <div class="alerta">
+          <b>1 item deixou de aparecer na API.</b> Contrato <b>00010/2022</b>: a NE <b>153165152392026NE000301</b> não está mais vinculada a ele no Contratos.gov.br.
+          Ela continua registrada nas fotografias anteriores — nada é apagado.
+          <label><input type="checkbox" id="ciente" onchange="document.getElementById('gravar').disabled=!this.checked"> Estou ciente da remoção</label>
+        </div>
+
+        <div class="confirm">
+          <button class="btn">Descartar</button>
+          <button class="btn primary" id="gravar" disabled>Gravar fotografia</button>
+        </div>
+      </div>
+
+      <div class="vazia" style="margin-top:16px">
+        <b>Estado sem nenhuma fotografia</b><br>Ainda não há dados do Contratos.gov.br. Faça a primeira carga (≈ 440 chamadas, alguns minutos).
+        <div style="margin-top:10px"><button class="btn primary">Fazer primeira carga</button></div>
+      </div>
+    </section>
+
+    <!-- ===================== HISTÓRICO ===================== -->
+    <section class="view" id="v-historico">
+      <h2>Histórico de atualizações</h2>
+      <p class="hint">Cada linha é uma fotografia gravada (manifesto em <code>data/manifestos/</code>). As anteriores nunca são sobrescritas.</p>
+      <div class="card">
+        <table>
+          <thead><tr><th>Consulta</th><th>Fotografia</th><th class="num">Contratos</th><th class="num">Vigentes</th><th class="num">Termos</th><th class="num">NEs</th><th class="num">Reconsultados</th><th>Mudanças</th></tr></thead>
+          <tbody>
+            <tr><td>08/10/2026 09:42 <span class="chip acc">atual</span></td><td><code>a3f9c2e81b04</code></td><td class="num">220</td><td class="num">43</td><td class="num">812</td><td class="num">1.906</td><td class="num">46</td><td>1 novo · 2 termos · 1 removido</td></tr>
+            <tr><td>01/10/2026 14:10</td><td><code>7c1d09aa52f3</code></td><td class="num">219</td><td class="num">42</td><td class="num">810</td><td class="num">1.901</td><td class="num">44</td><td>3 NEs novas</td></tr>
+            <tr><td>24/09/2026 10:05</td><td><code>e40b6f17c9d2</code></td><td class="num">219</td><td class="num">42</td><td class="num">810</td><td class="num">1.898</td><td class="num">219</td><td>primeira carga</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- ===================== DETALHE ===================== -->
+<div class="overlay" id="detalhe" onclick="if(event.target===this)fechar()">
+  <div class="dialog">
+    <div class="dhead">
+      <div>
+        <div style="display:flex;gap:8px;align-items:center"><h2>Contrato 00021/2017</h2><span class="chip pos">Vigente · 232 dias</span><span class="cat">Mão de Obra</span></div>
+        <div class="hint">Empresa de Serviços Terceirizados Ltda · CNPJ 12.345.678/0001-90 · Processo 23082.000000/2017-00</div>
+      </div>
+      <button class="x" onclick="fechar()" aria-label="Fechar">×</button>
+    </div>
+    <div class="dbody">
+      <div class="dl">
+        <div><div class="lbl">Vigência atual</div><div class="v">29/05/2017 – 28/05/2027</div></div>
+        <div><div class="lbl">Valor inicial</div><div class="v num" style="text-align:left">R$ 8.190.000,00</div></div>
+        <div><div class="lbl">Valor global atual</div><div class="v num" style="text-align:left">R$ 10.354.305,17</div></div>
+        <div><div class="lbl">Modalidade</div><div class="v">Pregão</div></div>
+        <div><div class="lbl">Assinatura</div><div class="v">29/05/2017</div></div>
+        <div><div class="lbl">Situação na API</div><div class="v">Ativo <span class="t2">(guardada como veio)</span></div></div>
+      </div>
+      <div class="t2" style="margin-top:-8px">Objeto: prestação de serviços continuados de apoio administrativo com dedicação exclusiva de mão de obra…</div>
+
+      <div class="sec2">
+        <h3>Complemento manual <small>não vem da API · nunca é alterado pela atualização</small></h3>
+        <div class="compl">
+          <div class="row">
+            <div><label>Valor mensal (R$)</label><input type="text" value="862.858,76" style="width:100%"></div>
+            <div><label>Observações</label><textarea>Repactuação 2026 em análise na PROAD.</textarea></div>
+          </div>
+          <div class="acts"><span>Alterado em 06/10/2026 16:20</span><button class="btn primary">Salvar complemento</button></div>
+        </div>
+      </div>
+
+      <div class="sec2">
+        <h3>Termos <small>6 · do /historico</small></h3>
+        <div class="timeline">
+          <div class="ev"><div class="l1"><b>Termo de Apostilamento 00004/2026</b><span class="num">novo valor global R$ 10.354.305,17</span></div><div class="l2">Assinado 20/01/2026 · novo valor a partir de 01/01/2026 · retroativo 01/2026–01/2026: R$ 107.535,62</div></div>
+          <div class="ev"><div class="l1"><b>Termo Aditivo 00004/2024</b><span class="num">R$ 9.063.822,56</span></div><div class="l2">Assinado 28/11/2024 · prorroga até 28/05/2027</div></div>
+          <div class="ev"><div class="l1"><b>Termo Aditivo 00003/2022</b><span class="num">R$ 9.063.822,56</span></div><div class="l2">Assinado 07/07/2022 · prorroga até 28/11/2024</div></div>
+          <div class="ev"><div class="l1"><b>Termo Aditivo 00002/2021</b><span class="num">R$ 9.063.822,56</span></div><div class="l2">Assinado 19/08/2021 · vigência até 28/05/2022</div></div>
+          <div class="ev"><div class="l1"><b>Termo Aditivo 00001/2019</b><span class="num">R$ 8.940.000,00</span></div><div class="l2">Assinado 28/11/2019 · prorroga até 28/05/2022</div></div>
+          <div class="ev ini"><div class="l1"><b>Contrato 00021/2017</b><span class="num">R$ 8.190.000,00</span></div><div class="l2">Assinado 29/05/2017 · vigência 29/05/2017 – 28/11/2019</div></div>
+        </div>
+      </div>
+
+      <div class="sec2">
+        <h3>Notas de empenho <small>4 · do /empenhos · valores do SIAFI informados pelo Contratos.gov.br</small></h3>
+        <div class="tw">
+        <table>
+          <thead><tr><th>NE</th><th>Emissão</th><th>Natureza / PI</th><th class="num">Empenhado</th><th class="num">Liquidado</th><th class="num">Pago</th><th class="num">RP pago</th></tr></thead>
+          <tbody>
+            <tr><td><div class="t1">2026NE000014</div><div class="t2">153165152392026NE000014</div></td><td>08/01/2026</td><td><div>339037</div><div class="t2">M20RKG01ADM</div></td><td class="num">R$ 7.800.000,00</td><td class="num">R$ 6.902.870,08</td><td class="num">R$ 6.902.870,08</td><td class="num">R$ 0,00</td></tr>
+            <tr><td><div class="t1">2026NE000388</div><div class="t2">153165152392026NE000388</div></td><td>12/06/2026</td><td><div>339037</div><div class="t2">M20RKG01ADM</div></td><td class="num">R$ 1.250.000,00</td><td class="num">R$ 0,00</td><td class="num">R$ 0,00</td><td class="num">R$ 0,00</td></tr>
+            <tr><td><div class="t1">2025NE000021</div><div class="t2">153165152392025NE000021</div></td><td>10/01/2025</td><td><div>339037</div><div class="t2">M20RKG01ADM</div></td><td class="num">R$ 9.100.000,00</td><td class="num">R$ 8.991.420,15</td><td class="num">R$ 8.991.420,15</td><td class="num">R$ 412.300,00</td></tr>
+            <tr><td><div class="t1">2024NE000019</div><div class="t2">153165152392024NE000019</div></td><td>09/01/2024</td><td><div>339037</div><div class="t2">M20RKG01ADM</div></td><td class="num">R$ 8.700.000,00</td><td class="num">R$ 8.700.000,00</td><td class="num">R$ 8.700.000,00</td><td class="num nulo">—</td></tr>
+          </tbody>
+          <tfoot><tr><td colspan="3">Total</td><td class="num">R$ 26.850.000,00</td><td class="num">R$ 24.594.290,23</td><td class="num">R$ 24.594.290,23</td><td class="num">R$ 412.300,00</td></tr></tfoot>
+        </table>
+        </div>
+      </div>
+
+      <div class="t2" style="margin-top:16px">Detalhe consultado em 08/10/2026 09:41 · fotografia <code>a3f9c2e81b04</code> · id no Contratos.gov.br: 18940</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function aba(v){
+    document.querySelectorAll('.view').forEach(e=>e.classList.toggle('on',e.id==='v-'+v));
+    document.querySelectorAll('.ptabs button').forEach(b=>b.classList.toggle('on',b.dataset.v===v));
+  }
+  function abrir(){document.getElementById('detalhe').classList.add('on')}
+  function fechar(){document.getElementById('detalhe').classList.remove('on')}
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')fechar()});
+</script>
+</body>
+</html>

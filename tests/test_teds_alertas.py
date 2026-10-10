@@ -299,15 +299,41 @@ class DetectaDocumentosNcParciaisTests(unittest.TestCase):
         self.assertEqual(len(parciais), 1)
         self.assertEqual(parciais[0].numero_nc, "2025NC000265")
 
-    def test_gera_um_alerta_de_gravidade_media_por_documento_parcial(self):
+    def test_gera_um_alerta_de_gravidade_baixa_por_ted_com_nc_parcial(self):
+        # Atualizado em 08/10/2026: era um alerta "media" por documento de NC; a regra revista (spec
+        # 2026-10-08-teds-alertas-e-controle-nc-design.md, §3.3) gera um alerta "baixa" por TED,
+        # documento "ted:<chave_ted>", listando as NCs sem UG.
         parciais = detectar_documentos_nc_parciais(self._documentos())
         alertas = gerar_alertas_nc_parcial(parciais)
         self.assertEqual(len(alertas), 1)
         alerta = alertas[0]
         self.assertEqual(alerta.tipo, TIPO_NC_UG_EMITENTE_AUSENTE)
-        self.assertEqual(alerta.gravidade, "media")
-        self.assertEqual(alerta.documento, "12172|1AAMPD|2025NC000265|+|2025-07-02")
+        self.assertEqual(alerta.gravidade, "baixa")
+        self.assertEqual(alerta.documento, f"ted:{TED_17352}")
         self.assertIn("2025NC000265", alerta.descricao)
+
+    def test_nc_sem_ug_um_alerta_por_ted(self):
+        def _parcial(numero, ted):
+            return DocumentoNC(f"{ted}|{numero}", numero, ted, "PARCIAL")
+
+        documentos = [
+            _parcial("2025NC000001", TED_17352),
+            _parcial("2025NC000002", TED_17352),
+            _parcial("2025NC000003", TED_17352),
+            DocumentoNC(f"{TED_17454}|2026NC000101", "2026NC000101", TED_17454, "OK"),
+        ]
+        alertas = gerar_alertas_nc_parcial(detectar_documentos_nc_parciais(documentos))
+        self.assertEqual([(a.documento, a.chave_ted, a.gravidade) for a in alertas],
+                         [(f"ted:{TED_17352}", TED_17352, "baixa")])
+        for numero in ("2025NC000001", "2025NC000002", "2025NC000003"):
+            self.assertIn(numero, alertas[0].descricao)
+        self.assertIn("3 NC", alertas[0].descricao)
+
+    def test_nc_sem_ted_agrupa_em_sem_ted(self):
+        documentos = [DocumentoNC("orfa1", "2025NC000009", None, "PARCIAL"),
+                      DocumentoNC("orfa2", "2025NC000010", None, "PARCIAL")]
+        (alerta,) = gerar_alertas_nc_parcial(documentos)
+        self.assertEqual((alerta.documento, alerta.chave_ted), ("ted:(sem TED)", None))
 
     def test_sem_documento_parcial_nao_gera_alerta(self):
         documentos = [self._documentos()[1]]  # só o OK
@@ -361,11 +387,13 @@ class SincronizacaoNcParcialComBancoTests(unittest.TestCase):
         self.assertEqual(abertos, 1)
 
     def test_documento_ok_nao_gera_alerta(self):
+        # Atualizado em 08/10/2026: o documento do alerta passou a ser o TED, não a NC (spec
+        # 2026-10-08-teds-alertas-e-controle-nc-design.md, §3.3).
         sincronizar_alertas_nc_parcial(self.conn)
-        documento = self.conn.execute(
+        documentos = self.conn.execute(
             "SELECT documento FROM alerta WHERE tipo = ?", (TIPO_NC_UG_EMITENTE_AUSENTE,)
-        ).fetchone()[0]
-        self.assertEqual(documento, "12172|1AAMPD|2025NC000265|+|2025-07-02")
+        ).fetchall()
+        self.assertEqual(documentos, [(f"ted:{TED_17352}",)])
 
 
 if __name__ == "__main__":

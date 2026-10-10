@@ -340,11 +340,16 @@ _CHAVE_BLOCO = ["ne_ccor", "natureza_detalhada_cod", "subitem_cod", "ano_mes"]
 #: bloco em si — todas constantes dentro de um bloco (mesma NE, mesma Natureza
 #: Detalhada/Subitem, mesmo mês), então `"first"` nunca perde nem mistura dado; existem aqui
 #: só para permitir composição por dimensão (ex.: Empenhado por GND) sem duplicar a conta.
+#: Fonte Recursos Detalhada (08/10/2026): incluída para permitir cruzar empenhos com as células
+#: da Dotação/Resultado Orçamentário no nível da fonte detalhada; é constante por NE, então
+#: `"first"` não mistura dado dentro do bloco.
 _DIMENSOES_EXTRA_BLOCO = {
     "elemento_cod": "elemento_cod", "elemento_desc": "elemento_desc",
     "natureza_detalhada_desc": "natureza_detalhada_desc",
     "gnd_cod": "gnd_cod", "gnd_desc": "gnd_desc",
     "fonte_cod": "fonte_cod", "fonte_desc": "fonte_desc",
+    "fonte_recursos_detalhada_cod": "fonte_recursos_detalhada_cod",
+    "fonte_recursos_detalhada_desc": "fonte_recursos_detalhada_desc",
     "acao_cod": "acao_cod", "acao_desc": "acao_desc",
     "ugr_cod": "ugr_cod", "ugr_desc": "ugr_desc",
     "ptres": "ptres",

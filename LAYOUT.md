@@ -23,7 +23,6 @@ Navegação lateral (`st.navigation`, `position="sidebar"`, definida em `app.py`
 | 6 | Empenhos com Execução Retardada | `app_pages/empenhos_execucao_retardada.py` | *(sem grupo)* | `schedule` |
 | 7 | Bolsas e Auxílios | `app_pages/bolsas_auxilios.py` | *(sem grupo)* | `school` |
 | 8 | Contratos Contínuos | `app_pages/contratos_continuos.py` | **Contratos** | `handshake` |
-| 9 | Contratos — Vigência | `app_pages/contratos_vigencia.py` | **Contratos** | `event_upcoming` |
 | 10 | Atualizar Planilhas | `app_pages/atualizar_planilhas.py` | **Administração** | `upload_file` |
 
 **Página existente mas fora do menu** (código mantido, `st.Page` comentado em `app.py`,
@@ -188,30 +187,6 @@ Ordem vertical de renderização. "N cols" indica quantas colunas a linha usa. B
   por padrão (3 cartões, "Ver mais"/"Ver menos"), cada cartão com a mesma estrutura de campo
   editável em grade que Bolsas (mais "Meses Pagos (Pagamentos)")
 - Diálogo de relatório (mesmo componente de Bolsas)
-
-### 2.9 Contratos — Vigência (`contratos_vigencia.py`)
-- Header
-- CSS próprio (`_inject_css`, prefixo `.ct-*`)
-- Linha `st.columns([3,1])`: espaço + "Atualizado em ..." + botão "Atualizar dados"
-- Banner de defasagem condicional (`.ct-banner`, se dados com ≥2 dias)
-- `st.checkbox` — "Mostrar todos os contratos"
-- "Filtros" (subheader): `st.columns(4)` (Contrato, Contratado, Término, Dias) +
-  `st.columns(3)` (Criticidade, Mensal vigente, Pendências)
-- Faixa de KPIs (`st.columns(6)`, `st.metric`): Contratos vigentes, Vencem em 30d, Vencem
-  31–120d, Sem termo final, Projeção do exercício, Com pendências
-- "Vencimentos por faixa" (subheader): 7 linhas `st.columns([2,6,1])` com `st.progress`
-  (rótulo | barra | contagem)
-- "Contratos" (subheader) + `st.columns([3,1])` (contagem | `st.selectbox` "Ordenar")
-- Tabela em grade HTML/widgets (`st.columns([1.4,2,1.2,1,1,1.2,1.3,0.6])`, 8 colunas:
-  Contrato, Contratado, Término, Dias, Criticidade, Mensal vigente, Pendências, botão "Ver")
-- "Ver mais" (paginação 20+20)
-- "Vigência × Contratos Contínuos" (subheader): grade HTML de 8 colunas comparando as duas
-  bases
-- `@st.dialog("Detalhe do contrato", width="large")`:
-  - Título + badges (situação, criticidade, pendências)
-  - `st.columns(4)` de métricas
-  - `st.tabs` (6 abas): Visão geral, Linha do tempo, Financeiro, Empenhos, Documentos e
-    responsáveis, Auditoria — cada uma com campos editáveis/tabelas próprias
 
 ### 2.10 Contratos — Pagamentos (`contratos_pagamentos.py`, fora do menu)
 - Header
@@ -465,7 +440,6 @@ Funções auxiliares no mesmo arquivo (`src/ui_theme.py`), usadas por quase toda
 | Bolsas e Auxílios | `.bls-*` | `_inject_css()` em `bolsas_auxilios.py` |
 | Contratos Contínuos | `.cc-*` | `_inject_css()` em `contratos_continuos.py` (mesma estrutura de `.bls-*`) |
 | Consulta de Empenhos | `.ce-*` | `_inject_css()` em `consulta_empenhos.py` |
-| Contratos — Vigência | `.ct-*` | `_inject_css()` em `contratos_vigencia.py` |
 | Contratos — Pagamentos | `.pg-*` | `_inject_css()` em `contratos_pagamentos.py` |
 | Dotação, Execução, Empenhos Retardada, Início, Atualizar Planilhas | — | sem CSS próprio, só `_THEME_CSS` + widgets nativos |
 
@@ -618,17 +592,6 @@ páginas (Contratos Contínuos reaproveita o padrão de Bolsas, só troca o pref
 .bls-dotacao-foot-label { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: #93A1B8; }
 ```
 
-**Contratos — Vigência (`.ct-*`)**:
-
-```css
-.ct-kicker { font-family: "Segoe UI Semibold", "Segoe UI", system-ui, sans-serif; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: #93A1B8; }
-.ct-label { font-family: "Segoe UI Semibold", "Segoe UI", system-ui, sans-serif; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: #93A1B8; }
-.ct-badge { display: inline-block; font-family: "Segoe UI Semibold", "Segoe UI", system-ui, sans-serif; font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; padding: 2px 7px; border-radius: 3px; margin: 0 4px 4px 0; }
-.ct-banner { padding: 9px 14px; border: 1px solid #F5A524; background: #F5A5241A; color: #F5A524; font-size: 12.5px; border-radius: 4px; }
-.st-key-cv_tabela div[data-testid="stVerticalBlockBorderWrapper"] { border: 1px solid #232E45 !important; border-radius: 4px; background: #121B2D; }
-.st-key-cv_comparacao div[data-testid="stVerticalBlockBorderWrapper"] { border: 1px solid #232E45 !important; border-radius: 4px; background: #121B2D; }
-```
-
 **Contratos — Pagamentos (`.pg-*`)**:
 
 ```css
@@ -651,8 +614,8 @@ páginas (Contratos Contínuos reaproveita o padrão de Bolsas, só troca o pref
 
 ### 4.2 Badge/tag de status (`_badge`, padrão repetido — não uma função compartilhada, cada
 página reimplementa)
-- **Onde**: `contratos_vigencia.py::_badge`, `contratos_pagamentos.py::_badge`, classes
-  `.bls-tag`/`.cc-tag`/`.ct-badge`/`.pg-badge`.
+- **Onde**: `contratos_pagamentos.py::_badge`, classes
+  `.bls-tag`/`.cc-tag`/`.pg-badge`.
 - **Padrão visual**: `<span>` com `background: {cor}22` (opacidade ~13%) + `color: {cor}`
   sólida — nunca preenchimento sólido.
 - **Variações por significado** (ver seção 5 para o mapeamento completo de cor):
@@ -669,7 +632,7 @@ página reimplementa)
   soma `QTD_INCREMENTO_*`; "Ver menos" (onde existe) volta para `QTD_INICIAL_*`. Botão
   `st.button`, sem estilo de link.
 - **Variação**: nem toda lista tem "Ver menos" (só onde foi pedido explicitamente:
-  Resumo Consolidado, listas de Bolsas/Contratos Contínuos/Contratos — Vigência).
+  Resumo Consolidado, listas de Bolsas/Contratos Contínuos).
 
 ### 4.4 Cabeçalho de grupo expansível (`st.expander`)
 - **Onde**: cartão por contrato/bolsa (Bolsas, Contratos Contínuos), "Pasta de entrada"
@@ -680,7 +643,7 @@ página reimplementa)
   emoji de status: 🟢 ativo sem reforço, 🟡 necessita reforço, 🔴 vencido/sem empenho.
 
 ### 4.5 Diálogo modal (`@st.dialog`)
-- **Onde**: Contratos — Vigência (`_abrir_detalhe`, `width="large"`), Empenhos Retardada
+- **Onde**: Empenhos Retardada
   (detalhe do empenho, `width="large"`), Relatório de Reforço de Empenho (Bolsas/Contratos
   Contínuos, `width="large"`).
 - **Padrão**: título + badges de status no topo → `st.columns` de métricas → conteúdo
@@ -688,7 +651,7 @@ página reimplementa)
 
 ### 4.6 Linha de tabela em grade CSS (não `st.dataframe`)
 - **Onde**: praticamente toda tabela "de negócio" do app (Painel por Ação, Resumo
-  Consolidado, Consulta de Empenhos, Contratos — Vigência, Contratos — Pagamentos) — decisão
+  Consolidado, Consulta de Empenhos, Contratos — Pagamentos) — decisão
   deliberada documentada no código: `st.dataframe` "lia como planilha" (grid do
   glide-data-grid, fora do alcance do CSS do app).
 - **Padrão**: `display: grid` com `grid-template-columns` fixo (larguras `minmax(...)`
@@ -758,7 +721,7 @@ NEGATIVE, TEXT_MUTED]`).
 | **Streamlit** (nativo) | Framework base — todos os widgets de formulário, `st.dataframe`, `st.metric`, `st.tabs`, `st.dialog`, `st.popover`, `st.expander`, `st.container` | Todas |
 | **Plotly** (`plotly.graph_objects`, via `st.plotly_chart`) | Único gráfico de terceiros do app — linha/área (Dotação), barras agrupadas (Execução, Série Histórica) | Dotação Orçamentária, Execução Orçamentária |
 | **reportlab** | Geração de PDF (relatório de Reforço de Empenho) — não é UI renderizada na tela, só o arquivo baixado | Bolsas, Contratos Contínuos (via `st.download_button`) |
-| HTML/CSS customizado (`st.markdown(unsafe_allow_html=True)`) | Cartões, grades de tabela, badges — ver seções 2–4 | Painel por Ação, Bolsas, Contratos Contínuos, Consulta de Empenhos, Contratos — Vigência, Contratos — Pagamentos |
+| HTML/CSS customizado (`st.markdown(unsafe_allow_html=True)`) | Cartões, grades de tabela, badges — ver seções 2–4 | Painel por Ação, Bolsas, Contratos Contínuos, Consulta de Empenhos, Contratos — Pagamentos |
 
 **Não usados neste projeto**: `streamlit-aggrid`, Altair, `streamlit-plotly-events`,
 `streamlit-elements`, ou qualquer outro pacote de componente customizado de terceiros. Toda a
@@ -807,15 +770,6 @@ Colunas: `processo, programa_bolsa, unidade_cod, acao_cod, ptres, fonte_cod, nat
 |---|---|---|---|---|---|---|---|
 | 001167/2026-78 | AUXÍLIOS PARA DESENVOLVIMENTO DE ESTUDOS E PESQUISA (AJUDA DE CUSTO PARA AULA PRÁTICA) | 2026NE000057 | 1 | 30.000,00 | 217.000,00 | 86.723,00 | ATUALIZADO |
 | 002429/2026-11 | PROGRAMA DE ENSINO PRESENCIAL E REMOTO DE IDIOMAS (BOLSA PEPRI) | 2026NE000232 | 3 | 2.100,00 | 11.200,00 | 1.400,00 | ATUALIZADO |
-
-### 7.5 Contratos — Vigência (`consolidar_por_contrato`, um por número de contrato)
-
-Colunas: `numero_contrato, ano_contrato, contratado, cnpj_cpf, objeto, classificacao_objeto, natureza_objeto, tipo_despesa, unidade_gestora, termo_atual, finalidade_termo_atual, termo_final, dias_para_vencer, criticidade, valor_mensal, valor_anual, gestor, email_gestor, garantia_status, arquivo_pdf, qtd_termos, alertas, linha_origem_atual`
-
-| numero_contrato | contratado | termo_final | dias_para_vencer | criticidade | valor_mensal |
-|---|---|---|---|---|---|
-| 34/2012 | WALTER LUIZ OLIVEIRA DO VALE | 2015-07-31 | -4044 | Vencido | (nulo) |
-| 35/2024 | SERVAL SERVIÇOS E LIMPEZA LTDA | 2026-06-16 | -71 | Vencido | 697.420,44 |
 
 ### 7.6 Contratos — Pagamentos (`ler_pagamentos`, ano 2026)
 

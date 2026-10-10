@@ -7,6 +7,7 @@ Abas (27/09/2026): "Acompanhamento" (o componente), "Fórmulas de projeção" (c
 editáveis dos parâmetros, só na sessão) e "Exercícios anteriores" (execução realizada).
 """
 from datetime import datetime
+import gc
 
 import pandas as pd
 import streamlit as st
@@ -50,6 +51,13 @@ def _cached_execucao_mensal(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.
 def _cached_dotacao_anual(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
     return carregar_dotacao_atual()
 
+
+# Memória (07/10/2026): a cada interação o `st.cache_data` devolve CÓPIAS das bases (DataFrames
+# inteiros), que ficam presas em referências circulares; o coletor do Python dispara pela quantidade de
+# objetos, não pelo tamanho, e a sessão subia ~0,25 GB por interação (1,6 → 5,2 GB em 20). Coleta no
+# início (lixo da interação anterior, em qualquer caminho — inclusive os `st.stop()`) e no fim. Custo
+# ~0,1 s por coleta; nenhum dado é alterado (mesma correção da Consulta de Empenhos).
+gc.collect()
 
 # Escopo desta página: o componente tem o espaçamento de 32px do HTML original.
 st.html("""<style>
@@ -191,3 +199,5 @@ with aba_painel:
     if resultado.restaurar and resultado.restaurar.get("referencia") == ano_mes_referencia:
         st.session_state[chave_edicoes] = {}
         st.rerun()
+
+gc.collect()  # ver o comentário no início da página

@@ -47,6 +47,14 @@ class SchemaTests(unittest.TestCase):
             conn.close()
             conn2.close()
 
+    def test_conexao_espera_o_bloqueio_do_banco_por_30_segundos(self):
+        # Vários servidores Streamlit compartilham o arquivo; o padrão de 5 s gerava "database is locked".
+        conn = conectar(":memory:")
+        try:
+            self.assertEqual(conn.execute("PRAGMA busy_timeout").fetchone()[0], 30000)
+        finally:
+            conn.close()
+
     def test_banco_novo_ja_tem_colunas_de_total_de_controle(self):
         # Regra 6.2 do briefing: as colunas de total de controle existem mesmo num banco criado
         # do zero (não só como resultado da migração de um banco antigo).

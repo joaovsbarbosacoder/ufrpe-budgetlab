@@ -11,7 +11,7 @@ Duas famílias de base, cada uma com sua própria mecânica, mas juntas nesta p�
     22/09/2026, pedido do usuário — ver histórico do git se precisar da referência) — as
     especificações agora vivem em `src/reimportacao_especificacoes.py` (só assim dá pra
     importar sem rodar a página de análise inteira como efeito colateral do import).
-  * Contratos Contínuos, Bolsas e Auxílios, Contratos — Vigência, Contratos — Pagamentos —
+  * Contratos Contínuos, Bolsas e Auxílios, Contratos — Pagamentos —
     planilhas de trabalho SEM reimportação versionada (sem manifesto, sem detecção de delta).
     Cada envio é validado com o leitor da própria base antes de aceitar
     (`src/atualizar_planilhas.py::substituir_planilha`) — layout errado é rejeitado sem tocar
@@ -131,7 +131,7 @@ _render_card_versionado(
 
 st.subheader("Planilhas de trabalho")
 st.caption(
-    "Contratos Contínuos, Bolsas e Auxílios, Contratos — Vigência, Contratos — Pagamentos e "
+    "Contratos Contínuos, Bolsas e Auxílios, Contratos — Pagamentos e "
     "Liquidação por Competência — sem reimportação versionada: cada envio substitui o arquivo "
     "inteiro, com a versão anterior preservada em data/raw/_backup/."
 )

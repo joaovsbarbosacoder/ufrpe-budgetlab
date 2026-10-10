@@ -22,8 +22,10 @@ ou ignora e começa em zero (Anulação).
 Os DOIS modelos de PDF em uso (ver histórico da conversa para os PDFs de referência — dois
 modelos distintos, os dois precisam ser emitidos, para os dois tipos de relatório):
 
-  * "Detalhado" (`gerar_pdf_detalhado`) — Processo, Item de Despesa, Item Lic., Unidade, Ação,
-    PTRES, Fonte, ND, UGR, PI, Empenho, Empenhar (R$); Processo/Unidade/Empenho repetidos em
+  * "Detalhado" (`gerar_pdf_detalhado`) — cabeçalho do PDF de referência da PROPLAD: Nº
+    Contrato, Nº Processo Empenho, Fornecedor, CNPJ/CPF Fornec, Ação, PTRES, Fonte, ND, UGR, PI,
+    Empenho, Item Lic., Empenhar (R$) (sem Unidade, pedido explícito; Nº Contrato/CNPJ em
+    branco em Bolsas); Processo/Empenho repetidos em
     toda linha; uma linha por item de licitação (`linhas_para_processo`/`coluna_itens`), em
     ordem alfabética por fornecedor.
   * "Resumido" (`gerar_pdf_resumido`) — Ação, PTRES, Fonte, ND, PI, UGR, Empenhar (R$); layout
@@ -151,6 +153,10 @@ class EspecificacaoRelatorio:
     #: mensal da linha passa a ser o VIGENTE e o rateio dos itens o vigente; a sugestão "por calendário"
     #: percorre o custo mês a mês (`_pesos`) em vez de multiplicar um valor único.
     coluna_aditivos: str | None = None
+    #: colunas opcionais "Nº CONTRATO" e "CNPJ/CPF FORNEC" do modelo detalhado (cabeçalho do PDF de
+    #: referência da PROPLAD) — só existem em Contratos Contínuos; em Bolsas saem em branco.
+    coluna_contrato: str | None = None
+    coluna_cnpj_cpf: str | None = None
 
 
 BOLSAS_AUXILIOS = EspecificacaoRelatorio(
@@ -181,6 +187,8 @@ CONTRATOS_CONTINUOS = EspecificacaoRelatorio(
     coluna_inicio_data="inicio_execucao_data",
     coluna_data_suspensao="data_suspensao",
     coluna_aditivos="aditivos",
+    coluna_contrato="contrato_numero",
+    coluna_cnpj_cpf="fornecedor_cnpj_cpf",
 )
 
 @dataclass(frozen=True)
@@ -240,8 +248,8 @@ def _cabecalho_detalhado(tipo: TipoRelatorio) -> list[str]:
     "ITEM DE DESPESA" só ganha o sufixo "— Item N" quando o contrato tem mais de um item)."""
 
     return [
-        "PROCESSO", "ITEM DE DESPESA", "ITEM LIC.", "UNIDADE", "AÇÃO", "PTRES", "FONTE", "ND",
-        "UGR", "PI", "EMPENHO", tipo.rotulo_coluna_valor,
+        "Nº CONTRATO", "Nº PROCESSO EMPENHO", "FORNECEDOR", "CNPJ/CPF FORNEC", "AÇÃO", "PTRES",
+        "FONTE", "ND", "UGR", "PI", "EMPENHO", "ITEM LIC.", tipo.rotulo_coluna_valor,
     ]
 
 
@@ -257,7 +265,7 @@ def processos_disponiveis(df: pd.DataFrame, spec: EspecificacaoRelatorio) -> lis
 _COLUNAS_LINHAS = [
     "processo", "item_despesa", "item_despesa_base", "unidade_cod", "acao_cod", "ptres",
     "fonte_cod", "natureza_despesa_cod", "ugr_cod", "pi_cod", "ne_curta", "valor_mensal",
-    "saldo", "meses_sugeridos", "item_licitacao",
+    "saldo", "meses_sugeridos", "item_licitacao", "contrato", "cnpj_cpf",
 ]
 
 #: colunas intermediárias, usadas só por `_com_sugestao_por_calendario` — descartadas do
@@ -271,6 +279,8 @@ _COLUNAS_CALENDARIO = [
 def _linha_base(linha: pd.Series, spec: EspecificacaoRelatorio) -> dict:
     return {
         "processo": linha[spec.coluna_processo],
+        "contrato": linha.get(spec.coluna_contrato) if spec.coluna_contrato else None,
+        "cnpj_cpf": linha.get(spec.coluna_cnpj_cpf) if spec.coluna_cnpj_cpf else None,
         "unidade_cod": linha["unidade_cod"],
         "acao_cod": linha["acao_cod"],
         "ptres": linha["ptres"],
@@ -552,6 +562,14 @@ def linhas_para_processo(
         resultado = pd.DataFrame(
             {
                 "processo": filtrado[spec.coluna_processo],
+                "contrato": (
+                    filtrado[spec.coluna_contrato]
+                    if spec.coluna_contrato and spec.coluna_contrato in filtrado.columns else pd.NA
+                ),
+                "cnpj_cpf": (
+                    filtrado[spec.coluna_cnpj_cpf]
+                    if spec.coluna_cnpj_cpf and spec.coluna_cnpj_cpf in filtrado.columns else pd.NA
+                ),
                 "item_despesa": filtrado[spec.coluna_item_despesa],
                 # sem `coluna_itens` nunca tem sufixo "— Item N" pra tirar — mesmo texto de
                 # "item_despesa" (ver docstring de `_linha_base`).
@@ -636,7 +654,18 @@ def _formatar_valor(valor: float) -> str:
 #: bem mais longa que as demais colunas), empurrando "EMPENHAR (R$)" para fora da página —
 #: por isso "Item de Despesa" (e "Processo", mais curto mas por segurança) usam `Paragraph`
 #: em vez de string simples, para quebrar linha dentro da largura fixa, não estourá-la.
-_LARGURAS_COLUNA_DETALHADO = [66, 175, 36, 42, 38, 42, 34, 38, 38, 62, 62, 62]
+_LARGURAS_COLUNA_DETALHADO = [54, 68, 142, 76, 36, 40, 36, 38, 36, 66, 66, 34, 64]
+
+
+def _texto_ou_vazio(valor) -> str:
+    return "" if valor is None or pd.isna(valor) else str(valor)
+
+
+def _formatar_cnpj_cpf(valor) -> str:
+    # A planilha guarda o documento como número e perde zeros à esquerda: 12-13 dígitos só
+    # podem ser CNPJ (14) truncado; 11 dígitos é CPF e fica como veio.
+    texto = _texto_ou_vazio(valor)
+    return texto.zfill(14) if texto.isdigit() and len(texto) in (12, 13) else texto
 
 #: Modelo "resumido" (ver `gerar_pdf_resumido`): sem Unidade/Empenho, Item de Despesa ganha o
 #: espaço que sobra.
@@ -737,25 +766,45 @@ def gerar_pdf_detalhado(spec: EspecificacaoRelatorio, tipo: TipoRelatorio, proce
 
     linhas = linhas.sort_values("item_despesa", key=lambda coluna: coluna.str.casefold())
 
-    dados = [_cabecalho_detalhado(tipo)]
+    # cabeçalho do modelo da PROPLAD: negrito, centralizado, sem fundo cinza, grade preta — como
+    # `Paragraph` para "Nº PROCESSO EMPENHO" e "CNPJ/CPF FORNEC" quebrarem em duas linhas.
+    estilo_cabecalho = estilo_celula.clone("cabecalho_detalhado")
+    estilo_cabecalho.fontName = "Helvetica-Bold"
+    estilo_cabecalho.alignment = 1
+    dados = [[_celula_texto(titulo, estilo_cabecalho) for titulo in _cabecalho_detalhado(tipo)]]
     for linha in linhas.itertuples():
         item_lic = getattr(linha, "item_licitacao", None)
         item_despesa_exibido = getattr(linha, "item_despesa_base", None) or linha.item_despesa
         dados.append(
             [
-                _celula_texto(linha.processo, estilo_celula),
+                _texto_ou_vazio(getattr(linha, "contrato", None)),
+                _texto_ou_vazio(linha.processo),
                 _celula_texto(item_despesa_exibido, estilo_celula),
-                str(int(item_lic)) if pd.notna(item_lic) else "—",
-                str(linha.unidade_cod), str(linha.acao_cod), str(linha.ptres),
+                _formatar_cnpj_cpf(getattr(linha, "cnpj_cpf", None)),
+                str(linha.acao_cod), str(linha.ptres),
                 str(linha.fonte_cod), str(linha.natureza_despesa_cod), str(linha.ugr_cod),
-                str(linha.pi_cod), str(linha.ne_curta), _formatar_valor(float(linha.empenhar)),
+                str(linha.pi_cod), str(linha.ne_curta),
+                str(int(item_lic)) if pd.notna(item_lic) else "—",
+                _formatar_valor(float(linha.empenhar)),
             ]
         )
     total = float(linhas["empenhar"].sum())
-    dados.append(["", "", "", "", "", "", "", "", "", "", "TOTAL", _formatar_valor(total)])
+    dados.append([""] * 11 + ["TOTAL", _formatar_valor(total)])
 
     tabela = Table(dados, colWidths=_LARGURAS_COLUNA_DETALHADO, repeatRows=1)
-    tabela.setStyle(_estilo_tabela(indice_inicio_alinhamento_direita=2))
+    tabela.setStyle(
+        TableStyle(
+            [
+                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+                ("ALIGN", (-1, 1), (-1, -1), "RIGHT"),
+                ("ALIGN", (-2, 1), (-2, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ]
+        )
+    )
     elementos.append(tabela)
     documento.build(elementos)
     return buffer.getvalue()

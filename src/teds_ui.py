@@ -140,6 +140,28 @@ def dash(valor: object) -> str:
     return str(valor)
 
 
+def data_br(valor: object, *, com_hora: bool = False) -> str:
+    """Data (texto ISO, `date`, `datetime` ou Timestamp) no padrão dd/mm/aaaa; `com_hora` acrescenta
+    `HH:MM`. Nulo vira "—". Texto que não seja data ISO é devolvido como veio — nada é descartado."""
+
+    if valor is None or (isinstance(valor, float) and pd.isna(valor)) or valor is pd.NaT:
+        return "—"
+    if isinstance(valor, str):
+        texto = valor.strip()
+        if not texto:
+            return "—"
+        try:
+            valor = pd.Timestamp(texto) if len(texto) >= 10 and texto[4] == "-" else None
+        except (ValueError, TypeError):
+            valor = None
+        if valor is None:
+            return texto
+    try:
+        return pd.Timestamp(valor).strftime("%d/%m/%Y %H:%M" if com_hora else "%d/%m/%Y")
+    except (ValueError, TypeError):
+        return str(valor)
+
+
 def pct(numerador: Decimal, denominador: Decimal) -> tuple[float, str]:
     """`(fração 0-1 para a barra, texto "NN%" ou "—")`."""
 
@@ -368,7 +390,7 @@ def render_timeline(marcos: list[tuple[str, str, str]], *, vazio: str = "Sem dat
         return
     itens = "".join(
         f"<div class='teds-timeline-item' style='--tone:{escape(cor)}'>"
-        f"<div class='teds-timeline-date'>{escape(data)}</div>"
+        f"<div class='teds-timeline-date'>{escape(data_br(data))}</div>"
         f"<div class='teds-timeline-label'>{escape(rotulo)}</div></div>"
         for data, rotulo, cor in marcos
     )
@@ -918,6 +940,7 @@ _ROTULO_TIPO_RELATORIO = {
     "tesouro_gerencial_execucao": "Tesouro Gerencial — Execução",
     TIPO_NC_TG_HISTORICA: "Tesouro Gerencial — NC (Destaques Recebidos)",
     TIPO_NC_TG_2026: "Tesouro Gerencial — NC 2026",
+    "transferegov_ted": "TransfereGov — TEDs (API)",
 }
 
 _ROTULOS_COLUNA_LOTE = {

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Fixture SINTÉTICA no formato dos XML do INLABS (não é publicação real do DOU).
+     Ver tests/test_dou_inlabs.py. -->
+<xml>
+  <article id="40000001" name="EXTRATO DE CONTRATO 12/2026" idOficio="11111" pubName="DO3" artType="Extrato de Contrato" pubDate="08/10/2026" artClass="00034:00010" artCategory="Ministério da Educação/Universidade Federal Rural de Pernambuco/Pró-Reitoria de Administração" artSize="12" artNotes="" numberPage="80" pdfPage="http://pesquisa.in.gov.br/imprensa/jsp/visualiza/index.jsp?data=08/10/2026&amp;jornal=530&amp;pagina=80" editionNumber="193" highlightType="" highlightPriority="" highlight="" highlightimage="" highlightimagename="" idMateria="0000001">
+    <body>
+      <Identifica><![CDATA[EXTRATO DE CONTRATO Nº 12/2026 - UASG 153165]]></Identifica>
+      <Data><![CDATA[]]></Data>
+      <Ementa />
+      <Titulo />
+      <SubTitulo />
+      <Texto><![CDATA[<p class="identifica">EXTRATO DE CONTRATO Nº 12/2026 - UASG 153165</p><p>Contratante: UNIVERSIDADE FEDERAL RURAL DE PERNAMBUCO. Objeto: serviços contínuos de limpeza. Valor: R$ 1.234.567,89.</p><p class="assina">FULANO DE TAL</p>]]></Texto>
+    </body>
+  </article>
+  <article id="40000002" name="PORTARIA 99" idOficio="22222" pubName="DO1" artType="Portaria" pubDate="08/10/2026" artClass="00010" artCategory="Ministério do Planejamento e Orçamento/Secretaria de Orçamento Federal" artSize="12" artNotes="" numberPage="10" pdfPage="" editionNumber="193" highlightType="" highlightPriority="" highlight="" highlightimage="" highlightimagename="" idMateria="0000002" atributoNovo="valor-preservado">
+    <body>
+      <Identifica><![CDATA[PORTARIA SOF Nº 99, DE 7 DE OUTUBRO DE 2026]]></Identifica>
+      <Data><![CDATA[7 de outubro de 2026]]></Data>
+      <Ementa><![CDATA[Abre crédito suplementar em favor de diversos órgãos.]]></Ementa>
+      <Titulo />
+      <SubTitulo />
+      <Texto><![CDATA[<p>Unidade orçamentária 26248 - Univ. Fed. Rural de Pernambuco: R$ 500.000,00. Unidade 262480: R$ 1,00.</p>]]></Texto>
+      <Anexo><![CDATA[conteúdo fora do esquema]]></Anexo>
+    </body>
+  </article>
+  <article id="40000003" name="AVISO DE LICITACAO" idOficio="33333" pubName="DO3" artType="Aviso" pubDate="data-invalida" artClass="00034" artCategory="Ministério da Educação/Universidade Federal de Pernambuco" artSize="12" artNotes="" numberPage="81" pdfPage="" editionNumber="193" highlightType="" highlightPriority="" highlight="" highlightimage="" highlightimagename="" idMateria="0000003">
+    <body>
+      <Identifica><![CDATA[AVISO DE LICITAÇÃO - UASG 1531650]]></Identifica>
+      <Data />
+      <Ementa />
+      <Titulo />
+      <SubTitulo />
+      <Texto><![CDATA[<p>Pregão eletrônico. Contato: ufrpex@exemplo.br</p>]]></Texto>
+    </body>
+  </article>
+</xml>

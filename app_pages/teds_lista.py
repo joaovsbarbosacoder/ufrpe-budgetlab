@@ -6,6 +6,10 @@ Uma página só, não duas, porque o mockup mostra o detalhe como um "drill-down
 a lista. `app_pages/teds_visao_geral.py` e a Central de Alertas navegam pra cá já preenchendo
 essa chave antes de `st.switch_page`.
 
+O seletor "Origem" alterna para os TEDs do TransfereGov (outros órgãos), que têm lista e detalhe
+próprios em `src/ui_teds_transferegov.py` (`st.session_state["teds_tg_selecionado"]`) — base separada,
+sem os totais e alertas do SIMEC.
+
 Tudo aqui é dado real (ver docstring de `src/teds_ui.py`), exceto "Registrar observação" no
 detalhe do TED, que fica desabilitado com nota — não existe campo de observação manual no
 schema hoje, seria uma regra nova não aprovada nesta rodada.
@@ -29,6 +33,7 @@ from src.teds_ui import (
     brl,
     carregar_alertas,
     carregar_teds,
+    data_br,
     cobertura_tg,
     conexao,
     cor_estado_ted,
@@ -54,15 +59,17 @@ from src.teds_ui import (
     texto_cobertura_tg,
     vinculos_ne,
 )
+from src import ui_teds_transferegov as ui_tg
 from src.ui_theme import render_page_header
 
 injetar_css()
 conn = conexao()
 teds_df = carregar_teds(conn)
 
-if teds_df.empty:
-    render_page_header("TEDs", "Lista de TEDs importados.", "TEDs")
-    st.info('Nenhum TED importado ainda. Vá em "Importações" e envie a extração do SIMEC.')
+# TEDs do TransfereGov (origem separada, ver `src/teds_transferegov.py`): detalhe próprio, por plano de ação.
+if st.session_state.get(ui_tg.CHAVE_SELECIONADO):
+    render_page_header("TEDs", "TED do TransfereGov.", "TEDs")
+    ui_tg.render_detalhe(conn, st.session_state[ui_tg.CHAVE_SELECIONADO])
     st.stop()
 
 
@@ -106,7 +113,7 @@ def _nota_consolidado(soma, consolidado, origem: str, kpi: str) -> str:
 def _cartao_nc(docs: list[tuple], consolidado: Decimal) -> tuple[list[dict[str, str]], str, str]:
     linhas = []
     for numero, ug_emitente, operacao, data_emissao, valor_total, qtd_linhas, status in docs:
-        meta = [dash(data_emissao), f"UG emitente: {dash(ug_emitente)}" if status != "PARCIAL" else "UG emitente ausente"]
+        meta = [data_br(data_emissao), f"UG emitente: {dash(ug_emitente)}" if status != "PARCIAL" else "UG emitente ausente"]
         if qtd_linhas > 1:
             meta.append(f"{qtd_linhas} linhas de origem")
         linhas.append({"main": f"{numero} ({operacao})", "meta": " · ".join(meta), "value": brl(valor_total)})
@@ -117,7 +124,7 @@ def _cartao_nc(docs: list[tuple], consolidado: Decimal) -> tuple[list[dict[str, 
 
 def _cartao_pf(docs: list[tuple], consolidado: Decimal) -> tuple[list[dict[str, str]], str, str]:
     linhas = [
-        {"main": f"{numero} ({operacao})", "meta": f"{dash(data_emissao)} · UG {dash(ug_emitente)}", "value": brl(valor)}
+        {"main": f"{numero} ({operacao})", "meta": f"{data_br(data_emissao)} · UG {dash(ug_emitente)}", "value": brl(valor)}
         for numero, ug_emitente, operacao, data_emissao, valor in docs
     ]
     soma, sem_valor = somar_valores([d[4] for d in docs])
@@ -163,8 +170,8 @@ def _render_detalhe(chave_ted: str) -> None:
         f"<div class='teds-hero-item'><span>SIAFI</span><strong>{escape(dash(linha['codigo_siafi']))}</strong></div>"
         f"<div class='teds-hero-item'><span>Estado</span>{badge(escape(dash(linha['estado_atual'])), cor_estado_ted(linha['estado_atual']))}</div>"
         f"<div class='teds-hero-item'><span>UG descentralizadora</span><strong>{escape(dash(linha['ug_descentralizadora']))}</strong></div>"
-        f"<div class='teds-hero-item'><span>Vigência</span><strong>{escape(dash(linha['inicio_vigencia']))} a "
-        f"{escape(dash(linha['fim_vigencia']))} ({escape(_situacao_vigencia(linha['fim_vigencia']))})</strong></div>"
+        f"<div class='teds-hero-item'><span>Vigência</span><strong>{escape(data_br(linha['inicio_vigencia']))} a "
+        f"{escape(data_br(linha['fim_vigencia']))} ({escape(_situacao_vigencia(linha['fim_vigencia']))})</strong></div>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -309,6 +316,18 @@ if chave_selecionada:
 
 render_page_header("TEDs", "Lista de TEDs — busque, filtre e abra o detalhe de cada um.", "TEDs")
 
+origem = st.radio(
+    "Origem", [ui_tg.ORIGEM_SIMEC, ui_tg.ORIGEM_TRANSFEREGOV], key="lst_origem", horizontal=True,
+    help="Os TEDs do MEC vêm do SIMEC; os de outros órgãos, da API de dados abertos do TransfereGov.",
+)
+if origem == ui_tg.ORIGEM_TRANSFEREGOV:
+    ui_tg.render_lista(conn)
+    st.stop()
+
+if teds_df.empty:
+    st.info('Nenhum TED importado ainda. Vá em "Importações" e envie a extração do SIMEC.')
+    st.stop()
+
 col_busca, col_exercicio, col_estado, col_vigencia, col_alerta = st.columns([2.2, 1, 1.3, 1.3, 1.3])
 with col_busca:
     busca = st.text_input("Busca", key="lst_busca", placeholder="TED, SIAFI, descrição…", label_visibility="collapsed")
@@ -379,7 +398,7 @@ for posicao, linha in pagina_df.reset_index(drop=True).iterrows():
                 dash(linha["descricao"]),
                 selos,
                 [
-                    ("Fim da vigência", dash(linha["fim_vigencia"])),
+                    ("Fim da vigência", data_br(linha["fim_vigencia"])),
                     ("NC líquida", brl(texto_para_valor(linha["total_nc_descentralizacao"] or "0") - texto_para_valor(linha["total_nc_devolucao"] or "0"))),
                     ("PF líquida", brl(texto_para_valor(linha["total_pf_repasse"] or "0") - texto_para_valor(linha["total_pf_devolucao"] or "0"))),
                     ("Empenhado", brl(linha["empenhado"])),

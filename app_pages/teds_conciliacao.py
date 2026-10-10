@@ -25,7 +25,11 @@ import streamlit as st
 
 from src import design_tokens
 from src.teds_normalizacao import texto_para_valor
-from src.teds_ui import anos_disponiveis, badge, brl, carregar_teds, conexao, cor_situacao_conciliacao, filtrar_por_exercicio, html_linha, injetar_css, paginar, render_doc_list, render_kpi_strip, situacao_conciliacao
+from src.teds_controle_nc import (
+    SITUACAO_AMBIGUA, SITUACAO_CONFERE, SITUACAO_DIVERGE, SITUACAO_SEM_PLANILHA, conferir_controle,
+    gerar_xlsx_conferencia, justificativa_sugerida, ler_controle_nc,
+)
+from src.teds_ui import STATUS_RESOLVIDO, anos_disponiveis, atualizar_status_alerta, badge, brl, carregar_teds, conexao, data_br, cor_situacao_conciliacao, filtrar_por_exercicio, html_linha, injetar_css, paginar, render_doc_list, render_kpi_strip, situacao_conciliacao
 from src.ui_theme import render_page_header
 
 injetar_css()
@@ -207,3 +211,115 @@ if evidencia:
                     "Tesouro Gerencial", [{"main": n, "meta": "lançamento no Tesouro", "value": brl(v)} for n, v in tg_linhas],
                     tone=design_tokens.POSITIVE, empty="Sem dado — nenhuma extração do Tesouro Gerencial importada para estas NEs.",
                 )
+
+
+# --- Conferir com a planilha de controle de NCs -------------------------------------------------
+# Decisão (08/10/2026, spec teds-alertas-e-controle-nc §5): a planilha manual é ferramenta de consulta
+# para sanear pendências, não fonte contínua. Ela é lida em memória a cada execução da tela e NUNCA
+# gravada no banco; a única escrita possível é a resolução de um alerta, clicada pelo usuário e feita
+# pelo fluxo auditado `atualizar_status_alerta`.
+_TIPOS_ALERTA_PLANILHA = (
+    "nc_ug_emitente_ausente", "pf_liquida_maior_que_nc", "pf_liquida_diverge_consolidado",
+    "ted_credito_sem_empenho",
+)
+_ROTULO_SITUACAO = {
+    SITUACAO_CONFERE: "Confere", SITUACAO_DIVERGE: "Diverge", SITUACAO_AMBIGUA: "Ambígua",
+    SITUACAO_SEM_PLANILHA: "Sem planilha",
+}
+
+
+def _linhas_planilha_df(linhas) -> pd.DataFrame:
+    return pd.DataFrame([
+        {"Aba": l.aba, "Linha": l.linha_origem, "NC": l.nc, "Data": data_br(l.data), "UG emitente": l.ug_emitente,
+         "TED": l.ted, "Valor": brl(l.valor), "Processo": l.processo, "Observação": l.observacao}
+        for l in linhas
+    ])
+
+
+st.divider()
+st.markdown("#### Conferir com a planilha de controle")
+st.caption("A planilha é lida só nesta tela e não é gravada no banco.")
+arquivo_controle = st.file_uploader("Planilha de controle de NCs (.xlsx)", type=["xlsx"], key="cc_controle_upload")
+if arquivo_controle is not None:
+    try:
+        leitura_controle = ler_controle_nc(arquivo_controle.getvalue())
+    except Exception as erro:  # arquivo corrompido ou não-xlsx: mensagem em vez de quebrar a página
+        st.error(f"Não foi possível ler a planilha: {erro}")
+        st.stop()
+    conferencia = conferir_controle(conn, leitura_controle)
+
+    st.caption(
+        f"{len(leitura_controle.linhas)} linha(s) lida(s), {len(leitura_controle.rejeitadas)} rejeitada(s), "
+        f"{len(leitura_controle.abas_ignoradas)} aba(s) não lida(s)."
+    )
+    if leitura_controle.abas_ignoradas or leitura_controle.rejeitadas:
+        with st.expander("Abas não lidas e linhas rejeitadas"):
+            for aba, motivo in leitura_controle.abas_ignoradas:
+                st.write(f"Aba **{aba}**: {motivo}")
+            for aba, linha, motivo in leitura_controle.rejeitadas:
+                st.write(f"Aba **{aba}**, linha {linha}: {motivo}")
+
+    contagem = {rotulo: sum(1 for c in conferencia.por_nc if c.situacao == sit) for sit, rotulo in _ROTULO_SITUACAO.items()}
+    colunas_contagem = st.columns(len(contagem))
+    for coluna, (rotulo, total) in zip(colunas_contagem, contagem.items()):
+        coluna.metric(rotulo, total)
+
+    destaque = [c for c in conferencia.por_nc if c.situacao in (SITUACAO_DIVERGE, SITUACAO_AMBIGUA) or (c.ug_simec is None and c.ug_planilha)]
+    st.markdown("**NCs que divergem, ambíguas ou com UG sugerida**")
+    if destaque:
+        st.dataframe(pd.DataFrame([
+            {"NC": c.numero_nc, "TED": c.chave_ted, "Situação": _ROTULO_SITUACAO[c.situacao],
+             "Valor SIMEC": brl(c.valor_simec) if c.valor_simec is not None else "—",
+             "Valor planilha": brl(c.valor_planilha) if c.valor_planilha is not None else "—",
+             "UG SIMEC": c.ug_simec or "—", "UG sugerida (planilha)": c.ug_planilha or "—"}
+            for c in destaque
+        ]), hide_index=True, width="stretch")
+    else:
+        st.caption("Nenhuma NC divergente, ambígua ou com UG sugerida.")
+
+    st.markdown("**NC anterior ao consolidado**")
+    if conferencia.nc_anterior_consolidado:
+        st.dataframe(pd.concat([
+            _linhas_planilha_df(linhas).assign(**{"TED (chave)": chave})
+            for chave, linhas in conferencia.nc_anterior_consolidado.items()
+        ]), hide_index=True, width="stretch")
+    else:
+        st.caption("Nenhuma NC da planilha anterior ao primeiro exercício do consolidado.")
+
+    st.markdown("**Sem TED**")
+    if conferencia.sem_ted:
+        st.dataframe(_linhas_planilha_df(conferencia.sem_ted), hide_index=True, width="stretch")
+    else:
+        st.caption("Todas as linhas da planilha têm TED informado.")
+
+    st.download_button(
+        "Baixar conferência (Excel)", data=gerar_xlsx_conferencia(conferencia),
+        file_name="conferencia_controle_nc.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="cc_controle_download",
+    )
+
+    st.markdown("**Alertas que a planilha ajuda a resolver**")
+    marcadores = ",".join("?" * len(_TIPOS_ALERTA_PLANILHA))
+    alertas_abertos = conn.execute(
+        f"SELECT id, tipo, chave_ted, descricao FROM alerta WHERE status = 'aberto' AND tipo IN ({marcadores}) "
+        "AND chave_ted IS NOT NULL ORDER BY id", _TIPOS_ALERTA_PLANILHA,
+    ).fetchall()
+    sugeridos = [(a, justificativa_sugerida(a[1], a[2], conferencia)) for a in alertas_abertos]
+    sugeridos = [(a, texto) for a, texto in sugeridos if texto]
+    if not sugeridos:
+        st.caption("Nenhum alerta aberto com dado na planilha.")
+    for (alerta_id, tipo, chave_ted, descricao), texto in sugeridos:
+        with st.container(border=True):
+            st.markdown(f"**TED {chave_ted.split('|')[0]}** · {tipo}")
+            st.caption(descricao)
+            justificativa = st.text_area("Justificativa", value=texto, key=f"cc_controle_just_{alerta_id}")
+            responsavel = st.text_input("Responsável", key=f"cc_controle_resp_{alerta_id}")
+            if st.button("Resolver", key=f"cc_controle_resolver_{alerta_id}", type="primary"):
+                if not justificativa.strip():
+                    st.error("Informe a justificativa antes de resolver o alerta.")
+                else:
+                    atualizar_status_alerta(
+                        conn, alerta_id, STATUS_RESOLVIDO,
+                        responsavel=responsavel.strip() or None, justificativa=justificativa.strip(),
+                    )
+                    st.rerun()

@@ -194,6 +194,34 @@ class TestMontarRelatorio(unittest.TestCase):
         self.assertTrue(any("sem NE" in a for a in relatorio.avisos))
         self.assertTrue(any("valor mensal cheio" in a and NE_NOVA in a for a in relatorio.avisos))
 
+    def test_sem_valor_mensal_necessidade_nao_calculada(self):
+        # valor mensal desconhecido → custo nulo nos 12 meses (regra de `custo_mensal_bolsa`, passada em
+        # `custos`): a necessidade fica nula ("—"), não 0, sai dos totais e é avisada; a NE com valor
+        # continua com os números de sempre (1.800).
+        filtrado = pd.DataFrame([
+            _linha(ne_curta=NE_EST, fornecedor="ESTAVEL", contrato_numero="10/2025",
+                   valor_empenhado_execucao=9000.0, valor_liquidado_execucao=6300.0),
+            _linha(ne_curta=NE_NOVA, fornecedor="SEM VALOR", contrato_numero="20/2026",
+                   valor_empenhado_execucao=2000.0, valor_liquidado_execucao=0.0),
+        ])
+        por_ne, sem_ne = necessidade_por_ne(filtrado, None, 2026)
+        custos = {NE_EST: CUSTO_1000, NE_NOVA: [float("nan")] * 12}
+        relatorio = montar_relatorio(por_ne, sem_ne, _liquidacao(), 2026, 10, custos=custos)
+        linhas = relatorio.linhas.set_index("ne_curta")
+        for coluna in ("necessidade_execucao", "projetado_execucao", "projetado_valor_cheio", "restante_em_aberto"):
+            self.assertTrue(pd.isna(linhas.loc[NE_NOVA, coluna]), coluna)
+        self.assertAlmostEqual(linhas.loc[NE_EST, "necessidade_execucao"], 1800.0)
+        self.assertAlmostEqual(relatorio.total_necessidade_execucao, 1800.0)
+        self.assertTrue(any("Sem valor mensal" in a and NE_NOVA in a for a in relatorio.avisos))
+        self.assertEqual(relatorio.linhas["ne_curta"].tolist(), [NE_EST, NE_NOVA])  # nula vai para o fim
+
+    def test_valor_mensal_zero_continua_zero(self):
+        filtrado = pd.DataFrame([_linha(ne_curta=NE_NOVA, despesa_mensal=0.0, valor_empenhado_execucao=0.0,
+                                        valor_liquidado_execucao=0.0)])
+        por_ne, sem_ne = necessidade_por_ne(filtrado, None, 2026)
+        linha = montar_relatorio(por_ne, sem_ne, None, 2026, 10).linhas.iloc[0]
+        self.assertEqual(linha["necessidade_execucao"], 0.0)
+
     def test_aviso_abaixo_e_acima_do_cadastro(self):
         filtrado = pd.DataFrame([
             _linha(ne_curta=NE_EST, valor_empenhado_execucao=1000.0, valor_liquidado_execucao=700.0),

@@ -180,15 +180,19 @@ lote que gravou/atualizou aquele registro pela última vez, e o histórico de lo
 
 Dezenove tipos (`src/teds_alertas.py`, mais o de célula orçamentária em `src/teds_celula_orcamentaria.py`), cada um com funções puras testáveis sem banco e uma
 `sincronizar_alertas_*` que lê do SQLite e grava alertas novos sem duplicar um alerta já
-aberto para o mesmo documento — e sem nunca fechar um alerta sozinha (resolução é sempre ação
-humana, registrada na Central de Alertas):
+aberto para o mesmo documento. Um alerta só é resolvido por ação humana, registrada na Central de
+Alertas, com uma exceção (revisão de 08/10/2026): a reavaliação (§9.1) fecha sozinha, com justificativa
+e auditoria, os alertas abertos dos cinco tipos de regra revista que as regras atuais não sustentam mais:
 
 - **Empenho associado a mais de um TED** — caso concreto documentado no briefing (NE
   2026NE000422 nos TEDs 17352 e 17454). A NE fica com `status_validacao='pendente'` e é
   excluída da soma de `valor_ne` por TED até uma decisão humana (`decisao_vinculo_ne`,
   append-only: os vínculos originais não são apagados, só um fica contabilizável).
-- **NC sem UG emitente** (`status_relacionamento='PARCIAL'`) — achado da extração real do
-  SIMEC (seção 5), não do briefing original; aprovado explicitamente para gerar alerta.
+- **NC sem UG emitente** (`nc_ug_emitente_ausente`, `status_relacionamento='PARCIAL'`) — achado da
+  extração real do SIMEC (seção 5), não do briefing original; aprovado explicitamente para gerar alerta.
+  Desde 08/10/2026 há **um alerta por TED** (documento `ted:<chave_ted>`, gravidade **baixa**), com a
+  lista das NCs sem UG, e não mais um por NC (eram 41 alertas para 17 TEDs; a falha é sistemática do
+  SIMEC, 28% das NCs sem UG). NC sem TED conhecido agrupa-se em `ted:(sem TED)`.
 
 - **Conciliação SIMEC analítica × consolidada** (`sincronizar_alertas_conciliacao_simec`,
   chamada ao fim das importações de Execução Anual, DOC NC e DOC PF). Três tipos, todos de
@@ -199,19 +203,30 @@ humana, registrada na Central de Alertas):
     Repassado consolidado (o valor é o **assinado por operação**, nunca uma soma absoluta);
   - `pf_liquida_maior_que_nc` — Total Repassado consolidado > Total Descentralizado consolidado.
 
-  O consolidado é a soma de `execucao_anual` sobre **todos** os exercícios importados (o total
-  descentralizado/repassado já é líquido de devoluções). Base analítica ainda não importada
-  (`documento_nc`/`documento_pf` vazias) é "sem base", nunca zero: não gera divergência.
+  O consolidado é a soma de `execucao_anual` sobre os exercícios importados **daquele TED** (o total
+  descentralizado/repassado já é líquido de devoluções). Regras revistas em 08/10/2026 para não
+  comparar fontes que cobrem períodos diferentes — só entram em alerta divergências comprováveis
+  pelas fontes oficiais (SIMEC e Tesouro):
+  - **Janela comum** (`nc_`/`pf_liquida_diverge_consolidado`): a soma analítica considera só os
+    documentos com data nos anos (`ano_emissao`) que o consolidado cobre para o TED; o que está fora
+    da janela não entra na soma e a descrição cita o seu valor.
+  - **Sem base** (sem alerta): TED sem nenhum documento do tipo no extrato (NC ou PF) nunca é
+    comparado como R$ 0.
+  - **Documento sem data** (achado nos dados reais: NCs principais vêm sem data) não decide sozinho:
+    só há alerta se a diferença persistir **tanto** com a janela sozinha **quanto** somando os
+    documentos sem data; senão a conciliação é inconclusiva, sem alerta. A descrição cita o valor
+    dos sem data.
+  - **PF maior que NC** (`pf_liquida_maior_que_nc`): se a vigência do TED começa antes de 1º de
+    janeiro do primeiro ano do consolidado dele, a NC do período anterior não está nas fontes
+    oficiais importadas → "sem base", sem alerta. Senão, vale a comparação consolidado × consolidado.
+
   Documentos sem TED conhecido ficam fora (aparecem na cobertura de relacionamentos). Os alertas
-  só descrevem a diferença e as causas possíveis; nunca fecham sozinhos. Limite conhecido: as
-  extrações analíticas cobrem um recorte de datas diferente do consolidado (ex.: PF de
-  2019–2022 sem contrapartida no consolidado, que começa em 2023), então parte das divergências
-  reflete cobertura da extração, não erro — decisão humana caso a caso. Com o banco atual
-  (44 TEDs): 0 divergências de NC, 12 de PF e 7 de PF maior que NC.
+  só descrevem a diferença e as causas possíveis. Com o banco atual (SIMEC de 22/09, Tesouro de
+  25/09, 44 TEDs): 0 alertas de conciliação (antes da revisão: 0 de NC, 12 de PF e 7 de PF maior que NC).
 
 - **Validações cadastrais e de vigência** (`sincronizar_alertas_cadastrais`, também ao fim de
   cada importação; briefing, seção 7). Todas descritivas — nada é excluído nem deixa de ser
-  importado, e o alerta nunca fecha sozinho:
+  importado; o alerta só fecha por ação humana (exceto `ted_sem_movimentacao`, ver §9.1):
   - `ted_vigencia_invertida` (alta) — início da vigência posterior ao fim;
   - `siafi_em_multiplos_teds` (alta) — mesmo código SIAFI em mais de um número de TED;
   - `ted_sem_ug_descentralizadora` (média);
@@ -222,18 +237,25 @@ humana, registrada na Central de Alertas):
     caixa); os demais (prestação de contas, diligência, comprovado, finalizado) não. Um estado
     novo do SIMEC não gera alerta até ser classificado.
 
-  - `ted_sem_movimentacao` (média) — TED em execução sem NC ou PF emitida há mais de **90
+  - `ted_sem_movimentacao` (média) — TED em execução sem movimentação há mais de **90
     dias** (definido com o usuário em 24/09/2026; era 180 por escolha inicial; parâmetro
-    `PRAZO_SEM_MOVIMENTACAO_DIAS`). O briefing não define o prazo. Movimentação =
-    NC ou PF com data de emissão (documento sem data ou com data futura não conta); a **NE não
-    entra** porque `vinculo_ne` não guarda data. Sem nenhum documento, a referência é o início da
-    vigência (TED recém-iniciado ainda não é "sem movimentação").
+    `PRAZO_SEM_MOVIMENTACAO_DIAS`). O briefing não define o prazo. Desde 08/10/2026 a movimentação é
+    a **mais recente** entre NC/PF com data de emissão (documento sem data ou com data futura não
+    conta) e liquidação ou pagamento diferente de zero no Tesouro em NE vinculada ao TED (data = último
+    dia do mês de lançamento; valor nulo não conta). A NE em si não entra porque `vinculo_ne` não
+    guarda data. Se o consolidado tem NC/PF no ano corrente sem documento datado correspondente, a
+    descrição avisa que o consolidado indica movimentação não presente nos documentos importados (o
+    alerta continua). Sem nenhum documento, a referência é o início da vigência (TED recém-iniciado
+    ainda não é "sem movimentação"). Caso real: o TED 10782 aparecia parado desde 2021, com R$ 1,6 mi
+    repassado em 2023–2026 no consolidado.
   - `ted_credito_sem_empenho` (**alta**) — TED com NC líquida positiva (consolidado) e **nenhuma NE
     ativa** vinculada (vínculo `descartado` não conta; `pendente` conta), passados **90 dias** da última
     NC de descentralização (`operacao = '+'`; NC de devolução não renova o prazo; sem NC datada, conta
     desde o início da vigência). Vale para **qualquer estado** do TED: NE ausente pode ser erro de
     inserção no SIMEC (a NE não foi lançada) — decisão do usuário em 24/09/2026. A NE não tem data no
-    banco, então o prazo conta a partir da NC. Com o banco atual: 8 TEDs (última NC entre 2023 e 2025).
+    banco, então o prazo conta a partir da NC. Desde 08/10/2026 a descrição separa o TED **encerrado**
+    (comprovado, finalizado, prestação de contas, relatório de cumprimento: "NE não registrada no SIMEC
+    — pendência para a prestação de contas") do TED em execução. Com o banco atual: 8 TEDs (última NC entre 2023 e 2025).
   - `ted_pf_sem_execucao_financeira` (média) — TED **em execução** com PF líquido positivo, NEs ativas
     com dado no Tesouro e **pago acumulado zero** nelas (execução financeira = pago no Tesouro,
     definido pelo usuário), passados 90 dias do último PF de repasse. Sem dado no Tesouro é "sem base",
@@ -280,8 +302,7 @@ Nenhuma das NEs divergentes está em mais de um TED.
   alerta falso; "pagamento sem NE" — não se aplica, toda linha de `execucao_tg` já é por NE;
   separação de reforço e anulação — a Execução Mensal só traz o movimento líquido do mês.
 
-Os demais alertas previstos no briefing (crédito sem empenho etc.) ficam para uma fase
-seguinte, fora do escopo aprovado até aqui.
+Os demais alertas previstos no briefing ficam para uma fase seguinte, fora do escopo aprovado até aqui.
 
 ### 8.1 Trilha de auditoria (`src/teds_auditoria.py`)
 
@@ -423,8 +444,80 @@ Roda `sincronizar_alertas_rodape`, `_nc_parcial`, `_conciliacao_simec`, `_cadast
 real, as importações de 22/09 antecediam as regras de 23–24/09, e uma prévia em cópia do banco mostrou
 38 alertas que nunca tinham sido gerados (12 de PF que difere do consolidado).
 
+**Fecha alertas obsoletos (revisão de 08/10/2026).** Para os cinco tipos de regra revista
+(`nc_liquida_diverge_consolidado`, `pf_liquida_diverge_consolidado`, `pf_liquida_maior_que_nc`,
+`nc_ug_emitente_ausente`, `ted_sem_movimentacao`), a reavaliação fecha o alerta aberto (ou em
+análise) cujo `(tipo, documento)` não é mais produzido pelas regras: status `resolvido`, responsável
+"sistema", justificativa "Regra revisada em 08/10/2026: <motivo>" e registro `alerta_status_alterado`
+na trilha de auditoria, na mesma transação. Tipos não revistos nunca são fechados automaticamente, e
+alerta resolvido manualmente nunca é reaberto.
+
+### 9.2 Conferência com a planilha de controle de NCs (`src/teds_controle_nc.py`, 08/10/2026)
+
+Ferramenta de consulta na página Conciliação, para tirar dúvidas e sanear pendências caso a caso. A
+planilha manual (`CONTROLE DESC.CREDITOS ATUALIZADA.xlsx`, uma aba por ano) **nunca é gravada no banco
+nem alimenta as regras de alerta**: o upload é lido e conferido em memória, sem tabela, lote ou coluna
+nova. O único registro persistente é a resolução de alerta feita pelo usuário.
+
+- **Leitura** (sem Streamlit): cabeçalho = primeira das 6 primeiras linhas com uma célula "NC";
+  colunas por apelido (os layouts variam por ano); linha de continuação herda NC, data, UG, órgão,
+  ofício, fonte, TED, transferência e processo da linha de cima; "-" vira nulo; códigos como texto;
+  linha sem valor numérico é rejeitada com motivo; aba não reconhecida (hoje: 2021) é listada, nunca
+  ignorada em silêncio. Nada é corrigido.
+- **Conferência por NC do SIMEC**: liga pelo número da NC e do TED (e pela UG, quando as duas fontes a
+  trazem). Situações: `confere` (valor em R$ 0,01), `diverge`, `ambigua` e `sem_planilha`. Para NC sem UG
+  no SIMEC mostra a UG que a planilha traz, como sugestão (não gravada).
+- **Por TED**: NCs da planilha com data anterior ao primeiro ano do consolidado (responde aos casos
+  "sem base" de PF > NC); descentralizações da planilha sem TED (informativo).
+- **Download** do resultado em Excel (abas: Conferência por NC, NC anterior ao consolidado, Sem TED,
+  Abas e linhas não lidas).
+- **Resolver com base na planilha**: para alertas abertos de `nc_ug_emitente_ausente`,
+  `pf_liquida_maior_que_nc`, `pf_liquida_diverge_consolidado` e `ted_credito_sem_empenho` de TEDs com
+  dado na planilha, a seção lista o alerta com justificativa sugerida (editável) e o botão **Resolver**,
+  que grava pelo fluxo já existente (`atualizar_status_alerta`, auditado). Nada é resolvido sem o clique.
+
+## 12. TEDs do TransfereGov (`src/teds_transferegov.py`, implementado em 08/10/2026)
+
+**Por que existe.** Os TEDs do MEC tramitam no SIMEC; os de outros órgãos, no TransfereGov, e ficavam fora do
+módulo. No levantamento de 08/10/2026 nenhuma NC do TransfereGov coincidia com as do SIMEC. Fonte: API de dados
+abertos (PostgREST, sem autenticação, só leitura, até 1.000 linhas por resposta).
+
+**O que é consultado.** `plano_acao` com `sigla_unidade_responsavel_execucao=eq.UFRPE`; a partir dos planos,
+`programa` (concedente), `termo_execucao`, `nota_credito` (do plano **ou** com UG favorecida 153165), `evento`
+das NCs, `programacao_financeira` (idem) e `trf` das PFs. Paginação por `offset` com `order` estável.
+
+**Persistência.** Tabelas próprias, separadas de `ted`/`documento_nc`/`documento_pf` para as regras do SIMEC
+(SIAFI, Execução Anual) não acusarem divergências falsas: `tg_ted` (um por plano de ação, chave `id_plano_acao`;
+o número do TED é `sq_instrumento/aa_instrumento`, vazio enquanto o plano não tem termo), `tg_nota_credito`,
+`tg_nc_evento`, `tg_programacao_financeira`, `tg_pf_trf` e `tg_extracao_bruta` (resposta inteira, append-only).
+Evento e TRF não têm identificador na API: a chave é o conteúdo da linha + número da ocorrência. Códigos como
+texto (zeros à esquerda preservados), valores como texto decimal exato, nulo continua nulo. As cinco tabelas
+estão em `TABELAS_VERSIONADAS`, então o lote pode ser revertido. Idempotente pelo SHA-256 do JSON canônico da
+resposta (linhas ordenadas, sem a hora da consulta); a sincronização nunca apaga linha que a API deixe de trazer.
+
+**Decisões.**
+- **Nenhum total de NC ou PF** é calculado: o significado de `cd_evento` (300300, 300302, 300306, 300309) e da
+  situação contábil da TRF (TRF003, TRF004, TRF027) não foi confirmado — só o 300302 aparece como "estorno" no
+  texto das NCs, e somando 300300 − 300302 − 300306 a NC líquida batia com o valor do plano em só 12 de 38 TEDs.
+  O lote não tem soma bruta/líquida; a tela mostra cada valor ao lado do código.
+- **Valor do plano** é informativo (não é teto das NCs: aditivos e valores por exercício).
+- **NE:** a API não traz NE. `indicios_ne` cruza (exercício, PTRES, fonte detalhada, natureza, PI) dos eventos
+  das NCs para a UG 153165 com `ne_celula`; é indício para conferência, **nunca vínculo**, e não gera alerta.
+- **Sem alertas** nesta etapa: nenhuma regra de alerta lê as tabelas `tg_*`.
+
+**Telas.** Importações: "Sincronizar com o TransfereGov". Lista: seletor "Origem" → lista e detalhe por plano
+(NCs com eventos, PFs com TRF, NEs com célula coincidente). Visão geral: bloco só com quantidades.
+
+**Validação com a API real (08/10/2026, cópia do banco):** 53 planos (38 com termo), 93 NCs, 104 eventos, 80 PFs,
+84 linhas TRF, nenhuma rejeitada; segunda sincronização sem mudança = no-op; 44 NEs com célula coincidente,
+nenhuma já vinculada a TED do SIMEC; nenhum alerta novo.
+
+**Pendências:** significado dos códigos de evento e de TRF (bloqueia qualquer total ou conciliação NC × PF ×
+execução); NC para a UFRPE ligada a plano de outra executora (3 no levantamento) aparece só nos indícios de NE.
+
 ## 10. O que NÃO foi aprovado ainda
 
+- Totais, conciliação e alertas dos TEDs do TransfereGov (seção 12) — dependem do significado dos códigos.
 - Alertas além dos dezenove da seção 8.
 - Edição do mapeamento de colunas na tela de Importações.
 - Campo de observação manual por TED.

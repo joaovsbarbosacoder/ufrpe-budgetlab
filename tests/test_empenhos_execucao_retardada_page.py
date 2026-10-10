@@ -75,6 +75,15 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
         labels = [metric.label for metric in app.metric]
         self.assertEqual(labels, ["Empenhos no escopo", "Empenhado", "Liquidado", "Saldo total (empenhado − liquidado)"])
 
+    def test_coleta_lixo_no_inicio_e_no_fim_da_pagina(self) -> None:
+        # cópias da base devolvidas pelo st.cache_data ficavam presas em ciclos (~0,3 GB por interação)
+        with patch("gc.collect", return_value=0) as coleta:
+            app = self._open_page()
+            antes = coleta.call_count
+            app.run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(coleta.call_count - antes, 2)
+
     def test_shows_procedencia_footer_with_manifest_hash(self) -> None:
         app = self._open_page()
 

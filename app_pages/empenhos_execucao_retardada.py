@@ -57,7 +57,7 @@ Esquema aprovado antes da implementação original (ver histórico da conversa):
     linha agregada informativa ("+ N empenhos abaixo do corte, somando R$X"), não uma segunda
     tabela.
   * Detalhe do empenho abre num pop-up (`@st.dialog`, mesmo padrão de
-    `contratos_vigencia.py::_abrir_detalhe`), acionado por um botão "Ver" por linha — pedido
+    `@st.dialog` do Streamlit), acionado por um botão "Ver" por linha — pedido
     explícito de ajuste: a primeira versão usava seleção de linha em `st.dataframe` com o
     detalhe renderizado abaixo, que não ficou claro como resposta ao clique; o pop-up deixa
     inequívoco que o clique funcionou, sem navegar para aba/página separada.
@@ -79,6 +79,7 @@ Contratos/Bolsas, nem a lógica de saldo já validada — só lê e reaproveita.
 from __future__ import annotations
 
 from datetime import datetime
+import gc
 
 import pandas as pd
 import streamlit as st
@@ -235,7 +236,7 @@ def _abrir_detalhe(dataframe: pd.DataFrame, linha: pd.Series) -> None:
     aba (pedido explícito — nem inline role-abaixo, nem aba/página separada). Mesmo conjunto de
     campos do painel de detalhe de `consulta_empenhos.py::_render_detalhe` (dimensões
     constantes por NE, ver `tesouro_execucao_mensal.py::_DIMENSOES_CONSTANTES_POR_NE`), mesmo
-    padrão de `@st.dialog` já usado em `contratos_vigencia.py::_abrir_detalhe` — sem
+    padrão de `@st.dialog` do Streamlit — sem
     reaproveitar as classes CSS `.ce-*` daquela página (específicas dela), só com os widgets
     nativos do Streamlit."""
 
@@ -288,6 +289,13 @@ def _abrir_detalhe(dataframe: pd.DataFrame, linha: pd.Series) -> None:
 
 
 # ---------------------------------------------------------------------- página
+# Memória (07/10/2026): a cada interação o `st.cache_data` devolve CÓPIAS das bases (DataFrames
+# inteiros), que ficam presas em referências circulares; o coletor do Python dispara pela quantidade de
+# objetos, não pelo tamanho, e a sessão subia ~0,3 GB por interação (1,4 → 7,9 GB em 20). Coleta no
+# início (lixo da interação anterior, em qualquer caminho — inclusive os `st.stop()`) e no fim. Custo
+# ~0,1 s por coleta; nenhum dado é alterado (mesma correção da Consulta de Empenhos).
+gc.collect()
+
 render_page_header(
     "Empenhos com Execução Retardada",
     "Notas de empenho com saldo alto (empenhado ainda não liquidado) — priorização de baixa.",
@@ -619,3 +627,5 @@ if not ordenado.empty:
         )
 
 st.caption(f"Procedência: extração de {data_extracao_texto} · hash {manifesto.sha256[:8]}")
+
+gc.collect()  # ver o comentário no início da página

@@ -90,6 +90,12 @@ class LimiteEmpenhoRemanejamentoPageTests(unittest.TestCase):
         self.assertEqual((numerador.value, denominador.value), (9, 12))
         self.assertIsInstance(numerador.value, int)
 
+    def test_coleta_lixo_no_inicio_e_no_fim_da_pagina(self):
+        # cópias das bases devolvidas pelo st.cache_data ficavam presas em ciclos (~0,25 GB por interação)
+        with patch("gc.collect", return_value=0) as coleta:
+            self._app()
+        self.assertEqual(coleta.call_count, 2)
+
     def test_sem_remanejamento_resumo_mostra_limite_original(self):
         app = self._app()
         texto = _textos(app)
