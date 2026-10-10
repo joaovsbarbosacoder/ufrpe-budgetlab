@@ -30,6 +30,7 @@ Contrato público:
     com_meses_pagos(df, meses_pagos) -> pd.DataFrame
     com_efeitos_da_suspensao(df) -> pd.DataFrame
     situacao_contrato(status, vigencia_fim_efetiva, necessidade, hoje) -> (texto, tom)
+    com_contratosgov(df, contratos, termos, empenhos) -> pd.DataFrame   (ligação/conciliação com o gov)
 """
 
 from __future__ import annotations
@@ -382,3 +383,165 @@ def situacao_contrato(status: object, vigencia_fim_efetiva: object, necessidade:
     if necessidade is not None and not pd.isna(necessidade) and float(necessidade) > 0.005:
         return SITUACAO_NECESSITA_REFORCO, "warn"
     return SITUACAO_ATIVO, "ok"
+
+
+# ---------------------------------------------------------------------------------------------
+# Integração com o Contratos.gov.br (10/2026): ligação por NE (depois número + CNPJ/CPF),
+# conciliação de vigência e contagem de termos. Funções puras, em memória: recebem as tabelas
+# derivadas de `src.contratos_cadastro` (`contratos`, `termos`, `empenhos`) e nunca alteram a
+# fotografia do gov nem o cadastro.
+# ---------------------------------------------------------------------------------------------
+
+SITUACOES_CONCILIACAO = (
+    "conciliado", "divergente", "sem_par_no_contratosgov", "conflito", "sem_data_para_comparar",
+)
+
+#: `tipo` do termo no Contratos.gov.br que conta como aditivo (apostilamento, rescisão etc. não).
+TIPO_TERMO_ADITIVO = "Termo Aditivo"
+
+_COLUNAS_CONTRATOSGOV = (
+    "contratosgov_id", "ligacao_por", "situacao_conciliacao", "situacao_vigencia_gov",
+    "vigencia_fim_contratosgov", "diverge_vigencia", "qtd_termos", "qtd_aditivos_gov",
+    "valor_parcela_contratosgov",
+)
+
+
+def _so_digitos(valor: object) -> str | None:
+    """CNPJ/CPF só com dígitos (zeros à esquerda preservados), para comparar com o do gov; nulo ou
+    sem dígito → `None`."""
+
+    if valor is None or pd.isna(valor):
+        return None
+    digitos = re.sub(r"\D", "", str(valor))
+    return digitos or None
+
+
+def _ne_normalizada(valor: object) -> str | None:
+    if valor is None or pd.isna(valor):
+        return None
+    texto = str(valor).strip().upper()
+    return texto or None
+
+
+def _resolver_ligacoes(df: pd.DataFrame, contratos: pd.DataFrame, empenhos: pd.DataFrame) -> pd.DataFrame:
+    """Liga cada linha do cadastro a um contrato do gov. Ordem: (a) `ne_curta` ∈ `empenhos.ne`;
+    (b) número normalizado (`normalizar_numero_contrato`) + CNPJ/CPF iguais (só dígitos). NE nula não
+    casa com nada, e número sem CNPJ/CPF não liga (nunca presumir). Devolve, alinhado a `df.index`:
+    `contratosgov_id` (`None` sem par ou em conflito), `ligacao_por` ("ne"/"numero"/`None`),
+    `conflito` (bool) e `envolvidos` (conjunto de `contrato_id` do gov citados no conflito).
+    Conflito: NE em mais de um contrato, número+CNPJ ambíguo no gov, ou NE e número apontando
+    contratos diferentes — nada do gov é aplicado nesses casos."""
+
+    por_ne: dict[str, set[str]] = {}
+    for ne, contrato_id in zip(empenhos["ne"], empenhos["contrato_id"]):
+        chave = _ne_normalizada(ne)
+        if chave:
+            por_ne.setdefault(chave, set()).add(str(contrato_id))
+
+    por_numero: dict[tuple[str, str], set[str]] = {}
+    for contrato_id, numero, documento in zip(
+        contratos["contrato_id"], contratos["numero"], contratos["fornecedor_documento"]
+    ):
+        numero_norm, documento_norm = normalizar_numero_contrato(numero), _so_digitos(documento)
+        if numero_norm and documento_norm:
+            por_numero.setdefault((numero_norm, documento_norm), set()).add(str(contrato_id))
+
+    linhas = []
+    for ne_curta, numero, documento in zip(df["ne_curta"], df["contrato_numero"], df["fornecedor_cnpj_cpf"]):
+        ne = _ne_normalizada(ne_curta)
+        numero_norm, documento_norm = normalizar_numero_contrato(numero), _so_digitos(documento)
+        cand_ne = por_ne.get(ne, set()) if ne else set()
+        cand_numero = por_numero.get((numero_norm, documento_norm), set()) if numero_norm and documento_norm else set()
+
+        contrato_id, ligacao, envolvidos = None, None, frozenset()
+        if cand_ne:
+            if len(cand_ne) > 1 or (cand_numero and cand_numero != cand_ne):
+                envolvidos = frozenset(cand_ne | cand_numero)
+            else:
+                contrato_id, ligacao = next(iter(cand_ne)), "ne"
+        elif cand_numero:
+            if len(cand_numero) > 1:
+                envolvidos = frozenset(cand_numero)
+            else:
+                contrato_id, ligacao = next(iter(cand_numero)), "numero"
+        linhas.append(
+            {"contratosgov_id": contrato_id, "ligacao_por": ligacao, "conflito": bool(envolvidos), "envolvidos": envolvidos}
+        )
+    return pd.DataFrame(linhas, index=df.index, columns=["contratosgov_id", "ligacao_por", "conflito", "envolvidos"])
+
+
+def com_contratosgov(
+    df: pd.DataFrame, contratos: pd.DataFrame, termos: pd.DataFrame, empenhos: pd.DataFrame
+) -> pd.DataFrame:
+    """Acrescenta ao cadastro de Contínuos (`como_dataframe`) a ligação com o Contratos.gov.br e a
+    conciliação de vigência — mesma granularidade e valores originais de `df`, nada é alterado.
+
+    Ligação em `_resolver_ligacoes` (NE primeiro; vários registros — uma NE cada — podem ligar ao
+    mesmo contrato do gov). Campos: `contratosgov_id`, `ligacao_por`, `situacao_vigencia_gov`
+    (a do gov, calculada pelas datas — a `situacao` da API não é confiável), `vigencia_fim_contratosgov`
+    (`date`), `qtd_termos`, `qtd_aditivos_gov` (só `tipo == "Termo Aditivo"`),
+    `valor_parcela_contratosgov` (REFERÊNCIA: o gov traz o contrato inteiro, Contínuos traz a parcela da
+    ação 20RK — nunca comparado) e `situacao_conciliacao` ∈ `SITUACOES_CONCILIACAO`.
+
+    Vigência: `vigencia_fim_efetiva` do cadastro (já com os aditivos nativos) contra `vigencia_fim` do gov,
+    igualdade exata de data em `diverge_vigencia` (`boolean`). Data nula em qualquer lado →
+    "sem_data_para_comparar" e `diverge_vigencia` nulo — ausência de dado nunca vira divergência. Sem par
+    ou em conflito, os campos do gov ficam nulos."""
+
+    resultado = df.copy()
+    ligacoes = _resolver_ligacoes(df, contratos, empenhos)
+
+    gov = contratos.assign(contrato_id=contratos["contrato_id"].astype(str)).set_index("contrato_id")
+    termos_por_contrato = termos.assign(contrato_id=termos["contrato_id"].astype(str)).groupby("contrato_id")
+    qtd_termos = termos_por_contrato.size()
+    qtd_aditivos = termos[termos["tipo"] == TIPO_TERMO_ADITIVO].assign(
+        contrato_id=lambda t: t["contrato_id"].astype(str)
+    ).groupby("contrato_id").size()
+
+    vigencia_cadastro = pd.to_datetime(
+        resultado["vigencia_fim_efetiva"] if "vigencia_fim_efetiva" in resultado.columns else resultado["vigencia_fim"],
+        errors="coerce",
+    )
+
+    saidas: dict[str, list] = {coluna: [] for coluna in _COLUNAS_CONTRATOSGOV}
+    for (_, ligacao), vigencia in zip(ligacoes.iterrows(), vigencia_cadastro):
+        contrato_id = ligacao["contratosgov_id"]
+        if contrato_id is None or pd.isna(contrato_id):  # `iterrows` troca None por NaN
+            situacao = "conflito" if ligacao["conflito"] else "sem_par_no_contratosgov"
+            valores = dict.fromkeys(_COLUNAS_CONTRATOSGOV, pd.NA)
+            valores.update(situacao_conciliacao=situacao)
+        else:
+            contrato = gov.loc[contrato_id]
+            fim_gov = contrato["vigencia_fim"]
+            fim_gov = pd.NA if fim_gov is None or pd.isna(fim_gov) else fim_gov
+            diverge = pd.NA
+            if pd.isna(fim_gov) or pd.isna(vigencia):
+                situacao = "sem_data_para_comparar"
+            else:
+                diverge = bool(vigencia.date() != fim_gov)
+                situacao = "divergente" if diverge else "conciliado"
+            parcela = contrato["valor_parcela"]
+            valores = {
+                "contratosgov_id": contrato_id,
+                "ligacao_por": ligacao["ligacao_por"],
+                "situacao_conciliacao": situacao,
+                "situacao_vigencia_gov": contrato["situacao_vigencia"],
+                "vigencia_fim_contratosgov": fim_gov,
+                "diverge_vigencia": diverge,
+                "qtd_termos": int(qtd_termos.get(contrato_id, 0)),
+                "qtd_aditivos_gov": int(qtd_aditivos.get(contrato_id, 0)),
+                "valor_parcela_contratosgov": pd.NA if parcela is None or pd.isna(parcela) else float(parcela),
+            }
+        for coluna in _COLUNAS_CONTRATOSGOV:
+            saidas[coluna].append(valores[coluna])
+
+    resultado["contratosgov_id"] = pd.array(saidas["contratosgov_id"], dtype="string")
+    resultado["ligacao_por"] = pd.array(saidas["ligacao_por"], dtype="string")
+    resultado["situacao_conciliacao"] = pd.array(saidas["situacao_conciliacao"], dtype="string")
+    resultado["situacao_vigencia_gov"] = pd.array(saidas["situacao_vigencia_gov"], dtype="string")
+    resultado["vigencia_fim_contratosgov"] = pd.Series(saidas["vigencia_fim_contratosgov"], index=resultado.index, dtype=object)
+    resultado["diverge_vigencia"] = pd.array(saidas["diverge_vigencia"], dtype="boolean")
+    resultado["qtd_termos"] = pd.array(saidas["qtd_termos"], dtype="Int64")
+    resultado["qtd_aditivos_gov"] = pd.array(saidas["qtd_aditivos_gov"], dtype="Int64")
+    resultado["valor_parcela_contratosgov"] = pd.array(saidas["valor_parcela_contratosgov"], dtype="Float64")
+    return resultado

@@ -18,23 +18,29 @@ Contínuos/Bolsas, para o procedimento de substituição deliberada.
 
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 
 import openpyxl
 import pandas as pd
 
+from src.contratos_cadastro import montar_contratos, montar_empenhos, montar_termos
 from src.contratos_continuos import (
     DESPESA_CONTRATUAL,
     DESPESA_EMPENHADO_SUSPENSO,
     ErroLayoutBase,
     NOME_ABA,
+    SITUACOES_CONCILIACAO,
+    com_contratosgov,
     com_efeitos_da_suspensao,
     com_meses_pagos,
     com_saldo_execucao,
     ler_contratos_continuos,
 )
+from src.contratos_continuos_cadastro import como_dataframe, novo_contrato
 from src.execucao_ne_utils import saldo_por_ne
 from src.necessidade_empenho import calcular_necessidade_empenho
 from src.tesouro_execucao_mensal import agregar_por_ne, ler_execucao_mensal
@@ -475,6 +481,149 @@ class TestEfeitosDaSuspensao(unittest.TestCase):
         com_efeitos_da_suspensao(df)
         self.assertEqual(df.loc[1, "despesa_anual"], 24_000.0)
         self.assertNotIn("despesa_anual_base", df.columns)
+
+
+# --- integração com o Contratos.gov.br (10/2026) -------------------------------------------------
+
+FIXTURE_CONTRATOSGOV = Path("tests/fixtures/contratosgov_2026-10-08.json")
+REF_GOV = date(2026, 10, 8)
+
+
+def _gov():
+    """(contratos, termos, empenhos) da fotografia congelada do Contratos.gov.br (6 contratos,
+    UG 153165), com a data de referência dos valores conferidos à mão (08/10/2026)."""
+
+    fotografia = json.loads(FIXTURE_CONTRATOSGOV.read_text(encoding="utf-8"))
+    return montar_contratos(fotografia, REF_GOV), montar_termos(fotografia), montar_empenhos(fotografia)
+
+
+def _cadastro(*registros: dict) -> pd.DataFrame:
+    return como_dataframe([novo_contrato(**r) for r in registros], 2026, hoje=REF_GOV)
+
+
+@unittest.skipUnless(FIXTURE_CONTRATOSGOV.exists(), f"Fixture ausente em {FIXTURE_CONTRATOSGOV}")
+class TestComContratosGov(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.contratos, cls.termos, cls.empenhos = _gov()
+
+    def _ligar(self, *registros: dict, contratos=None, empenhos=None) -> pd.DataFrame:
+        return com_contratosgov(
+            _cadastro(*registros),
+            self.contratos if contratos is None else contratos,
+            self.termos,
+            self.empenhos if empenhos is None else empenhos,
+        )
+
+    def test_liga_por_ne(self):
+        linha = self._ligar(
+            {"contrato_numero": "13/2026", "ne_curta": "2026NE000522", "vigencia_fim": pd.Timestamp("2027-09-10")}
+        ).iloc[0]
+        self.assertEqual(linha["contratosgov_id"], "1004328")
+        self.assertEqual(linha["ligacao_por"], "ne")
+        self.assertEqual(linha["situacao_conciliacao"], "conciliado")
+        self.assertFalse(linha["diverge_vigencia"])
+        self.assertEqual(linha["qtd_termos"], 1)
+        self.assertEqual(linha["qtd_aditivos_gov"], 0)
+        self.assertEqual(linha["situacao_vigencia_gov"], "vigente")
+        self.assertEqual(linha["vigencia_fim_contratosgov"], date(2027, 9, 10))
+
+    def test_ne_com_espacos_e_minusculas_liga(self):
+        linha = self._ligar({"contrato_numero": "13/2026", "ne_curta": " 2026ne000522 "}).iloc[0]
+        self.assertEqual(linha["contratosgov_id"], "1004328")
+
+    def test_liga_por_numero_e_cnpj_sem_ne(self):
+        linha = self._ligar(
+            {"contrato_numero": "29/2021", "fornecedor_cnpj_cpf": "07.674.744/0001-30",
+             "vigencia_fim": pd.Timestamp("2026-10-17")}
+        ).iloc[0]
+        self.assertEqual(linha["ligacao_por"], "numero")
+        self.assertEqual(linha["contratosgov_id"], "118872")
+        self.assertEqual(linha["qtd_termos"], 5)
+        self.assertEqual(linha["qtd_aditivos_gov"], 4)
+        self.assertEqual(linha["situacao_conciliacao"], "conciliado")
+
+    def test_numero_sem_cnpj_nao_liga(self):
+        linha = self._ligar({"contrato_numero": "29/2021"}).iloc[0]
+        self.assertEqual(linha["situacao_conciliacao"], "sem_par_no_contratosgov")
+        self.assertTrue(pd.isna(linha["contratosgov_id"]))
+
+    def test_divergente_e_aditivo_nativo_concilia(self):
+        base = {"contrato_numero": "29/2021", "ne_curta": "2025NE000046", "vigencia_fim": pd.Timestamp("2025-10-17")}
+        divergente = self._ligar(base).iloc[0]
+        self.assertEqual(divergente["situacao_conciliacao"], "divergente")
+        self.assertTrue(divergente["diverge_vigencia"])
+        self.assertEqual(divergente["vigencia_fim_contratosgov"], date(2026, 10, 17))
+
+        aditivo = {"numero": "4", "tipo": "PRORROGACAO", "situacao": "ASSINADO",
+                   "data_inicio": "2025-10-18", "vigencia_fim": "2026-10-17"}
+        conciliado = self._ligar({**base, "aditivos": [aditivo]}).iloc[0]
+        self.assertEqual(conciliado["situacao_conciliacao"], "conciliado")
+        self.assertFalse(conciliado["diverge_vigencia"])
+
+    def test_conflito_ne_e_numero(self):
+        linha = self._ligar(
+            {"contrato_numero": "13/2026", "fornecedor_cnpj_cpf": "05340639000130", "ne_curta": "2025NE000046"}
+        ).iloc[0]
+        self.assertEqual(linha["situacao_conciliacao"], "conflito")
+        self.assertTrue(pd.isna(linha["contratosgov_id"]))
+        self.assertTrue(pd.isna(linha["vigencia_fim_contratosgov"]))
+        self.assertTrue(pd.isna(linha["diverge_vigencia"]))
+
+    def test_ne_em_dois_contratos_e_conflito(self):
+        duplicada = pd.concat(
+            [self.empenhos, self.empenhos[self.empenhos["ne"] == "2026NE000522"].assign(contrato_id="118872")],
+            ignore_index=True,
+        )
+        linha = self._ligar({"contrato_numero": "13/2026", "ne_curta": "2026NE000522"}, empenhos=duplicada).iloc[0]
+        self.assertEqual(linha["situacao_conciliacao"], "conflito")
+
+    def test_varios_registros_do_mesmo_contrato(self):
+        df = self._ligar(
+            {"contrato_numero": "13/2026", "ne_curta": "2026NE000522"},
+            {"contrato_numero": "13/2026", "ne_curta": "2026NE000523"},
+        )
+        self.assertEqual(list(df["contratosgov_id"]), ["1004328", "1004328"])
+
+    def test_sem_par_e_ne_nula_nao_casam_entre_si(self):
+        df = self._ligar({"contrato_numero": "99/2026", "ne_curta": "2026NE999999"}, {"contrato_numero": "98/2026"})
+        self.assertEqual(set(df["situacao_conciliacao"]), {"sem_par_no_contratosgov"})
+        self.assertTrue(df["diverge_vigencia"].isna().all())
+        self.assertTrue(df["contratosgov_id"].isna().all())
+
+    def test_vigencia_nula_nao_e_divergencia(self):
+        linha = self._ligar({"contrato_numero": "13/2026", "ne_curta": "2026NE000522"}).iloc[0]
+        self.assertEqual(linha["situacao_conciliacao"], "sem_data_para_comparar")
+        self.assertTrue(pd.isna(linha["diverge_vigencia"]))
+        self.assertEqual(linha["contratosgov_id"], "1004328")
+
+    def test_contrato_encerrado_no_gov(self):
+        linha = self._ligar({"contrato_numero": "18/2014", "ne_curta": "2021NE000072"}).iloc[0]
+        self.assertEqual(linha["situacao_vigencia_gov"], "encerrado")
+
+    def test_situacoes_conhecidas(self):
+        df = self._ligar(
+            {"contrato_numero": "13/2026", "ne_curta": "2026NE000522", "vigencia_fim": pd.Timestamp("2027-09-10")},
+            {"contrato_numero": "99/2026"},
+        )
+        self.assertTrue(set(df["situacao_conciliacao"]) <= set(SITUACOES_CONCILIACAO))
+
+    def test_nao_altera_linhas_nem_valores(self):
+        original = _cadastro(
+            {"contrato_numero": "13/2026", "ne_curta": "2026NE000522", "despesa_mensal": 1000.0},
+            {"contrato_numero": "99/2026"},
+        )
+        resultado = com_contratosgov(original, self.contratos, self.termos, self.empenhos)
+        self.assertEqual(len(resultado), len(original))
+        pd.testing.assert_frame_equal(resultado[list(original.columns)], original)
+
+    def test_df_vazio_devolve_colunas_novas(self):
+        resultado = com_contratosgov(_cadastro(), self.contratos, self.termos, self.empenhos)
+        self.assertEqual(len(resultado), 0)
+        for coluna in ("contratosgov_id", "ligacao_por", "situacao_conciliacao", "situacao_vigencia_gov",
+                       "vigencia_fim_contratosgov", "diverge_vigencia", "qtd_termos", "qtd_aditivos_gov",
+                       "valor_parcela_contratosgov"):
+            self.assertIn(coluna, resultado.columns)
 
 
 if __name__ == "__main__":
