@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from contextlib import ExitStack, contextmanager
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,6 +16,7 @@ from streamlit.testing.v1 import AppTest
 
 from tests._apptest import TEMPO_LIMITE_APPTEST
 
+from src.acompanhamento_emendas import cancelar_status, definir_complemento, registrar_status
 from src.ajustes_dotacao_emendas import desfazer_decisao, registrar_decisao
 from src.emendas_parlamentares import vincular_execucao_emendas
 from src.importacao_emendas import Manifesto as ManifestoEmendas
@@ -81,6 +83,7 @@ class EmendasParlamentaresPageTests(unittest.TestCase):
                 return_value=[],
             ),
             patch("src.ajustes_dotacao_emendas.DIRETORIO_AJUSTES", self._ajustes_dir),
+            patch("src.acompanhamento_emendas.DIRETORIO_ACOMPANHAMENTO", self._ajustes_dir.parent / "acompanhamento"),
         ):
             app = AppTest.from_file(
                 str(PROJECT_ROOT / "app_pages" / "emendas_parlamentares.py"), default_timeout=TEMPO_LIMITE_APPTEST
@@ -214,7 +217,7 @@ def _vinculos_originais() -> pd.DataFrame:
 
 
 @contextmanager
-def _sessao(ajustes_dir: Path):
+def _sessao(ajustes_dir: Path, acompanhamento_dir: Path | None = None):
     """Página aberta com as fontes controladas e o diretório de decisões trocado por `ajustes_dir`. Os patches
     ficam ATIVOS durante todo o `with`: a página relê cadastros e eventos a cada execução (cliques incluídos)."""
 
@@ -227,6 +230,9 @@ def _sessao(ajustes_dir: Path):
         pilha.enter_context(patch("src.emendas_parlamentares.carregar_emendas_cadastradas", return_value=[]))
         pilha.enter_context(patch("src.vinculos_emendas.carregar_eventos_vinculo", return_value=[]))
         pilha.enter_context(patch("src.ajustes_dotacao_emendas.DIRETORIO_AJUSTES", ajustes_dir))
+        pilha.enter_context(
+            patch("src.acompanhamento_emendas.DIRETORIO_ACOMPANHAMENTO", acompanhamento_dir or ajustes_dir.parent / "acomp_vazio")
+        )
         app = AppTest.from_file(
             str(PROJECT_ROOT / "app_pages" / "emendas_parlamentares.py"), default_timeout=TEMPO_LIMITE_APPTEST
         )
@@ -330,6 +336,135 @@ class EmendasDecisaoDotacaoPageTests(unittest.TestCase):
         with _sessao(self.dir) as app:
             self.assertEqual(len(app.exception), 0)
             self.assertTrue(any("decisão de dotação" in e.value for e in app.error), [e.value for e in app.error])
+
+
+# ------------------------------------------------------------------ acompanhamento (10/2026)
+
+E_2026 = (2026, "6", "202632990006")
+E_2024 = (2024, "6", "202438130004")  # histórico: o acompanhamento vale para qualquer exercício
+
+
+def _chaves_validas() -> set[tuple]:
+    relatorio, _, _ = _fontes()
+    return {(int(r.ano), str(r.resultado_primario_cod), str(r.emenda_numero)) for r in relatorio.itertuples()}
+
+
+@unittest.skipUnless(CAMINHO_BASE.exists(), f"Fixture ausente em {CAMINHO_BASE}")
+@unittest.skipUnless(MANIFESTO_EMENDAS.exists(), f"Manifesto ausente em {MANIFESTO_EMENDAS}")
+class EmendasAcompanhamentoPageTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.ajustes = Path(self._tmp.name) / "ajustes"
+        self.acomp = Path(self._tmp.name) / "acompanhamento"
+
+    def _sessao(self):
+        return _sessao(self.ajustes, self.acomp)
+
+    def _status(self, chave=E_2026, status="Em análise técnica", data=date(2026, 8, 12), observacao=None) -> dict:
+        return registrar_status(
+            chave=chave, status=status, status_outro=None, data_status=data, observacao=observacao, responsavel="Maria",
+            chaves_validas=_chaves_validas(), hoje=date(2026, 10, 10), diretorio=self.acomp,
+        )
+
+    @staticmethod
+    def _chave_texto(chave: tuple) -> str:
+        return f"{chave[0]}_{chave[1]}_{chave[2]}"
+
+    def test_cada_emenda_tem_acoes_de_acompanhamento_inclusive_as_historicas(self) -> None:
+        with self._sessao() as app:
+            self.assertEqual(len(app.exception), 0)
+            self.assertEqual(len(_botoes(app, "em_status_")), 25)
+            self.assertEqual(len(_botoes(app, "em_complemento_")), 25)
+            self.assertIn(f"em_status_{self._chave_texto(E_2024)}", [b.key for b in app.button])
+            self.assertTrue(any(e.label.startswith("Acompanhamento") for e in app.expander))
+            texto = " ".join(m.value for m in app.markdown)
+            self.assertIn("não informado", texto)  # objeto/destinatário ausentes
+
+    def test_status_atual_aparece_no_cartao_e_o_historico_na_secao(self) -> None:
+        self._status(status="Em análise técnica", data=date(2026, 8, 12))
+        self._status(status="Proposta aceita", data=date(2026, 9, 1), observacao="Parecer favorável.")
+        with self._sessao() as app:
+            self.assertEqual(len(app.exception), 0)
+            cartao = next(m.value for m in app.markdown if 'class="em-card"' in m.value and "202632990006" in m.value)
+            self.assertIn("Tramitação: Proposta aceita", cartao)
+            texto = " ".join(m.value for m in app.markdown)
+            for esperado in ("Em análise técnica", "Proposta aceita", "12/08/2026", "01/09/2026", "Maria", "Parecer favorável."):
+                self.assertIn(esperado, texto)
+
+    def test_registro_cancelado_fica_no_historico_e_nao_e_o_status_atual(self) -> None:
+        self._status(status="Em análise técnica", data=date(2026, 8, 12))
+        errado = self._status(status="Paga", data=date(2026, 9, 1))
+        cancelar_status(evento_id=errado["evento_id"], motivo="Registrado por engano em outra emenda.", responsavel="João", diretorio=self.acomp)
+        with self._sessao() as app:
+            cartao = next(m.value for m in app.markdown if 'class="em-card"' in m.value and "202632990006" in m.value)
+            self.assertIn("Tramitação: Em análise técnica", cartao)
+            texto = " ".join(m.value for m in app.markdown)
+            self.assertIn("Registrado por engano em outra emenda.", texto)
+            self.assertIn("cancelado", texto)
+            self.assertEqual(  # só o registro ativo tem "Cancelar registro"
+                [b.key for b in _botoes(app, "em_cancelar_status_")], [f"em_cancelar_status_{self._primeiro_ativo()}"]
+            )
+
+    def _primeiro_ativo(self) -> str:
+        from src.acompanhamento_emendas import carregar_eventos, reconstruir_tramitacao
+
+        tramitacao = reconstruir_tramitacao(carregar_eventos(self.acomp))
+        return str(tramitacao[~tramitacao["cancelado"]].iloc[0]["evento_id"])
+
+    def test_janela_registrar_status_abre_com_os_campos_e_nao_grava(self) -> None:
+        with self._sessao() as app:
+            next(b for b in app.button if b.key == f"em_status_{self._chave_texto(E_2026)}").click().run()
+            self.assertEqual(len(app.exception), 0)
+            seletor = next(sb for sb in app.selectbox if sb.label == "Status")
+            self.assertIn("Outro", seletor.options)
+            self.assertIn("Em análise técnica", seletor.options)
+            self.assertIn("Data do status", [d.label for d in app.date_input])
+            self.assertIn("Observação", [t.label for t in app.text_area])
+            self.assertIn("Responsável", [t.label for t in app.text_input])
+        self.assertEqual(list(self.acomp.glob("*.json")) if self.acomp.exists() else [], [])
+
+    def test_objeto_e_destinatario_aparecem_e_a_janela_traz_os_valores_atuais(self) -> None:
+        definir_complemento(
+            chave=E_2026, objeto="Aquisição de equipamentos de laboratório", destinatario="Pró-Reitoria de Pesquisa",
+            responsavel="Maria", motivo=None, chaves_validas=_chaves_validas(), diretorio=self.acomp,
+        )
+        with self._sessao() as app:
+            texto = " ".join(m.value for m in app.markdown)
+            self.assertIn("Aquisição de equipamentos de laboratório", texto)
+            self.assertIn("Pró-Reitoria de Pesquisa", texto)
+            next(b for b in app.button if b.key == f"em_complemento_{self._chave_texto(E_2026)}").click().run()
+            self.assertEqual(len(app.exception), 0)
+            objeto = next(t for t in app.text_area if t.label == "Objeto")
+            destinatario = next(t for t in app.text_input if t.label == "Destinatário")
+            self.assertEqual(objeto.value, "Aquisição de equipamentos de laboratório")
+            self.assertEqual(destinatario.value, "Pró-Reitoria de Pesquisa")
+
+    def test_registros_de_emenda_inexistente_sao_listados_como_orfaos(self) -> None:
+        registrar_status(
+            chave=(2026, "6", "EMENDA-QUE-SUMIU"), status="Indicada", status_outro=None, data_status=date(2026, 7, 1),
+            observacao=None, responsavel="Maria", chaves_validas={(2026, "6", "EMENDA-QUE-SUMIU")},
+            hoje=date(2026, 10, 10), diretorio=self.acomp,
+        )
+        with self._sessao() as app:
+            self.assertEqual(len(app.exception), 0)
+            self.assertTrue(any(e.label.startswith("Registros sem emenda correspondente") for e in app.expander))
+            self.assertIn("EMENDA-QUE-SUMIU", " ".join(m.value for m in app.markdown))
+
+    def test_evento_corrompido_mostra_erro_explicito_sem_excecao(self) -> None:
+        self.acomp.mkdir(parents=True)
+        (self.acomp / "quebrado.json").write_text("{ isto nao e json", encoding="utf-8")
+        with self._sessao() as app:
+            self.assertEqual(len(app.exception), 0)
+            self.assertTrue(any("acompanhamento" in e.value for e in app.error), [e.value for e in app.error])
+
+    def test_cadastro_manual_tem_o_campo_destinatario(self) -> None:
+        with self._sessao() as app:
+            next(b for b in app.button if b.label == "Cadastrar emenda").click().run()
+            self.assertEqual(len(app.exception), 0)
+            rotulos = [t.label for t in app.text_input]
+            self.assertIn("Destinatário (opcional)", rotulos)
+            self.assertIn("Objeto ou observação", [t.label for t in app.text_area])
 
 
 if __name__ == "__main__":

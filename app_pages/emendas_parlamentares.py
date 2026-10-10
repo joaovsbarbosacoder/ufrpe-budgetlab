@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import html as html_lib
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import date, datetime
 
 import pandas as pd
 import streamlit as st
 
+from src import acompanhamento_emendas as acomp
 from src import ajustes_dotacao_emendas as ajustes
+from src.acompanhamento_emendas import STATUS_OUTRO, STATUS_SUGERIDOS, ErroAcompanhamento
 from src.ajustes_dotacao_emendas import ErroAjusteDotacao, ptres_com_uma_emenda
 from src.design_tokens import (
     ACCENT,
@@ -325,7 +327,7 @@ def _html_dotacao_anual(linha) -> str:
     return f'<div class="em-tags" style="margin-bottom:8px"><span class="em-tag">{_esc(texto)}</span>{aviso}</div>'
 
 
-def _render_card_emenda(linha, vinculos_da_emenda: pd.DataFrame) -> None:
+def _render_card_emenda(linha, vinculos_da_emenda: pd.DataFrame, status_atual: str | None = None) -> None:
     parlamentar = (
         "(não informado)" if pd.isna(linha.parlamentar) else _esc(linha.parlamentar)
     )
@@ -340,6 +342,7 @@ def _render_card_emenda(linha, vinculos_da_emenda: pd.DataFrame) -> None:
             f'<span class="em-tag">GND {_resumo_tupla(linha.gnds)}</span>',
             _badge_origem(linha.origem_valores),
             *(['<span class="em-tag">dotação decidida</span>'] if decidida else []),
+            *([f'<span class="em-tag">Tramitação: {_esc(status_atual)}</span>'] if status_atual else []),
         ]
     )
     original_relatorio = ""
@@ -434,6 +437,10 @@ def _dialog_cadastro_manual() -> None:
             format="%.2f",
         )
         objeto = st.text_area("Objeto ou observação")
+        destinatario = st.text_input(
+            "Destinatário (opcional)",
+            help="Com o responsável preenchido, objeto e destinatário também entram no acompanhamento da emenda.",
+        )
         responsavel = st.text_input("Responsável")
         enviado = st.form_submit_button(
             "Cadastrar emenda",
@@ -459,6 +466,19 @@ def _dialog_cadastro_manual() -> None:
     except (ErroPoliticaImportacao, ErroVinculoEmenda, OSError, ValueError) as error:
         st.error(str(error))
         return
+    if objeto.strip() or destinatario.strip():
+        chave_nova = (int(exercicio), str(rp_codigo), numero.strip())
+        if responsavel.strip():
+            try:
+                acomp.definir_complemento(
+                    chave=chave_nova, objeto=objeto, destinatario=destinatario, responsavel=responsavel,
+                    motivo="Informado no cadastro da emenda.", chaves_validas={chave_nova},
+                    diretorio=acomp.DIRETORIO_ACOMPANHAMENTO,
+                )
+            except (ErroAcompanhamento, OSError) as error:
+                st.toast(f"Emenda cadastrada, mas objeto/destinatário não foram registrados no acompanhamento: {error}")
+        else:
+            st.toast("Emenda cadastrada. Informe o responsável para registrar objeto/destinatário no acompanhamento.")
     st.success("Emenda cadastrada e incluída na reconciliação.")
     st.rerun()
 
@@ -508,6 +528,9 @@ try:
     eventos_vinculo = carregar_eventos_vinculo()
     # decisões sobre divergência de dotação (10/2026): eventos imutáveis; ilegível/incoerente levanta erro
     decisoes_dotacao = ajustes.reconstruir_decisoes(ajustes.carregar_eventos(ajustes.DIRETORIO_AJUSTES))
+    # acompanhamento manual (tramitação, objeto, destinatário): eventos imutáveis; ilegível/incoerente levanta erro
+    eventos_acompanhamento = acomp.carregar_eventos(acomp.DIRETORIO_ACOMPANHAMENTO)
+    tramitacao = acomp.reconstruir_tramitacao(eventos_acompanhamento)
     composicao = compor_relatorio_com_cadastros(
         relatorio_base,
         cadastros_manuais,
@@ -520,9 +543,23 @@ try:
     resultado = vincular_execucao_emendas(
         composicao_vinculos.relatorio, execucao, dotacao=dotacao_anual, decisoes_dotacao=decisoes_dotacao
     )
-except (ErroPoliticaImportacao, ErroVinculoEmenda, ErroAjusteDotacao) as error:
+except (ErroPoliticaImportacao, ErroVinculoEmenda, ErroAjusteDotacao, ErroAcompanhamento) as error:
     st.error(f"Não foi possível consolidar as Emendas: {error}")
     st.stop()
+
+# chaves das emendas existentes agora (relatório + cadastros manuais): o servidor valida contra elas
+chaves_validas = {
+    (int(r.ano), str(r.resultado_primario_cod), str(r.emenda_numero)) for r in resultado.emendas.itertuples()
+}
+status_por_chave = {
+    (int(r.ano), str(r.resultado_primario_cod), str(r.emenda_numero)): r
+    for r in acomp.status_atual(tramitacao).itertuples()
+}
+complemento_por_chave = {
+    (int(r.ano), str(r.resultado_primario_cod), str(r.emenda_numero)): r
+    for r in acomp.complemento_vigente(eventos_acompanhamento).itertuples()
+}
+orfaos_acompanhamento = acomp.orfaos(eventos_acompanhamento, chaves_validas)
 
 with st.container(horizontal=True):
     if st.button(
@@ -788,8 +825,152 @@ def _render_decisoes_dotacao(decisoes: list[dict]) -> None:
                 _dialogo_desfazer_decisao(decisao)
 
 
+_ESPECIAIS_MARKDOWN = {ord(c): chr(92) + c for c in chr(92) + "`*_{}[]<>~$|"}
+
+
+def _md(texto: object) -> str:
+    """Texto de dado digitado pelo usuário para `st.markdown`: escapa os caracteres especiais do markdown (`$` inclusive,
+    que em pares vira fórmula)."""
+
+    return str(texto).translate(_ESPECIAIS_MARKDOWN)
+
+
+def _fmt_data(valor: object) -> str:
+    return "—" if valor is None or pd.isna(valor) else pd.Timestamp(valor).strftime("%d/%m/%Y")
+
+
+def _texto_ou_nao_informado(valor: object) -> str:
+    return "_não informado_" if valor is None or pd.isna(valor) else _md(valor)
+
+
+@st.dialog("Registrar status da tramitação")
+def _dialogo_registrar_status(chave: tuple, chaves_validas: set) -> None:
+    """Registro de status (spec acompanhamento): lista sugerida + "Outro". Só o botão de confirmação grava um evento
+    imutável; a data pode ser retroativa, nunca futura."""
+
+    st.markdown(f"Emenda **{_md(chave[2])}** · RP{chave[1]} · exercício {chave[0]}")
+    with st.form("emendas_registrar_status", border=False):
+        status = st.selectbox("Status", [*STATUS_SUGERIDOS, STATUS_OUTRO])
+        status_outro = st.text_input("Descrição do status (obrigatória se for “Outro”)")
+        data_status = st.date_input("Data do status", value=date.today(), max_value=date.today(), format="DD/MM/YYYY")
+        observacao = st.text_area("Observação", help="Opcional, até 500 caracteres.")
+        responsavel = st.text_input("Responsável")
+        enviado = st.form_submit_button("Registrar status", type="primary", icon=":material/check:")
+    if not enviado:
+        return
+    try:
+        acomp.registrar_status(
+            chave=chave, status=status, status_outro=status_outro, data_status=data_status, observacao=observacao,
+            responsavel=responsavel, chaves_validas=chaves_validas, diretorio=acomp.DIRETORIO_ACOMPANHAMENTO,
+        )
+    except (ErroAcompanhamento, OSError) as error:
+        st.error(str(error))
+        return
+    st.toast("Status registrado.", icon=":material/check_circle:")
+    st.rerun()
+
+
+@st.dialog("Cancelar registro de status")
+def _dialogo_cancelar_status(evento_id: str, rotulo: str) -> None:
+    st.markdown(f"Cancelar o registro: **{_md(rotulo)}**")
+    st.caption("O registro original permanece no histórico (riscado); o cancelamento acrescenta um novo evento.")
+    with st.form("emendas_cancelar_status", border=False):
+        motivo = st.text_area("Motivo", help="Obrigatório, no mínimo 10 caracteres.")
+        responsavel = st.text_input("Responsável")
+        enviado = st.form_submit_button("Cancelar registro", type="primary")
+    if not enviado:
+        return
+    try:
+        acomp.cancelar_status(
+            evento_id=evento_id, motivo=motivo, responsavel=responsavel, diretorio=acomp.DIRETORIO_ACOMPANHAMENTO
+        )
+    except (ErroAcompanhamento, OSError) as error:
+        st.error(str(error))
+        return
+    st.toast("Registro cancelado.", icon=":material/undo:")
+    st.rerun()
+
+
+@st.dialog("Objeto e destinatário")
+def _dialogo_editar_complemento(chave: tuple, objeto_atual: object, destinatario_atual: object, chaves_validas: set) -> None:
+    st.markdown(f"Emenda **{_md(chave[2])}** · RP{chave[1]} · exercício {chave[0]}")
+    with st.form("emendas_editar_complemento", border=False):
+        objeto = st.text_area("Objeto", value="" if pd.isna(objeto_atual) else str(objeto_atual), help="Até 500 caracteres.")
+        destinatario = st.text_input(
+            "Destinatário", value="" if pd.isna(destinatario_atual) else str(destinatario_atual), help="Até 200 caracteres."
+        )
+        motivo = st.text_input("Motivo da alteração (opcional)")
+        responsavel = st.text_input("Responsável")
+        st.caption("Campo em branco = não informado. Cada alteração fica registrada com o valor anterior.")
+        enviado = st.form_submit_button("Salvar", type="primary", icon=":material/check:")
+    if not enviado:
+        return
+    try:
+        acomp.definir_complemento(
+            chave=chave, objeto=objeto, destinatario=destinatario, responsavel=responsavel, motivo=motivo,
+            chaves_validas=chaves_validas, diretorio=acomp.DIRETORIO_ACOMPANHAMENTO,
+        )
+    except (ErroAcompanhamento, OSError) as error:
+        st.error(str(error))
+        return
+    st.toast("Objeto e destinatário registrados.", icon=":material/check_circle:")
+    st.rerun()
+
+
+def _render_acompanhamento(linha, tramitacao_emenda: pd.DataFrame, complemento, atual: str | None) -> None:
+    """Acompanhamento manual da emenda: objeto, destinatário e histórico da tramitação (status atual + registros,
+    inclusive os cancelados, riscados). Vale para qualquer exercício."""
+
+    chave = (int(linha.ano), str(linha.resultado_primario_cod), str(linha.emenda_numero))
+    chave_texto = f"{chave[0]}_{chave[1]}_{chave[2]}"
+    objeto = getattr(complemento, "objeto", None)
+    destinatario = getattr(complemento, "destinatario", None)
+    with st.expander(f"Acompanhamento — {atual or 'sem status registrado'}"):
+        st.markdown(
+            f"**Objeto:** {_texto_ou_nao_informado(objeto)}  \n**Destinatário:** {_texto_ou_nao_informado(destinatario)}"
+        )
+        if st.button("Editar objeto e destinatário", key=f"em_complemento_{chave_texto}", icon=":material/edit:"):
+            _dialogo_editar_complemento(
+                chave, pd.NA if objeto is None else objeto, pd.NA if destinatario is None else destinatario, chaves_validas
+            )
+        st.markdown("**Tramitação**")
+        if tramitacao_emenda.empty:
+            st.caption("Nenhum status registrado.")
+        for registro in tramitacao_emenda.iloc[::-1].itertuples():
+            corpo = f"{_fmt_data(registro.data_status)} — **{_md(registro.status)}** · {_md(registro.responsavel)}"
+            if registro.observacao:
+                corpo += f" · {_md(registro.observacao)}"
+            if registro.cancelado:
+                corpo = (
+                    f"~~{corpo}~~  \ncancelado por {_md(registro.cancelado_por)} em {_data_hora(registro.cancelado_em)}: "
+                    f"{_md(registro.cancelado_motivo)}"
+                )
+            st.markdown(corpo)
+            if not registro.cancelado and st.button(
+                "Cancelar registro", key=f"em_cancelar_status_{registro.evento_id}", icon=":material/undo:"
+            ):
+                _dialogo_cancelar_status(registro.evento_id, f"{_fmt_data(registro.data_status)} — {registro.status}")
+        if st.button("Registrar status", key=f"em_status_{chave_texto}", icon=":material/add:", type="primary"):
+            _dialogo_registrar_status(chave, chaves_validas)
+
+
+def _render_orfaos(orfaos: list[dict]) -> None:
+    """Registros de acompanhamento cuja emenda não existe mais nos dados atuais: nada é escondido nem descartado."""
+
+    if not orfaos:
+        return
+    with st.expander(f"Registros sem emenda correspondente ({len(orfaos)})"):
+        st.caption("Estes registros continuam guardados, mas a emenda deixou de aparecer nos dados atuais.")
+        for item in orfaos:
+            st.markdown(
+                f"**{_md(item['emenda_numero'])}** · RP{item['resultado_primario_cod']} · exercício {item['ano']} — "
+                f"{_md(item['resumo'])} ({_md(item['responsavel'])}, {_data_hora(item['registrado_em'])})"
+            )
+
+
 _render_divergencias_dotacao(filtradas, resultado.vinculos, decisoes_dotacao)
 _render_decisoes_dotacao(decisoes_dotacao)
+_render_orfaos(orfaos_acompanhamento)
 
 if filtradas.empty:
     st.info("Nenhuma emenda corresponde aos filtros selecionados.")
@@ -803,7 +984,19 @@ else:
             & (resultado.vinculos["autor_emenda"] == linha.autor_emenda)
             & (resultado.vinculos["parlamentar"] == linha.parlamentar)
         ]
-        _render_card_emenda(linha, vinculos_da_emenda)
+        chave_emenda = (int(linha.ano), str(linha.resultado_primario_cod), str(linha.emenda_numero))
+        status_emenda = status_por_chave.get(chave_emenda)
+        _render_card_emenda(linha, vinculos_da_emenda, getattr(status_emenda, "status", None))
+        _render_acompanhamento(
+            linha,
+            tramitacao[
+                (tramitacao["ano"] == chave_emenda[0])
+                & (tramitacao["resultado_primario_cod"] == chave_emenda[1])
+                & (tramitacao["emenda_numero"] == chave_emenda[2])
+            ],
+            complemento_por_chave.get(chave_emenda),
+            getattr(status_emenda, "status", None),
+        )
 
 st.caption(
     f"Base de Emendas: {manifesto_emendas.rotulo} · hash "
