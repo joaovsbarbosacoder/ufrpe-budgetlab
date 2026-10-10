@@ -25,6 +25,8 @@ from typing import Callable
 #: série mensal de variação (%) no SGS/BCB: IPCA, INPC e IGP-M.
 SERIES_BCB = {"IPCA": 433, "INPC": 188, "IGPM": 189}
 INDICES = tuple(SERIES_BCB)
+#: índice usado quando o contrato não informa outro (decisão do usuário, 11/10/2026: base IPCA).
+INDICE_PADRAO = "IPCA"
 
 _URL = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{serie}/dados?formato=json&dataInicial={inicio}&dataFinal={fim}"
 _TIMEOUT_SEGUNDOS = 20.0

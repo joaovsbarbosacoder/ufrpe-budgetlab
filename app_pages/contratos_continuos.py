@@ -1979,10 +1979,16 @@ dataframe = tabela_contratos(
 # vigência e aditivos sem registro. Complemento opcional, em memória — ver `com_contratosgov`.
 termos_gov = None
 _inicio_por_gov: dict = {}
+_vigencias_por_gov: dict = {}
 _gov = _carregar_gov(_referencia_gov())
 if _gov is not None:
     _contratos_gov, termos_gov, _empenhos_gov = _gov
     _inicio_por_gov = dict(zip(_contratos_gov["contrato_id"].astype(str), _contratos_gov["vigencia_inicio"]))
+    # início de cada termo aditivo com vigência (as renovações): a data-base do reajuste vem do mais recente
+    _termos_vigencia = termos_gov[(termos_gov["tipo"] == "Termo Aditivo") & termos_gov["vigencia_inicio"].notna()]
+    _vigencias_por_gov = {
+        str(cid): list(grupo["vigencia_inicio"]) for cid, grupo in _termos_vigencia.groupby("contrato_id")
+    }
     dataframe = com_contratosgov(dataframe, _contratos_gov, termos_gov, _empenhos_gov)
     _candidatos_gov, _em_duvida_gov = candidatos_novos(dataframe, _contratos_gov, _empenhos_gov)
     _render_novos_contratosgov(_candidatos_gov, _em_duvida_gov, ano_selecionado, source_key)
@@ -2066,6 +2072,7 @@ _render_relatorio_projecao_execucao(
 render_estimativa_reajuste(
     filtrado, registros, [r for _ano in anos_disponiveis() for r in carregar_contratos(_ano)], ano_selecionado,
     liquidacao_competencia_por_mes, _inicio_por_gov, source_key, _referencia_gov(),
+    _vigencias_por_gov,
 )
 if indice_liquidado_competencia is not None:
     _render_empenhado_liquidado(

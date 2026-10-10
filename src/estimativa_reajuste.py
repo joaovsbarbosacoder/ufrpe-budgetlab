@@ -9,8 +9,9 @@ cadastrados — o módulo só LÊ o contrato e devolve a estimativa. A promoçã
 (`aditivo_previsto_do_ciclo`) devolve o aditivo; quem grava é a tela, por clique.
 
 Regras (resumo; detalhes e dúvidas registradas na spec):
-  * Data-base: a manual; senão 12 meses após o último aditivo de Reajuste ASSINADO; senão 12 meses após o
-    início da vigência. As seguintes, a cada 12 meses, só enquanto a data-base cabe na vigência EFETIVA
+  * Data-base: a manual; senão o início da vigência de renovação mais recente (termos de vigência do
+    Contratos.gov, aditivos ASSINADOS de vigência), repetida a cada 12 meses; sem renovação, 12 meses após o
+    início da vigência (ou do último Reajuste assinado). As seguintes, a cada 12 meses, só enquanto a data-base cabe na vigência EFETIVA
     (inclusive prorrogação PREVISTA) e a partir de janeiro do exercício selecionado (ciclos passados já estão
     no valor em vigor do cadastro).
   * Percentual do ciclo: manual > oficial (acumulado de 12 meses) > ausente. Ausente = nulo, nunca 0%.
@@ -93,28 +94,47 @@ def _somar_meses(dia: date, meses: int) -> date:
     return date(ano, mes, min(dia.day, calendar.monthrange(ano, mes)[1]))
 
 
+def _primeira_data_base(
+    vigencia_inicio: object, inicios_vigencia: list, aditivos: list[Aditivo]
+) -> date | None:
+    """Primeira data-base candidata (decisão do usuário, 11/10/2026: "a data-base vem das últimas vigências").
+    O reajuste acompanha a renovação: a data-base é o início da vigência MAIS RECENTE de renovação (termo de
+    vigência do Contratos.gov ou aditivo ASSINADO com nova vigência), repetida a cada 12 meses — a menos que
+    um Reajuste ASSINADO já tenha data de início igual ou posterior a ela (já refletido no valor): aí começa
+    12 meses depois dele. Sem renovação, 12 meses após o último Reajuste assinado ou o início da vigência.
+    Aditivo PREVISTO não conta. `None` sem nenhuma data."""
+
+    renovacoes = [_como_data(d) for d in inicios_vigencia or []]
+    renovacoes += [a.data_inicio for a in aditivos if a.situacao == "ASSINADO" and a.data_inicio is not None and a.vigencia_fim is not None]
+    renovacoes = [d for d in renovacoes if d is not None]
+    reajustes = [a.data_inicio for a in aditivos if a.tipo == "REAJUSTE" and a.situacao == "ASSINADO" and a.data_inicio is not None]
+    if renovacoes:
+        renovacao = max(renovacoes)
+        ja_refletido = [d for d in reajustes if d >= renovacao]
+        return _somar_meses(max(ja_refletido), 12) if ja_refletido else renovacao
+    inicio = _como_data(vigencia_inicio)
+    base = max([*reajustes, *([inicio] if inicio is not None else [])], default=None)
+    return None if base is None else _somar_meses(base, 12)
+
+
 def datas_base(
     *, vigencia_inicio: object, vigencia_fim_efetiva: object, aditivos: list[Aditivo], data_base_manual: object,
-    a_partir_de: date | None = None,
+    a_partir_de: date | None = None, inicios_vigencia: list | None = None,
 ) -> tuple[list[date], str]:
     """Datas-base dos ciclos e o motivo (`ok`, `sem_data_base`, `sem_vigencia_fim` ou
-    `sem_reajuste_na_vigencia`). Só aditivos de Reajuste ASSINADOS deslocam a data-base: os PREVISTOS são a
-    própria estimativa. `a_partir_de` descarta as datas-base anteriores a ele: o reajuste de um ciclo que já
-    passou está incorporado ao valor em vigor do cadastro (ou é um aditivo a registrar), não é estimativa."""
+    `sem_reajuste_na_vigencia`); a primeira segue `_primeira_data_base` (ou é a manual) e as seguintes vêm a
+    cada 12 meses, só dentro da vigência efetiva. `a_partir_de` descarta as datas-base anteriores a ele: o
+    reajuste de um ciclo que já passou está incorporado ao valor em vigor do cadastro (ou é um aditivo a
+    registrar), não é estimativa."""
 
     fim = _como_data(vigencia_fim_efetiva)
     if fim is None:
         return [], "sem_vigencia_fim"
     primeira = _como_data(data_base_manual)
     if primeira is None:
-        assinados = [a for a in aditivos if a.tipo == "REAJUSTE" and a.situacao == "ASSINADO" and a.data_inicio is not None]
-        if assinados:
-            primeira = _somar_meses(max(a.data_inicio for a in assinados), 12)
-        else:
-            inicio = _como_data(vigencia_inicio)
-            if inicio is None:
-                return [], "sem_data_base"
-            primeira = _somar_meses(inicio, 12)
+        primeira = _primeira_data_base(vigencia_inicio, inicios_vigencia or [], aditivos)
+        if primeira is None:
+            return [], "sem_data_base"
     datas = []
     atual, passo = primeira, 0
     while atual <= fim:
@@ -169,7 +189,7 @@ def estimar_contrato(
     *, contrato: str, despesa_mensal: object, aditivos: list[Aditivo], vigencia_inicio: object,
     vigencia_fim: object, parametros: ParametrosReajuste, exercicio_inicial: int,
     variacoes: dict | None = None, liquidado: dict[tuple[int, int], float] | None = None,
-    ultimo_mes_coberto: tuple[int, int] | None = None,
+    ultimo_mes_coberto: tuple[int, int] | None = None, inicios_vigencia: list | None = None,
 ) -> EstimativaContrato:
     """Matriz por competência (mês/ano) do contrato, do início da vigência (ou de janeiro de
     `exercicio_inicial`, sem o início) ao fim da vigência efetiva. `liquidado` é o liquidado por competência
@@ -182,6 +202,7 @@ def estimar_contrato(
     datas, motivo = datas_base(
         vigencia_inicio=inicio, vigencia_fim_efetiva=fim_efetivo, aditivos=aditivos,
         data_base_manual=parametros.data_base_manual, a_partir_de=date(exercicio_inicial, 1, 1),
+        inicios_vigencia=inicios_vigencia,
     )
     if fim_efetivo is None:
         return EstimativaContrato(pd.DataFrame(columns=COLUNAS_MATRIZ), "sem_vigencia_fim")
