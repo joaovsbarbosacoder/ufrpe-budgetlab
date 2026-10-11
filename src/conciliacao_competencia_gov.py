@@ -33,6 +33,7 @@ Contrato público:
     ajustar_mes(mes, ignorar=()) -> AjusteMes
     construir_contexto(relatorio, itens, pendentes, naturezas) -> Contexto
     classificar_mes(mes, ajuste, causas) -> str   # uma das CLASSES
+    totais_por_ne(relatorio, itens, execucao, empenhos) -> list[TotalNE]   # confronto de totais com a Execução Mensal
     causas_do_mes(contexto, ano, mes, nes) -> list[Causa]
     empenhos_do_contrato(empenhos_gov, contrato_id, ne_cadastro=None, natureza_cadastro=None) -> dict[ne, EmpenhoInfo]
     nes_do_mes(mes) -> list[str]
@@ -191,9 +192,66 @@ CLASSES = {
     "so_notas": "Só nota (sem relatório)",
     "so_relatorio": "Só relatório (sem nota)",
     "sem_explicacao": "Diferença sem explicação",
+    "confirmada": "Sugestão confirmada",
+    "rejeitada": "Sugestão rejeitada",
 }
-#: classes que NÃO são pendência: nada a fazer
-CLASSES_OK = ("batem", "sem_registro")
+#: classes que NÃO são pendência: nada a fazer ("confirmada" = o usuário confirmou a sugestão; "rejeitada" continua pendente)
+CLASSES_OK = ("batem", "sem_registro", "confirmada")
+
+
+@dataclass(frozen=True)
+class TotalNE:
+    """Totais de uma NE em três fontes (todas as competências/lançamentos disponíveis). A Execução Mensal é por mês de
+    LANÇAMENTO, não por competência: só o total é comparável (e ela só cobre 2024 em diante)."""
+
+    ne: str
+    notas: float | None  # liquidado nas notas (válidas, sem duplicadas); None = nenhuma nota
+    relatorio: float | None  # Liquidação por Competência; None = NE sem linha no relatório (ex.: DEA)
+    execucao: float | None  # Execução Mensal (liquidada); None = NE sem lançamento na Execução Mensal
+    empenho: EmpenhoInfo | None = None
+
+    @property
+    def dif_relatorio(self) -> float | None:
+        return None if self.relatorio is None or self.execucao is None else round(self.relatorio - self.execucao, 2)
+
+    @property
+    def dif_notas(self) -> float | None:
+        return None if self.notas is None or self.execucao is None else round(self.notas - self.execucao, 2)
+
+    @property
+    def situacao(self) -> str:
+        """sem_execucao | batem (as fontes presentes batem com a Execução) | diverge_relatorio | diverge_notas"""
+        if self.execucao is None:
+            return "sem_execucao"
+        if self.dif_relatorio is not None and abs(self.dif_relatorio) > TOLERANCIA:
+            return "diverge_relatorio"
+        if self.dif_notas is not None and abs(self.dif_notas) > TOLERANCIA:
+            return "diverge_notas"
+        return "batem"
+
+
+def totais_por_ne(
+    relatorio: pd.DataFrame | None, itens: pd.DataFrame, execucao: pd.DataFrame | None, empenhos: dict[str, EmpenhoInfo],
+) -> list[TotalNE]:
+    """Uma linha por NE do contrato com dado em alguma fonte: total das notas, do relatório e da Execução Mensal
+    (`execucao` com `ne_curta` e `liquidada`). Ausência de fonte = None (nunca zero)."""
+
+    rel = _relatorio_do_contrato(relatorio, set(empenhos))
+    por_rel = {str(ne): float(v) for ne, v in rel.groupby("ne_curta")["valor"].sum().items()}
+    validos = itens[~itens["duplicada"]] if not itens.empty else itens
+    por_notas = {str(ne): float(v) for ne, v in validos.groupby("ne")["valor"].sum().items()} if not validos.empty else {}
+    por_exec: dict[str, float] = {}
+    if execucao is not None and not execucao.empty:
+        recorte = execucao[execucao["ne_curta"].isin(set(empenhos))]
+        por_exec = {str(ne): float(v) for ne, v in recorte.groupby("ne_curta")["liquidada"].sum().items()}
+    nes = sorted(set(por_rel) | set(por_notas) | set(por_exec))
+    return [
+        TotalNE(
+            ne, round(por_notas[ne], 2) if ne in por_notas else None, round(por_rel[ne], 2) if ne in por_rel else None,
+            round(por_exec[ne], 2) if ne in por_exec else None, empenhos.get(ne),
+        )
+        for ne in nes
+    ]
 
 
 @dataclass(frozen=True)

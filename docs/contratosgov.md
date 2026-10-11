@@ -178,3 +178,11 @@ propósito:
    desvio é sinalizado, não adivinhado.
 
 Mesma regra do `AGENTS.md` para as demais fixtures de trabalho.
+
+## 7. Instrumentos de cobrança: campos guardados e usos (11/10/2026)
+Cada nota (`montar_faturas`) guarda: identificação (tipo, número, série, documento no SIAFI, processo, chave da NF-e), datas (emissão,
+protocolo, ateste, prazo, vencimento, liquidação), valores (valor, juros, multa, glosa, líquido; nulo ≠ zero), situação no Siafi,
+cancelada, repactuação, optante pelo Simples, empenhos (NE, subelemento, valor), competências (mês/ano/valor), itens faturados
+(item do contrato, quantidade, unitário, total) e informações complementares. Usos: lista e detalhamento na janela de cada
+contrato; conciliação por competência com o relatório de Liquidação por Competência (ver README); alerta por atualização e
+relatório de inconsistências. Valores do contrato inteiro (todas as ações), como vêm da API.

@@ -35,9 +35,20 @@ from src.conciliacao_competencia_gov import (
     nes_do_mes,
     ajustar_mes,
     padrao_do_mes,
+    totais_por_ne,
+)
+from src.decisoes_conciliacao import (
+    CLASSES_COM_SUGESTAO,
+    ErroDecisao,
+    aplicar_decisao,
+    assinatura_mes,
+    carregar_eventos,
+    desfazer_decisao,
+    reconstruir_decisoes,
+    registrar_decisao,
 )
 from src.design_tokens import BORDER, NEGATIVE, POSITIVE, SURFACE_ALT, TEXT_FAINT, TEXT_MUTED, WARNING
-from src.ui_cadastro import chip, formatar_brl
+from src.ui_cadastro import celula_principal, celula_suave, celula_valor, chip, formatar_brl, tabela_html
 
 _MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
 
@@ -57,6 +68,17 @@ CSS = f"""
 .cmp-tag {{ border:1px solid {BORDER}; border-radius:6px; padding:0 6px; font-size:11px; color:{TEXT_MUTED} !important; }}
 .cmp-painel {{ background:{SURFACE_ALT} !important; border-radius:8px; padding:8px 12px; margin:6px 0 8px; font-size:13px; }}
 .cmp-nota-painel {{ color:{TEXT_FAINT} !important; }}
+.cmp-cons {{ border-collapse:collapse; font-size:12px; width:100%; }}
+.cmp-cons th {{ font-size:11px; color:{TEXT_FAINT} !important; text-transform:uppercase; padding:4px 3px; text-align:right; }}
+.cmp-cons th:first-child, .cmp-cons td:first-child {{ text-align:left; }}
+.cmp-cons td {{ padding:3px 3px; text-align:right; font-variant-numeric:tabular-nums; border-top:1px solid {BORDER}; }}
+.cmp-cons td.c {{ border-radius:4px; }}
+.cmp-cons .k-batem {{ background:rgba(10,143,61,.16) !important; }}
+.cmp-cons .k-sem_registro {{ color:{TEXT_FAINT} !important; }}
+.cmp-cons .k-deslocamento, .cmp-cons .k-cancelamento, .cmp-cons .k-nota_pendente {{ background:rgba(9,105,218,.16) !important; }}
+.cmp-cons .k-ambiguo, .cmp-cons .k-sem_explicacao {{ background:rgba(210,10,22,.16) !important; }}
+.cmp-cons .k-so_notas, .cmp-cons .k-so_relatorio {{ background:rgba(201,106,0,.20) !important; }}
+.cmp-cons tr.tot td {{ font-weight:700; border-top:2px solid {BORDER}; }}
 .cmp-risco {{ text-decoration:line-through; opacity:.75; }}
 .cmp-alerta {{ background:{SURFACE_ALT} !important; border-radius:6px; padding:1px 7px; color:{WARNING} !important; font-weight:600; }}
 .cmp-ok {{ color:{POSITIVE} !important; font-weight:600; }}
@@ -68,6 +90,184 @@ CSS = f"""
 
 def _brl(valor: float) -> str:
     return formatar_brl(valor).replace("$", "&#36;")
+
+
+_SITUACAO_TOTAL = {
+    "batem": ("Batem", "ok"), "diverge_relatorio": ("Relatório ≠ Execução", "warn"), "diverge_notas": ("Notas ≠ Execução", "warn"),
+    "sem_execucao": ("Sem Execução Mensal", "neutro"),
+}
+
+
+def html_totais(linhas) -> str:
+    """Quadro de totais por NE: notas × relatório de competência × Execução Mensal, com as diferenças."""
+
+    corpo = []
+    for l in linhas:
+        rotulo, tom = _SITUACAO_TOTAL[l.situacao]
+        acao = f"{l.empenho.acao}" + (f" · {l.empenho.elemento}" if l.empenho and l.empenho.elemento else "") if l.empenho else "—"
+        corpo.append([
+            celula_principal(l.ne, acao), celula_valor(l.notas, vazio="sem nota"), celula_valor(l.relatorio, vazio="sem relatório"),
+            celula_valor(l.execucao, vazio="sem lançamento"), celula_valor(l.dif_relatorio, vazio="—"),
+            celula_valor(l.dif_notas, vazio="—"), chip(rotulo, tom),
+        ])
+    return tabela_html(
+        [("NE / ação", False), ("Notas", True), ("Relatório", True), ("Exec. Mensal", True), ("Relat. − Exec.", True),
+         ("Notas − Exec.", True), ("Situação", False)],
+        corpo, [1.5, 1, 1, 1, 1, 1, 1.3],
+    )
+
+
+def _compacto(valor: float | None) -> str:
+    """Valor curto para a célula da matriz: "2,6 mil", "1,2 mi"; nulo vira "—" (o valor exato fica no título)."""
+    if valor is None:
+        return "—"
+    absoluto = abs(valor)
+    if absoluto >= 1_000_000:
+        texto = f"{valor / 1_000_000:.1f} mi"
+    elif absoluto >= 1_000:
+        texto = f"{valor / 1_000:.1f} mil"
+    else:
+        texto = f"{valor:.0f}"
+    return texto.replace(".", ",")
+
+
+def html_consolidada(linhas: list[dict]) -> str:
+    """Matriz contratos × 12 meses: o valor do relatório (ou, se só há nota, o da nota, em itálico) com a cor da classe do
+    mês; o título de cada célula traz os valores exatos e a causa. Linha final com os totais por mês. Textos escapados."""
+
+    cabecalho = "".join(f"<th>{_MESES[m]}</th>" for m in range(12))
+    corpo, tot_rel, tot_notas = [], [None] * 12, [None] * 12
+    for linha in linhas:
+        celulas = []
+        for i, mes in enumerate(linha["meses"]):
+            rel, notas, classe = mes["relatorio"], mes["notas"], mes["classe"]
+            if rel is not None:
+                tot_rel[i] = (tot_rel[i] or 0.0) + rel
+            if notas is not None:
+                tot_notas[i] = (tot_notas[i] or 0.0) + notas
+            texto = _compacto(rel) if rel is not None else (f"<i>{_compacto(notas)}</i>" if notas is not None else "—")
+            titulo = (
+                f"{_MESES[i]}/{linha.get('ano', '')}: {CLASSES[classe]} · relatório "
+                f"{'sem registro' if rel is None else formatar_brl(rel)} · notas {'sem registro' if notas is None else formatar_brl(notas)}"
+            )
+            celulas.append(f'<td class="c k-{classe}" title="{escape(titulo)}">{texto}</td>')
+        corpo.append(
+            f"<tr><td><b>{escape(linha['contrato'])}</b></td>{''.join(celulas)}"
+            f"<td><b>{_compacto(linha['total_relatorio'])}</b></td><td>{_compacto(linha['total_notas'])}</td></tr>"
+        )
+    totais = "".join(f"<td>{_compacto(v)}</td>" for v in tot_rel)
+    soma_rel = sum(v for v in tot_rel if v is not None) if any(v is not None for v in tot_rel) else None
+    soma_notas = sum(v for v in tot_notas if v is not None) if any(v is not None for v in tot_notas) else None
+    corpo.append(f'<tr class="tot"><td>Total (relatório)</td>{totais}<td>{_compacto(soma_rel)}</td><td>{_compacto(soma_notas)}</td></tr>')
+    return (
+        f'<table class="cmp-cons"><thead><tr><th>Contrato</th>{cabecalho}<th>Total relat.</th><th>Total notas</th></tr></thead>'
+        f'<tbody>{"".join(corpo)}</tbody></table>'
+    )
+
+
+def html_legenda_consolidada() -> str:
+    cores = {
+        "batem": "Batem", "deslocamento": "Deslocamento / cancelamento / nota pendente",
+        "sem_explicacao": "Ambíguo / sem explicação", "so_notas": "Só uma das fontes", "sem_registro": "Sem registro",
+    }
+    itens = "".join(
+        f'<span class="k-{c}" style="padding:1px 8px;border-radius:4px;margin-right:8px">{escape(t)}</span>' for c, t in cores.items()
+    )
+    return f'<div class="cmp-cons"><div style="font-size:12px;margin:4px 0 8px">{itens}</div></div>'
+
+
+def render_visao_consolidada(
+    ligados: list, faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None, relatorio: pd.DataFrame | None, chave: str,
+) -> None:
+    """Expansor "todos os contratos": seletor de exercício e matriz calculada sob demanda (leva alguns segundos)."""
+
+    from src.pendencias_conciliacao import consolidar_exercicio
+
+    with st.expander("Liquidação por competência — todos os contratos", expanded=False):
+        if relatorio is None or relatorio.empty:
+            st.caption("Sem a base de Liquidação por Competência, não há o que mostrar.")
+            return
+        anos = sorted({int(a) // 100 for a in relatorio["ano_mes"]}, reverse=True)
+        ano = st.selectbox("Exercício", anos, key=f"{chave}_cons_ano")
+        estado = f"{chave}_cons_dados"
+        assinatura = (int(ano), len(ligados), len(relatorio), 0 if faturas is None else len(faturas))
+        st.caption(
+            "Valor LIQUIDADO por competência de cada contrato (relatório do Tesouro; em itálico, quando só há nota do gov), "
+            "com a cor da situação do mês. Só as NEs da 20RK; passe o mouse sobre a célula para ver os valores exatos."
+        )
+        if st.button("Calcular a visão consolidada", key=f"{chave}_cons_calcular"):
+            with st.spinner("Conciliando todos os contratos…"):
+                linhas = consolidar_exercicio(ligados, faturas, empenhos_gov, relatorio, int(ano))
+            for linha in linhas:
+                linha["ano"] = int(ano)
+            st.session_state[estado] = (assinatura, linhas)
+        guardado = st.session_state.get(estado)
+        if guardado and guardado[0] == assinatura:
+            st.markdown(CSS, unsafe_allow_html=True)
+            st.markdown(html_legenda_consolidada() + html_consolidada(guardado[1]), unsafe_allow_html=True)
+
+
+def _cb_registrar(prefixo: str, contrato: str, ano_mes: int, classe: str, assinatura: str, decisao: str) -> None:
+    """`on_click` do botão Confirmar/Rejeitar: grava o evento antes do redesenho (a janela do contrato não fecha)."""
+
+    try:
+        registrar_decisao(
+            contrato=contrato, ano_mes=ano_mes, classe=classe, assinatura=assinatura, decisao=decisao,
+            justificativa=st.session_state.get(f"{prefixo}_just", ""), responsavel=st.session_state.get(f"{prefixo}_resp", ""),
+        )
+        st.session_state[f"{prefixo}_msg"] = ""
+    except ErroDecisao as erro:
+        st.session_state[f"{prefixo}_msg"] = str(erro)
+
+
+def _cb_desfazer(prefixo: str, decisao_id: str) -> None:
+    try:
+        desfazer_decisao(
+            decisao_id=decisao_id, motivo=st.session_state.get(f"{prefixo}_mot", ""),
+            responsavel=st.session_state.get(f"{prefixo}_resp", ""),
+        )
+        st.session_state[f"{prefixo}_msg"] = ""
+    except ErroDecisao as erro:
+        st.session_state[f"{prefixo}_msg"] = str(erro)
+
+
+def _render_decisao(contrato: str, completo: MesConciliado, classe_original: str, assinatura: str, decisao, chave: str) -> None:
+    """Formulário do mês: decisão ativa (com desfazer) ou Confirmar/Rejeitar a sugestão. Grava por callback."""
+
+    ativa = decisao is not None and decisao.assinatura == assinatura and classe_original in CLASSES_COM_SUGESTAO
+    rotulo = f"{_MESES[completo.mes - 1]}/{completo.ano}"
+    prefixo = f"{chave}_dec_{completo.ano}_{completo.mes}"
+    titulo = f"Decisão — {rotulo}" + (f" ({decisao.decisao})" if ativa else "")
+    with st.expander(titulo, expanded=False):
+        if decisao is not None and not ativa:
+            st.caption("Havia uma decisão para este mês, mas os dados mudaram desde então: ela ficou obsoleta e foi ignorada.")
+        if ativa:
+            st.caption(
+                f"Sugestão {decisao.decisao} por {decisao.responsavel} em {decisao.registrado_em[:19].replace('T', ' ')}: "
+                f"{decisao.justificativa}"
+            )
+            st.text_input("Motivo para desfazer", key=f"{prefixo}_mot")
+            st.text_input("Responsável", key=f"{prefixo}_resp")
+            st.button("Desfazer decisão", key=f"{prefixo}_desfazer", on_click=_cb_desfazer, args=(prefixo, decisao.id))
+        else:
+            st.caption(
+                f"Sugestão do sistema para {rotulo}: {CLASSES[classe_original].lower()}. Confirmar tira o mês das pendências; "
+                "rejeitar mantém a pendência. A decisão é gravada com responsável e justificativa e pode ser desfeita."
+            )
+            st.text_input("Responsável", key=f"{prefixo}_resp")
+            st.text_area("Justificativa (mínimo de 10 caracteres)", key=f"{prefixo}_just", height=70)
+            c1, c2 = st.columns(2)
+            c1.button(
+                "Confirmar sugestão", key=f"{prefixo}_confirmar", disabled=classe_original == "ambiguo",
+                help="Mês ambíguo só pode ser rejeitado: o sistema não escolhe qual nota foi cancelada.",
+                on_click=_cb_registrar, args=(prefixo, contrato, completo.ano * 100 + completo.mes, classe_original, assinatura, "confirmada"),
+            )
+            c2.button(
+                "Rejeitar sugestão", key=f"{prefixo}_rejeitar", on_click=_cb_registrar,
+                args=(prefixo, contrato, completo.ano * 100 + completo.mes, classe_original, assinatura, "rejeitada"),
+            )
+        if st.session_state.get(f"{prefixo}_msg"):
+            st.error(st.session_state[f"{prefixo}_msg"])
 
 
 def _rotulo_ne(ne: str, empenhos: dict[str, EmpenhoInfo]) -> str:
@@ -201,7 +401,7 @@ def html_mes(
 
 def render_conciliacao_competencia(
     linha: pd.Series, faturas_gov: tuple | None, empenhos_gov: pd.DataFrame | None,
-    relatorio_por_mes: pd.DataFrame | None, chave: str,
+    relatorio_por_mes: pd.DataFrame | None, chave: str, execucao_mensal: pd.DataFrame | None = None,
 ) -> None:
     """Seção na janela "Editar contrato". `faturas_gov` = (tabela, contratos consultados); `relatorio_por_mes` = Liquidação
     por Competência por (NE, mês) com `ne_curta`."""
@@ -228,12 +428,28 @@ def render_conciliacao_competencia(
     ano = st.selectbox("Exercício", anos, key=f"{chave}_cmp_ano")
     st.markdown(CSS, unsafe_allow_html=True)
     meses = conciliar_exercicio(int(ano), relatorio_por_mes, itens, naturezas)
+    # confronto de totais por NE com a Execução Mensal (11/10/2026): só o total é comparável (lançamento ≠ competência)
+    totais = totais_por_ne(relatorio_por_mes, itens, execucao_mensal, empenhos)
+    if totais:
+        with st.expander(f"Totais por NE × Execução Mensal ({len(totais)} NE(s))", expanded=False):
+            st.caption(
+                "Total de cada NE em todas as competências: liquidado nas notas, no relatório de competência e na "
+                "Execução Mensal. A Execução Mensal é por mês de LANÇAMENTO (não por competência) e só cobre 2024 em "
+                "diante; notas de 2024 para trás são incompletas no gov. Compare só o total."
+            )
+            st.markdown(html_totais(totais), unsafe_allow_html=True)
     st.caption(
         "Em cada mês, escolha quais NEs ficam em evidência (padrão: as da ação 20RK). Relatório e notas usam sempre a "
         "mesma seleção e não são somados. Quando as notas somam mais que o relatório, o sistema procura as notas cuja "
         "retirada fecha o valor (provável cancelamento não informado no gov) — é só uma sugestão, nada é gravado."
         + (f" {fora} nota(s) liquidada(s) não têm nenhuma NE deste contrato e ficaram fora." if fora else "")
     )
+    contrato = str(linha["contrato_numero"])
+    try:
+        decisoes = reconstruir_decisoes(carregar_eventos())
+    except ErroDecisao as erro:
+        st.error(f"Decisões de conciliação ilegíveis: {erro}")
+        decisoes = {}
     # 1ª passada: seleção de NEs de cada mês (a do usuário, se já mexeu; senão o padrão), causa e classe
     analise = []
     for completo in meses:
@@ -243,11 +459,16 @@ def render_conciliacao_competencia(
         causas = causas_do_mes(contexto, completo.ano, completo.mes, escolhidas) if opcoes else []
         explicadas = {c.ne for c in causas if c.tipo == "deslocamento"}  # duas pontas confirmam: vale mais que o cancelamento
         ajuste = ajustar_mes(visto, explicadas) if opcoes else None
-        analise.append((completo, opcoes, visto, causas, ajuste, classificar_mes(visto, ajuste, causas)))
+        original = classificar_mes(visto, ajuste, causas)
+        assinatura = assinatura_mes(
+            original, escolhidas if opcoes else [], [i.nota for i in visto.itens], visto.notas, visto.relatorio
+        )
+        decisao = decisoes.get((contrato, completo.ano * 100 + completo.mes))
+        analise.append((completo, opcoes, visto, causas, ajuste, aplicar_decisao(original, decisao, assinatura), original, assinatura, decisao))
 
     # painel de pendências do exercício + filtro "só os divergentes"
     contagem = {}
-    for *_, classe in analise:
+    for *_, classe, _original, _assinatura, _decisao in analise:
         contagem[classe] = contagem.get(classe, 0) + 1
     pendencias = sum(n for c, n in contagem.items() if c not in CLASSES_OK)
     st.markdown(
@@ -261,7 +482,7 @@ def render_conciliacao_competencia(
         f"Mostrar só os meses com pendência ({pendencias})", key=f"{chave}_cmp_so_divergentes",
     )
 
-    for completo, opcoes, visto, causas, ajuste, classe in analise:
+    for completo, opcoes, visto, causas, ajuste, classe, original, assinatura, decisao in analise:
         if so_divergentes and classe in CLASSES_OK:
             continue
         bloco, filtro = st.container(), st.container()
@@ -276,3 +497,6 @@ def render_conciliacao_competencia(
                 format_func=lambda ne: _rotulo_ne(ne, empenhos),
             )
         bloco.markdown(html_mes(visto, empenhos, ajuste, causas), unsafe_allow_html=True)
+        if original in CLASSES_COM_SUGESTAO or decisao is not None:
+            with bloco:
+                _render_decisao(contrato, completo, original, assinatura, decisao, chave)
