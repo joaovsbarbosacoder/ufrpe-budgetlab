@@ -199,12 +199,12 @@ com erro de leitura) a tela segue como antes, com aviso.
   mensal, empenhado, saldo, meses empenhados/liquidados e os textos (`novo_contrato_do_formulario`); um zero
   digitado continua zero, e "Meses no ano" em branco vale 12 nas contas. Só grava em "Adicionar contrato".
 
-**Linha do tempo das vigências.** Seção "Linha do tempo das vigências (Contratos.gov)" em Contratos Contínuos
-(`src/linha_tempo_vigencias.py`, `src/ui_linha_tempo_vigencias.py`), somente leitura: uma linha por contrato com o
-contrato original e cada termo aditivo de VIGÊNCIA do Contratos.gov como barras, marcadores de reajuste (R),
-acréscimo/supressão (A), apostilamento (P) e rescisão (X), a marca de hoje e a situação (vigente, vence em até 90
-dias, encerrado, sem data, sem ligação ao gov), com aviso quando o fim do gov difere do fim efetivo do cadastro.
-Busca, filtro de situação e ordenação pelo fim da vigência. Contrato sem ligação ao gov aparece só com o fim do cadastro.
+**Linha do tempo das vigências.** Dentro do cadastro de cada contrato — na janela de detalhe da página Contratos
+(Contratos.gov) e na seção "Contratos.gov" da janela "Editar contrato" de Contratos Contínuos
+(`src/linha_tempo_vigencias.py`, `src/ui_linha_tempo_vigencias.py`), somente leitura: o contrato original e cada
+termo aditivo de VIGÊNCIA do Contratos.gov como barras, marcadores de reajuste (R), acréscimo/supressão (A),
+apostilamento (P) e rescisão (X), a marca de hoje, a situação (vigente, vence em até 90 dias, encerrado, sem data) e,
+em Contínuos, o aviso quando o fim do gov difere do fim efetivo do cadastro. Abaixo das barras, a lista dos períodos.
 
 **Estimativa de reajuste (cenário por competência).** Seção "Estimativa de reajuste" em Contratos Contínuos
 (`src/estimativa_reajuste.py`, `src/indices_economicos.py`, `src/ui_reajuste.py`; spec em

@@ -14,7 +14,9 @@ from src.linha_tempo_vigencias import (
     Evento,
     Segmento,
     contagens,
+    janela_do_contrato,
     janela_padrao,
+    linha_do_contrato,
     linhas_do_tempo,
     situacao_vigencia,
 )
@@ -105,6 +107,24 @@ class LinhasTests(unittest.TestCase):
         linhas = linhas_do_tempo(_cadastro(), None, None, HOJE)
         self.assertEqual(len(linhas), 3)
         self.assertTrue(all(not l.ligado for l in linhas))
+
+
+class LinhaDeUmContratoTests(unittest.TestCase):
+    def test_monta_a_linha_so_com_os_termos_do_contrato(self) -> None:
+        termos = _termos_gov()
+        linha = linha_do_contrato(
+            numero="35/2024", fornecedor="Serval", termos=termos[termos["contrato_id"] == "1"],
+            fim_gov=date(2026, 6, 16), fim_cadastro=None, ligado=True, hoje=HOJE,
+        )
+        self.assertEqual(linha, _por_numero()["35/2024"].__class__(**{**_por_numero()["35/2024"].__dict__, "fim_cadastro": None}))
+        self.assertEqual(janela_do_contrato(linha, HOJE), (date(2024, 1, 1), date(2026, 12, 31)))
+
+    def test_sem_termos_nem_ligacao(self) -> None:
+        linha = linha_do_contrato(
+            numero="99/2026", fornecedor="X", termos=None, fim_gov=None, fim_cadastro=date(2027, 1, 31), ligado=False, hoje=HOJE
+        )
+        self.assertEqual(linha.segmentos, [Segmento(None, date(2027, 1, 31), "Vigência do cadastro", "cadastro")])
+        self.assertEqual(janela_do_contrato(linha, HOJE), (date(2025, 1, 1), date(2027, 12, 31)))
 
 
 class AuxiliaresTests(unittest.TestCase):

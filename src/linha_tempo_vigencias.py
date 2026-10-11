@@ -19,7 +19,9 @@ Regras:
 Contrato público:
     Segmento, Evento, LinhaDoTempo
     situacao_vigencia(ligado, fim, hoje, dias_alerta=DIAS_ALERTA) -> (rótulo, tom)
+    linha_do_contrato(*, numero, fornecedor, termos, fim_gov, fim_cadastro, ligado, hoje) -> LinhaDoTempo
     linhas_do_tempo(cadastro, contratos_gov, termos_gov, hoje) -> list[LinhaDoTempo]
+    janela_do_contrato(linha, hoje) -> (início, fim)
     contagens(linhas, hoje) -> dict[str, int]
     janela_padrao(linhas, hoje) -> (início, fim)
 """
@@ -140,6 +142,37 @@ def _termos_do_contrato(termos: pd.DataFrame, contrato_id: str) -> tuple[list[Se
     return segmentos, eventos
 
 
+def linha_do_contrato(
+    *, numero: object, fornecedor: object, termos: pd.DataFrame | None, fim_gov: object, fim_cadastro: object,
+    ligado: bool, hoje: date,
+) -> LinhaDoTempo:
+    """A linha do tempo de UM contrato: `termos` são os do contrato no Contratos.gov (já filtrados; nulo = sem termos).
+    Sem ligação ao gov, só a vigência do cadastro."""
+
+    fim_gov_data, fim_cadastro_data = _data(fim_gov), _data(fim_cadastro)
+    if ligado and termos is not None and not termos.empty:
+        segmentos, eventos = _termos_do_contrato(termos, str(termos["contrato_id"].iloc[0]))
+    elif not ligado and fim_cadastro_data is not None:
+        segmentos, eventos = [Segmento(None, fim_cadastro_data, "Vigência do cadastro", "cadastro")], []
+    else:
+        segmentos, eventos = [], []
+    situacao, tom = situacao_vigencia(ligado, fim_gov_data or fim_cadastro_data, hoje)
+    return LinhaDoTempo(
+        contrato=_texto(numero), fornecedor=_texto(fornecedor), ligado=ligado, fim_gov=fim_gov_data,
+        fim_cadastro=fim_cadastro_data, situacao=situacao, tom=tom, segmentos=segmentos, eventos=eventos,
+    )
+
+
+def janela_do_contrato(linha: LinhaDoTempo, hoje: date) -> tuple[date, date]:
+    """Do ano do primeiro segmento conhecido (no máximo 6 anos antes de `hoje`; sem nenhum, o ano anterior) a dezembro
+    do ano do fim da vigência (no mínimo o ano de `hoje`)."""
+
+    inicios = [s.inicio for s in linha.segmentos if s.inicio is not None]
+    primeiro = min(inicios).year if inicios else hoje.year - 1
+    ultimo = max([hoje.year, *([linha.fim.year] if linha.fim else [])])
+    return date(max(primeiro, hoje.year - 6), 1, 1), date(ultimo, 12, 31)
+
+
 def linhas_do_tempo(
     cadastro: pd.DataFrame, contratos_gov: pd.DataFrame | None, termos_gov: pd.DataFrame | None, hoje: date,
 ) -> list[LinhaDoTempo]:
@@ -155,17 +188,13 @@ def linhas_do_tempo(
         contrato_id = linha.get("contratosgov_id") if "contratosgov_id" in grupo.columns else None
         fim_cadastro = _data(linha.get("vigencia_fim_efetiva", linha.get("vigencia_fim")))
         ligado = gov is not None and not _vazio(contrato_id) and str(contrato_id) in gov.index
-        if ligado:
-            fim_gov = _data(gov.loc[str(contrato_id), "vigencia_fim"])
-            segmentos, eventos = ([], []) if termos_gov is None else _termos_do_contrato(termos_gov, str(contrato_id))
-        else:
-            fim_gov = None
-            segmentos = [Segmento(None, fim_cadastro, "Vigência do cadastro", "cadastro")] if fim_cadastro else []
-            eventos = []
-        situacao, tom = situacao_vigencia(ligado, fim_gov or fim_cadastro, hoje)
-        linhas.append(LinhaDoTempo(
-            contrato=str(numero), fornecedor=_texto(linha.get("fornecedor")), ligado=ligado, fim_gov=fim_gov,
-            fim_cadastro=fim_cadastro, situacao=situacao, tom=tom, segmentos=segmentos, eventos=eventos,
+        termos = None
+        if ligado and termos_gov is not None:
+            termos = termos_gov[termos_gov["contrato_id"].astype(str) == str(contrato_id)]
+        linhas.append(linha_do_contrato(
+            numero=numero, fornecedor=linha.get("fornecedor"), termos=termos,
+            fim_gov=gov.loc[str(contrato_id), "vigencia_fim"] if ligado else None, fim_cadastro=fim_cadastro,
+            ligado=ligado, hoje=hoje,
         ))
     return sorted(linhas, key=lambda l: (l.fim is None, l.fim or date.max, l.contrato))
 
