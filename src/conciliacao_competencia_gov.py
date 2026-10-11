@@ -21,10 +21,19 @@ Regras (decisões do usuário, 11/10/2026):
     única = "provável cancelamento não informado" (retirada só na SUGESTÃO, em memória); mais de uma = ambíguo (as
     alternativas são mostradas, nunca se desempata); nenhuma = sem conclusão. Notas a MENOS que o relatório não são
     cancelamento e nada se infere. Nada é gravado nem alterado no dado do gov.
+  * CAUSAS (`causas_do_mes`, ordem de evidência): (1) NOTA NÃO LIQUIDADA — o que falta nas notas é exatamente o valor de
+    notas ainda sem liquidação (pendente/erro no Siafi); (2) DESLOCAMENTO DE COMPETÊNCIA — o excesso (ou a falta) da NE
+    num mês é exatamente a falta (ou o excesso) da mesma NE num mês vizinho (±1, depois ±2, inclusive na virada de
+    ano): a nota e o relatório registraram a mesma despesa em competências diferentes — duas pontas confirmam, por
+    isso tem PRIORIDADE sobre o cancelamento (só uma ponta); (3) cancelamento provável (`ajustar_mes`). NE sem
+    nenhuma linha no relatório (DEA) não tem com o que comparar e fica de fora.
 
 Contrato público:
-    ItemNota, MesConciliado, EmpenhoInfo, AjusteMes
-    ajustar_mes(mes) -> AjusteMes
+    ItemNota, MesConciliado, EmpenhoInfo, AjusteMes, Causa, Contexto
+    ajustar_mes(mes, ignorar=()) -> AjusteMes
+    construir_contexto(relatorio, itens, pendentes, naturezas) -> Contexto
+    classificar_mes(mes, ajuste, causas) -> str   # uma das CLASSES
+    causas_do_mes(contexto, ano, mes, nes) -> list[Causa]
     empenhos_do_contrato(empenhos_gov, contrato_id, ne_cadastro=None, natureza_cadastro=None) -> dict[ne, EmpenhoInfo]
     nes_do_mes(mes) -> list[str]
     padrao_do_mes(mes, empenhos) -> list[str]
@@ -140,12 +149,15 @@ def _melhores_combinacoes(valores: list[float], alvo: float) -> list[tuple[int, 
     return []
 
 
-def ajustar_mes(mes: "MesConciliado") -> AjusteMes:
-    """Conciliação de duplicidades do mês (já filtrado): ver docstring do módulo."""
+def ajustar_mes(mes: "MesConciliado", ignorar=()) -> AjusteMes:
+    """Conciliação de duplicidades do mês (já filtrado): ver docstring do módulo. `ignorar`: NEs já explicadas por outra
+    causa de mais evidência (deslocamento de competência) — não recebem sugestão de cancelamento."""
 
     retiradas: list[int] = []
     alternativas: list[tuple[str, tuple[tuple[int, ...], ...]]] = []
     for ne, rel in mes.relatorio_por_ne.items():
+        if ne in set(ignorar):
+            continue
         indices = [i for i, item in enumerate(mes.itens) if item.ne == ne and not item.duplicada]
         total = sum(mes.itens[i].valor for i in indices)
         if not indices or total - rel <= TOLERANCIA:
@@ -166,6 +178,108 @@ def ajustar_mes(mes: "MesConciliado") -> AjusteMes:
     else:
         situacao = "sem_ajuste"
     return AjusteMes(tuple(sorted(retiradas)), tuple(alternativas), ajustadas, situacao)
+
+
+#: classe única de cada mês (já filtrado), do mais ao menos conciliado, com o rótulo do painel de pendências
+CLASSES = {
+    "batem": "Batem",
+    "sem_registro": "Sem registro",
+    "deslocamento": "Deslocamento de competência",
+    "nota_pendente": "Nota ainda não liquidada",
+    "cancelamento": "Cancelamento provável",
+    "ambiguo": "Ambíguo",
+    "so_notas": "Só nota (sem relatório)",
+    "so_relatorio": "Só relatório (sem nota)",
+    "sem_explicacao": "Diferença sem explicação",
+}
+#: classes que NÃO são pendência: nada a fazer
+CLASSES_OK = ("batem", "sem_registro")
+
+
+@dataclass(frozen=True)
+class Causa:
+    ne: str
+    tipo: str  # nota_pendente | deslocamento
+    valor: float
+    #: deslocamento: AAAAMM do mês vizinho que tem o par; None para nota_pendente
+    par: int | None = None
+    #: deslocamento: "notas_aqui" (as notas estão neste mês, o relatório registrou no par) ou "relatorio_aqui"
+    sentido: str | None = None
+    #: nota_pendente: números das notas ainda sem liquidação
+    notas: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Contexto:
+    notas: dict  # (ne, AAAAMM) -> valor das notas liquidadas válidas
+    relatorio: dict  # (ne, AAAAMM) -> valor do relatório
+    pendentes: dict  # (ne, AAAAMM) -> [(nota, valor)] das notas ainda não liquidadas
+    nes_com_relatorio: frozenset  # NEs que têm alguma linha no relatório (as demais — ex.: DEA — não se comparam)
+
+
+def construir_contexto(
+    relatorio: pd.DataFrame | None, itens: pd.DataFrame, pendentes: pd.DataFrame | None, naturezas: dict[str, str | None],
+) -> Contexto:
+    """Soma por (NE, mês) das duas fontes e das notas pendentes, de TODOS os meses (a vizinhança atravessa exercícios)."""
+
+    rel = _relatorio_do_contrato(relatorio, set(naturezas))
+    por_rel = {(str(ne), int(am)): round(float(v), 2) for (ne, am), v in rel.groupby(["ne_curta", "ano_mes"])["valor"].sum().items()}
+    por_notas: dict = {}
+    for r in itens[~itens["duplicada"]].itertuples() if not itens.empty else []:
+        chave = (str(r.ne), int(r.ano) * 100 + int(r.mes))
+        por_notas[chave] = round(por_notas.get(chave, 0.0) + float(r.valor), 2)
+    por_pend: dict = {}
+    for r in pendentes.itertuples() if pendentes is not None and not pendentes.empty else []:
+        por_pend.setdefault((str(r.ne), int(r.ano) * 100 + int(r.mes)), []).append((str(r.nota), float(r.valor)))
+    return Contexto(por_notas, por_rel, por_pend, frozenset(ne for ne, _ in por_rel))
+
+
+def _vizinho(ano_mes: int, delta: int) -> int:
+    ano, mes = divmod(ano_mes, 100)
+    indice = ano * 12 + (mes - 1) + delta
+    return (indice // 12) * 100 + indice % 12 + 1
+
+
+def causas_do_mes(contexto: Contexto, ano: int, mes: int, nes) -> list[Causa]:
+    """A causa de cada divergência das `nes` no mês (só as que têm causa identificada): ver docstring do módulo."""
+
+    am = ano * 100 + mes
+    causas = []
+    for ne in sorted(nes):
+        if ne not in contexto.nes_com_relatorio:
+            continue  # sem relatório da NE em nenhum mês (DEA): nada a comparar
+        dif = round(contexto.notas.get((ne, am), 0.0) - contexto.relatorio.get((ne, am), 0.0), 2)
+        if abs(dif) <= TOLERANCIA:
+            continue
+        if dif < 0:  # relatório a mais que as notas
+            falta = -dif
+            pend = contexto.pendentes.get((ne, am), [])
+            if pend and abs(sum(v for _, v in pend) - falta) <= TOLERANCIA:
+                causas.append(Causa(ne, "nota_pendente", falta, None, None, tuple(n for n, _ in pend)))
+                continue
+        for delta in (-1, 1, -2, 2):  # o vizinho mais próximo primeiro
+            vz = _vizinho(am, delta)
+            dif_vz = round(contexto.notas.get((ne, vz), 0.0) - contexto.relatorio.get((ne, vz), 0.0), 2)
+            if abs(dif_vz + dif) <= TOLERANCIA:  # excesso aqui = falta lá (ou o contrário)
+                causas.append(Causa(ne, "deslocamento", abs(dif), vz, "notas_aqui" if dif > 0 else "relatorio_aqui"))
+                break
+    return causas
+
+
+def classificar_mes(mes: "MesConciliado", ajuste: "AjusteMes | None", causas: "list[Causa] | None") -> str:
+    """A classe do mês (ver `CLASSES`), na ordem de evidência: causa identificada (nota pendente, deslocamento) >
+    cancelamento provável / ambíguo > situação simples das duas fontes."""
+
+    if mes.situacao in ("sem_registro", "batem"):
+        return mes.situacao
+    tipos = [c.tipo for c in causas or []]
+    if "nota_pendente" in tipos:
+        return "nota_pendente"
+    if "deslocamento" in tipos:
+        return "deslocamento"
+    if ajuste is not None and ajuste.situacao in ("batem_ajustado", "ambiguo"):
+        return "cancelamento" if ajuste.situacao == "batem_ajustado" else "ambiguo"
+    return {"so_notas": "so_notas", "so_relatorio": "so_relatorio", "divergem": "sem_explicacao"}[mes.situacao]
 
 
 def _vazio(valor: object) -> bool:
@@ -248,13 +362,17 @@ def naturezas_20rk(
     return resultado
 
 
-def itens_das_notas(faturas: pd.DataFrame | None, naturezas: dict[str, str | None]) -> tuple[pd.DataFrame, int]:
-    """Uma linha por (NE do recorte, competência, nota) das notas liquidadas, e quantas notas liquidadas ficaram fora
-    do recorte (nenhuma NE da 20RK do contrato)."""
+def itens_das_notas(
+    faturas: pd.DataFrame | None, naturezas: dict[str, str | None], liquidadas: bool = True,
+) -> tuple[pd.DataFrame, int]:
+    """Uma linha por (NE do recorte, competência, nota) das notas liquidadas (ou, com `liquidadas=False`, das AINDA NÃO
+    liquidadas: sem data de liquidação — pendentes ou com erro no Siafi), e quantas dessas notas ficaram fora do
+    recorte (nenhuma NE do contrato)."""
 
     if faturas is None or faturas.empty:
         return pd.DataFrame(columns=COLUNAS_ITENS), 0
-    liquidadas = faturas[faturas["data_liquidacao"].apply(lambda d: isinstance(d, date))]
+    tem_data = faturas["data_liquidacao"].apply(lambda d: isinstance(d, date))
+    liquidadas = faturas[tem_data if liquidadas else ~tem_data]
     linhas, fora, vistas = [], 0, set()
     for _, nota in liquidadas.sort_values("fatura_id").iterrows():
         empenhos = [(ne, float(v)) for ne, _, v in nota["empenhos"] if ne and not _vazio(v)]

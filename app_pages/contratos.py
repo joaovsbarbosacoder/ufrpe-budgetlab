@@ -72,6 +72,7 @@ from src.ui_cadastro import (
     ordenar_por,
     tabela_html,
 )
+from src import pendencias_conciliacao
 from src.contratos_cadastro import ErroDadoContratosGov, contratos_com_faturas, montar_faturas
 from src.linha_tempo_vigencias import linha_do_contrato
 from src.ui_faturas import render_faturas_do_contrato
@@ -746,7 +747,15 @@ def _render_previa(consulta: dict, referencia: date) -> None:
                 st.error(f"A fotografia não foi gravada: {erro}")
             else:
                 st.session_state.pop(CHAVE_CONSULTA, None)
-                st.session_state[CHAVE_AVISO] = f"Fotografia {manifesto.sha256[:12]} gravada."
+                aviso_gravada = f"Fotografia {manifesto.sha256[:12]} gravada."
+                # alerta de conciliação (11/10/2026): pendências novas/resolvidas desde a atualização anterior; uma
+                # falha aqui nunca desfaz a gravação da fotografia
+                try:
+                    fotografia_nova = {**consulta["nova"], "_sha256": manifesto.sha256}
+                    aviso_gravada += " " + pendencias_conciliacao.atualizar_apos_gravacao(fotografia_nova, referencia)
+                except Exception as erro_conciliacao:  # noqa: BLE001 — complemento opcional
+                    aviso_gravada += f" (Conciliação por competência não atualizada: {erro_conciliacao})"
+                st.session_state[CHAVE_AVISO] = aviso_gravada
                 st.rerun()
 
 
