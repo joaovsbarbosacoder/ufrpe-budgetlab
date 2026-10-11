@@ -235,11 +235,13 @@ def render_faturas_do_contrato(
     if total["erros_siafi"]:
         st.warning(f"{total['erros_siafi']} nota(s) com erro no Siafi — confira a apropriação.")
 
+    # lista e detalhamento ficam OCULTOS por padrão (pedido do usuário, 11/10/2026): a janela de edição do contrato já é
+    # longa; os totais e o alerta de erro no Siafi continuam visíveis acima
     ordenadas = ordenar(visiveis).reset_index(drop=True)
-    st.markdown(html_lista(ordenadas), unsafe_allow_html=True)
-
-    rotulos = [rotulo_nota(nota) for _, nota in ordenadas.iterrows()]
-    escolhida = st.selectbox(
-        "Detalhar nota", range(len(rotulos)), format_func=lambda i: rotulos[i], key=f"{chave}_faturas_detalhe",
-    )
-    st.markdown(html_detalhe(ordenadas.iloc[escolhida]), unsafe_allow_html=True)
+    with st.expander(f"Notas e detalhamento ({len(ordenadas)})", expanded=False):
+        st.markdown(html_lista(ordenadas), unsafe_allow_html=True)
+        rotulos = [rotulo_nota(nota) for _, nota in ordenadas.iterrows()]
+        escolhida = st.selectbox(
+            "Detalhar nota", range(len(rotulos)), format_func=lambda i: rotulos[i], key=f"{chave}_faturas_detalhe",
+        )
+        st.markdown(html_detalhe(ordenadas.iloc[escolhida]), unsafe_allow_html=True)

@@ -269,6 +269,7 @@ from src.ui_cadastro import (
 from src.ui_cadastro import css as css_cadastro
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
 from src.estimativa_reajuste import termos_do_gov
+from src.ui_conciliacao_competencia import render_conciliacao_competencia
 from src.ui_faturas import render_faturas_do_contrato
 from src.ui_reajuste import render_estimativa_reajuste
 from src.linha_tempo_vigencias import linha_do_contrato
@@ -582,7 +583,8 @@ def _texto_conciliacao(linha: pd.Series) -> str:
 
 def _render_contratosgov_no_dialogo(
     linha: pd.Series, k: str, termos_gov: pd.DataFrame | None, aditivos_atuais: list | None = None,
-    faturas_gov: tuple | None = None,
+    faturas_gov: tuple | None = None, empenhos_gov: pd.DataFrame | None = None,
+    relatorio_por_mes: pd.DataFrame | None = None,
 ) -> None:
     """Seção "Contratos.gov" da janela de edição: vigência do cadastro × a do gov, histórico de termos e um botão
     "Registrar aditivo do gov" por aditivo sem registro. O botão SÓ pré-preenche a aba Aditivos (em
@@ -648,6 +650,9 @@ def _render_contratosgov_no_dialogo(
         nes_do_cadastro={str(linha["ne_curta"])} if pd.notna(linha.get("ne_curta")) else None,
     )
 
+    # liquidação por competência × notas (11/10/2026): seletor de exercício, mês a mês
+    render_conciliacao_competencia(linha, faturas_gov, empenhos_gov, relatorio_por_mes, k)
+
     pendentes = aditivos_pendentes(linha["aditivos"] if aditivos_atuais is None else aditivos_atuais, termos)
     if pendentes.empty:
         st.caption("Todos os aditivos do Contratos.gov já têm registro neste contrato.")
@@ -694,6 +699,7 @@ def _situacao(status_bruto: object, vigencia_fim_efetiva: object, necessidade: o
 def _dialogo_editar_contrato(
     linha: pd.Series, ano_exercicio: int, source_key: str, sugestao_inicio: object,
     termos_gov: pd.DataFrame | None = None, faturas_gov: tuple | None = None,
+    empenhos_gov: pd.DataFrame | None = None, relatorio_por_mes: pd.DataFrame | None = None,
 ) -> None:
     """Janela de edição de um contrato (substitui o antigo cartão-expansor de campos soltos —
     pedido de 05/10/2026: "muita cara de planilha"). Mesmos campos, mesmas chaves de widget e a
@@ -742,7 +748,7 @@ def _dialogo_editar_contrato(
     with aba_aditivos:
         aditivos_editados = render_aba_aditivos(k, linha["aditivos"], linha["itens"])
         with gov_container:
-            _render_contratosgov_no_dialogo(linha, k, termos_gov, aditivos_editados, faturas_gov)
+            _render_contratosgov_no_dialogo(linha, k, termos_gov, aditivos_editados, faturas_gov, empenhos_gov, relatorio_por_mes)
     with aba_periodo:
         p_vig, p_data, p_mes, p_meses = st.columns(4)
         # Vigência (fim) — a data de fim do cadastro limita a projeção do relatório de Necessidade de
@@ -2249,7 +2255,7 @@ with st.container(border=True, key="cad_registro"):
                             _dialogo_editar_contrato(
                                 linha, ano_selecionado, source_key,
                                 sugestao_inicio_por_ne.get(linha["ne_curta"]) if pd.notna(linha["ne_curta"]) else None,
-                                termos_gov, faturas_gov,
+                                termos_gov, faturas_gov, _empenhos_gov, liquidacao_competencia_por_mes,
                             )
                         if b_remover.button("", icon=":material/delete:", key=f"cc_remover_{source_key}_{id_linha}", help="Remover contrato", use_container_width=True):
                             _dialogo_remover_contrato(

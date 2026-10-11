@@ -199,6 +199,20 @@ com erro de leitura) a tela segue como antes, com aviso.
   mensal, empenhado, saldo, meses empenhados/liquidados e os textos (`novo_contrato_do_formulario`); um zero
   digitado continua zero, e "Meses no ano" em branco vale 12 nas contas. Só grava em "Adicionar contrato".
 
+**Liquidação por competência × Contratos.gov (por contrato).** Na seção "Contratos.gov" da janela "Editar contrato"
+de Contratos Contínuos (`src/conciliacao_competencia_gov.py`, `src/ui_conciliacao_competencia.py`), somente leitura:
+seletor de **exercício** e, mês a mês, duas linhas empilhadas — a liquidação do relatório de competência e, abaixo, as
+notas (instrumentos de cobrança) do Contratos.gov. Os dois valores quando houver (com a diferença), "sem registro" no
+que faltar; quando só há nota, o **elemento de despesa do empenho** (o relatório não traz competência dos empenhos de
+DEA, elemento 92). Cada mês tem um **filtro de NEs** (padrão: as da 20RK; o que sai do filtro aparece como "fora do
+filtro"), valendo para os dois lados. **Conciliação de duplicidades:** quando as notas somam mais que o relatório,
+procura-se a menor combinação de notas cuja retirada fecha o valor (tolerância R$ 1) — combinação única = "provável
+cancelamento não informado no Contratos.gov" (a nota aparece riscada, o valor do gov segue visível); mais de uma =
+ambíguo, com as alternativas (o sistema não escolhe); notas a menos não são cancelamento. É só sugestão em memória:
+nada é gravado. Valores da nota: bruto, só notas com data de liquidação; várias NEs × várias competências = rateio
+proporcional (marcado); nota com mesmo número, valor e NEs = possível duplicidade (não somada). Dúvida registrada: o
+confronto com a Execução Mensal (por mês de lançamento) mostrou que as notas de 2024 são incompletas no gov.
+
 **Linha do tempo das vigências.** Dentro do cadastro de cada contrato — na janela de detalhe da página Contratos
 (Contratos.gov) e na seção "Contratos.gov" da janela "Editar contrato" de Contratos Contínuos
 (`src/linha_tempo_vigencias.py`, `src/ui_linha_tempo_vigencias.py`), somente leitura: o contrato original e cada
