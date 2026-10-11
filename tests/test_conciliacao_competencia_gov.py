@@ -20,6 +20,7 @@ from src.conciliacao_competencia_gov import (
     ajustar_mes,
     causas_do_mes,
     classificar_mes,
+    totais_por_ne,
     construir_contexto,
     filtrar_mes,
     itens_das_notas,
@@ -323,6 +324,50 @@ def ItemNota_(ne, valor, nota):
     return ItemNota(ne, valor, nota, False, False, None)
 
 
+class TotaisPorNeTests(unittest.TestCase):
+    """Confronto de totais por NE: notas × relatório de competência × Execução Mensal (por mês de lançamento)."""
+
+    def setUp(self) -> None:
+        self.empenhos = empenhos_do_contrato(_empenhos(), "1")
+        self.nat = {ne: i.natureza for ne, i in self.empenhos.items()}
+        notas = _faturas(
+            _nota("1", "100", 1000, [("2026NE000001", 1000)], [(2026, 1, 1000)]),
+            _nota("2", "200", 500, [("2026NE000001", 500)], [(2026, 2, 500)]),
+            _nota("3", "300", 700, [("2026NE000002", 700)], [(2025, 6, 700)]),
+        )
+        self.itens, _ = itens_das_notas(notas, self.nat)
+        self.relatorio = _relatorio(("2026NE000001", 202601, 1000.0), ("2026NE000001", 202602, 500.0))
+        self.execucao = pd.DataFrame({
+            "ne_curta": ["2026NE000001", "2026NE000001", "2026NE000002"], "ano_mes": [202602, 202603, 202603],
+            "liquidada": [1000.0, 500.0, 400.0],
+        })
+
+    def test_tres_totais_por_ne_e_diferencas(self) -> None:
+        linhas = {l.ne: l for l in totais_por_ne(self.relatorio, self.itens, self.execucao, self.empenhos)}
+        a = linhas["2026NE000001"]
+        self.assertEqual((a.notas, a.relatorio, a.execucao), (1500.0, 1500.0, 1500.0))
+        self.assertEqual((a.dif_relatorio, a.dif_notas, a.situacao), (0.0, 0.0, "batem"))
+        b = linhas["2026NE000002"]  # DEA: sem linha no relatório; execução menor que as notas
+        self.assertEqual((b.notas, b.relatorio, b.execucao), (700.0, None, 400.0))
+        self.assertIsNone(b.dif_relatorio)  # nulo ≠ zero
+        self.assertEqual((b.dif_notas, b.situacao), (300.0, "diverge_notas"))
+
+    def test_ne_sem_execucao_e_sinalizada_e_nulo_nao_vira_zero(self) -> None:
+        sem = totais_por_ne(self.relatorio, self.itens, self.execucao.iloc[0:0], self.empenhos)
+        self.assertTrue(all(l.execucao is None and l.situacao == "sem_execucao" for l in sem if l.ne != "2026NE000003"))
+        nada = totais_por_ne(self.relatorio, self.itens, None, self.empenhos)
+        self.assertTrue(all(l.execucao is None for l in nada))
+
+    def test_ne_sem_nenhum_dado_nao_aparece_e_ordem_por_ne(self) -> None:
+        linhas = totais_por_ne(self.relatorio, self.itens, self.execucao, self.empenhos)
+        self.assertEqual([l.ne for l in linhas], ["2026NE000001", "2026NE000002"])  # 2026NE000003 (20RL) sem nada
+
+    def test_relatorio_diferente_da_execucao_e_destacado(self) -> None:
+        rel = _relatorio(("2026NE000001", 202601, 1000.0))
+        linha = totais_por_ne(rel, self.itens, self.execucao, self.empenhos)[0]
+        self.assertEqual((linha.dif_relatorio, linha.situacao), (-500.0, "diverge_relatorio"))
+
+
 class ConciliarTests(unittest.TestCase):
     def setUp(self) -> None:
         self.nat = {"2026NE000001": SERV, "2026NE000002": DEA}
@@ -501,3 +546,4 @@ def test_janela_editar_mostra_o_seletor_de_exercicio_e_os_meses(tmp_path, monkey
     assert any(m.label.startswith("NEs em evidência") for m in app.multiselect)  # filtro de NEs dentro do mês
     assert "Pendências do exercício" in " ".join(m.value for m in app.markdown)  # painel de pendências
     assert any(c.label.startswith("Mostrar só os meses com pendência") for c in app.checkbox)
+    assert any(e.label.startswith("Totais por NE × Execução Mensal") for e in app.expander)  # confronto com a Execução Mensal

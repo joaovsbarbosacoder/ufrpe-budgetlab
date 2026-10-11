@@ -35,9 +35,10 @@ from src.conciliacao_competencia_gov import (
     nes_do_mes,
     ajustar_mes,
     padrao_do_mes,
+    totais_por_ne,
 )
 from src.design_tokens import BORDER, NEGATIVE, POSITIVE, SURFACE_ALT, TEXT_FAINT, TEXT_MUTED, WARNING
-from src.ui_cadastro import chip, formatar_brl
+from src.ui_cadastro import celula_principal, celula_suave, celula_valor, chip, formatar_brl, tabela_html
 
 _MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
 
@@ -68,6 +69,31 @@ CSS = f"""
 
 def _brl(valor: float) -> str:
     return formatar_brl(valor).replace("$", "&#36;")
+
+
+_SITUACAO_TOTAL = {
+    "batem": ("Batem", "ok"), "diverge_relatorio": ("Relatório ≠ Execução", "warn"), "diverge_notas": ("Notas ≠ Execução", "warn"),
+    "sem_execucao": ("Sem Execução Mensal", "neutro"),
+}
+
+
+def html_totais(linhas) -> str:
+    """Quadro de totais por NE: notas × relatório de competência × Execução Mensal, com as diferenças."""
+
+    corpo = []
+    for l in linhas:
+        rotulo, tom = _SITUACAO_TOTAL[l.situacao]
+        acao = f"{l.empenho.acao}" + (f" · {l.empenho.elemento}" if l.empenho and l.empenho.elemento else "") if l.empenho else "—"
+        corpo.append([
+            celula_principal(l.ne, acao), celula_valor(l.notas, vazio="sem nota"), celula_valor(l.relatorio, vazio="sem relatório"),
+            celula_valor(l.execucao, vazio="sem lançamento"), celula_valor(l.dif_relatorio, vazio="—"),
+            celula_valor(l.dif_notas, vazio="—"), chip(rotulo, tom),
+        ])
+    return tabela_html(
+        [("NE / ação", False), ("Notas", True), ("Relatório", True), ("Exec. Mensal", True), ("Relat. − Exec.", True),
+         ("Notas − Exec.", True), ("Situação", False)],
+        corpo, [1.5, 1, 1, 1, 1, 1, 1.3],
+    )
 
 
 def _rotulo_ne(ne: str, empenhos: dict[str, EmpenhoInfo]) -> str:
@@ -201,7 +227,7 @@ def html_mes(
 
 def render_conciliacao_competencia(
     linha: pd.Series, faturas_gov: tuple | None, empenhos_gov: pd.DataFrame | None,
-    relatorio_por_mes: pd.DataFrame | None, chave: str,
+    relatorio_por_mes: pd.DataFrame | None, chave: str, execucao_mensal: pd.DataFrame | None = None,
 ) -> None:
     """Seção na janela "Editar contrato". `faturas_gov` = (tabela, contratos consultados); `relatorio_por_mes` = Liquidação
     por Competência por (NE, mês) com `ne_curta`."""
@@ -228,6 +254,16 @@ def render_conciliacao_competencia(
     ano = st.selectbox("Exercício", anos, key=f"{chave}_cmp_ano")
     st.markdown(CSS, unsafe_allow_html=True)
     meses = conciliar_exercicio(int(ano), relatorio_por_mes, itens, naturezas)
+    # confronto de totais por NE com a Execução Mensal (11/10/2026): só o total é comparável (lançamento ≠ competência)
+    totais = totais_por_ne(relatorio_por_mes, itens, execucao_mensal, empenhos)
+    if totais:
+        with st.expander(f"Totais por NE × Execução Mensal ({len(totais)} NE(s))", expanded=False):
+            st.caption(
+                "Total de cada NE em todas as competências: liquidado nas notas, no relatório de competência e na "
+                "Execução Mensal. A Execução Mensal é por mês de LANÇAMENTO (não por competência) e só cobre 2024 em "
+                "diante; notas de 2024 para trás são incompletas no gov. Compare só o total."
+            )
+            st.markdown(html_totais(totais), unsafe_allow_html=True)
     st.caption(
         "Em cada mês, escolha quais NEs ficam em evidência (padrão: as da ação 20RK). Relatório e notas usam sempre a "
         "mesma seleção e não são somados. Quando as notas somam mais que o relatório, o sistema procura as notas cuja "

@@ -584,7 +584,7 @@ def _texto_conciliacao(linha: pd.Series) -> str:
 def _render_contratosgov_no_dialogo(
     linha: pd.Series, k: str, termos_gov: pd.DataFrame | None, aditivos_atuais: list | None = None,
     faturas_gov: tuple | None = None, empenhos_gov: pd.DataFrame | None = None,
-    relatorio_por_mes: pd.DataFrame | None = None,
+    relatorio_por_mes: pd.DataFrame | None = None, execucao_mensal: pd.DataFrame | None = None,
 ) -> None:
     """Seção "Contratos.gov" da janela de edição: vigência do cadastro × a do gov, histórico de termos e um botão
     "Registrar aditivo do gov" por aditivo sem registro. O botão SÓ pré-preenche a aba Aditivos (em
@@ -651,7 +651,7 @@ def _render_contratosgov_no_dialogo(
     )
 
     # liquidação por competência × notas (11/10/2026): seletor de exercício, mês a mês
-    render_conciliacao_competencia(linha, faturas_gov, empenhos_gov, relatorio_por_mes, k)
+    render_conciliacao_competencia(linha, faturas_gov, empenhos_gov, relatorio_por_mes, k, execucao_mensal)
 
     pendentes = aditivos_pendentes(linha["aditivos"] if aditivos_atuais is None else aditivos_atuais, termos)
     if pendentes.empty:
@@ -700,6 +700,7 @@ def _dialogo_editar_contrato(
     linha: pd.Series, ano_exercicio: int, source_key: str, sugestao_inicio: object,
     termos_gov: pd.DataFrame | None = None, faturas_gov: tuple | None = None,
     empenhos_gov: pd.DataFrame | None = None, relatorio_por_mes: pd.DataFrame | None = None,
+    execucao_mensal: pd.DataFrame | None = None,
 ) -> None:
     """Janela de edição de um contrato (substitui o antigo cartão-expansor de campos soltos —
     pedido de 05/10/2026: "muita cara de planilha"). Mesmos campos, mesmas chaves de widget e a
@@ -748,7 +749,9 @@ def _dialogo_editar_contrato(
     with aba_aditivos:
         aditivos_editados = render_aba_aditivos(k, linha["aditivos"], linha["itens"])
         with gov_container:
-            _render_contratosgov_no_dialogo(linha, k, termos_gov, aditivos_editados, faturas_gov, empenhos_gov, relatorio_por_mes)
+            _render_contratosgov_no_dialogo(
+                linha, k, termos_gov, aditivos_editados, faturas_gov, empenhos_gov, relatorio_por_mes, execucao_mensal
+            )
     with aba_periodo:
         p_vig, p_data, p_mes, p_meses = st.columns(4)
         # Vigência (fim) — a data de fim do cadastro limita a projeção do relatório de Necessidade de
@@ -2256,6 +2259,7 @@ with st.container(border=True, key="cad_registro"):
                                 linha, ano_selecionado, source_key,
                                 sugestao_inicio_por_ne.get(linha["ne_curta"]) if pd.notna(linha["ne_curta"]) else None,
                                 termos_gov, faturas_gov, _empenhos_gov, liquidacao_competencia_por_mes,
+                                tempo_por_ne_curta,
                             )
                         if b_remover.button("", icon=":material/delete:", key=f"cc_remover_{source_key}_{id_linha}", help="Remover contrato", use_container_width=True):
                             _dialogo_remover_contrato(
