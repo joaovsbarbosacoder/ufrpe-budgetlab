@@ -269,7 +269,8 @@ from src.ui_cadastro import (
 from src.ui_cadastro import css as css_cadastro
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
 from src.estimativa_reajuste import termos_do_gov
-from src.ui_conciliacao_competencia import render_conciliacao_competencia
+from src.pendencias_conciliacao import contratos_ligados
+from src.ui_conciliacao_competencia import render_conciliacao_competencia, render_visao_consolidada
 from src.ui_faturas import render_faturas_do_contrato
 from src.ui_reajuste import render_estimativa_reajuste
 from src.linha_tempo_vigencias import linha_do_contrato
@@ -2105,6 +2106,12 @@ _render_relatorio_projecao_execucao(
     filtrado, liquidacao_competencia_por_mes, source_key, ano_selecionado, manifesto_execucao_mensal,
     via_competencia=indice_liquidado_competencia is not None,
 )
+# Visão consolidada da liquidação por competência de todos os contratos (11/10/2026): matriz sob demanda
+if faturas_gov is not None and _empenhos_gov is not None:
+    render_visao_consolidada(
+        contratos_ligados(dataframe, faturas_gov[1]), faturas_gov[0], _empenhos_gov, liquidacao_competencia_por_mes,
+        f"cc_{source_key}",
+    )
 # Estimativa de reajuste por competência (11/10/2026): cenário separado, só lê os contratos do exercício.
 render_estimativa_reajuste(
     filtrado, registros, [r for _ano in anos_disponiveis() for r in carregar_contratos(_ano)], ano_selecionado,

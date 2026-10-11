@@ -486,6 +486,19 @@ class HtmlMesTests(unittest.TestCase):
         self.assertIn("nota ainda não liquidada", pend)
         self.assertIn("nota P1", pend)
 
+    def test_matriz_consolidada(self) -> None:
+        from src.ui_conciliacao_competencia import _compacto, html_consolidada
+
+        meses = [{"mes": m, "relatorio": None, "notas": None, "classe": "sem_registro", "acao": ""} for m in range(1, 13)]
+        meses[0] = {"mes": 1, "relatorio": 2560.24, "notas": 2560.24, "classe": "batem", "acao": ""}
+        meses[1] = {"mes": 2, "relatorio": None, "notas": 8680.0, "classe": "so_notas", "acao": ""}
+        html = html_consolidada([{"contrato": "A&B", "ano": 2026, "meses": meses, "total_relatorio": 2560.24, "total_notas": 11240.24}])
+        self.assertIn("A&amp;B", html)  # texto escapado
+        self.assertIn("k-batem", html)
+        self.assertIn("<i>8,7 mil</i>", html)  # só nota: itálico
+        self.assertIn("Total (relatório)", html)
+        self.assertEqual((_compacto(None), _compacto(2560.24), _compacto(1_234_000.0), _compacto(0.0)), ("—", "2,6 mil", "1,2 mi", "0"))
+
     def test_aviso_de_fora_do_filtro(self) -> None:
         mes = filtrar_mes(
             MesConciliado(2026, 3, 1300.0, {"A": 1000.0, "B": 300.0}, None, []), ["A"],
@@ -547,3 +560,5 @@ def test_janela_editar_mostra_o_seletor_de_exercicio_e_os_meses(tmp_path, monkey
     assert "Pendências do exercício" in " ".join(m.value for m in app.markdown)  # painel de pendências
     assert any(c.label.startswith("Mostrar só os meses com pendência") for c in app.checkbox)
     assert any(e.label.startswith("Totais por NE × Execução Mensal") for e in app.expander)  # confronto com a Execução Mensal
+    assert any(e.label.startswith("Liquidação por competência — todos os contratos") for e in app.expander)  # visão consolidada
+    assert any(b.label == "Calcular a visão consolidada" for b in app.button)

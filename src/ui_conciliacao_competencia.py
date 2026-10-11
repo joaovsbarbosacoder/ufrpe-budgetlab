@@ -58,6 +58,17 @@ CSS = f"""
 .cmp-tag {{ border:1px solid {BORDER}; border-radius:6px; padding:0 6px; font-size:11px; color:{TEXT_MUTED} !important; }}
 .cmp-painel {{ background:{SURFACE_ALT} !important; border-radius:8px; padding:8px 12px; margin:6px 0 8px; font-size:13px; }}
 .cmp-nota-painel {{ color:{TEXT_FAINT} !important; }}
+.cmp-cons {{ border-collapse:collapse; font-size:12px; width:100%; }}
+.cmp-cons th {{ font-size:11px; color:{TEXT_FAINT} !important; text-transform:uppercase; padding:4px 3px; text-align:right; }}
+.cmp-cons th:first-child, .cmp-cons td:first-child {{ text-align:left; }}
+.cmp-cons td {{ padding:3px 3px; text-align:right; font-variant-numeric:tabular-nums; border-top:1px solid {BORDER}; }}
+.cmp-cons td.c {{ border-radius:4px; }}
+.cmp-cons .k-batem {{ background:rgba(10,143,61,.16) !important; }}
+.cmp-cons .k-sem_registro {{ color:{TEXT_FAINT} !important; }}
+.cmp-cons .k-deslocamento, .cmp-cons .k-cancelamento, .cmp-cons .k-nota_pendente {{ background:rgba(9,105,218,.16) !important; }}
+.cmp-cons .k-ambiguo, .cmp-cons .k-sem_explicacao {{ background:rgba(210,10,22,.16) !important; }}
+.cmp-cons .k-so_notas, .cmp-cons .k-so_relatorio {{ background:rgba(201,106,0,.20) !important; }}
+.cmp-cons tr.tot td {{ font-weight:700; border-top:2px solid {BORDER}; }}
 .cmp-risco {{ text-decoration:line-through; opacity:.75; }}
 .cmp-alerta {{ background:{SURFACE_ALT} !important; border-radius:6px; padding:1px 7px; color:{WARNING} !important; font-weight:600; }}
 .cmp-ok {{ color:{POSITIVE} !important; font-weight:600; }}
@@ -94,6 +105,96 @@ def html_totais(linhas) -> str:
          ("Notas − Exec.", True), ("Situação", False)],
         corpo, [1.5, 1, 1, 1, 1, 1, 1.3],
     )
+
+
+def _compacto(valor: float | None) -> str:
+    """Valor curto para a célula da matriz: "2,6 mil", "1,2 mi"; nulo vira "—" (o valor exato fica no título)."""
+    if valor is None:
+        return "—"
+    absoluto = abs(valor)
+    if absoluto >= 1_000_000:
+        texto = f"{valor / 1_000_000:.1f} mi"
+    elif absoluto >= 1_000:
+        texto = f"{valor / 1_000:.1f} mil"
+    else:
+        texto = f"{valor:.0f}"
+    return texto.replace(".", ",")
+
+
+def html_consolidada(linhas: list[dict]) -> str:
+    """Matriz contratos × 12 meses: o valor do relatório (ou, se só há nota, o da nota, em itálico) com a cor da classe do
+    mês; o título de cada célula traz os valores exatos e a causa. Linha final com os totais por mês. Textos escapados."""
+
+    cabecalho = "".join(f"<th>{_MESES[m]}</th>" for m in range(12))
+    corpo, tot_rel, tot_notas = [], [None] * 12, [None] * 12
+    for linha in linhas:
+        celulas = []
+        for i, mes in enumerate(linha["meses"]):
+            rel, notas, classe = mes["relatorio"], mes["notas"], mes["classe"]
+            if rel is not None:
+                tot_rel[i] = (tot_rel[i] or 0.0) + rel
+            if notas is not None:
+                tot_notas[i] = (tot_notas[i] or 0.0) + notas
+            texto = _compacto(rel) if rel is not None else (f"<i>{_compacto(notas)}</i>" if notas is not None else "—")
+            titulo = (
+                f"{_MESES[i]}/{linha.get('ano', '')}: {CLASSES[classe]} · relatório "
+                f"{'sem registro' if rel is None else formatar_brl(rel)} · notas {'sem registro' if notas is None else formatar_brl(notas)}"
+            )
+            celulas.append(f'<td class="c k-{classe}" title="{escape(titulo)}">{texto}</td>')
+        corpo.append(
+            f"<tr><td><b>{escape(linha['contrato'])}</b></td>{''.join(celulas)}"
+            f"<td><b>{_compacto(linha['total_relatorio'])}</b></td><td>{_compacto(linha['total_notas'])}</td></tr>"
+        )
+    totais = "".join(f"<td>{_compacto(v)}</td>" for v in tot_rel)
+    soma_rel = sum(v for v in tot_rel if v is not None) if any(v is not None for v in tot_rel) else None
+    soma_notas = sum(v for v in tot_notas if v is not None) if any(v is not None for v in tot_notas) else None
+    corpo.append(f'<tr class="tot"><td>Total (relatório)</td>{totais}<td>{_compacto(soma_rel)}</td><td>{_compacto(soma_notas)}</td></tr>')
+    return (
+        f'<table class="cmp-cons"><thead><tr><th>Contrato</th>{cabecalho}<th>Total relat.</th><th>Total notas</th></tr></thead>'
+        f'<tbody>{"".join(corpo)}</tbody></table>'
+    )
+
+
+def html_legenda_consolidada() -> str:
+    cores = {
+        "batem": "Batem", "deslocamento": "Deslocamento / cancelamento / nota pendente",
+        "sem_explicacao": "Ambíguo / sem explicação", "so_notas": "Só uma das fontes", "sem_registro": "Sem registro",
+    }
+    itens = "".join(
+        f'<span class="k-{c}" style="padding:1px 8px;border-radius:4px;margin-right:8px">{escape(t)}</span>' for c, t in cores.items()
+    )
+    return f'<div class="cmp-cons"><div style="font-size:12px;margin:4px 0 8px">{itens}</div></div>'
+
+
+def render_visao_consolidada(
+    ligados: list, faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None, relatorio: pd.DataFrame | None, chave: str,
+) -> None:
+    """Expansor "todos os contratos": seletor de exercício e matriz calculada sob demanda (leva alguns segundos)."""
+
+    from src.pendencias_conciliacao import consolidar_exercicio
+
+    with st.expander("Liquidação por competência — todos os contratos", expanded=False):
+        if relatorio is None or relatorio.empty:
+            st.caption("Sem a base de Liquidação por Competência, não há o que mostrar.")
+            return
+        anos = sorted({int(a) // 100 for a in relatorio["ano_mes"]}, reverse=True)
+        ano = st.selectbox("Exercício", anos, key=f"{chave}_cons_ano")
+        estado = f"{chave}_cons_dados"
+        assinatura = (int(ano), len(ligados), len(relatorio), 0 if faturas is None else len(faturas))
+        st.caption(
+            "Valor LIQUIDADO por competência de cada contrato (relatório do Tesouro; em itálico, quando só há nota do gov), "
+            "com a cor da situação do mês. Só as NEs da 20RK; passe o mouse sobre a célula para ver os valores exatos."
+        )
+        if st.button("Calcular a visão consolidada", key=f"{chave}_cons_calcular"):
+            with st.spinner("Conciliando todos os contratos…"):
+                linhas = consolidar_exercicio(ligados, faturas, empenhos_gov, relatorio, int(ano))
+            for linha in linhas:
+                linha["ano"] = int(ano)
+            st.session_state[estado] = (assinatura, linhas)
+        guardado = st.session_state.get(estado)
+        if guardado and guardado[0] == assinatura:
+            st.markdown(CSS, unsafe_allow_html=True)
+            st.markdown(html_legenda_consolidada() + html_consolidada(guardado[1]), unsafe_allow_html=True)
 
 
 def _rotulo_ne(ne: str, empenhos: dict[str, EmpenhoInfo]) -> str:

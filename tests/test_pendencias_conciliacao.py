@@ -19,6 +19,7 @@ from src.pendencias_conciliacao import (
     ErroBaseline,
     calcular_pendencias,
     carregar_baseline,
+    consolidar_exercicio,
     COLUNAS_INCONSISTENCIAS,
     comparar,
     excel_inconsistencias,
@@ -70,6 +71,34 @@ class CalcularTests(unittest.TestCase):
         faturas = pd.DataFrame([_nota("1", "A", 100.0, NE_B, 2026, 2), pendente])
         resultado = calcular_pendencias([("23/2025", "1", NE_B)], faturas, _empenhos(), _relatorio((NE_B, 202602, 600.0)))
         self.assertEqual(resultado["23/2025"], {(202602, "nota_pendente")})
+
+
+class ConsolidadaTests(unittest.TestCase):
+    """Visão consolidada de todos os contratos: 12 meses por contrato, com valor e classe de cada mês."""
+
+    def test_uma_linha_por_contrato_com_os_12_meses_e_a_classe(self) -> None:
+        faturas = pd.DataFrame([_nota("1", "A", 8680.0, NE_A, 2026, 1), _nota("2", "B", 100.0, NE_B, 2026, 3)])
+        relatorio = _relatorio((NE_A, 202512, 8680.0), (NE_B, 202601, 2560.24), (NE_B, 202603, 100.0))
+        linhas = consolidar_exercicio(
+            [("23/2025", "1", NE_B), ("99/2026", None, None)], faturas, _empenhos(), relatorio, 2026
+        )
+        self.assertEqual([l["contrato"] for l in linhas], ["23/2025", "99/2026"])
+        meses = linhas[0]["meses"]
+        self.assertEqual(len(meses), 12)
+        self.assertEqual(meses[0]["classe"], "deslocamento")  # jan/2026: o caso real de R$ 8.680,00
+        self.assertEqual((meses[2]["classe"], meses[2]["relatorio"], meses[2]["notas"]), ("batem", 100.0, 100.0))
+        self.assertEqual(meses[5]["classe"], "sem_registro")
+        self.assertIsNone(meses[5]["relatorio"])  # nulo, nunca zero
+        self.assertAlmostEqual(linhas[0]["total_relatorio"], 2660.24)
+        self.assertAlmostEqual(linhas[0]["total_notas"], 8780.0)
+
+    def test_contrato_sem_ligacao_aparece_com_o_relatorio_da_ne_do_cadastro_ou_vazio(self) -> None:
+        relatorio = _relatorio((NE_B, 202602, 50.0))
+        linhas = consolidar_exercicio([("99/2026", None, NE_B)], None, None, relatorio, 2026)
+        self.assertEqual(linhas[0]["meses"][1]["relatorio"], 50.0)
+        self.assertEqual(linhas[0]["meses"][1]["classe"], "so_relatorio")
+        vazio = consolidar_exercicio([("99/2026", None, None)], None, None, _relatorio(), 2026)
+        self.assertIsNone(vazio[0]["total_relatorio"])
 
 
 class RelatorioInconsistenciasTests(unittest.TestCase):

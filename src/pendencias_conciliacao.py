@@ -16,6 +16,8 @@ Contrato público:
     carregar_baseline(diretorio=None) -> {"fotografia", "gerado_em", "pendencias"} | None
     salvar_baseline(pendencias, fotografia, diretorio=None) -> Path
     atualizar_apos_gravacao(fotografia, referencia, diretorio=None) -> str     # orquestra tudo e devolve a mensagem
+    meses_analisados(cid, ne, faturas, empenhos_gov, relatorio) -> list[dict]     # todos os meses com dado
+    consolidar_exercicio(contratos, faturas, empenhos_gov, relatorio, ano) -> list[dict]   # visão de todos os contratos
     tabela_inconsistencias(contratos, faturas, empenhos_gov, relatorio) -> DataFrame   # relatório para o gov
     excel_inconsistencias(tabela) -> bytes
     gerar_relatorio_inconsistencias(fotografia, referencia, a_partir_do_ano=None) -> bytes
@@ -79,18 +81,18 @@ def _acao_sugerida(classe: str, causas: list, ajuste, visto) -> str:
     return "Conferir a nota e o lançamento no Tesouro: diferença sem causa identificada."
 
 
-def detalhar_contrato(
+def meses_analisados(
     cid: object, ne_cadastro: object, faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None,
     relatorio: pd.DataFrame | None,
 ) -> list[dict]:
-    """Uma linha por mês pendente do contrato (filtro padrão: NEs da 20RK), com valores, notas, causa e ação sugerida."""
+    """TODOS os meses com dado do contrato (filtro padrão: NEs da 20RK), cada um com a classe, os valores nas duas
+    fontes, as NEs, as notas e a ação sugerida. Contrato sem id no gov usa só o relatório da NE do cadastro."""
 
-    if cid is None or (isinstance(cid, float) and pd.isna(cid)):
-        return []
-    cid = str(cid)
-    empenhos = empenhos_do_contrato(empenhos_gov, cid, ne_cadastro)
+    tem_gov = not (cid is None or (isinstance(cid, float) and pd.isna(cid)))
+    cid = str(cid) if tem_gov else None
+    empenhos = empenhos_do_contrato(empenhos_gov if tem_gov else None, cid, ne_cadastro)
     naturezas = {ne: info.natureza for ne, info in empenhos.items()}
-    tabela = None if faturas is None else faturas[faturas["contrato_id"].astype(str) == cid]
+    tabela = None if faturas is None or not tem_gov else faturas[faturas["contrato_id"].astype(str) == cid]
     itens, _ = itens_das_notas(tabela, naturezas)
     pendentes, _ = itens_das_notas(tabela, naturezas, liquidadas=False)
     contexto = construir_contexto(relatorio, itens, pendentes, naturezas)
@@ -105,14 +107,48 @@ def detalhar_contrato(
             explicadas = {c.ne for c in causas if c.tipo == "deslocamento"}
             ajuste = ajustar_mes(visto, explicadas)
             classe = classificar_mes(visto, ajuste, causas)
-            if classe in CLASSES_OK:
-                continue
             linhas.append({
                 "classe": classe, "ano_mes": ano * 100 + completo.mes, "nes": sorted(escolhidas),
                 "notas": sorted({i.nota for i in visto.itens}), "valor_notas": visto.notas, "valor_relatorio": visto.relatorio,
-                "acao": _acao_sugerida(classe, causas, ajuste, visto),
+                "acao": _acao_sugerida(classe, causas, ajuste, visto) if classe not in CLASSES_OK else "",
             })
     return linhas
+
+
+def detalhar_contrato(
+    cid: object, ne_cadastro: object, faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None,
+    relatorio: pd.DataFrame | None,
+) -> list[dict]:
+    """Os meses PENDENTES do contrato (classe fora de `CLASSES_OK`), com valores, notas, causa e ação sugerida."""
+
+    if cid is None or (isinstance(cid, float) and pd.isna(cid)):
+        return []
+    return [l for l in meses_analisados(cid, ne_cadastro, faturas, empenhos_gov, relatorio) if l["classe"] not in CLASSES_OK]
+
+
+def consolidar_exercicio(
+    contratos: list[tuple], faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None, relatorio: pd.DataFrame | None,
+    ano: int,
+) -> list[dict]:
+    """Visão consolidada de todos os contratos no exercício `ano`: por contrato, os 12 meses com o valor do relatório, o das
+    notas e a classe, e os totais (None = sem nenhum valor). Contrato sem ligação ao gov entra pelo relatório da NE do
+    cadastro."""
+
+    resultado = []
+    for numero, cid, ne in contratos:
+        por_mes = {l["ano_mes"]: l for l in meses_analisados(cid, ne, faturas, empenhos_gov, relatorio) if l["ano_mes"] // 100 == ano}
+        meses = []
+        for mes in range(1, 13):
+            l = por_mes.get(ano * 100 + mes)
+            meses.append(
+                {"mes": mes, "relatorio": l["valor_relatorio"], "notas": l["valor_notas"], "classe": l["classe"],
+                 "acao": l["acao"]} if l else {"mes": mes, "relatorio": None, "notas": None, "classe": "sem_registro", "acao": ""}
+            )
+        def total(campo):
+            valores = [m[campo] for m in meses if m[campo] is not None]
+            return round(sum(valores), 2) if valores else None
+        resultado.append({"contrato": str(numero), "meses": meses, "total_relatorio": total("relatorio"), "total_notas": total("notas")})
+    return resultado
 
 
 def _pendencias_do_contrato(
@@ -235,6 +271,19 @@ def salvar_baseline(pendencias: dict, fotografia: str, diretorio: Path | None = 
     return caminho
 
 
+def contratos_ligados(tabela: pd.DataFrame, consultados: set) -> list[tuple]:
+    """[(número, id no Contratos.gov ou None, NE do cadastro ou None)] de um cadastro de Contínuos já ligado ao gov
+    (`com_contratosgov`); o id só vale se as notas do contrato foram consultadas (`consultados`)."""
+
+    ligados = []
+    for _, linha in tabela.drop_duplicates("contrato_numero").iterrows():
+        cid = linha.get("contratosgov_id")
+        cid = None if pd.isna(cid) or str(cid) not in consultados else str(cid)
+        ne = linha.get("ne_curta")
+        ligados.append((linha["contrato_numero"], cid, None if pd.isna(ne) else str(ne)))
+    return ligados
+
+
 def entradas_da_conciliacao(fotografia: dict, referencia) -> tuple[list, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Lê o cadastro de Contínuos (exercício mais recente) e a Liquidação por Competência em `data/raw` e monta as
     entradas do cálculo com a `fotografia` dada: (contratos ligados, faturas, empenhos do gov, relatório por mês).
@@ -265,14 +314,7 @@ def entradas_da_conciliacao(fotografia: dict, referencia) -> tuple[list, pd.Data
     faturas = montar_faturas(fotografia)
     ano = max(anos)
     tabela = com_contratosgov(como_dataframe(carregar_contratos(ano), ano), contratos_gov, termos, empenhos)
-    consultados = contratos_com_faturas(fotografia)
-    ligados = []
-    for _, linha in tabela.drop_duplicates("contrato_numero").iterrows():
-        cid = linha.get("contratosgov_id")
-        cid = None if pd.isna(cid) or str(cid) not in consultados else str(cid)
-        ne = linha.get("ne_curta")
-        ligados.append((linha["contrato_numero"], cid, None if pd.isna(ne) else str(ne)))
-    return ligados, faturas, empenhos, relatorio
+    return contratos_ligados(tabela, contratos_com_faturas(fotografia)), faturas, empenhos, relatorio
 
 
 def gerar_relatorio_inconsistencias(fotografia: dict, referencia, a_partir_do_ano: int | None = None) -> bytes:
