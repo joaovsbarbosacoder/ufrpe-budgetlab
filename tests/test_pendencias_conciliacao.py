@@ -92,6 +92,14 @@ class RelatorioInconsistenciasTests(unittest.TestCase):
         self.assertIn("12/2025", jan["Ação sugerida"])
         self.assertEqual(jan["Notas"], "A")
 
+    def test_filtro_de_periodo_descarta_competencias_anteriores(self) -> None:
+        faturas = pd.DataFrame([_nota("1", "A", 8680.0, NE_A, 2026, 1)])
+        relatorio = _relatorio((NE_A, 202512, 8680.0), (NE_B, 202601, 2560.24))
+        todas = tabela_inconsistencias([("23/2025", "1", NE_B)], faturas, _empenhos(), relatorio)
+        so_2026 = tabela_inconsistencias([("23/2025", "1", NE_B)], faturas, _empenhos(), relatorio, a_partir_do_ano=2026)
+        self.assertEqual(todas["Competência"].tolist(), ["12/2025", "01/2026"])
+        self.assertEqual(so_2026["Competência"].tolist(), ["01/2026"])  # o par de dez/2025 sai junto com o ano
+
     def test_sem_pendencia_devolve_tabela_vazia_com_as_colunas(self) -> None:
         faturas = pd.DataFrame([_nota("1", "A", 100.0, NE_B, 2026, 3)])
         tabela = tabela_inconsistencias([("23/2025", "1", NE_B)], faturas, _empenhos(), _relatorio((NE_B, 202603, 100.0)))
@@ -167,4 +175,5 @@ def test_aba_atualizar_oferece_o_relatorio_de_inconsistencias(tmp_path, monkeypa
     pagina_contratos._aba(app, "Atualizar")
     assert not app.exception, [e.value for e in app.exception]
     assert any(b.label == "Gerar relatório de inconsistências" for b in app.button)
+    assert next(s for s in app.selectbox if s.label == "Competências a partir de").value == 2025  # padrão: 2025 em diante
     assert "Relatório de inconsistências de conciliação" in " ".join(m.value for m in app.markdown)
