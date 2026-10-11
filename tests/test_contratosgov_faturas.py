@@ -197,6 +197,8 @@ def test_janela_da_pagina_contratos_lista_as_notas(tmp_path, monkeypatch) -> Non
     assert "Nº 100 ·" in html and "Nº 200 ·" in html  # na página Contratos, todas as notas do contrato
     assert any("erro no Siafi" in w.value for w in app.warning)
     # detalhamento da nota escolhida (a mais recente primeiro): itens, empenhos, chave da NF-e, datas
+    expansor = next(e for e in app.expander if e.label.startswith("Notas e detalhamento"))
+    assert not expansor.proto.expanded  # oculto por padrão
     assert next(s for s in app.selectbox if s.label == "Detalhar nota")
     assert "Itens faturados" in html and "Item 1612963" in html
     assert "23044001207360290000123000000006871526080741299039" in html

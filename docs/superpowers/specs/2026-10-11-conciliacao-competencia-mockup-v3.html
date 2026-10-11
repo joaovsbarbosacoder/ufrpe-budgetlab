@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Liquidação por competência × Contratos.gov — v3 (filtro por mês)</title>
+<style>
+:root{--bg:#f4f6fa;--card:#fff;--tx:#14233c;--mut:#5d6b82;--faint:#8493ad;--bd:#dde3ee;--alt:#f0f5fa;--ok:#0f7b45;--bad:#d20a16;--warn:#9a5b00;--warnb:#fdf1d9;--pri:#1d4ed8;--prib:#e4eefb}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1626;--card:#16213a;--tx:#e8edf7;--mut:#9fb0cc;--faint:#7387a8;--bd:#2a3858;--alt:#1d2944;--ok:#5fd194;--bad:#ff8a8a;--warn:#f0b758;--warnb:#3b2c0f;--pri:#6c9bff;--prib:#15294a}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif;padding:24px 16px}
+.wrap{max-width:1000px;margin:0 auto}.nota{background:var(--warnb);color:var(--warn);border-radius:8px;padding:8px 12px;font-size:12.5px;margin-bottom:14px}
+.janela{background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:20px 24px}
+.sec{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--mut);border-bottom:1px solid var(--bd);padding-bottom:6px;margin:0 0 12px}
+h3{font-size:15px;margin:0 0 4px}.cap{color:var(--faint);font-size:12.5px;margin:0 0 10px}
+.lbl{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:6px 0 3px}
+.sel{display:inline-block;border:1px solid var(--bd);border-radius:8px;padding:6px 12px;background:var(--bg);min-width:120px;margin-bottom:8px}
+.mes{display:grid;grid-template-columns:70px minmax(0,1fr);gap:12px;padding:11px 0;border-bottom:1px solid var(--bd)}
+.rot{font-weight:700;font-size:13px}
+.linha{display:grid;grid-template-columns:190px 150px minmax(0,1fr);gap:10px;align-items:center;padding:2px 0}
+.fonte{color:var(--mut)}.valor{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
+.vazio{color:var(--faint);font-style:italic;font-weight:400}.nota-ne{color:var(--faint);font-size:12px}
+.det{margin:2px 0 4px 200px;font-size:12px;color:var(--faint)}.det div{padding:1px 0}
+.tag{border:1px solid var(--bd);border-radius:6px;padding:0 6px;font-size:11px;color:var(--mut)}
+.alerta{background:var(--warnb);color:var(--warn);border-radius:6px;padding:1px 7px;font-weight:600;font-size:12px}
+.ok{color:var(--ok);font-weight:600}.dif{color:var(--bad);font-weight:600}
+.filtro{margin:6px 0 0 200px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.filtro .t{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin-right:2px}
+.ne{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--bd);border-radius:999px;padding:3px 10px;font-size:12px;background:var(--bg);color:var(--mut)}
+.ne b{color:var(--tx)}.ne.on{background:var(--prib);border-color:var(--pri);color:var(--pri)}.ne.on b{color:var(--pri)}
+.ne i{font-style:normal;width:13px;height:13px;border:1.5px solid var(--faint);border-radius:4px;display:inline-block;text-align:center;line-height:10px;font-size:10px}
+.ne.on i{background:var(--pri);border-color:var(--pri);color:#fff}
+.fora{margin:4px 0 0 200px;font-size:12px;color:var(--warn)}
+@media (max-width:760px){.mes,.linha{grid-template-columns:1fr}.det,.filtro,.fora{margin-left:0}}
+</style></head><body><div class="wrap">
+<div class="nota">Maquete v3 com valores <b>ilustrativos</b>: o filtro de NEs fica <b>dentro de cada mês</b>. Padrão: as NEs da 20RK do mês (se não houver, todas). Relatório e notas usam sempre a mesma seleção.</div>
+<div class="janela">
+  <div class="sec">Contratos.gov</div>
+  <h3>Liquidação por competência × Contratos.gov</h3>
+  <span class="lbl">Exercício</span><span class="sel">2026 ▾</span>
+  <p class="cap">Contrato pago por várias ações. Em cada mês, escolha quais NEs ficam em evidência. Relatório e notas não são somados.</p>
+
+  <div class="mes"><div class="rot">jan/2026</div><div>
+    <div class="linha"><span class="fonte">Liquidação por competência</span><span class="valor">R$ 7.775,65</span><span class="nota-ne">2025NE000046: R$ 7.775,65</span></div>
+    <div class="linha"><span class="fonte">Contratos.gov (notas)</span><span class="valor">R$ 7.775,65</span><span class="ok">✓ batem</span></div>
+    <div class="det"><div>Nota 195 · NE 2025NE000046 · R$ 7.775,65</div></div>
+    <div class="filtro"><span class="t">NEs em evidência</span><span class="ne on"><i>✓</i><b>2025NE000046</b> 20RK · 37</span></div></div></div>
+
+  <div class="mes"><div class="rot">fev/2026</div><div>
+    <div class="linha"><span class="fonte">Liquidação por competência</span><span class="valor">R$ 400,00</span><span class="nota-ne">2026NE000116: R$ 400,00</span></div>
+    <div class="linha"><span class="fonte">Contratos.gov (notas)</span><span class="valor">R$ 500,00</span><span class="dif">≠ diferença R$ 100,00</span></div>
+    <div class="det"><div>Nota 353 · NE 2026NE000116 · R$ 500,00</div></div>
+    <div class="filtro"><span class="t">NEs em evidência</span><span class="ne on"><i>✓</i><b>2026NE000116</b> 20RK · 37</span><span class="ne"><i></i><b>2026NE000203</b> 20RL · 39</span></div>
+    <div class="fora">1 NE fora do filtro: relatório R$ 1.200,00 · notas R$ 1.200,00 (2026NE000203)</div></div></div>
+
+  <div class="mes"><div class="rot">mar/2026</div><div>
+    <div class="linha"><span class="fonte">Liquidação por competência</span><span class="valor">R$ 9.340,22</span><span class="nota-ne">2026NE000116: R$ 7.775,65 · 2026NE000203: R$ 1.564,57</span></div>
+    <div class="linha"><span class="fonte">Contratos.gov (notas)</span><span class="valor">R$ 9.340,22</span><span class="ok">✓ batem</span></div>
+    <div class="det"><div>Nota 412 · NE 2026NE000116 · R$ 7.775,65</div><div>Nota 413 · NE 2026NE000203 · R$ 1.564,57 · <span class="tag">20RL</span></div></div>
+    <div class="filtro"><span class="t">NEs em evidência</span><span class="ne on"><i>✓</i><b>2026NE000116</b> 20RK · 37</span><span class="ne on"><i>✓</i><b>2026NE000203</b> 20RL · 39</span></div></div></div>
+
+  <div class="mes"><div class="rot">abr/2026</div><div>
+    <div class="linha"><span class="fonte">Liquidação por competência</span><span class="valor vazio">sem registro</span><span></span></div>
+    <div class="linha"><span class="fonte">Contratos.gov (notas)</span><span class="valor">R$ 127.953,84</span><span class="alerta">sem registro no relatório de competência</span></div>
+    <div class="det"><div>Nota 3271 · NE 2025NE000184 · R$ 127.953,84 · <span class="alerta">elemento 92 · 339092 - DESPESAS DE EXERCÍCIOS ANTERIORES</span></div></div>
+    <div class="filtro"><span class="t">NEs em evidência</span><span class="ne on"><i>✓</i><b>2025NE000184</b> 20RK · 92 DEA</span></div></div></div>
+
+  <div class="mes"><div class="rot">mai/2026</div><div>
+    <div class="linha"><span class="fonte">Liquidação por competência</span><span class="valor vazio">sem registro</span><span></span></div>
+    <div class="linha"><span class="fonte">Contratos.gov (notas)</span><span class="valor vazio">sem registro</span><span></span></div></div></div>
+
+  <p class="cap" style="margin-top:10px">… jun a dez/2026 seguem o mesmo formato. Mês sem nenhuma NE não mostra filtro. Se todas as NEs forem desmarcadas, o mês mostra "sem registro" nos dois lados e o valor aparece em "fora do filtro".</p>
+</div></div></body></html>
