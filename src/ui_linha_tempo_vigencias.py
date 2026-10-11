@@ -21,33 +21,44 @@ from src.ui_cadastro import chip
 _COR_TA = "#5B9BF0"
 _COR_CADASTRO = "#A9B6CA"
 _COR_ACRESCIMO = "#8A5CF6"
-_COR_MARCA = {"R": POSITIVE, "A": _COR_ACRESCIMO, "P": TEXT_MUTED, "X": NEGATIVE}
 
+#: Dentro de `st.dialog`, o tema (`src/ui_theme.py`) força `background` e `color` com `!important` em todo `div`/`*`
+#: da janela — por isso as cores aqui são por CLASSE (estilo inline não vence `!important`) e cada regra é prefixada
+#: por `.ltv-bloco` (especificidade maior) com `!important`.
 CSS = f"""
 <style>
 .ltv-bloco {{ margin: 6px 0 12px; }}
-.ltv-leg {{ display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:{TEXT_FAINT}; margin:2px 0 8px; }}
-.ltv-leg i {{ display:inline-block; width:20px; height:8px; border-radius:3px; margin-right:5px; vertical-align:middle; }}
-.ltv-leg b {{ display:inline-block; min-width:16px; text-align:center; color:#fff; border-radius:7px; font-size:10px;
-    padding:0 3px; margin-right:4px; }}
-.ltv-cab, .ltv-linha {{ display:grid; grid-template-columns:minmax(0,1fr) 190px; gap:14px; align-items:center; }}
-.ltv-eixo {{ position:relative; height:16px; border-bottom:1px solid {BORDER}; }}
-.ltv-ano {{ position:absolute; border-left:1px solid {BORDER}; padding-left:4px; font-size:11px; color:{TEXT_FAINT};
-    height:16px; }}
-.ltv-linha {{ padding:8px 0; }}
-.ltv-trilho {{ position:relative; height:30px; background:{SURFACE_ALT}; border-radius:6px; }}
-.ltv-seg {{ position:absolute; top:8px; height:14px; border-radius:3px; }}
-.ltv-seg.contrato {{ background:{ACCENT}; }}
-.ltv-seg.ta {{ background:{_COR_TA}; box-shadow:inset -2px 0 0 #fff; }}
-.ltv-seg.cadastro {{ background:{_COR_CADASTRO}; }}
-.ltv-seg.corte {{ border-top-left-radius:0; border-bottom-left-radius:0; }}
-.ltv-hoje {{ position:absolute; top:0; bottom:0; width:2px; background:{NEGATIVE}; }}
-.ltv-ev {{ position:absolute; top:0; transform:translateX(-50%); font-size:9px; font-weight:700; line-height:14px;
-    min-width:14px; text-align:center; border-radius:7px; padding:0 3px; color:#fff; z-index:2; }}
-.ltv-fim small {{ display:block; color:{TEXT_FAINT}; font-size:12px; margin-top:3px; }}
-.ltv-div {{ color:{WARNING}; font-weight:600; }}
-.ltv-lista {{ font-size:12.5px; color:{TEXT_MUTED}; margin:6px 0 0; padding-left:18px; }}
-@media (max-width:700px) {{ .ltv-cab, .ltv-linha {{ grid-template-columns:1fr; }} }}
+.ltv-bloco .ltv-leg {{ display:flex; gap:14px; flex-wrap:wrap; font-size:12px; margin:2px 0 8px; }}
+.ltv-bloco .ltv-leg span {{ color:{TEXT_FAINT} !important; }}
+.ltv-bloco .ltv-leg i {{ display:inline-block; width:20px; height:8px; border-radius:3px; margin-right:5px; vertical-align:middle; }}
+.ltv-bloco .ltv-leg i.hoje {{ width:3px; }}
+.ltv-bloco .ltv-leg b {{ display:inline-block; min-width:16px; text-align:center; border-radius:7px; font-size:10px;
+    padding:0 3px; margin-right:4px; color:#fff !important; }}
+.ltv-bloco .ltv-cab, .ltv-bloco .ltv-linha {{ display:grid; grid-template-columns:minmax(0,1fr) 190px; gap:14px; align-items:center; }}
+.ltv-bloco .ltv-eixo {{ position:relative; height:16px; border-bottom:1px solid {BORDER}; }}
+.ltv-bloco .ltv-ano {{ position:absolute; border-left:1px solid {BORDER}; padding-left:4px; font-size:11px;
+    color:{TEXT_FAINT} !important; height:16px; background:transparent !important; }}
+.ltv-bloco .ltv-linha {{ padding:8px 0; }}
+.ltv-bloco .ltv-trilho {{ position:relative; height:30px; background:{SURFACE_ALT} !important; border-radius:6px; }}
+.ltv-bloco .ltv-seg {{ position:absolute; top:8px; height:14px; border-radius:3px; }}
+.ltv-bloco .c-contrato {{ background:{ACCENT} !important; }}
+.ltv-bloco .c-ta {{ background:{_COR_TA} !important; }}
+.ltv-bloco .ltv-seg.c-ta {{ box-shadow:inset -2px 0 0 #fff; }}
+.ltv-bloco .c-cadastro {{ background:{_COR_CADASTRO} !important; }}
+.ltv-bloco .ltv-seg.corte {{ border-top-left-radius:0; border-bottom-left-radius:0; }}
+.ltv-bloco .c-hoje {{ background:{NEGATIVE} !important; }}
+.ltv-bloco .ltv-hoje {{ position:absolute; top:0; bottom:0; width:2px; }}
+.ltv-bloco .ltv-ev {{ position:absolute; top:0; transform:translateX(-50%); font-size:9px; font-weight:700; line-height:14px;
+    min-width:14px; text-align:center; border-radius:7px; padding:0 3px; z-index:2; color:#fff !important; }}
+.ltv-bloco .m-R {{ background:{POSITIVE} !important; }}
+.ltv-bloco .m-A {{ background:{_COR_ACRESCIMO} !important; }}
+.ltv-bloco .m-P {{ background:{TEXT_MUTED} !important; }}
+.ltv-bloco .m-X {{ background:{NEGATIVE} !important; }}
+.ltv-bloco .ltv-fim small {{ display:block; color:{TEXT_FAINT} !important; font-size:12px; margin-top:3px; }}
+.ltv-bloco .ltv-div {{ color:{WARNING} !important; font-weight:600; }}
+.ltv-bloco .ltv-lista {{ font-size:12.5px; margin:6px 0 0; padding-left:18px; }}
+.ltv-bloco .ltv-lista li {{ color:{TEXT_MUTED} !important; }}
+@media (max-width:700px) {{ .ltv-bloco .ltv-cab, .ltv-bloco .ltv-linha {{ grid-template-columns:1fr; }} }}
 </style>
 """
 
@@ -75,31 +86,31 @@ def html_trilho(linha: LinhaDoTempo, janela: tuple[date, date], hoje: date) -> s
         largura = max(_posicao(seg.fim, janela) - esquerda, 0.4)
         inicio_txt = "início desconhecido" if seg.inicio is None else f"{seg.inicio:%d/%m/%Y}"
         partes.append(
-            f'<div class="ltv-seg {seg.tipo}{" corte" if cortado else ""}" style="left:{esquerda:.3f}%;'
+            f'<div class="ltv-seg c-{seg.tipo}{" corte" if cortado else ""}" style="left:{esquerda:.3f}%;'
             f'width:{largura:.3f}%" title="{escape(seg.rotulo)}: {inicio_txt} a {seg.fim:%d/%m/%Y}"></div>'
         )
     for ev in linha.eventos:
         if janela[0] <= ev.data <= janela[1]:
             partes.append(
-                f'<div class="ltv-ev" style="left:{_posicao(ev.data, janela):.3f}%;background:{_COR_MARCA[ev.marca[0]]}" '
+                f'<div class="ltv-ev m-{ev.marca[0]}" style="left:{_posicao(ev.data, janela):.3f}%" '
                 f'title="{escape(ev.rotulo)} ({ev.data:%d/%m/%Y})">{escape(ev.marca)}</div>'
             )
     if janela[0] <= hoje <= janela[1]:
-        partes.append(f'<div class="ltv-hoje" style="left:{_posicao(hoje, janela):.3f}%" title="Hoje"></div>')
+        partes.append(f'<div class="ltv-hoje c-hoje" style="left:{_posicao(hoje, janela):.3f}%" title="Hoje"></div>')
     return f'<div class="ltv-trilho">{"".join(partes)}</div>'
 
 
 def html_legenda() -> str:
     return (
         '<div class="ltv-leg">'
-        f'<span><i style="background:{ACCENT}"></i>Contrato original</span>'
-        f'<span><i style="background:{_COR_TA}"></i>Termo aditivo de vigência</span>'
-        f'<span><i style="background:{_COR_CADASTRO}"></i>Vigência do cadastro</span>'
-        f'<span><b style="background:{POSITIVE}">R</b>reajuste</span>'
-        f'<span><b style="background:{_COR_ACRESCIMO}">A</b>acréscimo/supressão</span>'
-        f'<span><b style="background:{TEXT_MUTED}">P</b>apostilamento</span>'
-        f'<span><b style="background:{NEGATIVE}">X</b>rescisão</span>'
-        f'<span><i style="background:{NEGATIVE};width:3px"></i>hoje</span>'
+        '<span><i class="c-contrato"></i>Contrato original</span>'
+        '<span><i class="c-ta"></i>Termo aditivo de vigência</span>'
+        '<span><i class="c-cadastro"></i>Vigência do cadastro</span>'
+        '<span><b class="m-R">R</b>reajuste</span>'
+        '<span><b class="m-A">A</b>acréscimo/supressão</span>'
+        '<span><b class="m-P">P</b>apostilamento</span>'
+        '<span><b class="m-X">X</b>rescisão</span>'
+        '<span><i class="c-hoje hoje"></i>hoje</span>'
         "</div>"
     )
 
@@ -125,4 +136,6 @@ def html_bloco_contrato(linha: LinhaDoTempo, hoje: date) -> str:
 
 
 def render_linha_tempo_do_contrato(linha: LinhaDoTempo, hoje: date) -> None:
-    st.markdown(CSS + html_bloco_contrato(linha, hoje), unsafe_allow_html=True)
+    # o <style> vai num markdown só dele: junto do HTML no mesmo bloco, o Streamlit não o aplica
+    st.markdown(CSS, unsafe_allow_html=True)
+    st.markdown(html_bloco_contrato(linha, hoje), unsafe_allow_html=True)

@@ -39,7 +39,7 @@ def test_bloco_escapa_textos_e_lista_os_periodos() -> None:
     assert "TA &lt;1&gt;" in html
     assert "<li>TA &lt;1&gt;: 01/01/2026 a 01/01/2027</li>" in html
     assert "≠ cadastro 01/02/2027" in html
-    assert 'class="ltv-hoje"' in html
+    assert 'class="ltv-hoje c-hoje"' in html
 
 
 @pytest.mark.skipif(
@@ -81,5 +81,5 @@ def test_detalhe_da_pagina_contratos_mostra_a_linha_do_tempo(tmp_path, monkeypat
     assert not app.exception, [e.value for e in app.exception]
     bloco = _blocos(app)
     assert bloco.count('class="ltv-bloco"') == 1
-    assert 'class="ltv-seg contrato' in bloco
+    assert 'class="ltv-seg c-contrato' in bloco
     assert "Linha do tempo das vigências" in " ".join(m.value for m in app.markdown)
