@@ -270,6 +270,7 @@ from src.ui_cadastro import css as css_cadastro
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
 from src.estimativa_reajuste import termos_do_gov
 from src.ui_reajuste import render_estimativa_reajuste
+from src.ui_linha_tempo_vigencias import render_linha_tempo_vigencias
 from src.ui_theme import render_page_header
 
 DIRETORIO_DADOS_BRUTOS = Path("data/raw")
@@ -1982,6 +1983,7 @@ termos_gov = None
 _inicio_por_gov: dict = {}
 _vigencias_por_gov: dict = {}
 _empenhos_gov = None
+_contratos_gov = None
 _gov = _carregar_gov(_referencia_gov())
 if _gov is not None:
     _contratos_gov, termos_gov, _empenhos_gov = _gov
@@ -2068,6 +2070,9 @@ _render_relatorio_projecao_execucao(
     filtrado, liquidacao_competencia_por_mes, source_key, ano_selecionado, manifesto_execucao_mensal,
     via_competencia=indice_liquidado_competencia is not None,
 )
+# Linha do tempo das vigências por contrato (11/10/2026): contrato e termos de vigência do Contratos.gov, marcadores
+# de reajuste/acréscimo/apostilamento/rescisão e situação — somente leitura.
+render_linha_tempo_vigencias(filtrado, _contratos_gov, termos_gov, _referencia_gov(), source_key)
 # Estimativa de reajuste por competência (11/10/2026): cenário separado, só lê os contratos do exercício.
 render_estimativa_reajuste(
     filtrado, registros, [r for _ano in anos_disponiveis() for r in carregar_contratos(_ano)], ano_selecionado,
