@@ -109,3 +109,6 @@ data/dou/*
 
 # Pendências de conciliação da última atualização do Contratos.gov (dado derivado, regenerável)
 data/conciliacao_pendencias/
+
+# Decisões do usuário sobre as sugestões de conciliação (dado do usuário: não vai ao GitHub)
+data/conciliacao_decisoes/

@@ -192,9 +192,11 @@ CLASSES = {
     "so_notas": "Só nota (sem relatório)",
     "so_relatorio": "Só relatório (sem nota)",
     "sem_explicacao": "Diferença sem explicação",
+    "confirmada": "Sugestão confirmada",
+    "rejeitada": "Sugestão rejeitada",
 }
-#: classes que NÃO são pendência: nada a fazer
-CLASSES_OK = ("batem", "sem_registro")
+#: classes que NÃO são pendência: nada a fazer ("confirmada" = o usuário confirmou a sugestão; "rejeitada" continua pendente)
+CLASSES_OK = ("batem", "sem_registro", "confirmada")
 
 
 @dataclass(frozen=True)

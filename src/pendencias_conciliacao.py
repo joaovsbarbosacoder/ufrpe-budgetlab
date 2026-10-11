@@ -32,6 +32,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.decisoes_conciliacao import aplicar_decisao, assinatura_mes, carregar_eventos, reconstruir_decisoes
 from src.conciliacao_competencia_gov import (
     CLASSES,
     CLASSES_OK,
@@ -83,10 +84,12 @@ def _acao_sugerida(classe: str, causas: list, ajuste, visto) -> str:
 
 def meses_analisados(
     cid: object, ne_cadastro: object, faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None,
-    relatorio: pd.DataFrame | None,
+    relatorio: pd.DataFrame | None, numero: str | None = None, decisoes: dict | None = None,
 ) -> list[dict]:
     """TODOS os meses com dado do contrato (filtro padrão: NEs da 20RK), cada um com a classe, os valores nas duas
-    fontes, as NEs, as notas e a ação sugerida. Contrato sem id no gov usa só o relatório da NE do cadastro."""
+    fontes, as NEs, as notas e a ação sugerida. Contrato sem id no gov usa só o relatório da NE do cadastro. Com `numero` e
+    `decisoes` (ver `src/decisoes_conciliacao.py`), uma decisão ATIVA do usuário muda a classe do mês para "confirmada"
+    (resolvido) ou "rejeitada" (continua pendente); a `assinatura` de cada mês acompanha o resultado."""
 
     tem_gov = not (cid is None or (isinstance(cid, float) and pd.isna(cid)))
     cid = str(cid) if tem_gov else None
@@ -107,8 +110,11 @@ def meses_analisados(
             explicadas = {c.ne for c in causas if c.tipo == "deslocamento"}
             ajuste = ajustar_mes(visto, explicadas)
             classe = classificar_mes(visto, ajuste, causas)
+            assinatura = assinatura_mes(classe, escolhidas, [i.nota for i in visto.itens], visto.notas, visto.relatorio)
+            if decisoes and numero is not None:
+                classe = aplicar_decisao(classe, decisoes.get((str(numero), ano * 100 + completo.mes)), assinatura)
             linhas.append({
-                "classe": classe, "ano_mes": ano * 100 + completo.mes, "nes": sorted(escolhidas),
+                "assinatura": assinatura, "classe": classe, "ano_mes": ano * 100 + completo.mes, "nes": sorted(escolhidas),
                 "notas": sorted({i.nota for i in visto.itens}), "valor_notas": visto.notas, "valor_relatorio": visto.relatorio,
                 "acao": _acao_sugerida(classe, causas, ajuste, visto) if classe not in CLASSES_OK else "",
             })
@@ -117,18 +123,21 @@ def meses_analisados(
 
 def detalhar_contrato(
     cid: object, ne_cadastro: object, faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None,
-    relatorio: pd.DataFrame | None,
+    relatorio: pd.DataFrame | None, numero: str | None = None, decisoes: dict | None = None,
 ) -> list[dict]:
     """Os meses PENDENTES do contrato (classe fora de `CLASSES_OK`), com valores, notas, causa e ação sugerida."""
 
     if cid is None or (isinstance(cid, float) and pd.isna(cid)):
         return []
-    return [l for l in meses_analisados(cid, ne_cadastro, faturas, empenhos_gov, relatorio) if l["classe"] not in CLASSES_OK]
+    return [
+        l for l in meses_analisados(cid, ne_cadastro, faturas, empenhos_gov, relatorio, numero, decisoes)
+        if l["classe"] not in CLASSES_OK
+    ]
 
 
 def consolidar_exercicio(
     contratos: list[tuple], faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None, relatorio: pd.DataFrame | None,
-    ano: int,
+    ano: int, decisoes: dict | None = None,
 ) -> list[dict]:
     """Visão consolidada de todos os contratos no exercício `ano`: por contrato, os 12 meses com o valor do relatório, o das
     notas e a classe, e os totais (None = sem nenhum valor). Contrato sem ligação ao gov entra pelo relatório da NE do
@@ -136,13 +145,17 @@ def consolidar_exercicio(
 
     resultado = []
     for numero, cid, ne in contratos:
-        por_mes = {l["ano_mes"]: l for l in meses_analisados(cid, ne, faturas, empenhos_gov, relatorio) if l["ano_mes"] // 100 == ano}
+        por_mes = {
+            l["ano_mes"]: l for l in meses_analisados(cid, ne, faturas, empenhos_gov, relatorio, str(numero), decisoes)
+            if l["ano_mes"] // 100 == ano
+        }
         meses = []
         for mes in range(1, 13):
             l = por_mes.get(ano * 100 + mes)
             meses.append(
                 {"mes": mes, "relatorio": l["valor_relatorio"], "notas": l["valor_notas"], "classe": l["classe"],
-                 "acao": l["acao"]} if l else {"mes": mes, "relatorio": None, "notas": None, "classe": "sem_registro", "acao": ""}
+                 "acao": l["acao"], "assinatura": l["assinatura"]} if l else
+                {"mes": mes, "relatorio": None, "notas": None, "classe": "sem_registro", "acao": "", "assinatura": ""}
             )
         def total(campo):
             valores = [m[campo] for m in meses if m[campo] is not None]
@@ -153,14 +166,17 @@ def consolidar_exercicio(
 
 def _pendencias_do_contrato(
     cid: object, ne_cadastro: object, faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None,
-    relatorio: pd.DataFrame | None,
+    relatorio: pd.DataFrame | None, numero: str | None = None, decisoes: dict | None = None,
 ) -> set[tuple[int, str]]:
-    return {(l["ano_mes"], l["classe"]) for l in detalhar_contrato(cid, ne_cadastro, faturas, empenhos_gov, relatorio)}
+    return {
+        (l["ano_mes"], l["classe"])
+        for l in detalhar_contrato(cid, ne_cadastro, faturas, empenhos_gov, relatorio, numero, decisoes)
+    }
 
 
 def tabela_inconsistencias(
     contratos: list[tuple], faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None, relatorio: pd.DataFrame | None,
-    a_partir_do_ano: int | None = None,
+    a_partir_do_ano: int | None = None, decisoes: dict | None = None,
 ) -> pd.DataFrame:
     """Relatório de inconsistências para quem alimenta o Contratos.gov: uma linha por contrato e mês pendente, com a causa
     (rótulo de `CLASSES`), os valores nas duas fontes, a diferença e a ação sugerida. Ordenado por contrato e competência.
@@ -168,7 +184,7 @@ def tabela_inconsistencias(
 
     linhas = []
     for numero, cid, ne in contratos:
-        for l in detalhar_contrato(cid, ne, faturas, empenhos_gov, relatorio):
+        for l in detalhar_contrato(cid, ne, faturas, empenhos_gov, relatorio, str(numero), decisoes):
             if a_partir_do_ano is not None and l["ano_mes"] // 100 < a_partir_do_ano:
                 continue
             nota, rel = l["valor_notas"], l["valor_relatorio"]
@@ -207,12 +223,14 @@ def excel_inconsistencias(tabela: pd.DataFrame) -> bytes:
 
 def calcular_pendencias(
     contratos: list[tuple], faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None, relatorio: pd.DataFrame | None,
+    decisoes: dict | None = None,
 ) -> dict[str, set[tuple[int, str]]]:
     """Pendências por contrato: `contratos` = [(número, id no Contratos.gov ou None, NE do cadastro ou None)]. Mês
     pendente = qualquer classe que não seja "batem"/"sem registro" (ver `CLASSES_OK`), com o filtro padrão do mês."""
 
     return {
-        str(numero): _pendencias_do_contrato(cid, ne, faturas, empenhos_gov, relatorio) for numero, cid, ne in contratos
+        str(numero): _pendencias_do_contrato(cid, ne, faturas, empenhos_gov, relatorio, str(numero), decisoes)
+        for numero, cid, ne in contratos
     }
 
 
@@ -321,7 +339,8 @@ def gerar_relatorio_inconsistencias(fotografia: dict, referencia, a_partir_do_an
     """Excel de inconsistências (para o pessoal que alimenta o Contratos.gov) com a fotografia dada."""
 
     ligados, faturas, empenhos, relatorio = entradas_da_conciliacao(fotografia, referencia)
-    return excel_inconsistencias(tabela_inconsistencias(ligados, faturas, empenhos, relatorio, a_partir_do_ano))
+    decisoes = reconstruir_decisoes(carregar_eventos())  # confirmadas saem do relatório; rejeitadas ficam
+    return excel_inconsistencias(tabela_inconsistencias(ligados, faturas, empenhos, relatorio, a_partir_do_ano, decisoes))
 
 
 def atualizar_apos_gravacao(fotografia: dict, referencia, diretorio: Path | None = None) -> str:
@@ -331,7 +350,7 @@ def atualizar_apos_gravacao(fotografia: dict, referencia, diretorio: Path | None
     gravação da fotografia."""
 
     ligados, faturas, empenhos, relatorio = entradas_da_conciliacao(fotografia, referencia)
-    atual = calcular_pendencias(ligados, faturas, empenhos, relatorio)
+    atual = calcular_pendencias(ligados, faturas, empenhos, relatorio, reconstruir_decisoes(carregar_eventos()))
     anterior = carregar_baseline(diretorio)
     novas, resolvidas = comparar(None if anterior is None else anterior["pendencias"], atual)
     salvar_baseline(atual, fotografia=str(fotografia.get("_sha256", ""))[:12], diretorio=diretorio)

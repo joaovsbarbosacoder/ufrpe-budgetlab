@@ -37,6 +37,16 @@ from src.conciliacao_competencia_gov import (
     padrao_do_mes,
     totais_por_ne,
 )
+from src.decisoes_conciliacao import (
+    CLASSES_COM_SUGESTAO,
+    ErroDecisao,
+    aplicar_decisao,
+    assinatura_mes,
+    carregar_eventos,
+    desfazer_decisao,
+    reconstruir_decisoes,
+    registrar_decisao,
+)
 from src.design_tokens import BORDER, NEGATIVE, POSITIVE, SURFACE_ALT, TEXT_FAINT, TEXT_MUTED, WARNING
 from src.ui_cadastro import celula_principal, celula_suave, celula_valor, chip, formatar_brl, tabela_html
 
@@ -195,6 +205,69 @@ def render_visao_consolidada(
         if guardado and guardado[0] == assinatura:
             st.markdown(CSS, unsafe_allow_html=True)
             st.markdown(html_legenda_consolidada() + html_consolidada(guardado[1]), unsafe_allow_html=True)
+
+
+def _cb_registrar(prefixo: str, contrato: str, ano_mes: int, classe: str, assinatura: str, decisao: str) -> None:
+    """`on_click` do botão Confirmar/Rejeitar: grava o evento antes do redesenho (a janela do contrato não fecha)."""
+
+    try:
+        registrar_decisao(
+            contrato=contrato, ano_mes=ano_mes, classe=classe, assinatura=assinatura, decisao=decisao,
+            justificativa=st.session_state.get(f"{prefixo}_just", ""), responsavel=st.session_state.get(f"{prefixo}_resp", ""),
+        )
+        st.session_state[f"{prefixo}_msg"] = ""
+    except ErroDecisao as erro:
+        st.session_state[f"{prefixo}_msg"] = str(erro)
+
+
+def _cb_desfazer(prefixo: str, decisao_id: str) -> None:
+    try:
+        desfazer_decisao(
+            decisao_id=decisao_id, motivo=st.session_state.get(f"{prefixo}_mot", ""),
+            responsavel=st.session_state.get(f"{prefixo}_resp", ""),
+        )
+        st.session_state[f"{prefixo}_msg"] = ""
+    except ErroDecisao as erro:
+        st.session_state[f"{prefixo}_msg"] = str(erro)
+
+
+def _render_decisao(contrato: str, completo: MesConciliado, classe_original: str, assinatura: str, decisao, chave: str) -> None:
+    """Formulário do mês: decisão ativa (com desfazer) ou Confirmar/Rejeitar a sugestão. Grava por callback."""
+
+    ativa = decisao is not None and decisao.assinatura == assinatura and classe_original in CLASSES_COM_SUGESTAO
+    rotulo = f"{_MESES[completo.mes - 1]}/{completo.ano}"
+    prefixo = f"{chave}_dec_{completo.ano}_{completo.mes}"
+    titulo = f"Decisão — {rotulo}" + (f" ({decisao.decisao})" if ativa else "")
+    with st.expander(titulo, expanded=False):
+        if decisao is not None and not ativa:
+            st.caption("Havia uma decisão para este mês, mas os dados mudaram desde então: ela ficou obsoleta e foi ignorada.")
+        if ativa:
+            st.caption(
+                f"Sugestão {decisao.decisao} por {decisao.responsavel} em {decisao.registrado_em[:19].replace('T', ' ')}: "
+                f"{decisao.justificativa}"
+            )
+            st.text_input("Motivo para desfazer", key=f"{prefixo}_mot")
+            st.text_input("Responsável", key=f"{prefixo}_resp")
+            st.button("Desfazer decisão", key=f"{prefixo}_desfazer", on_click=_cb_desfazer, args=(prefixo, decisao.id))
+        else:
+            st.caption(
+                f"Sugestão do sistema para {rotulo}: {CLASSES[classe_original].lower()}. Confirmar tira o mês das pendências; "
+                "rejeitar mantém a pendência. A decisão é gravada com responsável e justificativa e pode ser desfeita."
+            )
+            st.text_input("Responsável", key=f"{prefixo}_resp")
+            st.text_area("Justificativa (mínimo de 10 caracteres)", key=f"{prefixo}_just", height=70)
+            c1, c2 = st.columns(2)
+            c1.button(
+                "Confirmar sugestão", key=f"{prefixo}_confirmar", disabled=classe_original == "ambiguo",
+                help="Mês ambíguo só pode ser rejeitado: o sistema não escolhe qual nota foi cancelada.",
+                on_click=_cb_registrar, args=(prefixo, contrato, completo.ano * 100 + completo.mes, classe_original, assinatura, "confirmada"),
+            )
+            c2.button(
+                "Rejeitar sugestão", key=f"{prefixo}_rejeitar", on_click=_cb_registrar,
+                args=(prefixo, contrato, completo.ano * 100 + completo.mes, classe_original, assinatura, "rejeitada"),
+            )
+        if st.session_state.get(f"{prefixo}_msg"):
+            st.error(st.session_state[f"{prefixo}_msg"])
 
 
 def _rotulo_ne(ne: str, empenhos: dict[str, EmpenhoInfo]) -> str:
@@ -371,6 +444,12 @@ def render_conciliacao_competencia(
         "retirada fecha o valor (provável cancelamento não informado no gov) — é só uma sugestão, nada é gravado."
         + (f" {fora} nota(s) liquidada(s) não têm nenhuma NE deste contrato e ficaram fora." if fora else "")
     )
+    contrato = str(linha["contrato_numero"])
+    try:
+        decisoes = reconstruir_decisoes(carregar_eventos())
+    except ErroDecisao as erro:
+        st.error(f"Decisões de conciliação ilegíveis: {erro}")
+        decisoes = {}
     # 1ª passada: seleção de NEs de cada mês (a do usuário, se já mexeu; senão o padrão), causa e classe
     analise = []
     for completo in meses:
@@ -380,11 +459,16 @@ def render_conciliacao_competencia(
         causas = causas_do_mes(contexto, completo.ano, completo.mes, escolhidas) if opcoes else []
         explicadas = {c.ne for c in causas if c.tipo == "deslocamento"}  # duas pontas confirmam: vale mais que o cancelamento
         ajuste = ajustar_mes(visto, explicadas) if opcoes else None
-        analise.append((completo, opcoes, visto, causas, ajuste, classificar_mes(visto, ajuste, causas)))
+        original = classificar_mes(visto, ajuste, causas)
+        assinatura = assinatura_mes(
+            original, escolhidas if opcoes else [], [i.nota for i in visto.itens], visto.notas, visto.relatorio
+        )
+        decisao = decisoes.get((contrato, completo.ano * 100 + completo.mes))
+        analise.append((completo, opcoes, visto, causas, ajuste, aplicar_decisao(original, decisao, assinatura), original, assinatura, decisao))
 
     # painel de pendências do exercício + filtro "só os divergentes"
     contagem = {}
-    for *_, classe in analise:
+    for *_, classe, _original, _assinatura, _decisao in analise:
         contagem[classe] = contagem.get(classe, 0) + 1
     pendencias = sum(n for c, n in contagem.items() if c not in CLASSES_OK)
     st.markdown(
@@ -398,7 +482,7 @@ def render_conciliacao_competencia(
         f"Mostrar só os meses com pendência ({pendencias})", key=f"{chave}_cmp_so_divergentes",
     )
 
-    for completo, opcoes, visto, causas, ajuste, classe in analise:
+    for completo, opcoes, visto, causas, ajuste, classe, original, assinatura, decisao in analise:
         if so_divergentes and classe in CLASSES_OK:
             continue
         bloco, filtro = st.container(), st.container()
@@ -413,3 +497,6 @@ def render_conciliacao_competencia(
                 format_func=lambda ne: _rotulo_ne(ne, empenhos),
             )
         bloco.markdown(html_mes(visto, empenhos, ajuste, causas), unsafe_allow_html=True)
+        if original in CLASSES_COM_SUGESTAO or decisao is not None:
+            with bloco:
+                _render_decisao(contrato, completo, original, assinatura, decisao, chave)
