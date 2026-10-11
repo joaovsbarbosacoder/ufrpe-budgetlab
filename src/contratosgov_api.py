@@ -135,3 +135,7 @@ class ClienteContratosGov:
 
     def empenhos(self, contrato_id: str) -> list[dict]:
         return self.get_json(f"/api/contrato/{contrato_id}/empenhos")
+
+    def faturas(self, contrato_id: str) -> list[dict]:
+        """Instrumentos de cobrança (notas fiscais/faturas) do contrato (11/10/2026)."""
+        return self.get_json(f"/api/contrato/{contrato_id}/faturas")

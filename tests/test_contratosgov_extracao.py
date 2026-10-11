@@ -416,7 +416,7 @@ def test_gravar_e_carregar_atual(tmp_path):
     r = resumo(montar_contratos(nova, REF))
     n_vig = len(vigentes_ou_a_iniciar(fixture()))
     assert atual.contagens == {
-        "contratos": r["total"], "vigentes": r["vigentes"], "termos": 28, "empenhos": 34,
+        "contratos": r["total"], "vigentes": r["vigentes"], "termos": 28, "empenhos": 34, "faturas": 0,
         "reconsultados": n_vig, "reaproveitados": 6 - n_vig,
         **delta.contagens(),
     }
