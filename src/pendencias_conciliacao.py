@@ -18,7 +18,7 @@ Contrato público:
     atualizar_apos_gravacao(fotografia, referencia, diretorio=None) -> str     # orquestra tudo e devolve a mensagem
     tabela_inconsistencias(contratos, faturas, empenhos_gov, relatorio) -> DataFrame   # relatório para o gov
     excel_inconsistencias(tabela) -> bytes
-    gerar_relatorio_inconsistencias(fotografia, referencia) -> bytes
+    gerar_relatorio_inconsistencias(fotografia, referencia, a_partir_do_ano=None) -> bytes
 """
 
 from __future__ import annotations
@@ -124,13 +124,17 @@ def _pendencias_do_contrato(
 
 def tabela_inconsistencias(
     contratos: list[tuple], faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None, relatorio: pd.DataFrame | None,
+    a_partir_do_ano: int | None = None,
 ) -> pd.DataFrame:
     """Relatório de inconsistências para quem alimenta o Contratos.gov: uma linha por contrato e mês pendente, com a causa
-    (rótulo de `CLASSES`), os valores nas duas fontes, a diferença e a ação sugerida. Ordenado por contrato e competência."""
+    (rótulo de `CLASSES`), os valores nas duas fontes, a diferença e a ação sugerida. Ordenado por contrato e competência.
+    `a_partir_do_ano`: só competências desse ano em diante (antes de 2025 as notas do gov são incompletas — ruído)."""
 
     linhas = []
     for numero, cid, ne in contratos:
         for l in detalhar_contrato(cid, ne, faturas, empenhos_gov, relatorio):
+            if a_partir_do_ano is not None and l["ano_mes"] // 100 < a_partir_do_ano:
+                continue
             nota, rel = l["valor_notas"], l["valor_relatorio"]
             linhas.append({
                 "Contrato": str(numero), "Competência": f"{l['ano_mes'] % 100:02d}/{l['ano_mes'] // 100}",
@@ -271,11 +275,11 @@ def entradas_da_conciliacao(fotografia: dict, referencia) -> tuple[list, pd.Data
     return ligados, faturas, empenhos, relatorio
 
 
-def gerar_relatorio_inconsistencias(fotografia: dict, referencia) -> bytes:
+def gerar_relatorio_inconsistencias(fotografia: dict, referencia, a_partir_do_ano: int | None = None) -> bytes:
     """Excel de inconsistências (para o pessoal que alimenta o Contratos.gov) com a fotografia dada."""
 
     ligados, faturas, empenhos, relatorio = entradas_da_conciliacao(fotografia, referencia)
-    return excel_inconsistencias(tabela_inconsistencias(ligados, faturas, empenhos, relatorio))
+    return excel_inconsistencias(tabela_inconsistencias(ligados, faturas, empenhos, relatorio, a_partir_do_ano))
 
 
 def atualizar_apos_gravacao(fotografia: dict, referencia, diretorio: Path | None = None) -> str:

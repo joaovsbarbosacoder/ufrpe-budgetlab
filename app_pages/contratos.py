@@ -773,11 +773,15 @@ def _render_relatorio_inconsistencias(fotografia, referencia) -> None:
     if fotografia is None:
         st.caption("Faça a primeira carga do Contratos.gov para gerar o relatório.")
         return
+    desde = st.selectbox(
+        "Competências a partir de", [2025, 2024, 2023], key="ctg_inconsistencias_desde",
+        help="Antes de 2025 as notas do Contratos.gov são incompletas: o relatório fica cheio de casos que não dá para corrigir.",
+    )
     if st.button("Gerar relatório de inconsistências", key="ctg_gerar_inconsistencias"):
         try:
             with st.spinner("Conciliando os contratos…"):
                 st.session_state[CHAVE_INCONSISTENCIAS] = pendencias_conciliacao.gerar_relatorio_inconsistencias(
-                    fotografia, referencia
+                    fotografia, referencia, desde
                 )
         except Exception as erro:  # noqa: BLE001 — a página segue; o motivo aparece
             st.session_state.pop(CHAVE_INCONSISTENCIAS, None)
