@@ -16,6 +16,9 @@ Contrato público:
     carregar_baseline(diretorio=None) -> {"fotografia", "gerado_em", "pendencias"} | None
     salvar_baseline(pendencias, fotografia, diretorio=None) -> Path
     atualizar_apos_gravacao(fotografia, referencia, diretorio=None) -> str     # orquestra tudo e devolve a mensagem
+    tabela_inconsistencias(contratos, faturas, empenhos_gov, relatorio) -> DataFrame   # relatório para o gov
+    excel_inconsistencias(tabela) -> bytes
+    gerar_relatorio_inconsistencias(fotografia, referencia) -> bytes
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.conciliacao_competencia_gov import (
+    CLASSES,
     CLASSES_OK,
     ajustar_mes,
     causas_do_mes,
@@ -50,12 +54,39 @@ class ErroBaseline(RuntimeError):
     """O arquivo de pendências da atualização anterior existe mas não pôde ser lido."""
 
 
-def _pendencias_do_contrato(
+COLUNAS_INCONSISTENCIAS = [
+    "Contrato", "Competência", "Causa", "NEs", "Notas", "Valor nas notas", "Valor no relatório", "Diferença", "Ação sugerida",
+]
+
+
+def _acao_sugerida(classe: str, causas: list, ajuste, visto) -> str:
+    if classe == "deslocamento":
+        c = next(c for c in causas if c.tipo == "deslocamento")
+        par = f"{c.par % 100:02d}/{c.par // 100}"
+        return f"Corrigir a competência da nota no Contratos.gov (ou confirmar o lançamento no SIAFI): o valor está em {par} no outro lado."
+    if classe == "nota_pendente":
+        c = next(c for c in causas if c.tipo == "nota_pendente")
+        return f"Concluir a liquidação/apropriação da(s) nota(s) {', '.join(c.notas)} no SIAFI (pendente ou com erro)."
+    if classe == "cancelamento":
+        notas = ", ".join(visto.itens[i].nota for i in ajuste.retiradas)
+        return f"Verificar se a(s) nota(s) {notas} foi(ram) cancelada(s)/substituída(s) e registrar o cancelamento no Contratos.gov."
+    if classe == "ambiguo":
+        return "Identificar qual nota foi cancelada/substituída (mais de uma combinação fecha o valor) e registrar no Contratos.gov."
+    if classe == "so_relatorio":
+        return "Registrar no Contratos.gov o instrumento de cobrança (nota) desta competência: o Tesouro tem liquidação e o gov não tem nota."
+    if classe == "so_notas":
+        return "Conferir: NE sem competência no relatório (ex.: DEA) ou liquidação ausente no Tesouro para a nota."
+    return "Conferir a nota e o lançamento no Tesouro: diferença sem causa identificada."
+
+
+def detalhar_contrato(
     cid: object, ne_cadastro: object, faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None,
     relatorio: pd.DataFrame | None,
-) -> set[tuple[int, str]]:
+) -> list[dict]:
+    """Uma linha por mês pendente do contrato (filtro padrão: NEs da 20RK), com valores, notas, causa e ação sugerida."""
+
     if cid is None or (isinstance(cid, float) and pd.isna(cid)):
-        return set()
+        return []
     cid = str(cid)
     empenhos = empenhos_do_contrato(empenhos_gov, cid, ne_cadastro)
     naturezas = {ne: info.natureza for ne, info in empenhos.items()}
@@ -63,7 +94,7 @@ def _pendencias_do_contrato(
     itens, _ = itens_das_notas(tabela, naturezas)
     pendentes, _ = itens_das_notas(tabela, naturezas, liquidadas=False)
     contexto = construir_contexto(relatorio, itens, pendentes, naturezas)
-    resultado: set[tuple[int, str]] = set()
+    linhas: list[dict] = []
     for ano in exercicios_disponiveis(relatorio, itens, naturezas):
         for completo in conciliar_exercicio(ano, relatorio, itens, naturezas):
             if not nes_do_mes(completo):
@@ -72,10 +103,66 @@ def _pendencias_do_contrato(
             visto = filtrar_mes(completo, escolhidas)
             causas = causas_do_mes(contexto, ano, completo.mes, escolhidas)
             explicadas = {c.ne for c in causas if c.tipo == "deslocamento"}
-            classe = classificar_mes(visto, ajustar_mes(visto, explicadas), causas)
-            if classe not in CLASSES_OK:
-                resultado.add((ano * 100 + completo.mes, classe))
-    return resultado
+            ajuste = ajustar_mes(visto, explicadas)
+            classe = classificar_mes(visto, ajuste, causas)
+            if classe in CLASSES_OK:
+                continue
+            linhas.append({
+                "classe": classe, "ano_mes": ano * 100 + completo.mes, "nes": sorted(escolhidas),
+                "notas": sorted({i.nota for i in visto.itens}), "valor_notas": visto.notas, "valor_relatorio": visto.relatorio,
+                "acao": _acao_sugerida(classe, causas, ajuste, visto),
+            })
+    return linhas
+
+
+def _pendencias_do_contrato(
+    cid: object, ne_cadastro: object, faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None,
+    relatorio: pd.DataFrame | None,
+) -> set[tuple[int, str]]:
+    return {(l["ano_mes"], l["classe"]) for l in detalhar_contrato(cid, ne_cadastro, faturas, empenhos_gov, relatorio)}
+
+
+def tabela_inconsistencias(
+    contratos: list[tuple], faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None, relatorio: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Relatório de inconsistências para quem alimenta o Contratos.gov: uma linha por contrato e mês pendente, com a causa
+    (rótulo de `CLASSES`), os valores nas duas fontes, a diferença e a ação sugerida. Ordenado por contrato e competência."""
+
+    linhas = []
+    for numero, cid, ne in contratos:
+        for l in detalhar_contrato(cid, ne, faturas, empenhos_gov, relatorio):
+            nota, rel = l["valor_notas"], l["valor_relatorio"]
+            linhas.append({
+                "Contrato": str(numero), "Competência": f"{l['ano_mes'] % 100:02d}/{l['ano_mes'] // 100}",
+                "Causa": CLASSES[l["classe"]], "NEs": ", ".join(l["nes"]), "Notas": ", ".join(l["notas"]) or "—",
+                "Valor nas notas": nota, "Valor no relatório": rel,
+                "Diferença": None if nota is None or rel is None else round(nota - rel, 2),
+                "Ação sugerida": l["acao"], "_ordem": l["ano_mes"],
+            })
+    if not linhas:
+        return pd.DataFrame(columns=COLUNAS_INCONSISTENCIAS)
+    return pd.DataFrame(linhas).sort_values(["Contrato", "_ordem"]).drop(columns="_ordem").reset_index(drop=True)[COLUNAS_INCONSISTENCIAS]
+
+
+def excel_inconsistencias(tabela: pd.DataFrame) -> bytes:
+    """Excel com a aba "Resumo por causa" e a aba "Pendências"."""
+
+    from io import BytesIO
+
+    resumo = (
+        tabela.groupby("Causa").agg(Meses=("Contrato", "size"), Contratos=("Contrato", "nunique")).reset_index()
+        .sort_values("Meses", ascending=False) if not tabela.empty else pd.DataFrame(columns=["Causa", "Meses", "Contratos"])
+    )
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as escritor:
+        resumo.to_excel(escritor, sheet_name="Resumo por causa", index=False)
+        tabela.to_excel(escritor, sheet_name="Pendências", index=False)
+        for aba in escritor.book.worksheets:
+            for coluna in aba.columns:
+                aba.column_dimensions[coluna[0].column_letter].width = min(
+                    60, max(12, *(len(str(c.value)) for c in coluna if c.value is not None))
+                )
+    return buffer.getvalue()
 
 
 def calcular_pendencias(
@@ -144,11 +231,10 @@ def salvar_baseline(pendencias: dict, fotografia: str, diretorio: Path | None = 
     return caminho
 
 
-def atualizar_apos_gravacao(fotografia: dict, referencia, diretorio: Path | None = None) -> str:
-    """Chamada logo depois de gravar uma fotografia nova do Contratos.gov: calcula as pendências de todos os contratos do
-    cadastro de Contínuos (exercício mais recente) com a fotografia NOVA e a Liquidação por Competência em
-    `data/raw`, compara com a atualização anterior, grava a nova referência e devolve a mensagem para o usuário.
-    Qualquer falha de leitura levanta exceção — o chamador mostra o aviso sem desfazer a gravação da fotografia."""
+def entradas_da_conciliacao(fotografia: dict, referencia) -> tuple[list, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Lê o cadastro de Contínuos (exercício mais recente) e a Liquidação por Competência em `data/raw` e monta as
+    entradas do cálculo com a `fotografia` dada: (contratos ligados, faturas, empenhos do gov, relatório por mês).
+    Falha de leitura levanta exceção."""
 
     from src.contratos_cadastro import (  # importações tardias: este módulo é puro e leve sem elas
         contratos_com_faturas,
@@ -182,7 +268,23 @@ def atualizar_apos_gravacao(fotografia: dict, referencia, diretorio: Path | None
         cid = None if pd.isna(cid) or str(cid) not in consultados else str(cid)
         ne = linha.get("ne_curta")
         ligados.append((linha["contrato_numero"], cid, None if pd.isna(ne) else str(ne)))
+    return ligados, faturas, empenhos, relatorio
 
+
+def gerar_relatorio_inconsistencias(fotografia: dict, referencia) -> bytes:
+    """Excel de inconsistências (para o pessoal que alimenta o Contratos.gov) com a fotografia dada."""
+
+    ligados, faturas, empenhos, relatorio = entradas_da_conciliacao(fotografia, referencia)
+    return excel_inconsistencias(tabela_inconsistencias(ligados, faturas, empenhos, relatorio))
+
+
+def atualizar_apos_gravacao(fotografia: dict, referencia, diretorio: Path | None = None) -> str:
+    """Chamada logo depois de gravar uma fotografia nova do Contratos.gov: calcula as pendências de todos os contratos do
+    cadastro de Contínuos com a fotografia NOVA, compara com a atualização anterior, grava a nova referência e devolve a
+    mensagem para o usuário. Qualquer falha de leitura levanta exceção — o chamador mostra o aviso sem desfazer a
+    gravação da fotografia."""
+
+    ligados, faturas, empenhos, relatorio = entradas_da_conciliacao(fotografia, referencia)
     atual = calcular_pendencias(ligados, faturas, empenhos, relatorio)
     anterior = carregar_baseline(diretorio)
     novas, resolvidas = comparar(None if anterior is None else anterior["pendencias"], atual)

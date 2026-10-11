@@ -84,6 +84,7 @@ from src.ui_linha_tempo_vigencias import render_linha_tempo_do_contrato
 CHAVE_REFERENCIA = "contratos_referencia"
 CHAVE_ABA = "ctg_aba"
 CHAVE_CONSULTA = "ctg_consulta"
+CHAVE_INCONSISTENCIAS = "ctg_relatorio_inconsistencias"
 CHAVE_AVISO = "ctg_aviso"
 QTD_INICIAL_REGISTRO = 15
 ABAS = ["Cadastro", "Atualizar", "Histórico de atualizações"]
@@ -759,6 +760,36 @@ def _render_previa(consulta: dict, referencia: date) -> None:
                 st.rerun()
 
 
+def _render_relatorio_inconsistencias(fotografia, referencia) -> None:
+    """Relatório de inconsistências (relatório de competência × notas) para quem alimenta o Contratos.gov: gerado sob
+    demanda (leva alguns segundos), com a fotografia atual; só leitura."""
+
+    st.markdown('<div class="cad-secao-titulo">Relatório de inconsistências de conciliação</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="cad-secao-desc">Lista, por contrato e competência, o que não bate entre o relatório de Liquidação por '
+        "Competência e as notas do Contratos.gov, com a causa e a ação sugerida (para corrigir na origem).</div>",
+        unsafe_allow_html=True,
+    )
+    if fotografia is None:
+        st.caption("Faça a primeira carga do Contratos.gov para gerar o relatório.")
+        return
+    if st.button("Gerar relatório de inconsistências", key="ctg_gerar_inconsistencias"):
+        try:
+            with st.spinner("Conciliando os contratos…"):
+                st.session_state[CHAVE_INCONSISTENCIAS] = pendencias_conciliacao.gerar_relatorio_inconsistencias(
+                    fotografia, referencia
+                )
+        except Exception as erro:  # noqa: BLE001 — a página segue; o motivo aparece
+            st.session_state.pop(CHAVE_INCONSISTENCIAS, None)
+            st.error(f"Não foi possível gerar o relatório: {erro}")
+    if CHAVE_INCONSISTENCIAS in st.session_state:
+        st.download_button(
+            "Baixar relatório (Excel)", st.session_state[CHAVE_INCONSISTENCIAS], key="ctg_baixar_inconsistencias",
+            file_name=f"inconsistencias_conciliacao_{referencia:%Y-%m-%d}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+
 def _render_atualizar(fotografia, contratos, referencia, erro_carga=None) -> None:
     st.markdown('<div class="cad-secao-titulo">Atualizar do Contratos.gov.br</div>', unsafe_allow_html=True)
     st.markdown(
@@ -899,6 +930,7 @@ with aba_cadastro:
 
 with aba_atualizar:
     _render_atualizar(fotografia, contratos, referencia, erro_carga)
+    _render_relatorio_inconsistencias(fotografia, referencia)
 
 with aba_historico:
     _render_historico(manifesto)

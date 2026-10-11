@@ -216,7 +216,7 @@ na virada de ano — duas pontas confirmam e têm prioridade sobre o cancelament
 pendências** do exercício conta os meses por causa, com o filtro "só os meses com pendência". **Alerta por atualização:**
 logo depois de gravar uma fotografia do Contratos.gov, `src/pendencias_conciliacao.py` recalcula as pendências de todos os
 contratos, compara com a atualização anterior ("N nova(s), M resolvida(s)") e grava a referência em
-`data/conciliacao_pendencias/ultima.json` (única persistência desta função; ignorada pelo Git). Dúvida registrada: o
+`data/conciliacao_pendencias/ultima.json` (única persistência desta função; ignorada pelo Git). **Relatório de inconsistências** (Excel, para quem alimenta o gov): na aba Atualizar da página Contratos, botão "Gerar relatório de inconsistências" — uma linha por contrato e mês pendente, com a causa, os valores nas duas fontes, a diferença e a ação sugerida (corrigir competência, concluir liquidação no SIAFI, registrar/cancelar nota…). Dúvida registrada: o
 confronto com a Execução Mensal (por mês de lançamento) mostrou que as notas de 2024 são incompletas no gov.
 
 **Linha do tempo das vigências.** Dentro do cadastro de cada contrato — na janela de detalhe da página Contratos
