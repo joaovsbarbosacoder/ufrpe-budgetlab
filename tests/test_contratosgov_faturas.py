@@ -13,6 +13,7 @@ from decimal import Decimal
 
 from src.contratos_cadastro import ErroDadoContratosGov, contratos_com_faturas, montar_faturas
 from src.contratosgov_extracao import consultar
+from src.ui_faturas import html_detalhe, html_lista, ordenar
 
 
 def _fatura(**extra) -> dict:
@@ -25,6 +26,11 @@ def _fatura(**extra) -> dict:
         "repactuacao": "Não", "situacao": "Siafi Apropriado",
         "dados_empenho": [{"id_empenho": 15382317, "numero_empenho": "2026NE000510", "valor_empenho": "33.498,24"}],
         "dados_referencia": [{"mesref": "05", "anoref": "2026", "valorref": "33.498,24"}],
+        "dados_item_faturado": [{"id_item_contrato": 1612963, "quantidade_faturado": "1,00000",
+                                 "valorunitario_faturado": "33.498,2400", "valortotal_faturado": "33.498,24"}],
+        "sfadrao_id": "2026NP000853", "chave_nfe": "23044001207360290000123000000006871526080741299039",
+        "protocolo": "2026-08-21", "ateste": "2026-08-21", "infcomplementar": "Competência maio/2026",
+        "optante_simples": "Não",
     }
     base.update(extra)
     return base
@@ -59,6 +65,22 @@ class MontarFaturasTests(unittest.TestCase):
         self.assertIs(linha["repactuacao"], False)
         self.assertEqual(linha["situacao"], "Siafi Apropriado")
 
+    def test_detalhamento_do_que_foi_cadastrado_na_nota(self) -> None:
+        linha = montar_faturas(_fotografia([_fatura()])).iloc[0]
+        self.assertEqual(linha["itens"], (("1612963", Decimal("1.00000"), Decimal("33498.2400"), Decimal("33498.24")),))
+        self.assertEqual(linha["empenhos"], (("2026NE000510", None, Decimal("33498.24")),))
+        self.assertEqual((linha["protocolo"], linha["ateste"], linha["prazo"]), (date(2026, 8, 21), date(2026, 8, 21), date(2026, 9, 4)))
+        self.assertEqual(linha["documento_siafi"], "2026NP000853")
+        self.assertEqual(linha["chave_nfe"], "23044001207360290000123000000006871526080741299039")  # texto, sem perder dígitos
+        self.assertEqual(linha["inf_complementar"], "Competência maio/2026")
+        self.assertIs(linha["optante_simples"], False)
+        self.assertIsNone(linha["justificativa"])  # "" da API = sem justificativa
+
+    def test_quantidade_em_formato_invalido_e_erro_explicito(self) -> None:
+        nota = _fatura(dados_item_faturado=[{"id_item_contrato": 1, "quantidade_faturado": "1.0"}])
+        with self.assertRaises(ErroDadoContratosGov):
+            montar_faturas(_fotografia([nota]))
+
     def test_zero_e_nulo_sao_distintos(self) -> None:
         linha = montar_faturas(_fotografia([_fatura(glosa=None, juros="0,00")])).iloc[0]
         self.assertIsNone(linha["glosa"])
@@ -78,6 +100,27 @@ class MontarFaturasTests(unittest.TestCase):
         self.assertTrue(montar_faturas(_fotografia(None)).empty)
         self.assertEqual(contratos_com_faturas(_fotografia(None)), set())  # não consultado
         self.assertEqual(contratos_com_faturas(_fotografia([])), {"326557"})  # consultado, sem notas
+
+
+class HtmlTests(unittest.TestCase):
+    def test_lista_e_detalhe_escapam_textos_e_mostram_tudo(self) -> None:
+        notas = montar_faturas(_fotografia([_fatura(infcomplementar="<b>maio</b> & junho")]))
+        nota = ordenar(notas).iloc[0]
+        detalhe = html_detalhe(nota)
+        self.assertIn("&lt;b&gt;maio&lt;/b&gt; &amp; junho", detalhe)
+        for trecho in ("Item 1612963", "2026NE000510", "2026NP000853", "21/08/2026", "05/2026", "Não"):
+            self.assertIn(trecho, detalhe)
+        self.assertIn("Nº 68715 ·", html_lista(ordenar(notas)))
+
+
+    def test_campos_de_texto_nan_viram_traco(self) -> None:
+        # dado real (11/10/2026): o pandas troca None por NaN em coluna mista — `NaN or "—"` não funciona
+        nota = ordenar(montar_faturas(_fotografia([_fatura()]))).iloc[0].copy()
+        for campo in ("inf_complementar", "serie", "justificativa", "documento_siafi", "chave_nfe", "processo"):
+            nota[campo] = float("nan")
+        detalhe = html_detalhe(nota)
+        self.assertNotIn("nan", detalhe.lower().replace("financ", ""))
+        self.assertIn("68715 / —", detalhe)
 
 
 class _Cliente:
@@ -150,9 +193,14 @@ def test_janela_da_pagina_contratos_lista_as_notas(tmp_path, monkeypatch) -> Non
     pagina_contratos._aba(app, "Todos")
     [b for b in app.button if b.key == "ctg_detalhe_1004328"][0].click().run()
     assert not app.exception, [e.value for e in app.exception]
-    tabela = next(d.value for d in app.dataframe if {"Competência", "Nº"} <= set(d.value.columns))
-    assert sorted(tabela["Nº"]) == ["100", "200"]  # na página Contratos, todas as notas do contrato
+    html = " ".join(m.value for m in app.markdown)
+    assert "Nº 100 ·" in html and "Nº 200 ·" in html  # na página Contratos, todas as notas do contrato
     assert any("erro no Siafi" in w.value for w in app.warning)
+    # detalhamento da nota escolhida (a mais recente primeiro): itens, empenhos, chave da NF-e, datas
+    assert next(s for s in app.selectbox if s.label == "Detalhar nota")
+    assert "Itens faturados" in html and "Item 1612963" in html
+    assert "23044001207360290000123000000006871526080741299039" in html
+    assert "Competência maio/2026" in html
 
 
 @pytest.mark.skipif(
@@ -173,6 +221,6 @@ def test_janela_de_continuos_filtra_as_notas_pela_ne_do_cadastro(tmp_path, monke
     pagina_continuos._botao(app, "cc_editar_", registros[0]["id"]).click()
     app.run()
     assert not app.exception, [e.value for e in app.exception]
-    tabela = next(d.value for d in app.dataframe if {"Competência", "Nº"} <= set(d.value.columns))
-    assert list(tabela["Nº"]) == ["100"]  # só a nota paga pela NE do cadastro
+    html = " ".join(m.value for m in app.markdown)
+    assert "Nº 100 ·" in html and "Nº 200 ·" not in html  # só a nota paga pela NE do cadastro
     assert any("1 de 2 nota(s)" in c.value for c in app.caption)

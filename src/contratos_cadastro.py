@@ -85,6 +85,9 @@ COLUNAS_FATURAS = [
     "contrato_id", "fatura_id", "tipo_lista", "tipo_instrumento", "numero", "serie", "emissao", "vencimento",
     "valor", "juros", "multa", "glosa", "valor_liquido", "data_liquidacao", "situacao", "cancelada", "repactuacao",
     "processo", "nes", "referencias",
+    # detalhamento (11/10/2026): o que foi cadastrado na nota
+    "prazo", "protocolo", "ateste", "documento_siafi", "chave_nfe", "justificativa", "inf_complementar",
+    "optante_simples", "empenhos", "itens",
 ]
 _MONETARIAS_FATURAS = ("valor", "juros", "multa", "glosa", "valor_liquido")
 _MONETARIAS_CONTRATOS = ("valor_inicial", "valor_global", "valor_parcela", "valor_acumulado")
@@ -397,6 +400,19 @@ def montar_empenhos(fotografia: dict) -> pd.DataFrame:
     return _df(linhas, COLUNAS_EMPENHOS, _MONETARIAS_EMPENHOS)
 
 
+_RE_NUMERO_BR = re.compile(r"^-?(\d{1,3}(\.\d{3})*|\d+)(,\d+)?$")
+
+
+def _numero_br(texto, cid, endpoint, campo) -> Decimal | None:
+    """Número no formato brasileiro com casas variáveis ("1,00000", "1.250,0000"): quantidade e valor unitário dos
+    itens faturados. None/"" -> None; zero preservado; formato fora do padrão -> erro."""
+    if texto is None or texto == "":
+        return None
+    if not isinstance(texto, str) or not _RE_NUMERO_BR.match(texto):
+        raise _erro(cid, endpoint, campo, f"número inválido: {texto!r}")
+    return Decimal(texto.replace(".", "").replace(",", "."))
+
+
 def _sim_nao(valor, cid, endpoint, campo) -> bool | None:
     if valor is None or valor == "":
         return None
@@ -441,13 +457,28 @@ def montar_faturas(fotografia: dict) -> pd.DataFrame:
             def d(campo, f=f):
                 return data_iso(f.get(campo), contrato_id=cid, endpoint=endpoint, campo=campo)
 
-            nes = []
+            nes, empenhos = [], []
             for empenho in f.get("dados_empenho") or []:
                 if not isinstance(empenho, dict):
                     raise _erro(cid, endpoint, "dados_empenho", f"item fora do formato: {empenho!r}")
                 ne = _texto(empenho.get("numero_empenho"), cid, endpoint, "dados_empenho.numero_empenho")
                 if ne:
                     nes.append(ne)
+                empenhos.append((
+                    ne, _texto(empenho.get("subelemento"), cid, endpoint, "dados_empenho.subelemento"),
+                    valor_brl(empenho.get("valor_empenho"), contrato_id=cid, endpoint=endpoint, campo="dados_empenho.valor_empenho"),
+                ))
+            itens = []
+            for item_faturado in f.get("dados_item_faturado") or []:
+                if not isinstance(item_faturado, dict):
+                    raise _erro(cid, endpoint, "dados_item_faturado", f"item fora do formato: {item_faturado!r}")
+                itens.append((
+                    _texto(item_faturado.get("id_item_contrato"), cid, endpoint, "dados_item_faturado.id_item_contrato"),
+                    _numero_br(item_faturado.get("quantidade_faturado"), cid, endpoint, "dados_item_faturado.quantidade_faturado"),
+                    _numero_br(item_faturado.get("valorunitario_faturado"), cid, endpoint, "dados_item_faturado.valorunitario_faturado"),
+                    valor_brl(item_faturado.get("valortotal_faturado"), contrato_id=cid, endpoint=endpoint,
+                              campo="dados_item_faturado.valortotal_faturado"),
+                ))
             referencias = []
             for ref in f.get("dados_referencia") or []:
                 if not isinstance(ref, dict):
@@ -482,9 +513,19 @@ def montar_faturas(fotografia: dict) -> pd.DataFrame:
                 "processo": _texto(f.get("processo"), cid, endpoint, "processo"),
                 "nes": tuple(nes),
                 "referencias": tuple(referencias),
+                "prazo": d("prazo"),
+                "protocolo": d("protocolo"),
+                "ateste": d("ateste"),
+                "documento_siafi": _texto(f.get("sfadrao_id"), cid, endpoint, "sfadrao_id"),
+                "chave_nfe": _texto(f.get("chave_nfe"), cid, endpoint, "chave_nfe"),
+                "justificativa": _texto(f.get("justificativafatura_id"), cid, endpoint, "justificativafatura_id"),
+                "inf_complementar": _texto(f.get("infcomplementar"), cid, endpoint, "infcomplementar"),
+                "optante_simples": _sim_nao(f.get("optante_simples"), cid, endpoint, "optante_simples"),
+                "empenhos": tuple(empenhos),
+                "itens": tuple(itens),
             })
     tabela = _df(linhas, COLUNAS_FATURAS, _MONETARIAS_FATURAS)
-    for coluna in ("cancelada", "repactuacao"):  # bool nativo ou None (nulo ≠ "Não")
+    for coluna in ("cancelada", "repactuacao", "optante_simples"):  # bool nativo ou None (nulo ≠ "Não")
         tabela[coluna] = pd.Series([v for v in (l[coluna] for l in linhas)], index=tabela.index, dtype=object)
     return tabela
 
