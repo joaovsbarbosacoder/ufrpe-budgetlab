@@ -73,12 +73,18 @@ def test_sem_configuracao_o_indice_padrao_e_o_ipca_oficial(tmp_path, monkeypatch
     assert resumo.loc["13/2026", "Percentual (%)"] == pytest.approx((1.004**12 - 1) * 100, abs=1e-3)
 
 
-def test_resumo_traz_a_coluna_de_reajuste_assinado_no_gov(tmp_path, monkeypatch) -> None:
+def test_resumo_separa_formalizado_projetado_e_exercicios_anteriores(tmp_path, monkeypatch) -> None:
     _ambiente(tmp_path, monkeypatch, com_fotografia=True)
 
-    resumo = _tabela_resumo(_abrir())
+    app = _abrir()
 
-    assert "Reajuste assinado no gov (registrar)" in resumo.columns
+    resumo = _tabela_resumo(app)
+    for coluna in ("Formalizado a confirmar 2026", "Projetado 2026", "Exercícios anteriores", "Ciclos a confirmar",
+                   "Retroativo no gov (contrato inteiro)", "Estado do ciclo"):
+        assert coluna in resumo.columns, coluna
+    assert resumo.set_index("Contrato").loc["13/2026", "Estado do ciclo"] == "Projetado"  # sem reajuste no gov
+    metricas = {m.label for m in app.metric}
+    assert {"Formalizado a confirmar (2026)", "Projetado (2026)", "Exercícios anteriores"} <= metricas
 
 
 def test_configuracao_vazia_nao_inventa_percentual(tmp_path, monkeypatch) -> None:
@@ -89,7 +95,10 @@ def test_configuracao_vazia_nao_inventa_percentual(tmp_path, monkeypatch) -> Non
     resumo = _tabela_resumo(app)
     assert resumo["Percentual (%)"].isna().all()  # sem índice nem manual: nulo, nunca 0%
     metricas = {m.label: m.value for m in app.metric}
-    assert metricas["Acréscimo na vigência"] == "—"  # nenhum contrato tem valor: traço, nunca "R$ 0,00"
+    # nenhum contrato tem valor: traço, nunca "R$ 0,00"
+    assert metricas["Formalizado a confirmar (2026)"] == "—"
+    assert metricas["Projetado (2026)"] == "—"
+    assert metricas["Exercícios anteriores"] == "—"
     assert metricas["Contratos sem estimativa"] == str(len(resumo))  # todos sem data-base
     assert not app.exception
 

@@ -268,7 +268,7 @@ from src.ui_cadastro import (
 )
 from src.ui_cadastro import css as css_cadastro
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
-from src.estimativa_reajuste import datas_dos_termos
+from src.estimativa_reajuste import termos_do_gov
 from src.ui_reajuste import render_estimativa_reajuste
 from src.ui_theme import render_page_header
 
@@ -1981,13 +1981,14 @@ dataframe = tabela_contratos(
 termos_gov = None
 _inicio_por_gov: dict = {}
 _vigencias_por_gov: dict = {}
+_empenhos_gov = None
 _gov = _carregar_gov(_referencia_gov())
 if _gov is not None:
     _contratos_gov, termos_gov, _empenhos_gov = _gov
     _inicio_por_gov = dict(zip(_contratos_gov["contrato_id"].astype(str), _contratos_gov["vigencia_inicio"]))
-    # renovações (termo com VIGÊNCIA) e reajustes assinados (termo com REAJUSTE) de cada contrato do gov: a
-    # data-base da estimativa de reajuste vem da renovação mais recente e o reajuste assinado sai da estimativa
-    _vigencias_por_gov = datas_dos_termos(termos_gov)
+    # reajustes formalizados (termo aditivo com REAJUSTE) e apostilamentos retroativos de cada contrato do gov:
+    # base dos ciclos da estimativa de reajuste (regras v2, src/estimativa_reajuste.py)
+    _vigencias_por_gov = termos_do_gov(termos_gov)
     dataframe = com_contratosgov(dataframe, _contratos_gov, termos_gov, _empenhos_gov)
     _candidatos_gov, _em_duvida_gov = candidatos_novos(dataframe, _contratos_gov, _empenhos_gov)
     _render_novos_contratosgov(_candidatos_gov, _em_duvida_gov, ano_selecionado, source_key)
@@ -2071,7 +2072,7 @@ _render_relatorio_projecao_execucao(
 render_estimativa_reajuste(
     filtrado, registros, [r for _ano in anos_disponiveis() for r in carregar_contratos(_ano)], ano_selecionado,
     liquidacao_competencia_por_mes, _inicio_por_gov, source_key, _referencia_gov(),
-    _vigencias_por_gov,
+    _vigencias_por_gov, _empenhos_gov,
 )
 if indice_liquidado_competencia is not None:
     _render_empenhado_liquidado(
