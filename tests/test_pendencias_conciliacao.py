@@ -19,8 +19,11 @@ from src.pendencias_conciliacao import (
     ErroBaseline,
     calcular_pendencias,
     carregar_baseline,
+    COLUNAS_INCONSISTENCIAS,
     comparar,
+    excel_inconsistencias,
     mensagem_delta,
+    tabela_inconsistencias,
     salvar_baseline,
 )
 
@@ -69,6 +72,42 @@ class CalcularTests(unittest.TestCase):
         self.assertEqual(resultado["23/2025"], {(202602, "nota_pendente")})
 
 
+class RelatorioInconsistenciasTests(unittest.TestCase):
+    def _tabela(self):
+        faturas = pd.DataFrame([_nota("1", "A", 8680.0, NE_A, 2026, 1)])
+        relatorio = _relatorio((NE_A, 202512, 8680.0), (NE_B, 202601, 2560.24))
+        return tabela_inconsistencias([("23/2025", "1", NE_B)], faturas, _empenhos(), relatorio)
+
+    def test_uma_linha_por_mes_pendente_com_causa_valores_e_acao(self) -> None:
+        tabela = self._tabela()
+        self.assertEqual(list(tabela.columns), COLUNAS_INCONSISTENCIAS)
+        self.assertEqual(tabela["Competência"].tolist(), ["12/2025", "01/2026"])
+        jan = tabela[tabela["Competência"] == "01/2026"].iloc[0]
+        self.assertEqual(jan["Causa"], "Deslocamento de competência")
+        self.assertEqual(jan["Valor nas notas"], 8680.0)
+        dez = tabela[tabela["Competência"] == "12/2025"].iloc[0]
+        self.assertTrue(pd.isna(dez["Valor nas notas"]))  # sem nota no mês: nulo, nunca zero
+        self.assertEqual(dez["Valor no relatório"], 8680.0)
+        self.assertTrue(pd.isna(dez["Diferença"]))
+        self.assertIn("12/2025", jan["Ação sugerida"])
+        self.assertEqual(jan["Notas"], "A")
+
+    def test_sem_pendencia_devolve_tabela_vazia_com_as_colunas(self) -> None:
+        faturas = pd.DataFrame([_nota("1", "A", 100.0, NE_B, 2026, 3)])
+        tabela = tabela_inconsistencias([("23/2025", "1", NE_B)], faturas, _empenhos(), _relatorio((NE_B, 202603, 100.0)))
+        self.assertTrue(tabela.empty)
+        self.assertEqual(list(tabela.columns), COLUNAS_INCONSISTENCIAS)
+
+    def test_excel_tem_resumo_e_pendencias(self) -> None:
+        from io import BytesIO
+
+        planilhas = pd.read_excel(BytesIO(excel_inconsistencias(self._tabela())), sheet_name=None)
+        self.assertEqual(set(planilhas), {"Resumo por causa", "Pendências"})
+        self.assertEqual(planilhas["Resumo por causa"].iloc[0]["Meses"], 2)
+        self.assertEqual(len(planilhas["Pendências"]), 2)
+        self.assertEqual(len(pd.read_excel(BytesIO(excel_inconsistencias(pd.DataFrame(columns=COLUNAS_INCONSISTENCIAS))), sheet_name="Pendências")), 0)
+
+
 class CompararTests(unittest.TestCase):
     def test_novas_e_resolvidas(self) -> None:
         anterior = {"a": {(202601, "deslocamento")}, "b": {(202602, "so_relatorio")}}
@@ -111,3 +150,21 @@ class BaselineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ------------------------------------------------------------------ página Contratos (aba Atualizar)
+
+import pytest  # noqa: E402
+
+from tests import test_contratos_page as pagina_contratos  # noqa: E402
+
+
+@pytest.mark.skipif(not pagina_contratos.FIXTURE.exists(), reason="Fixture do Contratos.gov ausente")
+def test_aba_atualizar_oferece_o_relatorio_de_inconsistencias(tmp_path, monkeypatch) -> None:
+    dirs = pagina_contratos.dirs.__wrapped__(tmp_path, monkeypatch)
+    pagina_contratos._gravar_fixture(dirs)
+    app = pagina_contratos._app()
+    pagina_contratos._aba(app, "Atualizar")
+    assert not app.exception, [e.value for e in app.exception]
+    assert any(b.label == "Gerar relatório de inconsistências" for b in app.button)
+    assert "Relatório de inconsistências de conciliação" in " ".join(m.value for m in app.markdown)
