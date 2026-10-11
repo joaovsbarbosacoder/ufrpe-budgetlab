@@ -210,7 +210,13 @@ procura-se a menor combinação de notas cuja retirada fecha o valor (tolerânci
 cancelamento não informado no Contratos.gov" (a nota aparece riscada, o valor do gov segue visível); mais de uma =
 ambíguo, com as alternativas (o sistema não escolhe); notas a menos não são cancelamento. É só sugestão em memória:
 nada é gravado. Valores da nota: bruto, só notas com data de liquidação; várias NEs × várias competências = rateio
-proporcional (marcado); nota com mesmo número, valor e NEs = possível duplicidade (não somada). Dúvida registrada: o
+proporcional (marcado); nota com mesmo número, valor e NEs = possível duplicidade (não somada). **Causas** (por ordem de evidência): nota ainda não liquidada (o que falta é o valor de notas pendentes/com erro no
+Siafi); **deslocamento de competência** (o excesso da NE num mês é exatamente a falta no mês vizinho, ±1 ou ±2, inclusive
+na virada de ano — duas pontas confirmam e têm prioridade sobre o cancelamento); cancelamento provável. O **painel de
+pendências** do exercício conta os meses por causa, com o filtro "só os meses com pendência". **Alerta por atualização:**
+logo depois de gravar uma fotografia do Contratos.gov, `src/pendencias_conciliacao.py` recalcula as pendências de todos os
+contratos, compara com a atualização anterior ("N nova(s), M resolvida(s)") e grava a referência em
+`data/conciliacao_pendencias/ultima.json` (única persistência desta função; ignorada pelo Git). Dúvida registrada: o
 confronto com a Execução Mensal (por mês de lançamento) mostrou que as notas de 2024 são incompletas no gov.
 
 **Linha do tempo das vigências.** Dentro do cadastro de cada contrato — na janela de detalhe da página Contratos

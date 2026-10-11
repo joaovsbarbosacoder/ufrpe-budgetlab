@@ -17,7 +17,14 @@ import pandas as pd
 import streamlit as st
 
 from src.conciliacao_competencia_gov import (
+    CLASSES,
+    CLASSES_OK,
     AjusteMes,
+    Causa,
+    Contexto,
+    causas_do_mes,
+    classificar_mes,
+    construir_contexto,
     EmpenhoInfo,
     MesConciliado,
     conciliar_exercicio,
@@ -48,6 +55,8 @@ CSS = f"""
 .cmp-detalhe div {{ padding:1px 0; }}
 .cmp-fora {{ margin:3px 0 2px 200px; font-size:12px; color:{WARNING} !important; }}
 .cmp-tag {{ border:1px solid {BORDER}; border-radius:6px; padding:0 6px; font-size:11px; color:{TEXT_MUTED} !important; }}
+.cmp-painel {{ background:{SURFACE_ALT} !important; border-radius:8px; padding:8px 12px; margin:6px 0 8px; font-size:13px; }}
+.cmp-nota-painel {{ color:{TEXT_FAINT} !important; }}
 .cmp-risco {{ text-decoration:line-through; opacity:.75; }}
 .cmp-alerta {{ background:{SURFACE_ALT} !important; border-radius:6px; padding:1px 7px; color:{WARNING} !important; font-weight:600; }}
 .cmp-ok {{ color:{POSITIVE} !important; font-weight:600; }}
@@ -76,7 +85,33 @@ def _tag_elemento(item) -> str:
     return f'<span class="cmp-alerta">{rotulo}</span>' if item.elemento == "92" else f"<span>{rotulo}</span>"
 
 
-def html_mes(mes: MesConciliado, empenhos: dict[str, EmpenhoInfo] | None = None, ajuste: AjusteMes | None = None) -> str:
+def _mes_ano(ano_mes: int) -> str:
+    return f"{_MESES[ano_mes % 100 - 1]}/{ano_mes // 100}"
+
+
+def html_causa(mes: MesConciliado, causa: Causa) -> str:
+    """Uma linha explicando a divergência de uma NE (nota pendente ou deslocamento de competência)."""
+
+    ne = escape(causa.ne)
+    if causa.tipo == "nota_pendente":
+        notas = ", ".join(escape(n) for n in causa.notas)
+        return (
+            f'<div><span class="cmp-alerta">nota ainda não liquidada</span> NE {ne}: faltam {_brl(causa.valor)} nas notas — '
+            f"é a nota {notas}, sem liquidação no Siafi (pendente ou com erro).</div>"
+        )
+    par = _mes_ano(causa.par)
+    aqui = f"{_MESES[mes.mes - 1]}/{mes.ano}"
+    if causa.sentido == "notas_aqui":
+        texto = f"as notas põem {_brl(causa.valor)} em {aqui}, mas o relatório registrou esse valor em {par}"
+    else:
+        texto = f"o relatório registra {_brl(causa.valor)} em {aqui}, mas as notas puseram esse valor em {par}"
+    return f'<div><span class="cmp-alerta">deslocamento de competência</span> NE {ne}: {texto} (par exato).</div>'
+
+
+def html_mes(
+    mes: MesConciliado, empenhos: dict[str, EmpenhoInfo] | None = None, ajuste: AjusteMes | None = None,
+    causas: list[Causa] | None = None,
+) -> str:
     """O bloco de um mês: relatório e notas empilhados, com o detalhe por NE e o aviso do que ficou fora do filtro.
     `empenhos` (opcional) acrescenta a ação de cada NE que não é da 20RK. Textos escapados."""
 
@@ -114,7 +149,7 @@ def html_mes(mes: MesConciliado, empenhos: dict[str, EmpenhoInfo] | None = None,
             f'<span class="cmp-valor">{valor}</span><span>{marca}</span></div>'
         )
     detalhe = ""
-    if mes.itens:
+    if mes.itens or causas:
         # o elemento de despesa só é "evidenciado" quando o relatório não tem o mês (o caso do DEA)
         mostrar_elemento = mes.relatorio is None
         linhas = []
@@ -136,6 +171,8 @@ def html_mes(mes: MesConciliado, empenhos: dict[str, EmpenhoInfo] | None = None,
             if indice in retiradas:
                 texto = f'<span class="cmp-risco">{texto}</span>'
             linhas.append(f"<div>{texto}{' · ' + ' · '.join(sufixos) if sufixos else ''}</div>")
+        for causa in causas or []:
+            linhas.append(html_causa(mes, causa))
         if ajuste is not None:
             for ne, combos in ajuste.alternativas:
                 opcoes = " ou ".join(
@@ -180,6 +217,8 @@ def render_conciliacao_competencia(
     empenhos = empenhos_do_contrato(empenhos_gov, cid, ne_cadastro)
     naturezas = {ne: info.natureza for ne, info in empenhos.items()}
     itens, fora = itens_das_notas(tabela, naturezas)
+    pendentes, _ = itens_das_notas(tabela, naturezas, liquidadas=False)
+    contexto = construir_contexto(relatorio_por_mes, itens, pendentes, naturezas)
     anos = exercicios_disponiveis(relatorio_por_mes, itens, naturezas)
     if tabela is None:
         st.caption("Instrumentos de cobrança ainda não consultados para este contrato — atualize na página Contratos.")
@@ -195,18 +234,45 @@ def render_conciliacao_competencia(
         "retirada fecha o valor (provável cancelamento não informado no gov) — é só uma sugestão, nada é gravado."
         + (f" {fora} nota(s) liquidada(s) não têm nenhuma NE deste contrato e ficaram fora." if fora else "")
     )
+    # 1ª passada: seleção de NEs de cada mês (a do usuário, se já mexeu; senão o padrão), causa e classe
+    analise = []
     for completo in meses:
         opcoes = nes_do_mes(completo)
+        escolhidas = st.session_state.get(f"{chave}_cmp_{completo.ano}_{completo.mes}", padrao_do_mes(completo, empenhos))
+        visto = filtrar_mes(completo, escolhidas) if opcoes else completo
+        causas = causas_do_mes(contexto, completo.ano, completo.mes, escolhidas) if opcoes else []
+        explicadas = {c.ne for c in causas if c.tipo == "deslocamento"}  # duas pontas confirmam: vale mais que o cancelamento
+        ajuste = ajustar_mes(visto, explicadas) if opcoes else None
+        analise.append((completo, opcoes, visto, causas, ajuste, classificar_mes(visto, ajuste, causas)))
+
+    # painel de pendências do exercício + filtro "só os divergentes"
+    contagem = {}
+    for *_, classe in analise:
+        contagem[classe] = contagem.get(classe, 0) + 1
+    pendencias = sum(n for c, n in contagem.items() if c not in CLASSES_OK)
+    st.markdown(
+        '<div class="cmp-painel"><b>Pendências do exercício:</b> '
+        + (" · ".join(f"{contagem[c]} {escape(CLASSES[c].lower())}" for c in CLASSES if contagem.get(c) and c not in CLASSES_OK)
+           or "nenhuma")
+        + f' <span class="cmp-nota-painel">({contagem.get("batem", 0)} mês(es) batem, {contagem.get("sem_registro", 0)} sem registro)</span></div>',
+        unsafe_allow_html=True,
+    )
+    so_divergentes = st.checkbox(
+        f"Mostrar só os meses com pendência ({pendencias})", key=f"{chave}_cmp_so_divergentes",
+    )
+
+    for completo, opcoes, visto, causas, ajuste, classe in analise:
+        if so_divergentes and classe in CLASSES_OK:
+            continue
         bloco, filtro = st.container(), st.container()
         if not opcoes:
             bloco.markdown(html_mes(completo), unsafe_allow_html=True)
             continue
         rotulo = f"{_MESES[completo.mes - 1]}/{completo.ano}"
         with filtro:
-            escolhidas = st.multiselect(
+            st.multiselect(
                 f"NEs em evidência — {rotulo}", opcoes, default=padrao_do_mes(completo, empenhos),
                 key=f"{chave}_cmp_{completo.ano}_{completo.mes}",
                 format_func=lambda ne: _rotulo_ne(ne, empenhos),
             )
-        visto = filtrar_mes(completo, escolhidas)
-        bloco.markdown(html_mes(visto, empenhos, ajustar_mes(visto)), unsafe_allow_html=True)
+        bloco.markdown(html_mes(visto, empenhos, ajuste, causas), unsafe_allow_html=True)

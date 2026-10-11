@@ -15,7 +15,12 @@ from src.conciliacao_competencia_gov import (
     conciliar_exercicio,
     empenhos_do_contrato,
     exercicios_disponiveis,
+    CLASSES,
+    Causa,
     ajustar_mes,
+    causas_do_mes,
+    classificar_mes,
+    construir_contexto,
     filtrar_mes,
     itens_das_notas,
     naturezas_20rk,
@@ -224,6 +229,100 @@ class ConciliacaoDeDuplicidadesTests(unittest.TestCase):
         self.assertEqual(ajustar_mes(mes).retiradas, ())  # a duplicada já não soma; nada a retirar
 
 
+class CausasTests(unittest.TestCase):
+    """Motor de causas: nota não liquidada e deslocamento de competência (casos modelados em dados reais)."""
+
+    NE = "2025NE000604"
+
+    def _contexto(self, notas, relatorio, pendentes=()):
+        nat = {self.NE: SERV, "2026NE000100": SERV}
+        itens, _ = itens_das_notas(_faturas(*[
+            _nota(str(i), f"N{i}", v, [(ne, v)], [(a, m, v)]) for i, (ne, a, m, v) in enumerate(notas)
+        ]) if notas else None, nat)
+        pend, _ = itens_das_notas(_faturas(*[
+            _nota(f"p{i}", f"P{i}", v, [(ne, v)], [(a, m, v)], liquidacao=None) for i, (ne, a, m, v) in enumerate(pendentes)
+        ]) if pendentes else None, nat, liquidadas=False)
+        rel = _relatorio(*[(ne, a * 100 + m, v) for ne, a, m, v in relatorio])
+        return construir_contexto(rel, itens, pend, nat)
+
+    def test_caso_real_deslocamento_dez_2025_jan_2026_atravessa_o_ano(self) -> None:
+        # notas põem R$ 8.680 em jan/2026 (2.480 + 6.200); o relatório registrou em dez/2025
+        ctx = self._contexto(
+            notas=[(self.NE, 2026, 1, 2480.0), (self.NE, 2026, 1, 6200.0)],
+            relatorio=[(self.NE, 2025, 12, 8680.0), ("2026NE000100", 2026, 1, 2560.24)],
+        )
+        jan = causas_do_mes(ctx, 2026, 1, [self.NE])
+        self.assertEqual([(c.tipo, c.valor, c.par, c.sentido) for c in jan], [("deslocamento", 8680.0, 202512, "notas_aqui")])
+        dez = causas_do_mes(ctx, 2025, 12, [self.NE])
+        self.assertEqual([(c.tipo, c.valor, c.par, c.sentido) for c in dez], [("deslocamento", 8680.0, 202601, "relatorio_aqui")])
+
+    def test_deslocamento_de_dois_meses(self) -> None:
+        ctx = self._contexto(notas=[(self.NE, 2025, 4, 87554.09)], relatorio=[(self.NE, 2025, 2, 87554.09), (self.NE, 2025, 3, 5.0)])
+        self.assertEqual(causas_do_mes(ctx, 2025, 4, [self.NE])[0].par, 202502)
+
+    def test_valores_diferentes_nao_sao_deslocamento(self) -> None:
+        ctx = self._contexto(notas=[(self.NE, 2026, 1, 8680.0)], relatorio=[(self.NE, 2025, 12, 8000.0)])
+        self.assertEqual(causas_do_mes(ctx, 2026, 1, [self.NE]), [])
+
+    def test_nota_nao_liquidada_explica_a_falta(self) -> None:
+        ctx = self._contexto(
+            notas=[(self.NE, 2026, 2, 100.0)], relatorio=[(self.NE, 2026, 2, 33458.77)],
+            pendentes=[(self.NE, 2026, 2, 33358.77)],
+        )
+        causa = causas_do_mes(ctx, 2026, 2, [self.NE])[0]
+        self.assertEqual((causa.tipo, causa.valor, causa.notas), ("nota_pendente", 33358.77, ("P0",)))
+
+    def test_ne_sem_nenhuma_linha_no_relatorio_nao_se_compara(self) -> None:
+        ctx = self._contexto(notas=[(self.NE, 2026, 1, 500.0)], relatorio=[("2026NE000100", 2026, 1, 10.0)])
+        self.assertEqual(causas_do_mes(ctx, 2026, 1, [self.NE]), [])  # DEA: o relatório não tem competência
+
+    def test_deslocamento_tem_prioridade_sobre_o_cancelamento(self) -> None:
+        nat = {self.NE: SERV}
+        itens, _ = itens_das_notas(_faturas(
+            _nota("1", "A", 100.0, [(self.NE, 100.0)], [(2026, 3, 100.0)]),
+            _nota("2", "B", 40.0, [(self.NE, 40.0)], [(2026, 3, 40.0)]),
+        ), nat)
+        rel = _relatorio((self.NE, 202603, 100.0), (self.NE, 202602, 40.0))
+        ctx = construir_contexto(rel, itens, None, nat)
+        mes = conciliar_exercicio(2026, rel, itens, nat)[2]
+        self.assertEqual(ajustar_mes(mes).situacao, "batem_ajustado")  # sozinha, a regra sugeriria cancelar B
+        causas = causas_do_mes(ctx, 2026, 3, [self.NE])
+        self.assertEqual(causas[0].tipo, "deslocamento")  # mas as duas pontas mostram que B só mudou de mês
+        self.assertEqual(ajustar_mes(mes, {c.ne for c in causas}).situacao, "sem_ajuste")
+
+
+class ClassificarMesTests(unittest.TestCase):
+    def test_cada_situacao_tem_a_sua_classe(self) -> None:
+        from src.conciliacao_competencia_gov import ItemNota
+
+        self.assertEqual(classificar_mes(MesConciliado(2026, 1, None, {}, None, []), None, []), "sem_registro")
+        self.assertEqual(classificar_mes(MesConciliado(2026, 1, 10.0, {"a": 10.0}, 10.0, []), None, []), "batem")
+        self.assertEqual(classificar_mes(MesConciliado(2026, 1, 10.0, {"a": 10.0}, None, []), None, []), "so_relatorio")
+        so_notas = MesConciliado(2026, 1, None, {}, 10.0, [ItemNota("a", 10.0, "1", False, False, None)])
+        self.assertEqual(classificar_mes(so_notas, ajustar_mes(so_notas), []), "so_notas")
+        diverge = MesConciliado(2026, 1, 10.0, {"a": 10.0}, 25.0, [ItemNota("a", 25.0, "1", False, False, None)])
+        self.assertEqual(classificar_mes(diverge, ajustar_mes(diverge), []), "sem_explicacao")
+
+    def test_causa_identificada_vale_mais_que_o_cancelamento(self) -> None:
+        itens = [ItemNota_("a", 100.0, "1"), ItemNota_("a", 40.0, "2")]
+        mes = MesConciliado(2026, 3, 100.0, {"a": 100.0}, 140.0, itens)
+        self.assertEqual(classificar_mes(mes, ajustar_mes(mes), []), "cancelamento")
+        desloc = [Causa("a", "deslocamento", 40.0, 202602, "notas_aqui")]
+        self.assertEqual(classificar_mes(mes, ajustar_mes(mes, {"a"}), desloc), "deslocamento")
+        pend = [Causa("a", "nota_pendente", 40.0, None, None, ("9",))]
+        self.assertEqual(classificar_mes(mes, None, desloc + pend), "nota_pendente")
+
+    def test_todas_as_classes_tem_rotulo(self) -> None:
+        self.assertIn("deslocamento", CLASSES)
+        self.assertEqual(CLASSES["nota_pendente"], "Nota ainda não liquidada")
+
+
+def ItemNota_(ne, valor, nota):
+    from src.conciliacao_competencia_gov import ItemNota
+
+    return ItemNota(ne, valor, nota, False, False, None)
+
+
 class ConciliarTests(unittest.TestCase):
     def setUp(self) -> None:
         self.nat = {"2026NE000001": SERV, "2026NE000002": DEA}
@@ -330,6 +429,18 @@ class HtmlMesTests(unittest.TestCase):
         self.assertIn("O sistema não escolhe", html)
         self.assertNotIn("cmp-risco", html)
 
+    def test_html_das_causas(self) -> None:
+        from src.conciliacao_competencia_gov import Causa
+
+        mes = MesConciliado(2026, 1, None, {}, 8680.0, [])
+        html = html_mes(mes, None, None, [Causa("NE1", "deslocamento", 8680.0, 202512, "notas_aqui")])
+        self.assertIn("deslocamento de competência", html)
+        self.assertIn("as notas põem", html)
+        self.assertIn("dez/2025", html)
+        pend = html_mes(mes, None, None, [Causa("NE1", "nota_pendente", 100.0, None, None, ("P1",))])
+        self.assertIn("nota ainda não liquidada", pend)
+        self.assertIn("nota P1", pend)
+
     def test_aviso_de_fora_do_filtro(self) -> None:
         mes = filtrar_mes(
             MesConciliado(2026, 3, 1300.0, {"A": 1000.0, "B": 300.0}, None, []), ["A"],
@@ -388,3 +499,5 @@ def test_janela_editar_mostra_o_seletor_de_exercicio_e_os_meses(tmp_path, monkey
     html = " ".join(m.value for m in app.markdown if 'class="cmp-mes"' in m.value)
     assert html.count('class="cmp-mes"') == 12  # os 12 meses do exercício
     assert any(m.label.startswith("NEs em evidência") for m in app.multiselect)  # filtro de NEs dentro do mês
+    assert "Pendências do exercício" in " ".join(m.value for m in app.markdown)  # painel de pendências
+    assert any(c.label.startswith("Mostrar só os meses com pendência") for c in app.checkbox)

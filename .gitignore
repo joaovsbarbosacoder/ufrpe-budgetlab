@@ -106,3 +106,6 @@ data/resultado_orcamentario/*
 # — ver src/dou_inlabs.py::salvar_termos. Os ZIPs baixados do DOU ficam em data/raw/dou/ (ja ignorado).
 data/dou/*
 !data/dou/.gitkeep
+
+# Pendências de conciliação da última atualização do Contratos.gov (dado derivado, regenerável)
+data/conciliacao_pendencias/
