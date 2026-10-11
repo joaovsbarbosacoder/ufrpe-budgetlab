@@ -81,6 +81,12 @@ COLUNAS_EMPENHOS = [
     "plano_interno", "natureza_despesa", "empenhado", "a_liquidar", "liquidado", "pago",
     "rp_inscrito", "rp_a_liquidar", "rp_liquidado", "rp_pago",
 ]
+COLUNAS_FATURAS = [
+    "contrato_id", "fatura_id", "tipo_lista", "tipo_instrumento", "numero", "serie", "emissao", "vencimento",
+    "valor", "juros", "multa", "glosa", "valor_liquido", "data_liquidacao", "situacao", "cancelada", "repactuacao",
+    "processo", "nes", "referencias",
+]
+_MONETARIAS_FATURAS = ("valor", "juros", "multa", "glosa", "valor_liquido")
 _MONETARIAS_CONTRATOS = ("valor_inicial", "valor_global", "valor_parcela", "valor_acumulado")
 _MONETARIAS_TERMOS = ("valor_global", "novo_valor_global", "novo_valor_parcela", "retroativo_valor")
 _MONETARIAS_EMPENHOS = (
@@ -389,6 +395,98 @@ def montar_empenhos(fotografia: dict) -> pd.DataFrame:
                 "rp_pago": v("rppago"),
             })
     return _df(linhas, COLUNAS_EMPENHOS, _MONETARIAS_EMPENHOS)
+
+
+def _sim_nao(valor, cid, endpoint, campo) -> bool | None:
+    if valor is None or valor == "":
+        return None
+    if valor == "Sim":
+        return True
+    if valor == "Não":
+        return False
+    raise _erro(cid, endpoint, campo, f"esperado 'Sim' ou 'Não', veio {valor!r}")
+
+
+def contratos_com_faturas(fotografia: dict) -> set[str]:
+    """Contratos cujo detalhe traz a chave `faturas` (consultados). Fotografia anterior ao endpoint não tem a chave:
+    o contrato fica "não consultado" — diferente de consultado sem nenhuma nota (lista vazia)."""
+
+    return {
+        str(cid) for cid, det in (fotografia.get("detalhes") or {}).items()
+        if isinstance(det, dict) and isinstance(det.get("faturas"), list)
+    }
+
+
+def montar_faturas(fotografia: dict) -> pd.DataFrame:
+    """Instrumentos de cobrança (`/api/contrato/{id}/faturas`, 11/10/2026): uma linha por nota/fatura, com valores
+    em Decimal (nulo ≠ zero), datas, NEs (`dados_empenho.numero_empenho`) e competências
+    (`dados_referencia`: (ano, mês, valor)). Contrato sem a chave `faturas` não gera linhas (ver
+    `contratos_com_faturas`). Valores do CONTRATO INTEIRO (todas as ações/NEs), como vêm da API."""
+
+    linhas = []
+    for item, _, _ in _ids_dos_contratos(fotografia):
+        cid = str(item["id"])
+        endpoint = f"/api/contrato/{cid}/faturas"
+        faturas = _detalhe(fotografia, cid).get("faturas")
+        if faturas is None:
+            continue
+        if not isinstance(faturas, list):
+            raise _erro(cid, endpoint, "faturas", f"esperada lista, veio {type(faturas).__name__}")
+        for f in faturas:
+            _exigir(f, ("id",), cid, endpoint)
+
+            def v(campo, f=f):
+                return valor_brl(f.get(campo), contrato_id=cid, endpoint=endpoint, campo=campo)
+
+            def d(campo, f=f):
+                return data_iso(f.get(campo), contrato_id=cid, endpoint=endpoint, campo=campo)
+
+            nes = []
+            for empenho in f.get("dados_empenho") or []:
+                if not isinstance(empenho, dict):
+                    raise _erro(cid, endpoint, "dados_empenho", f"item fora do formato: {empenho!r}")
+                ne = _texto(empenho.get("numero_empenho"), cid, endpoint, "dados_empenho.numero_empenho")
+                if ne:
+                    nes.append(ne)
+            referencias = []
+            for ref in f.get("dados_referencia") or []:
+                if not isinstance(ref, dict):
+                    raise _erro(cid, endpoint, "dados_referencia", f"item fora do formato: {ref!r}")
+                ano = _inteiro(ref.get("anoref"), cid, endpoint, "dados_referencia.anoref")
+                mes = _inteiro(ref.get("mesref"), cid, endpoint, "dados_referencia.mesref")
+                if ano is None or mes is None:
+                    continue
+                if not 1 <= mes <= 12:
+                    raise _erro(cid, endpoint, "dados_referencia.mesref", f"mês inválido: {mes!r}")
+                referencias.append((
+                    ano, mes, valor_brl(ref.get("valorref"), contrato_id=cid, endpoint=endpoint, campo="dados_referencia.valorref"),
+                ))
+            linhas.append({
+                "contrato_id": cid,
+                "fatura_id": _texto(f.get("id"), cid, endpoint, "id"),
+                "tipo_lista": _texto(f.get("tipolistafatura_id"), cid, endpoint, "tipolistafatura_id"),
+                "tipo_instrumento": _texto(f.get("tipo_instrumento_cobranca"), cid, endpoint, "tipo_instrumento_cobranca"),
+                "numero": _texto(f.get("numero"), cid, endpoint, "numero"),
+                "serie": _texto(f.get("numero_serie"), cid, endpoint, "numero_serie"),
+                "emissao": d("emissao"),
+                "vencimento": d("vencimento"),
+                "valor": v("valor"),
+                "juros": v("juros"),
+                "multa": v("multa"),
+                "glosa": v("glosa"),
+                "valor_liquido": v("valorliquido"),
+                "data_liquidacao": d("data_liquidacao"),
+                "situacao": _texto(f.get("situacao"), cid, endpoint, "situacao"),
+                "cancelada": _sim_nao(f.get("nota_cancelada"), cid, endpoint, "nota_cancelada"),
+                "repactuacao": _sim_nao(f.get("repactuacao"), cid, endpoint, "repactuacao"),
+                "processo": _texto(f.get("processo"), cid, endpoint, "processo"),
+                "nes": tuple(nes),
+                "referencias": tuple(referencias),
+            })
+    tabela = _df(linhas, COLUNAS_FATURAS, _MONETARIAS_FATURAS)
+    for coluna in ("cancelada", "repactuacao"):  # bool nativo ou None (nulo ≠ "Não")
+        tabela[coluna] = pd.Series([v for v in (l[coluna] for l in linhas)], index=tabela.index, dtype=object)
+    return tabela
 
 
 def resumo(contratos: pd.DataFrame) -> dict:

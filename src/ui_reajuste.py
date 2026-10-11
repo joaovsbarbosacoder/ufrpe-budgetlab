@@ -25,6 +25,7 @@ from src.estimativa_reajuste import (
     aditivo_previsto_do_ciclo,
     estimar_contrato,
     liquidado_do_contrato,
+    nes_do_gov,
     nes_em_conflito,
     ultimo_mes_coberto,
 )
@@ -38,6 +39,7 @@ ROTULO_SITUACAO = {
     "sem_vigencia_fim": "Sem fim de vigência",
     "sem_reajuste_na_vigencia": "Sem reajuste previsto na vigência",
 }
+ROTULO_ESTADO = {"formalizado": "Formalizado, a confirmar", "projetado": "Projetado"}
 ROTULO_ORIGEM_BASE = {"liquidado": "Liquidado", "contratado": "Contratado (teto)", "sem_liquidado": "Sem liquidado apurado"}
 ROTULO_ORIGEM_PERCENTUAL = {
     "manual": "Manual", "oficial": "Oficial (12 meses)", "oficial_ultimo": "Oficial (último disponível)",
@@ -89,16 +91,23 @@ def _inicio_da_vigencia(linha: pd.Series, inicio_por_gov: dict[str, object]) -> 
 def _estimativas(
     dataframe: pd.DataFrame, todos_registros: list[dict], liquidacao_por_mes: pd.DataFrame | None,
     inicio_por_gov: dict[str, object], ano: int, hoje: date, vigencias_por_gov: dict[str, list] | None = None,
+    empenhos_gov: pd.DataFrame | None = None,
 ) -> tuple[list[dict], list[str]]:
     """Uma estimativa por contrato (a primeira linha de cada `contrato_numero` no exercício) e os avisos de
-    NE em conflito. O liquidado soma as NEs do contrato em todos os exercícios, menos as NEs em conflito."""
+    NE em conflito. O liquidado soma as NEs do contrato em todos os exercícios — as do cadastro e, do
+    Contratos.gov, as de plano interno igual ao do cadastro (`nes_do_gov`) —, menos as NEs em conflito."""
 
     conflitos = nes_em_conflito(todos_registros)
     nes_por_contrato: dict[str, set[str]] = {}
+    pis_por_contrato: dict[str, set[str]] = {}
     for registro in todos_registros:
-        ne, contrato = registro.get("ne_curta"), registro.get("contrato_numero")
-        if ne and contrato and str(ne).strip() not in conflitos:
+        ne, contrato, pi = registro.get("ne_curta"), registro.get("contrato_numero"), registro.get("pi_cod")
+        if not contrato:
+            continue
+        if ne and str(ne).strip() not in conflitos:
             nes_por_contrato.setdefault(str(contrato).strip(), set()).add(str(ne).strip())
+        if pi and str(pi).strip():
+            pis_por_contrato.setdefault(str(contrato).strip(), set()).add(str(pi).strip())
 
     cobertura = ultimo_mes_coberto(liquidacao_por_mes, hoje)
     variacoes_por_indice: dict[str, dict | None] = {}
@@ -119,20 +128,25 @@ def _estimativas(
         parametros = _parametros(linha)
         indice = parametros.indice if parametros.indice in INDICES else None
         if indice and indice not in variacoes_por_indice:
-            retorno = _variacoes_oficiais(indice, ano - 3, hoje_iso)
+            retorno = _variacoes_oficiais(indice, ano - 5, hoje_iso)  # janelas de ciclos retroativos vão longe
             if isinstance(retorno, str):
                 avisos.append(retorno)
                 variacoes_por_indice[indice] = None
             else:
                 variacoes_por_indice[indice] = retorno
         termos_gov = (vigencias_por_gov or {}).get(str(linha.get("contratosgov_id")), {})
+        nes = nes_por_contrato.get(numero, set()) | {
+            ne for ne in nes_do_gov(empenhos_gov, linha.get("contratosgov_id"), pis_por_contrato.get(numero, set()))
+            if ne not in conflitos
+        }
         estimativa = estimar_contrato(
             contrato=numero, despesa_mensal=linha.get("despesa_mensal"), aditivos=list(linha.get("aditivos") or []),
             vigencia_inicio=_inicio_da_vigencia(linha, inicio_por_gov), vigencia_fim=linha.get("vigencia_fim"),
             parametros=parametros, exercicio_inicial=ano, variacoes=variacoes_por_indice.get(indice) if indice else None,
-            liquidado=liquidado_do_contrato(nes_por_contrato.get(numero, set()), liquidacao_por_mes),
+            liquidado=liquidado_do_contrato(nes, liquidacao_por_mes),
             ultimo_mes_coberto=cobertura,
-            inicios_vigencia=termos_gov.get("renovacoes"), reajustes_gov=termos_gov.get("reajustes"),
+            reajustes_gov=termos_gov.get("reajustes"), retroativos=termos_gov.get("retroativos"),
+            apostilamentos=termos_gov.get("apostilamentos"),
         )
         resultados.append({"linha": linha, "estimativa": estimativa, "parametros": parametros})
     return resultados, avisos
@@ -154,21 +168,30 @@ def _resumo(resultados: list[dict], ano: int, hoje: date) -> pd.DataFrame:
     for item in resultados:
         linha, estimativa = item["linha"], item["estimativa"]
         matriz = estimativa.matriz
-        do_ano = matriz[matriz["ano"] == ano] if not matriz.empty else matriz
-        proxima = next((c for c in estimativa.ciclos if c["data_base"] >= hoje), None)
+        vazio = matriz.empty
+        do_ano = matriz if vazio else matriz[matriz["ano"] == ano]
+        anteriores = matriz if vazio else matriz[matriz["exercicio_anterior"]]
+        proxima = next((c for c in estimativa.ciclos if c.data_base >= hoje), None)
         ciclo = proxima or (estimativa.ciclos[-1] if estimativa.ciclos else None)
+        a_confirmar = [c.data_base for c in estimativa.ciclos if c.estado == "formalizado"]
+        retroativo_gov = [r.valor for r in estimativa.retroativos_exercicio if r.valor is not None]
         linhas.append({
             "Contrato": linha.get("contrato_numero"),
             "Fornecedor": linha.get("fornecedor"),
             "Situação": ROTULO_SITUACAO.get(estimativa.situacao, estimativa.situacao),
-            "Data-base": None if ciclo is None else ciclo["data_base"],
-            "Percentual (%)": None if ciclo is None or ciclo["percentual"] is None else round(ciclo["percentual"], 4),
-            "Origem do %": None if ciclo is None else ROTULO_ORIGEM_PERCENTUAL.get(ciclo["origem"], ciclo["origem"]),
+            "Data-base": None if ciclo is None else ciclo.data_base,
+            "Estado do ciclo": None if ciclo is None else ROTULO_ESTADO.get(ciclo.estado, ciclo.estado),
+            "Percentual (%)": None if ciclo is None or ciclo.percentual is None else round(ciclo.percentual, 4),
+            "Origem do %": None if ciclo is None else ROTULO_ORIGEM_PERCENTUAL.get(ciclo.origem, ciclo.origem),
             # `min_count=1`: só NaN = sem estimativa (nulo), nunca R$ 0,00
+            f"Formalizado a confirmar {ano}": None if do_ano.empty else _soma_ou_nulo(do_ano["acrescimo_formalizado"]),
+            f"Projetado {ano}": None if do_ano.empty else _soma_ou_nulo(do_ano["acrescimo_projetado"]),
             f"Acréscimo {ano}": None if do_ano.empty else _soma_ou_nulo(do_ano["acrescimo"]),
-            "Acréscimo na vigência": None if matriz.empty else _soma_ou_nulo(matriz["acrescimo"]),
-            "Competências sem estimativa": 0 if matriz.empty else int(matriz["acrescimo"].isna().sum()),
-            "Reajuste assinado no gov (registrar)": ", ".join(f"{d:%d/%m/%Y}" for d in estimativa.reajustes_gov_a_registrar) or None,
+            "Exercícios anteriores": None if anteriores.empty else _soma_ou_nulo(anteriores["acrescimo"]),
+            "Acréscimo na vigência": None if vazio else _soma_ou_nulo(matriz["acrescimo"]),
+            "Competências sem estimativa": 0 if vazio else int(matriz["acrescimo"].isna().sum()),
+            "Ciclos a confirmar": ", ".join(f"{d:%d/%m/%Y}" for d in a_confirmar) or None,
+            "Retroativo no gov (contrato inteiro)": sum(retroativo_gov) if retroativo_gov else None,
         })
     return pd.DataFrame(linhas)
 
@@ -228,6 +251,7 @@ def render_estimativa_reajuste(
     dataframe: pd.DataFrame, registros: list[dict], todos_registros: list[dict], ano: int,
     liquidacao_por_mes: pd.DataFrame | None, inicio_por_gov: dict[str, object], source_key: str,
     hoje: date | None = None, vigencias_por_gov: dict[str, list] | None = None,
+    empenhos_gov: pd.DataFrame | None = None,
 ) -> None:
     """Seção completa. `registros` são os do exercício `ano` (o que se grava); `todos_registros` são os de todos
     os exercícios (liquidado e conflito de NE); `inicio_por_gov` mapeia `contratosgov_id` → início da vigência;
@@ -242,7 +266,7 @@ def render_estimativa_reajuste(
             "contratado, marcado como teto. Competência já apurada sem lançamento fica vazia, nunca zero."
         ))
         resultados, avisos = _estimativas(
-            dataframe, todos_registros, liquidacao_por_mes, inicio_por_gov, ano, hoje, vigencias_por_gov
+            dataframe, todos_registros, liquidacao_por_mes, inicio_por_gov, ano, hoje, vigencias_por_gov, empenhos_gov
         )
         for aviso in avisos:
             st.warning(_md(aviso))
@@ -253,26 +277,30 @@ def render_estimativa_reajuste(
         resumo = _resumo(resultados, ano, hoje)
         matriz = _matriz_longa(resultados)
         coluna_ano = f"Acréscimo {ano}"
-        a, b, c = st.columns(3)
-        a.metric(f"Acréscimo estimado em {ano}", _total_ou_traco(resumo[coluna_ano]))
-        b.metric("Acréscimo na vigência", _total_ou_traco(resumo["Acréscimo na vigência"]))
+        a, b, c, d = st.columns(4)
+        a.metric(f"Formalizado a confirmar ({ano})", _total_ou_traco(resumo[f"Formalizado a confirmar {ano}"]))
+        b.metric(f"Projetado ({ano})", _total_ou_traco(resumo[f"Projetado {ano}"]))
+        c.metric("Exercícios anteriores", _total_ou_traco(resumo["Exercícios anteriores"]))
         # "sem estimativa" = situação desconhecida (falta índice, data-base ou fim de vigência); "sem reajuste
         # previsto na vigência" é uma resposta conhecida, não falta de dado
         desconhecidas = {ROTULO_SITUACAO[s] for s in ("sem_indice", "sem_data_base", "sem_vigencia_fim")}
-        c.metric("Contratos sem estimativa", str(int(resumo["Situação"].isin(desconhecidas).sum())))
-
-        if resumo["Reajuste assinado no gov (registrar)"].notna().any():
-            st.info(_md(
-                "Contratos com reajuste já assinado no Contratos.gov (coluna \"Reajuste assinado no gov\"): o ciclo "
-                "sai da estimativa. O gov não traz o valor novo da parcela — registre o aditivo de Reajuste, com o "
-                "valor, na aba Aditivos do contrato."
-            ))
+        d.metric("Contratos sem estimativa", str(int(resumo["Situação"].isin(desconhecidas).sum())))
+        st.caption(_md(
+            "Formalizado a confirmar = reajuste já assinado no Contratos.gov (ou aditivo sem valor) cujo valor ainda "
+            "não está no cadastro: estimado pelo índice até você registrar o aditivo de Reajuste com o valor (aí sai "
+            "daqui). Projetado = próximos aniversários. Exercícios anteriores = competências de anos passados "
+            "alcançadas por reajuste formalizado com retroativo assinado neste exercício (fora do total do exercício). "
+            "O retroativo do gov é do contrato inteiro: só referência, não comparável à parcela da 20RK."
+        ))
+        moedas = [
+            f"Formalizado a confirmar {ano}", f"Projetado {ano}", coluna_ano, "Exercícios anteriores",
+            "Acréscimo na vigência", "Retroativo no gov (contrato inteiro)",
+        ]
         st.dataframe(
             resumo, hide_index=True, use_container_width=True,
             column_config={
                 "Data-base": st.column_config.DateColumn(format="DD/MM/YYYY"),
-                coluna_ano: st.column_config.NumberColumn(format="R$ %.2f"),
-                "Acréscimo na vigência": st.column_config.NumberColumn(format="R$ %.2f"),
+                **{coluna: st.column_config.NumberColumn(format="R$ %.2f") for coluna in moedas},
             },
         )
 
@@ -297,20 +325,23 @@ def render_estimativa_reajuste(
         st.caption(_md(f"Situação: {ROTULO_SITUACAO.get(estimativa.situacao, estimativa.situacao)}."))
         if not estimativa.matriz.empty:
             detalhe = estimativa.matriz[[
-                "competencia", "base_valor", "base_origem", "ciclo", "percentual", "percentual_origem", "acrescimo",
-                "prorrogacao_prevista",
+                "competencia", "exercicio_anterior", "base_valor", "base_origem", "ciclo", "estado_ciclo", "percentual",
+                "percentual_origem", "acrescimo_formalizado", "acrescimo_projetado", "acrescimo", "prorrogacao_prevista",
             ]].rename(columns={
-                "competencia": "Competência", "base_valor": "Base", "base_origem": "Origem da base", "ciclo": "Ciclo",
-                "percentual": "Percentual (%)", "percentual_origem": "Origem do %", "acrescimo": "Acréscimo",
+                "competencia": "Competência", "exercicio_anterior": "Exercício anterior", "base_valor": "Base",
+                "base_origem": "Origem da base", "ciclo": "Ciclo", "estado_ciclo": "Estado do ciclo",
+                "percentual": "Percentual (%)", "percentual_origem": "Origem do %",
+                "acrescimo_formalizado": "Formalizado", "acrescimo_projetado": "Projetado", "acrescimo": "Acréscimo",
                 "prorrogacao_prevista": "Prorrogação prevista",
             })
             detalhe["Origem da base"] = detalhe["Origem da base"].map(ROTULO_ORIGEM_BASE)
             detalhe["Origem do %"] = detalhe["Origem do %"].map(ROTULO_ORIGEM_PERCENTUAL)
+            detalhe["Estado do ciclo"] = detalhe["Estado do ciclo"].map(ROTULO_ESTADO)
             st.dataframe(
                 detalhe, hide_index=True, use_container_width=True,
                 column_config={
-                    "Base": st.column_config.NumberColumn(format="R$ %.2f"),
-                    "Acréscimo": st.column_config.NumberColumn(format="R$ %.2f"),
+                    coluna: st.column_config.NumberColumn(format="R$ %.2f")
+                    for coluna in ("Base", "Formalizado", "Projetado", "Acréscimo")
                 },
             )
 

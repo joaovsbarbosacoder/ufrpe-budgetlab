@@ -415,6 +415,11 @@ def _theme_css() -> str:
     [data-testid="stVideoRecordedDialog"] * {{
         color: {d.TEXT} !important;
     }}
+    /* Exceção (11/10/2026): o `st.dataframe` desenha a grade num <canvas> e põe `div`s por cima; com a
+       varredura acima eles ficavam brancos e escondiam a tabela inteira dentro das janelas. */
+    [data-testid="stDialog"] [data-testid="stDataFrame"] div {{
+        background: transparent !important;
+    }}
     [data-testid="stDialog"] button,
     [data-testid="stClearCacheDialog"] button {{
         background: {d.SURFACE_ALT} !important;

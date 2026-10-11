@@ -199,26 +199,33 @@ com erro de leitura) a tela segue como antes, com aviso.
   mensal, empenhado, saldo, meses empenhados/liquidados e os textos (`novo_contrato_do_formulario`); um zero
   digitado continua zero, e "Meses no ano" em branco vale 12 nas contas. Só grava em "Adicionar contrato".
 
+**Linha do tempo das vigências.** Dentro do cadastro de cada contrato — na janela de detalhe da página Contratos
+(Contratos.gov) e na seção "Contratos.gov" da janela "Editar contrato" de Contratos Contínuos
+(`src/linha_tempo_vigencias.py`, `src/ui_linha_tempo_vigencias.py`), somente leitura: o contrato original e cada
+termo aditivo de VIGÊNCIA do Contratos.gov como barras, marcadores de reajuste (R), acréscimo/supressão (A),
+apostilamento (P) e rescisão (X), a marca de hoje, a situação (vigente, vence em até 90 dias, encerrado, sem data) e,
+em Contínuos, o aviso quando o fim do gov difere do fim efetivo do cadastro. Abaixo das barras, a lista dos períodos.
+
 **Estimativa de reajuste (cenário por competência).** Seção "Estimativa de reajuste" em Contratos Contínuos
 (`src/estimativa_reajuste.py`, `src/indices_economicos.py`, `src/ui_reajuste.py`; spec em
 `docs/superpowers/specs/2026-10-11-estimativa-reajuste-contratos-design.md`). **Cenário separado**: não altera
 Necessidade de Empenho, Projeção nem aditivos. Para cada contrato, uma matriz mês/ano (inclusive vigências que
 atravessam exercícios) do **acréscimo** causado pelo reajuste:
-- **Data-base:** a manual; senão o **início da vigência de renovação mais recente** (termo aditivo do Contratos.gov
-  cuja qualificação inclui VIGÊNCIA — acréscimo/supressão sozinho não é renovação — ou aditivo ASSINADO com nova
-  vigência), repetida a cada 12 meses enquanto cabe na vigência efetiva
-  (prorrogação prevista conta, marcada) e a partir de janeiro do exercício. Se um Reajuste ASSINADO já começa nessa
-  renovação (ou depois), ele já está no valor em vigor e o ciclo seguinte vem 12 meses depois dele. Sem renovação:
-  12 meses após o início da vigência. Data-base passada sem reajuste registrado gera acréscimo retroativo a conferir.
-  Sem ciclo na vigência: "sem reajuste previsto" (nulo, nunca 0).
-- **Reajuste já assinado no gov:** termo aditivo com qualificação REAJUSTE conta como reajuste assinado — o ciclo sai
-  da estimativa e a coluna "Reajuste assinado no gov (registrar)" mostra a data quando não há aditivo de Reajuste
-  cadastrado. O gov não traz o valor novo da parcela (a parcela do gov é do contrato inteiro): o valor continua a
-  registrar à mão na aba Aditivos.
-- **Percentual:** manual > oficial (índice do contrato; **padrão IPCA**, ou INPC/IGP-M; acumulado de 12 meses da API do
-  Banco Central, só em sessão) > sem índice. Zero manual vale; ausente nunca vira 0%. Ciclos são compostos.
+- **Ciclos com estado (regras v2, `docs/superpowers/specs/2026-10-11-estimativa-reajuste-regras-v2.md`):**
+  *registrado* (aditivo de Reajuste com valor no cadastro: já está no valor, só ancora), *formalizado, a confirmar*
+  (reajuste no gov — termo aditivo com REAJUSTE, ou apostilamento com novo valor longe de um termo — sem valor no
+  cadastro: estimado pelo índice) e *projetado* (aniversários de 12 em 12 meses a partir do último reajuste
+  formalizado; sem nenhum, do início do contrato; a data manual manda). **Anualidade:** evento a menos de ~1 ano do
+  anterior não abre ciclo novo. **Implantação:** o liquidado de competência posterior ao apostilamento que implanta
+  o reajuste já vem reajustado e não recebe o acréscimo de novo. Ciclo formalizado anterior ao exercício só entra se
+  foi implantado (ou teve retroativo assinado) no exercício; as competências de anos anteriores aparecem em
+  "Exercícios anteriores", fora do total do exercício. Sem ciclo na vigência: "sem reajuste previsto" (nulo, nunca 0).
+  Necessidade de Empenho e Projeção nunca usam a estimativa: registrar o aditivo com valor tira o ciclo daqui.
+- **Percentual:** manual > oficial (índice do contrato; **padrão IPCA**, ou INPC/IGP-M; acumulado dos 12 meses
+  anteriores à data-base, API do Banco Central, só em sessão) > sem índice. Zero manual vale; ausente nunca vira 0%.
+  Ciclos são compostos.
 - **Base:** o reajuste incide sobre o **liquidado por competência** (Liquidação por Competência, estornos com sinal,
-  NEs de todos os exercícios do contrato). Competência já apurada sem lançamento fica **vazia**; competência futura usa
+  NEs de todos os exercícios do contrato — as do cadastro e, do Contratos.gov, as de mesmo plano interno). Competência já apurada sem lançamento fica **vazia**; competência futura usa
   o valor contratado, rotulado **teto**. NE ligada a dois contratos é inconsistência sinalizada (o liquidado dela fica fora).
 - **Configuração** (índice, percentual e data-base manuais) é gravada no próprio registro do contrato; "Registrar
   aditivo previsto" cria o aditivo REAJUSTE/PREVISTO do próximo ciclo só por clique; a estimativa sai em Excel.

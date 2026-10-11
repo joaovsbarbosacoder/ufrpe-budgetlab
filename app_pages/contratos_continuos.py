@@ -165,7 +165,7 @@ from src.contratos_aditivos import (
     valor_vigente_em,
     vigencia_efetiva,
 )
-from src.contratos_cadastro import montar_contratos, montar_empenhos, montar_termos
+from src.contratos_cadastro import contratos_com_faturas, montar_contratos, montar_empenhos, montar_faturas, montar_termos
 from src.contratos_continuos import (
     SITUACAO_NECESSITA_REFORCO,
     SITUACAO_VIGENCIA_ENCERRADA,
@@ -268,8 +268,11 @@ from src.ui_cadastro import (
 )
 from src.ui_cadastro import css as css_cadastro
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
-from src.estimativa_reajuste import datas_dos_termos
+from src.estimativa_reajuste import termos_do_gov
+from src.ui_faturas import render_faturas_do_contrato
 from src.ui_reajuste import render_estimativa_reajuste
+from src.linha_tempo_vigencias import linha_do_contrato
+from src.ui_linha_tempo_vigencias import render_linha_tempo_do_contrato
 from src.ui_theme import render_page_header
 
 DIRETORIO_DADOS_BRUTOS = Path("data/raw")
@@ -524,8 +527,9 @@ def _referencia_gov() -> date:
     return valor if isinstance(valor, date) else date.today()
 
 
-def _carregar_gov(referencia: date) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame] | None:
-    """(contratos, termos, empenhos) da fotografia atual do Contratos.gov.br, ou `None` — com aviso explícito —
+def _carregar_gov(referencia: date) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, tuple] | None:
+    """(contratos, termos, empenhos, (faturas, contratos com faturas consultadas)) da fotografia atual do
+    Contratos.gov.br, ou `None` — com aviso explícito —
     se não houver fotografia ou ela não puder ser lida (mesmo critério de `app_pages/contratos.py`). A
     integração é complemento opcional: sem ela, a tela segue como antes, sem conciliação, sem exceção."""
 
@@ -537,7 +541,10 @@ def _carregar_gov(referencia: date) -> tuple[pd.DataFrame, pd.DataFrame, pd.Data
                 "e a lista de contratos novos não aparecem. Faça a carga na página Contratos (aba Atualizar)."
             )
             return None
-        return montar_contratos(fotografia, referencia), montar_termos(fotografia), montar_empenhos(fotografia)
+        return (
+            montar_contratos(fotografia, referencia), montar_termos(fotografia), montar_empenhos(fotografia),
+            (montar_faturas(fotografia), contratos_com_faturas(fotografia)),
+        )
     except Exception as erro:  # manifesto incompleto (TypeError), arquivo travado pelo Drive (OSError), dado inválido...
         st.warning(
             f"Não foi possível ler a fotografia do Contratos.gov.br ({erro}) — a conciliação de vigência e "
@@ -574,7 +581,8 @@ def _texto_conciliacao(linha: pd.Series) -> str:
 
 
 def _render_contratosgov_no_dialogo(
-    linha: pd.Series, k: str, termos_gov: pd.DataFrame | None, aditivos_atuais: list | None = None
+    linha: pd.Series, k: str, termos_gov: pd.DataFrame | None, aditivos_atuais: list | None = None,
+    faturas_gov: tuple | None = None,
 ) -> None:
     """Seção "Contratos.gov" da janela de edição: vigência do cadastro × a do gov, histórico de termos e um botão
     "Registrar aditivo do gov" por aditivo sem registro. O botão SÓ pré-preenche a aba Aditivos (em
@@ -611,6 +619,16 @@ def _render_contratosgov_no_dialogo(
             f"{_brl(linha['valor_parcela_contratosgov'])}"
         )
     termos = termos_gov[termos_gov["contrato_id"].astype(str) == str(linha["contratosgov_id"])]
+    # linha do tempo das vigências deste contrato (11/10/2026, dentro do cadastro — pedido do usuário)
+    hoje = _referencia_gov()
+    render_linha_tempo_do_contrato(
+        linha_do_contrato(
+            numero=linha["contrato_numero"], fornecedor=linha.get("fornecedor"), termos=termos,
+            fim_gov=linha["vigencia_fim_contratosgov"], fim_cadastro=linha["vigencia_fim_efetiva"], ligado=True,
+            hoje=hoje,
+        ),
+        hoje,
+    )
     st.dataframe(
         termos.sort_values("data_assinatura", na_position="last")[
             ["tipo", "numero", "qualificacao_termo", "data_assinatura", "vigencia_fim", "data_inicio_novo_valor"]
@@ -619,6 +637,15 @@ def _render_contratosgov_no_dialogo(
             "vigencia_fim": "Vigência (fim)", "data_inicio_novo_valor": "Início do novo valor",
         }),
         hide_index=True, width="stretch",
+    )
+
+    # instrumentos de cobrança (11/10/2026): notas do gov, filtradas pela NE deste cadastro (parcela 20RK)
+    st.markdown("**Instrumentos de cobrança (notas fiscais/faturas)**")
+    cid_gov = str(linha["contratosgov_id"])
+    faturas, consultados = faturas_gov if faturas_gov is not None else (None, set())
+    render_faturas_do_contrato(
+        None if faturas is None else faturas[faturas["contrato_id"] == cid_gov], cid_gov in consultados, k,
+        nes_do_cadastro={str(linha["ne_curta"])} if pd.notna(linha.get("ne_curta")) else None,
     )
 
     pendentes = aditivos_pendentes(linha["aditivos"] if aditivos_atuais is None else aditivos_atuais, termos)
@@ -666,7 +693,7 @@ def _situacao(status_bruto: object, vigencia_fim_efetiva: object, necessidade: o
 @st.dialog("Editar contrato", width="large")
 def _dialogo_editar_contrato(
     linha: pd.Series, ano_exercicio: int, source_key: str, sugestao_inicio: object,
-    termos_gov: pd.DataFrame | None = None,
+    termos_gov: pd.DataFrame | None = None, faturas_gov: tuple | None = None,
 ) -> None:
     """Janela de edição de um contrato (substitui o antigo cartão-expansor de campos soltos —
     pedido de 05/10/2026: "muita cara de planilha"). Mesmos campos, mesmas chaves de widget e a
@@ -715,7 +742,7 @@ def _dialogo_editar_contrato(
     with aba_aditivos:
         aditivos_editados = render_aba_aditivos(k, linha["aditivos"], linha["itens"])
         with gov_container:
-            _render_contratosgov_no_dialogo(linha, k, termos_gov, aditivos_editados)
+            _render_contratosgov_no_dialogo(linha, k, termos_gov, aditivos_editados, faturas_gov)
     with aba_periodo:
         p_vig, p_data, p_mes, p_meses = st.columns(4)
         # Vigência (fim) — a data de fim do cadastro limita a projeção do relatório de Necessidade de
@@ -1979,15 +2006,17 @@ dataframe = tabela_contratos(
 # Integração com o Contratos.gov.br (10/2026): ligação por NE (depois número + CNPJ/CPF), conciliação de
 # vigência e aditivos sem registro. Complemento opcional, em memória — ver `com_contratosgov`.
 termos_gov = None
+faturas_gov = None
 _inicio_por_gov: dict = {}
 _vigencias_por_gov: dict = {}
+_empenhos_gov = None
 _gov = _carregar_gov(_referencia_gov())
 if _gov is not None:
-    _contratos_gov, termos_gov, _empenhos_gov = _gov
+    _contratos_gov, termos_gov, _empenhos_gov, faturas_gov = _gov
     _inicio_por_gov = dict(zip(_contratos_gov["contrato_id"].astype(str), _contratos_gov["vigencia_inicio"]))
-    # renovações (termo com VIGÊNCIA) e reajustes assinados (termo com REAJUSTE) de cada contrato do gov: a
-    # data-base da estimativa de reajuste vem da renovação mais recente e o reajuste assinado sai da estimativa
-    _vigencias_por_gov = datas_dos_termos(termos_gov)
+    # reajustes formalizados (termo aditivo com REAJUSTE) e apostilamentos retroativos de cada contrato do gov:
+    # base dos ciclos da estimativa de reajuste (regras v2, src/estimativa_reajuste.py)
+    _vigencias_por_gov = termos_do_gov(termos_gov)
     dataframe = com_contratosgov(dataframe, _contratos_gov, termos_gov, _empenhos_gov)
     _candidatos_gov, _em_duvida_gov = candidatos_novos(dataframe, _contratos_gov, _empenhos_gov)
     _render_novos_contratosgov(_candidatos_gov, _em_duvida_gov, ano_selecionado, source_key)
@@ -2071,7 +2100,7 @@ _render_relatorio_projecao_execucao(
 render_estimativa_reajuste(
     filtrado, registros, [r for _ano in anos_disponiveis() for r in carregar_contratos(_ano)], ano_selecionado,
     liquidacao_competencia_por_mes, _inicio_por_gov, source_key, _referencia_gov(),
-    _vigencias_por_gov,
+    _vigencias_por_gov, _empenhos_gov,
 )
 if indice_liquidado_competencia is not None:
     _render_empenhado_liquidado(
@@ -2220,7 +2249,7 @@ with st.container(border=True, key="cad_registro"):
                             _dialogo_editar_contrato(
                                 linha, ano_selecionado, source_key,
                                 sugestao_inicio_por_ne.get(linha["ne_curta"]) if pd.notna(linha["ne_curta"]) else None,
-                                termos_gov,
+                                termos_gov, faturas_gov,
                             )
                         if b_remover.button("", icon=":material/delete:", key=f"cc_remover_{source_key}_{id_linha}", help="Remover contrato", use_container_width=True):
                             _dialogo_remover_contrato(

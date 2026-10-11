@@ -72,9 +72,13 @@ from src.ui_cadastro import (
     ordenar_por,
     tabela_html,
 )
+from src.contratos_cadastro import ErroDadoContratosGov, contratos_com_faturas, montar_faturas
+from src.linha_tempo_vigencias import linha_do_contrato
+from src.ui_faturas import render_faturas_do_contrato
 from src.ui_cadastro import cartao_resumo
 from src.ui_cadastro import css as css_cadastro
 from src.ui_theme import render_page_header
+from src.ui_linha_tempo_vigencias import render_linha_tempo_do_contrato
 
 CHAVE_REFERENCIA = "contratos_referencia"
 CHAVE_ABA = "ctg_aba"
@@ -275,7 +279,7 @@ def _carregar_complementos():
 
 # ----------------------------------------------------------------------------- detalhe
 
-def _detalhe_contrato(linha, termos, empenhos, complemento, editavel: bool, sha12: str) -> None:
+def _detalhe_contrato(linha, termos, empenhos, complemento, editavel: bool, sha12: str, faturas=None) -> None:
     cid = linha["contrato_id"]
     rotulo, tom = ROTULO_SITUACAO.get(linha["situacao_vigencia"], ("", "neutro"))
     dias = linha["dias_para_vencer"]
@@ -332,6 +336,18 @@ def _detalhe_contrato(linha, termos, empenhos, complemento, editavel: bool, sha1
         else:
             st.session_state[CHAVE_AVISO] = f"Complemento do contrato {linha['numero']} gravado."
             st.rerun()
+
+    # linha do tempo das vigências (11/10/2026): contrato original e termos aditivos de vigência como barras,
+    # marcadores de reajuste/acréscimo/apostilamento/rescisão e a situação — somente leitura
+    st.markdown('<div class="cad-secao-dialogo">Linha do tempo das vigências</div>', unsafe_allow_html=True)
+    hoje = _referencia()
+    render_linha_tempo_do_contrato(
+        linha_do_contrato(
+            numero=linha["numero"], fornecedor=linha["fornecedor_nome"], termos=termos, fim_gov=linha["vigencia_fim"],
+            fim_cadastro=None, ligado=True, hoje=hoje,
+        ),
+        hoje,
+    )
 
     st.markdown(f'<div class="cad-secao-dialogo">Termos · {len(termos)} · do /historico</div>', unsafe_allow_html=True)
     if termos.empty:
@@ -395,6 +411,11 @@ def _detalhe_contrato(linha, termos, empenhos, complemento, editavel: bool, sha1
             unsafe_allow_html=True,
         )
 
+    # instrumentos de cobrança (11/10/2026): `faturas` = (tabela do contrato, consultado?)
+    st.markdown('<div class="cad-secao-dialogo">Instrumentos de cobrança · notas fiscais/faturas</div>', unsafe_allow_html=True)
+    tabela_faturas, consultado = faturas if faturas is not None else (None, False)
+    render_faturas_do_contrato(tabela_faturas, consultado, f"ctg_{cid}")
+
     origem = "" if _nulo(linha["detalhe_origem"]) else f" ({linha['detalhe_origem']})"
     st.caption(
         f"Detalhe consultado em {_data_hora(linha['detalhe_consultado_em'])}{origem} · fotografia {sha12} · "
@@ -402,15 +423,17 @@ def _detalhe_contrato(linha, termos, empenhos, complemento, editavel: bool, sha1
     )
 
 
-def _abrir_detalhe(linha, termos, empenhos, complemento, editavel, sha12) -> None:
+def _abrir_detalhe(linha, termos, empenhos, complemento, editavel, sha12, faturas=None) -> None:
     st.dialog(f"Contrato {linha['numero']}", width="large")(_detalhe_contrato)(
-        linha, termos, empenhos, complemento, editavel, sha12
+        linha, termos, empenhos, complemento, editavel, sha12, faturas
     )
 
 
 # ----------------------------------------------------------------------------- aba Cadastro
 
-def _render_cadastro(contratos, termos, empenhos, manifesto, complementos, complementos_ok, referencia) -> None:
+def _render_cadastro(
+    contratos, termos, empenhos, manifesto, complementos, complementos_ok, referencia, faturas=None
+) -> None:
     r = resumo(contratos)
     ate = referencia + timedelta(days=90)
     with st.container(key="ctg_resumo"):
@@ -537,6 +560,7 @@ def _render_cadastro(contratos, termos, empenhos, manifesto, complementos, compl
                                 termos[termos["contrato_id"] == cid],
                                 empenhos[empenhos["contrato_id"] == cid],
                                 complemento, complementos_ok, sha12,
+                                None if faturas is None else (faturas[0][faturas[0]["contrato_id"] == cid], cid in faturas[1]),
                             )
 
         if len(registro) > QTD_INICIAL_REGISTRO:
@@ -857,7 +881,12 @@ with aba_cadastro:
         st.info("Ainda não há dados do Contratos.gov.br. Faça a primeira carga na aba **Atualizar**.")
     else:
         complementos, complementos_ok = _carregar_complementos()
-        _render_cadastro(contratos, termos, empenhos, manifesto, complementos, complementos_ok, referencia)
+        try:
+            faturas_gov = (montar_faturas(fotografia), contratos_com_faturas(fotografia))
+        except ErroDadoContratosGov as erro:
+            st.warning(f"Instrumentos de cobrança indisponíveis: {erro}")
+            faturas_gov = None
+        _render_cadastro(contratos, termos, empenhos, manifesto, complementos, complementos_ok, referencia, faturas_gov)
 
 with aba_atualizar:
     _render_atualizar(fotografia, contratos, referencia, erro_carga)

@@ -13,6 +13,7 @@ Contrato público:
     ErroIndiceEconomico
     variacoes_bcb(indice, inicio, fim, *, buscar=None) -> dict[(ano, mes), float]   # variação mensal, em %
     acumulado_12m(variacoes, ano, mes) -> (percentual | None, origem)
+    acumulado_periodo(variacoes, inicio, fim_exclusivo) -> (percentual | None, origem)
 """
 
 from __future__ import annotations
@@ -72,30 +73,33 @@ def _mes_anterior(ano: int, mes: int) -> tuple[int, int]:
     return (ano - 1, 12) if mes == 1 else (ano, mes - 1)
 
 
-def _janela(ano: int, mes: int) -> list[tuple[int, int]]:
-    """12 meses terminando em (ano, mes), em ordem cronológica."""
+def _janela(ano: int, mes: int, tamanho: int = 12) -> list[tuple[int, int]]:
+    """`tamanho` meses terminando em (ano, mes), em ordem cronológica."""
 
     meses = []
-    for _ in range(12):
+    for _ in range(tamanho):
         meses.append((ano, mes))
         ano, mes = _mes_anterior(ano, mes)
     return meses[::-1]
 
 
-def acumulado_12m(
-    variacoes: dict[tuple[int, int], float], ano: int, mes: int
+def acumulado_periodo(
+    variacoes: dict[tuple[int, int], float], inicio: tuple[int, int], fim_exclusivo: tuple[int, int]
 ) -> tuple[float | None, str]:
-    """Acumulado (%) dos 12 meses anteriores ao mês (`ano`, `mes`) da data-base. Origem: `oficial` (os 12
-    meses esperados existem), `oficial_ultimo` (a série ainda não chegou lá: usa os 12 meses terminando no
-    último mês disponível anterior à data-base — estimativa) ou `ausente` (menos de 12 meses disponíveis:
-    nulo, nunca 0%)."""
+    """Acumulado (%) dos meses de `inicio` (inclusive) a `fim_exclusivo` (exclusive) — a janela entre dois
+    reajustes. Origem: `oficial` (todos os meses existem), `oficial_ultimo` (a série ainda não chegou ao fim da
+    janela: usa a mesma quantidade de meses terminando no último mês disponível — estimativa) ou `ausente`
+    (nulo, nunca 0%). Janela vazia (mesmo mês) = 0% oficial."""
 
-    fim_esperado = _mes_anterior(ano, mes)
+    tamanho = (fim_exclusivo[0] - inicio[0]) * 12 + (fim_exclusivo[1] - inicio[1])
+    if tamanho <= 0:
+        return 0.0, "oficial"
+    fim_esperado = _mes_anterior(*fim_exclusivo)
     disponiveis = [chave for chave in variacoes if chave <= fim_esperado]
     if not disponiveis:
         return None, "ausente"
     ultimo = max(disponiveis)
-    janela = _janela(*ultimo)
+    janela = _janela(*ultimo, tamanho=tamanho)
     if any(chave not in variacoes for chave in janela):
         return None, "ausente"
     fator = 1.0
@@ -103,3 +107,11 @@ def acumulado_12m(
         fator *= 1.0 + variacoes[chave] / 100.0
     origem = "oficial" if ultimo == fim_esperado else "oficial_ultimo"
     return (fator - 1.0) * 100.0, origem
+
+
+def acumulado_12m(
+    variacoes: dict[tuple[int, int], float], ano: int, mes: int
+) -> tuple[float | None, str]:
+    """Acumulado (%) dos 12 meses anteriores ao mês (`ano`, `mes`) da data-base (ver `acumulado_periodo`)."""
+
+    return acumulado_periodo(variacoes, (ano - 1, mes), (ano, mes))

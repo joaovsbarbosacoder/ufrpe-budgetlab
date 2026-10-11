@@ -13,6 +13,7 @@ from src.indices_economicos import (
     SERIES_BCB,
     ErroIndiceEconomico,
     acumulado_12m,
+    acumulado_periodo,
     variacoes_bcb,
 )
 
@@ -53,6 +54,21 @@ class AcumuladoDozeMesesTests(unittest.TestCase):
         variacoes[(2026, 6)] = -1.0
         percentual, _ = acumulado_12m(variacoes, 2027, 6)
         self.assertAlmostEqual(percentual, -1.0, places=9)
+
+
+class AcumuladoPeriodoTests(unittest.TestCase):
+    def test_janela_entre_reajustes_de_quatro_meses(self) -> None:
+        variacoes = _meses((2025, 1), 24, 1.0)
+        percentual, origem = acumulado_periodo(variacoes, (2025, 10), (2026, 2))  # out/2025..jan/2026
+        self.assertEqual(origem, "oficial")
+        self.assertAlmostEqual(percentual, (1.01**4 - 1) * 100, places=9)
+
+    def test_janela_vazia_e_zero_oficial_e_futura_usa_os_ultimos_meses(self) -> None:
+        self.assertEqual(acumulado_periodo({}, (2026, 5), (2026, 5)), (0.0, "oficial"))
+        variacoes = _meses((2025, 1), 18, 1.0)  # até jun/2026
+        percentual, origem = acumulado_periodo(variacoes, (2026, 6), (2027, 6))
+        self.assertEqual(origem, "oficial_ultimo")
+        self.assertAlmostEqual(percentual, (1.01**12 - 1) * 100, places=9)
 
 
 class VariacoesBcbTests(unittest.TestCase):

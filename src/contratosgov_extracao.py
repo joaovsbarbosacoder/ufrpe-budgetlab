@@ -6,8 +6,8 @@ tabelas derivadas (`contratos_cadastro`), abaixo da interface. Não importa Stre
 
 Fluxo (spec §5):
   1. `consultar` busca as listas ativa e inativa da UG, mantém só `tipo == "Contrato"` e monta a
-     fotografia NOVA, sempre completa (todo contrato tem detalhe). O detalhe (`/historico` e
-     `/empenhos`) é consultado quando: atualização completa; contrato ausente da fotografia
+     fotografia NOVA, sempre completa (todo contrato tem detalhe). O detalhe (`/historico`,
+     `/empenhos` e, desde 11/10/2026, `/faturas`) é consultado quando: atualização completa; contrato ausente da fotografia
      anterior; vigente ou a iniciar pela vigência calculada (datas do item NOVO da lista,
      `inativo` = veio da lista de inativos); item da lista diferente do anterior (comparação
      sem a chave `links`, que só traz URLs); ou mudou de lista (ativo <-> inativo). Os demais
@@ -44,6 +44,7 @@ from src.contratos_cadastro import (
     data_iso,
     montar_contratos,
     montar_empenhos,
+    montar_faturas,
     montar_termos,
     resumo,
     situacao_vigencia,
@@ -236,6 +237,9 @@ def consultar(
     total = len(alvos)
     if progresso:
         progresso(0, total)
+    # instrumentos de cobrança (11/10/2026): só quando o cliente oferece o endpoint — sem ele, a chave fica AUSENTE
+    # ("não consultado"), nunca uma lista vazia inventada
+    buscar_faturas = getattr(cliente, "faturas", None)
     for n, cid in enumerate(alvos, start=1):
         detalhes[cid] = {
             "historico": _exigir_lista(cliente.historico(cid), f"/api/contrato/{cid}/historico"),
@@ -243,6 +247,8 @@ def consultar(
             "consultado_em": consultado_em,
             "origem": "consulta",
         }
+        if buscar_faturas is not None:
+            detalhes[cid]["faturas"] = _exigir_lista(buscar_faturas(cid), f"/api/contrato/{cid}/faturas")
         if progresso:
             progresso(n, total)
 
@@ -381,6 +387,7 @@ def gravar(
     contratos = montar_contratos(fotografia, referencia)
     termos = montar_termos(fotografia)
     empenhos = montar_empenhos(fotografia)
+    faturas = montar_faturas(fotografia)
     r = resumo(contratos)
     origens = [str(d.get("origem") or "") for d in fotografia["detalhes"].values()]
 
@@ -402,6 +409,7 @@ def gravar(
             "vigentes": r["vigentes"],
             "termos": int(len(termos)),
             "empenhos": int(len(empenhos)),
+            "faturas": int(len(faturas)),
             "reconsultados": sum(o == "consulta" for o in origens),
             "reaproveitados": sum(o.startswith(PREFIXO_REAPROVEITADO) for o in origens),
         } | delta.contagens(),

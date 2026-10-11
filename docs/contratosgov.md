@@ -19,10 +19,15 @@ Cliente em `src/contratosgov_api.py` (único módulo que acessa a rede; devolve 
 | `/api/contrato/inativo/ug/153165` | Instrumentos inativos |
 | `/api/contrato/{id}/historico` | Termos: contrato, aditivo, apostilamento |
 | `/api/contrato/{id}/empenhos` | NEs vinculadas ao contrato |
+| `/api/contrato/{id}/faturas` | Instrumentos de cobrança (notas fiscais/faturas): valores, glosa, NE, competência, situação no Siafi — desde 11/10/2026 |
 
 Recorte: só instrumentos do tipo **"Contrato"**, todos os anos, ativos e inativos. Empenhos
-substitutivos (tipo "Empenho") ficam de fora. Garantias, arquivos, cronograma, faturas e unidades
-requisitantes não são lidos.
+substitutivos (tipo "Empenho") ficam de fora. Garantias, arquivos, cronograma e unidades
+requisitantes não são lidos. As faturas (instrumentos de cobrança) vinham vazias nas amostras de 08/10/2026 e
+passaram a ser lidas em 11/10/2026, quando o endpoint já trazia dados: ficam em `detalhes[id]["faturas"]`;
+fotografia anterior sem essa chave = "não consultado" (diferente de lista vazia = consultado, sem notas). São
+mostradas, só para leitura, na janela de cada contrato (página Contratos e, filtradas pela NE do cadastro, na
+seção "Contratos.gov" de Contratos Contínuos). Valores do contrato inteiro, como vêm da API.
 
 Resiliência: HTTP 5xx, timeout, falha de conexão e `ChunkedEncodingError` são repetidos até 3 vezes,
 com pausa exponencial (2 s, 4 s, 8 s); HTTP 429 respeita `Retry-After` numérico, finito e não negativo
