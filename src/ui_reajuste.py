@@ -1,5 +1,5 @@
 """
-Seção "Estimativa de reajuste" de Contratos Contínuos (11/10/2026).
+Página "Reajuste estimado" (11/10/2026; repaginada e movida para página própria em 12/10/2026).
 
 Camada de interface (Streamlit). O cálculo está em `src/estimativa_reajuste.py` e os índices oficiais em
 `src/indices_economicos.py`; aqui só se monta a tela: resumo por contrato, matriz mensal por competência,
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from io import BytesIO
+from xml.sax.saxutils import escape
 
 import pandas as pd
 import streamlit as st
@@ -31,6 +32,7 @@ from src.estimativa_reajuste import (
 )
 from src.indices_economicos import INDICE_PADRAO, INDICES, ErroIndiceEconomico, variacoes_bcb
 from src.ui_cadastro import formatar_brl
+from src.ui_reajuste_visual import CSS, html_ciclos, html_destaque, html_grafico_mensal, html_mapa, html_ranking
 
 ROTULO_SITUACAO = {
     "estimado": "Estimado",
@@ -247,83 +249,141 @@ def _dialogo_configurar(registro: dict, ano: int, chave: str) -> None:
         st.rerun()
 
 
+def _itens_do_ranking(resumo: pd.DataFrame, ano: int) -> list[dict]:
+    """Uma linha do resumo por contrato, no formato de `html_ranking`."""
+
+    itens = []
+    for _, linha in resumo.iterrows():
+        itens.append({
+            "contrato": linha["Contrato"], "fornecedor": linha["Fornecedor"], "situacao": linha["Situação"],
+            "estado": linha["Estado do ciclo"], "data_base": linha["Data-base"], "percentual": linha["Percentual (%)"],
+            "origem": linha["Origem do %"], "formalizado": linha[f"Formalizado a confirmar {ano}"],
+            "projetado": linha[f"Projetado {ano}"], "acrescimo": linha[f"Acréscimo {ano}"],
+        })
+    return itens
+
+
+def _alternar_mais(chave: str) -> None:
+    st.session_state[chave] = not st.session_state.get(chave, False)
+
+
+LIMITE_RANKING = 8
+
+
 def render_estimativa_reajuste(
     dataframe: pd.DataFrame, registros: list[dict], todos_registros: list[dict], ano: int,
     liquidacao_por_mes: pd.DataFrame | None, inicio_por_gov: dict[str, object], source_key: str,
     hoje: date | None = None, vigencias_por_gov: dict[str, list] | None = None,
     empenhos_gov: pd.DataFrame | None = None,
 ) -> None:
-    """Seção completa. `registros` são os do exercício `ano` (o que se grava); `todos_registros` são os de todos
-    os exercícios (liquidado e conflito de NE); `inicio_por_gov` mapeia `contratosgov_id` → início da vigência;
-    `hoje` é a data de referência (padrão: hoje) — define o último mês de liquidação considerado apurado."""
+    """Conteúdo da página "Reajuste estimado" (repaginada em 12/10/2026): cartão de destaque, os contratos que mais pesam,
+    mapa do ano e detalhe de um contrato — tudo calculado como antes (`_estimativas`), só a apresentação mudou.
+    `registros` são os do exercício `ano` (o que se grava); `todos_registros` são os de todos os exercícios (liquidado e
+    conflito de NE); `inicio_por_gov` mapeia `contratosgov_id` → início da vigência; `hoje` é a data de referência (padrão:
+    hoje) — define o último mês de liquidação considerado apurado."""
 
     hoje = hoje or date.today()
+    st.markdown(CSS, unsafe_allow_html=True)
+    st.caption(_md(
+        "Cenário separado: não altera Necessidade de Empenho, Projeção nem aditivos. O reajuste incide sobre o "
+        "valor LIQUIDADO por competência; onde ainda não há liquidado apurado (meses futuros) a base é o valor "
+        "contratado, marcado como teto. Competência já apurada sem lançamento fica vazia, nunca zero."
+    ))
+    resultados, avisos = _estimativas(
+        dataframe, todos_registros, liquidacao_por_mes, inicio_por_gov, ano, hoje, vigencias_por_gov, empenhos_gov
+    )
+    for aviso in avisos:
+        st.warning(_md(aviso))
+    if not resultados:
+        st.info("Nenhum contrato no exercício para estimar.")
+        return
 
-    with st.expander("Estimativa de reajuste (cenário por competência)", expanded=False):
-        st.caption(_md(
-            "Cenário separado: não altera Necessidade de Empenho, Projeção nem aditivos. O reajuste incide sobre o "
-            "valor LIQUIDADO por competência; onde ainda não há liquidado apurado (meses futuros) a base é o valor "
-            "contratado, marcado como teto. Competência já apurada sem lançamento fica vazia, nunca zero."
-        ))
-        resultados, avisos = _estimativas(
-            dataframe, todos_registros, liquidacao_por_mes, inicio_por_gov, ano, hoje, vigencias_por_gov, empenhos_gov
+    resumo = _resumo(resultados, ano, hoje)
+    matriz = _matriz_longa(resultados)
+    # "sem estimativa" = situação desconhecida (falta índice, data-base ou fim de vigência); "sem reajuste previsto na
+    # vigência" é uma resposta conhecida, não falta de dado
+    desconhecidas = {ROTULO_SITUACAO[s] for s in ("sem_indice", "sem_data_base", "sem_vigencia_fim")}
+    st.markdown(
+        html_destaque(
+            ano, _soma_ou_nulo(resumo[f"Formalizado a confirmar {ano}"]), _soma_ou_nulo(resumo[f"Projetado {ano}"]),
+            _soma_ou_nulo(resumo["Exercícios anteriores"]), int(resumo["Situação"].isin(desconhecidas).sum()),
+        ),
+        unsafe_allow_html=True,
+    )
+    st.caption(_md(
+        "Formalizado a confirmar = reajuste já assinado no Contratos.gov (ou aditivo sem valor) cujo valor ainda "
+        "não está no cadastro: estimado pelo índice até você registrar o aditivo de Reajuste com o valor (aí sai "
+        "daqui). Projetado = próximos aniversários. Exercícios anteriores = competências de anos passados "
+        "alcançadas por reajuste formalizado com retroativo assinado neste exercício (fora do total do exercício). "
+        "O retroativo do gov é do contrato inteiro: só referência, não comparável à parcela da 20RK."
+    ))
+
+    # ---- quem mais pesa
+    itens = _itens_do_ranking(resumo, ano)
+    chave_mais = f"rj_{source_key}_mais"
+    mostrar_todos = st.session_state.get(chave_mais, False)
+    st.markdown(
+        f'<div class="rj-titulo">Quem mais pesa em {ano}</div>'
+        '<div class="rj-leg2">Contratos ordenados pelo acréscimo estimado no exercício.</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(html_ranking(itens, None if mostrar_todos else LIMITE_RANKING), unsafe_allow_html=True)
+    if len(itens) > LIMITE_RANKING:
+        st.button(
+            "Ver menos" if mostrar_todos else f"Ver mais ({len(itens)})", key=f"rj_{source_key}_btn_mais",
+            on_click=_alternar_mais, args=(chave_mais,),
         )
-        for aviso in avisos:
-            st.warning(_md(aviso))
-        if not resultados:
-            st.info("Nenhum contrato no exercício para estimar.")
-            return
 
-        resumo = _resumo(resultados, ano, hoje)
-        matriz = _matriz_longa(resultados)
-        coluna_ano = f"Acréscimo {ano}"
-        a, b, c, d = st.columns(4)
-        a.metric(f"Formalizado a confirmar ({ano})", _total_ou_traco(resumo[f"Formalizado a confirmar {ano}"]))
-        b.metric(f"Projetado ({ano})", _total_ou_traco(resumo[f"Projetado {ano}"]))
-        c.metric("Exercícios anteriores", _total_ou_traco(resumo["Exercícios anteriores"]))
-        # "sem estimativa" = situação desconhecida (falta índice, data-base ou fim de vigência); "sem reajuste
-        # previsto na vigência" é uma resposta conhecida, não falta de dado
-        desconhecidas = {ROTULO_SITUACAO[s] for s in ("sem_indice", "sem_data_base", "sem_vigencia_fim")}
-        d.metric("Contratos sem estimativa", str(int(resumo["Situação"].isin(desconhecidas).sum())))
-        st.caption(_md(
-            "Formalizado a confirmar = reajuste já assinado no Contratos.gov (ou aditivo sem valor) cujo valor ainda "
-            "não está no cadastro: estimado pelo índice até você registrar o aditivo de Reajuste com o valor (aí sai "
-            "daqui). Projetado = próximos aniversários. Exercícios anteriores = competências de anos passados "
-            "alcançadas por reajuste formalizado com retroativo assinado neste exercício (fora do total do exercício). "
-            "O retroativo do gov é do contrato inteiro: só referência, não comparável à parcela da 20RK."
-        ))
-        moedas = [
-            f"Formalizado a confirmar {ano}", f"Projetado {ano}", coluna_ano, "Exercícios anteriores",
-            "Acréscimo na vigência", "Retroativo no gov (contrato inteiro)",
-        ]
-        st.dataframe(
-            resumo, hide_index=True, use_container_width=True,
-            column_config={
-                "Data-base": st.column_config.DateColumn(format="DD/MM/YYYY"),
-                **{coluna: st.column_config.NumberColumn(format="R$ %.2f") for coluna in moedas},
-            },
+    # ---- mapa do ano
+    estimativas_por_contrato = {str(i["linha"]["contrato_numero"]): i["estimativa"] for i in resultados}
+    escolhido = ano
+    if not matriz.empty:
+        anos = sorted(matriz["ano"].unique())
+        escolhido = st.selectbox(
+            "Exercício do mapa e do gráfico", anos, index=anos.index(ano) if ano in anos else 0, key=f"rj_{source_key}_ano"
         )
+        pivot = matriz[matriz["ano"] == escolhido].pivot_table(
+            index="contrato", columns="mes", values="acrescimo", aggfunc="sum", dropna=False
+        )
+        bases = {
+            numero: {c.data_base.month for c in est.ciclos if c.data_base.year == escolhido}
+            for numero, est in estimativas_por_contrato.items()
+        }
+    else:
+        pivot, bases = pd.DataFrame(), {}
+    st.markdown(
+        f'<div class="rj-titulo">Mapa de {escolhido}</div><div class="rj-leg2">Acréscimo estimado por competência. Quanto mais '
+        "forte a cor, maior o valor; o contorno laranja marca o mês da data-base; traço = sem estimativa.</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(html_mapa(pivot, escolhido, bases), unsafe_allow_html=True)
 
-        if not matriz.empty:
-            anos = sorted(matriz["ano"].unique())
-            escolhido = st.selectbox(
-                "Exercício da matriz mensal", anos, index=anos.index(ano) if ano in anos else 0, key=f"rj_{source_key}_ano"
-            )
-            do_ano = matriz[matriz["ano"] == escolhido]
-            pivot = do_ano.pivot_table(index="contrato", columns="mes", values="acrescimo", aggfunc="sum", dropna=False)
-            pivot.columns = [f"{mes:02d}/{escolhido}" for mes in pivot.columns]
-            st.caption(f"Acréscimo estimado por competência em {escolhido} (vazio = sem estimativa).")
-            st.dataframe(
-                pivot, use_container_width=True,
-                column_config={coluna: st.column_config.NumberColumn(format="R$ %.2f") for coluna in pivot.columns},
-            )
-
-        numeros = [item["linha"]["contrato_numero"] for item in resultados]
-        escolhido_contrato = st.selectbox("Detalhar contrato", numeros, key=f"rj_{source_key}_contrato")
-        item = next(i for i in resultados if i["linha"]["contrato_numero"] == escolhido_contrato)
-        estimativa = item["estimativa"]
-        st.caption(_md(f"Situação: {ROTULO_SITUACAO.get(estimativa.situacao, estimativa.situacao)}."))
-        if not estimativa.matriz.empty:
+    # ---- detalhe de um contrato
+    rotulos = {
+        str(i["linha"]["contrato_numero"]): f"{i['linha']['contrato_numero']} — {i['linha'].get('fornecedor') or 'sem credor'}"
+        for i in resultados
+    }
+    escolhido_contrato = st.selectbox(
+        "Detalhar contrato", list(rotulos), format_func=lambda numero: rotulos[numero], key=f"rj_{source_key}_contrato"
+    )
+    item = next(i for i in resultados if str(i["linha"]["contrato_numero"]) == escolhido_contrato)
+    estimativa = item["estimativa"]
+    st.markdown(
+        f'<div class="rj-titulo">{escape(rotulos[escolhido_contrato])}</div>'
+        f'<div class="rj-leg2">{escape(ROTULO_SITUACAO.get(estimativa.situacao, estimativa.situacao))}. Ciclos de reajuste e o '
+        "efeito mês a mês: a base é o liquidado por competência; nos meses futuros, o valor contratado (teto).</div>"
+        + html_ciclos(estimativa.ciclos) + html_grafico_mensal(estimativa.matriz, escolhido),
+        unsafe_allow_html=True,
+    )
+    retroativo = resumo.set_index("Contrato").loc[item["linha"]["contrato_numero"], "Retroativo no gov (contrato inteiro)"]
+    if not pd.isna(retroativo):
+        st.markdown(
+            f'<div class="rj-nota">Retroativo no gov (contrato inteiro): {formatar_brl(retroativo)} — só referência, não '
+            "comparável à parcela da 20RK.</div>",
+            unsafe_allow_html=True,
+        )
+    if not estimativa.matriz.empty:
+        with st.expander("Ver tabela detalhada das competências", expanded=False):
             detalhe = estimativa.matriz[[
                 "competencia", "exercicio_anterior", "base_valor", "base_origem", "ciclo", "estado_ciclo", "percentual",
                 "percentual_origem", "acrescimo_formalizado", "acrescimo_projetado", "acrescimo", "prorrogacao_prevista",
@@ -345,26 +405,39 @@ def render_estimativa_reajuste(
                 },
             )
 
-        registro = next((r for r in registros if str(r.get("id")) == str(item["linha"].get("id"))), None)
-        acoes = st.columns(2)
-        if registro is not None and acoes[0].button("Configurar reajuste", key=f"rj_{source_key}_config"):
-            _dialogo_configurar(registro, ano, f"rj_{source_key}_dlg")
-        aditivos = list(item["linha"].get("aditivos") or [])
-        proposto = aditivo_previsto_do_ciclo(estimativa, aditivos, item["linha"].get("despesa_mensal"))
-        if registro is not None and proposto is not None and acoes[1].button(
-            f"Registrar aditivo previsto ({proposto.data_inicio:%d/%m/%Y})", key=f"rj_{source_key}_promover"
-        ):
-            novos = [*aditivos, proposto]
-            erros = validar_aditivos(aditivos_do_registro([aditivo_para_registro(a) for a in novos]))
-            if erros:
-                st.error(_md(" ".join(erros)))
-            else:
-                atualizado = dict(registro)
-                atualizado["aditivos"] = [aditivo_para_registro(a) for a in novos]
-                atualizar_contrato(ano, atualizado)
-                st.rerun()
+    registro = next((r for r in registros if str(r.get("id")) == str(item["linha"].get("id"))), None)
+    acoes = st.columns(2)
+    if registro is not None and acoes[0].button("Configurar reajuste", key=f"rj_{source_key}_config"):
+        _dialogo_configurar(registro, ano, f"rj_{source_key}_dlg")
+    aditivos = list(item["linha"].get("aditivos") or [])
+    proposto = aditivo_previsto_do_ciclo(estimativa, aditivos, item["linha"].get("despesa_mensal"))
+    if registro is not None and proposto is not None and acoes[1].button(
+        f"Registrar aditivo previsto ({proposto.data_inicio:%d/%m/%Y})", key=f"rj_{source_key}_promover"
+    ):
+        novos = [*aditivos, proposto]
+        erros = validar_aditivos(aditivos_do_registro([aditivo_para_registro(a) for a in novos]))
+        if erros:
+            st.error(_md(" ".join(erros)))
+        else:
+            atualizado = dict(registro)
+            atualizado["aditivos"] = [aditivo_para_registro(a) for a in novos]
+            atualizar_contrato(ano, atualizado)
+            st.rerun()
 
-        st.download_button(
-            "Baixar estimativa (Excel)", _excel(resumo, matriz), file_name=f"estimativa_reajuste_{ano}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"rj_{source_key}_excel",
+    # ---- tabela completa (todas as colunas, para conferir os números)
+    with st.expander("Tabela completa por contrato", expanded=False):
+        moedas = [
+            f"Formalizado a confirmar {ano}", f"Projetado {ano}", f"Acréscimo {ano}", "Exercícios anteriores",
+            "Acréscimo na vigência", "Retroativo no gov (contrato inteiro)",
+        ]
+        st.dataframe(
+            resumo, hide_index=True, use_container_width=True,
+            column_config={
+                "Data-base": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                **{coluna: st.column_config.NumberColumn(format="R$ %.2f") for coluna in moedas},
+            },
         )
+    st.download_button(
+        "Baixar estimativa (Excel)", _excel(resumo, matriz), file_name=f"estimativa_reajuste_{ano}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"rj_{source_key}_excel",
+    )

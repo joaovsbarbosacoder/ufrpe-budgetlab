@@ -111,6 +111,8 @@ page = st.navigation(
                 title="Contratos Contínuos",
                 icon="🤝",
             ),
+            # Reajuste estimado (12/10/2026): antes uma seção de Contratos Contínuos, agora página própria.
+            st.Page("app_pages/reajuste_estimado.py", title="Reajuste estimado", icon="📈"),
         ],
         # Acompanhamento de TEDs — 6 páginas (layout adaptado de um handoff de design, ver
         # docstring de cada app_pages/teds_*.py): drill-down do detalhe do TED acontece dentro

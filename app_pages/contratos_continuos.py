@@ -273,11 +273,9 @@ from src.ui_cadastro import (
 )
 from src.ui_cadastro import css as css_cadastro
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
-from src.estimativa_reajuste import termos_do_gov
 from src.pendencias_conciliacao import contratos_ligados
 from src.ui_conciliacao_competencia import render_conciliacao_competencia, render_visao_consolidada
 from src.ui_faturas import render_faturas_do_contrato
-from src.ui_reajuste import render_estimativa_reajuste
 from src.linha_tempo_vigencias import linha_do_contrato
 from src.ui_linha_tempo_vigencias import render_linha_tempo_do_contrato
 from src.ui_theme import render_page_header
@@ -2057,16 +2055,10 @@ dataframe = tabela_contratos(
 # vigência e aditivos sem registro. Complemento opcional, em memória — ver `com_contratosgov`.
 termos_gov = None
 faturas_gov = None
-_inicio_por_gov: dict = {}
-_vigencias_por_gov: dict = {}
 _empenhos_gov = None
 _gov = _carregar_gov(_referencia_gov())
 if _gov is not None:
     _contratos_gov, termos_gov, _empenhos_gov, faturas_gov = _gov
-    _inicio_por_gov = dict(zip(_contratos_gov["contrato_id"].astype(str), _contratos_gov["vigencia_inicio"]))
-    # reajustes formalizados (termo aditivo com REAJUSTE) e apostilamentos retroativos de cada contrato do gov:
-    # base dos ciclos da estimativa de reajuste (regras v2, src/estimativa_reajuste.py)
-    _vigencias_por_gov = termos_do_gov(termos_gov)
     dataframe = com_contratosgov(dataframe, _contratos_gov, termos_gov, _empenhos_gov)
     _candidatos_gov, _em_duvida_gov = candidatos_novos(dataframe, _contratos_gov, _empenhos_gov)
     _render_novos_contratosgov(_candidatos_gov, _em_duvida_gov, ano_selecionado, source_key)
@@ -2185,12 +2177,7 @@ if faturas_gov is not None and _empenhos_gov is not None:
             ].itertuples(index=False)
         },
     )
-# Estimativa de reajuste por competência (11/10/2026): cenário separado, só lê os contratos do exercício.
-render_estimativa_reajuste(
-    filtrado, registros, [r for _ano in anos_disponiveis() for r in carregar_contratos(_ano)], ano_selecionado,
-    liquidacao_competencia_por_mes, _inicio_por_gov, source_key, _referencia_gov(),
-    _vigencias_por_gov, _empenhos_gov,
-)
+# A estimativa de reajuste (11/10/2026) virou a página própria "Reajuste estimado" (12/10/2026), no mesmo grupo.
 if indice_liquidado_competencia is not None:
     _render_empenhado_liquidado(
         filtrado, indice_liquidado_competencia, source_key, meses_liquidados_por_ne, via_competencia=True

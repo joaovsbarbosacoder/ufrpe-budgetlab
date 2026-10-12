@@ -1,25 +1,24 @@
-"""Testes da seção "Estimativa de reajuste" em Contratos Contínuos (11/10/2026).
+"""Testes da página "Reajuste estimado" (11/10/2026; página própria e repaginada em 12/10/2026).
 
-Mesmo ambiente de `tests/test_contratos_continuos_gov_page.py`: cadastro e fotografia do Contratos.gov em
-`tmp_path`, data de referência fixa; nada é gravado em `data/` e nenhuma chamada de rede é feita (nenhum
-contrato usa índice oficial). Os cálculos têm teste próprio em `tests/test_estimativa_reajuste.py`; aqui só a
-integração da tela. Limitação do AppTest: só a primeira execução de um `@st.dialog` é alcançável.
+Mesmo ambiente de `tests/test_contratos_continuos_gov_page.py`: cadastro e fotografia do Contratos.gov em `tmp_path`,
+data de referência fixa; nada é gravado em `data/` e nenhuma chamada de rede é feita (nenhum contrato usa índice oficial).
+Os cálculos têm teste próprio em `tests/test_estimativa_reajuste.py` e o HTML em `tests/test_ui_reajuste_visual.py`; aqui só
+a integração da tela. Limitação do AppTest: só a primeira execução de um `@st.dialog` é alcançável.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
+from streamlit.testing.v1 import AppTest
 
 import src.contratos_continuos_cadastro as cadastro
-from tests.test_contratos_continuos_gov_page import (
-    FIXTURE,
-    MANIFESTO_EXECUCAO,
-    _abrir,
-    _ambiente,
-    aquecer_pagina,
-    PAGINA,
-)
+from tests._apptest import TEMPO_LIMITE_APPTEST, aquecer_pagina
+from tests.test_contratos_continuos_gov_page import FIXTURE, MANIFESTO_EXECUCAO, REF, _ambiente
+
+PAGINA_REAJUSTE = str(Path(__file__).resolve().parents[1] / "app_pages" / "reajuste_estimado.py")
 
 pytestmark = pytest.mark.skipif(
     not (FIXTURE.exists() and MANIFESTO_EXECUCAO.exists()),
@@ -29,21 +28,33 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module", autouse=True)
 def _aquecer():
-    aquecer_pagina(PAGINA)
+    aquecer_pagina(PAGINA_REAJUSTE)
+
+
+def _abrir() -> AppTest:
+    app = AppTest.from_file(PAGINA_REAJUSTE, default_timeout=TEMPO_LIMITE_APPTEST)
+    app.session_state["contratos_referencia"] = REF
+    app.run()
+    assert not app.exception, [e.value for e in app.exception]
+    return app
+
+
+def _html(app: AppTest) -> str:
+    return " ".join(m.value for m in app.markdown)
 
 
 def _tabela_resumo(app):
     return next(d.value for d in app.dataframe if "Competências sem estimativa" in d.value.columns)
 
 
-def test_secao_lista_cada_contrato_e_usa_o_percentual_manual(tmp_path, monkeypatch) -> None:
+def test_pagina_lista_cada_contrato_e_usa_o_percentual_manual(tmp_path, monkeypatch) -> None:
     _ambiente(tmp_path, monkeypatch, com_fotografia=True)
     registro = next(r for r in cadastro.carregar_contratos(2026) if r["contrato_numero"] == "13/2026")
     cadastro.atualizar_contrato(2026, {**registro, "reajuste_percentual_manual": 5.0})
 
     app = _abrir()
 
-    assert any(e.label.startswith("Estimativa de reajuste") for e in app.expander)
+    assert "Reajuste estimado em 2026" in _html(app)
     resumo = _tabela_resumo(app).set_index("Contrato")
     assert {"13/2026", "29/2021", "99/2026", "18/2014"} <= set(resumo.index)
     # 13/2026: ligado ao gov (início 10/09/2026, fim 10/09/2027) → data-base 10/09/2027, 5% manual. O único
@@ -60,6 +71,17 @@ def test_secao_lista_cada_contrato_e_usa_o_percentual_manual(tmp_path, monkeypat
     # contratos encerrados no cadastro: sem ciclo na vigência, e sem valor (não R$ 0,00)
     assert resumo.loc["29/2021", "Situação"].startswith("Sem reajuste previsto")
     assert pd.isna(resumo.loc["29/2021", "Acréscimo na vigência"])
+
+
+def test_lista_mostra_numero_com_o_nome_do_credor_e_contrato_sem_estimativa_visivel(tmp_path, monkeypatch) -> None:
+    _ambiente(tmp_path, monkeypatch, com_fotografia=True)
+
+    html = _html(_abrir())
+
+    assert "<b>13/2026</b>" in html and "PRIME CONSULTORIA" in html  # só o número, acompanhado do nome do credor
+    assert "<b>99/2026</b>" in html and "SEM PAR LTDA" in html
+    assert "Sem estimativa" in html and "falta a data-base" in html  # 99/2026 não some: aparece com o motivo
+    assert "Quem mais pesa em 2026" in html and "Mapa de 2026" in html
 
 
 def test_sem_configuracao_o_indice_padrao_e_o_ipca_oficial(tmp_path, monkeypatch) -> None:
@@ -83,8 +105,9 @@ def test_resumo_separa_formalizado_projetado_e_exercicios_anteriores(tmp_path, m
                    "Retroativo no gov (contrato inteiro)", "Estado do ciclo"):
         assert coluna in resumo.columns, coluna
     assert resumo.set_index("Contrato").loc["13/2026", "Estado do ciclo"] == "Projetado"  # sem reajuste no gov
-    metricas = {m.label for m in app.metric}
-    assert {"Formalizado a confirmar (2026)", "Projetado (2026)", "Exercícios anteriores"} <= metricas
+    html = _html(app)
+    for rotulo in ("Formalizado a confirmar", "Projetado", "Exercícios anteriores", "Sem estimativa"):
+        assert rotulo in html, rotulo
 
 
 def test_configuracao_vazia_nao_inventa_percentual(tmp_path, monkeypatch) -> None:
@@ -94,12 +117,11 @@ def test_configuracao_vazia_nao_inventa_percentual(tmp_path, monkeypatch) -> Non
 
     resumo = _tabela_resumo(app)
     assert resumo["Percentual (%)"].isna().all()  # sem índice nem manual: nulo, nunca 0%
-    metricas = {m.label: m.value for m in app.metric}
-    # nenhum contrato tem valor: traço, nunca "R$ 0,00"
-    assert metricas["Formalizado a confirmar (2026)"] == "—"
-    assert metricas["Projetado (2026)"] == "—"
-    assert metricas["Exercícios anteriores"] == "—"
-    assert metricas["Contratos sem estimativa"] == str(len(resumo))  # todos sem data-base
+    html = _html(app)
+    # nenhum contrato tem valor: o destaque mostra traço, nunca "R$ 0"
+    destaque = html[html.index("Reajuste estimado em 2026"):][:1500]
+    assert "R$ 0" not in destaque
+    assert f"{len(resumo)} contratos" in destaque  # todos sem data-base
     assert not app.exception
 
 
