@@ -2177,6 +2177,13 @@ if faturas_gov is not None and _empenhos_gov is not None:
     render_visao_consolidada(
         contratos_ligados(dataframe, faturas_gov[1]), faturas_gov[0], _empenhos_gov, liquidacao_competencia_por_mes,
         f"cc_{source_key}",
+        # credor de cada contrato = o fornecedor do cadastro de Contínuos (primeiro não vazio por número de contrato)
+        credores={
+            str(numero): nome
+            for numero, nome in dataframe.dropna(subset=["fornecedor"]).drop_duplicates("contrato_numero")[
+                ["contrato_numero", "fornecedor"]
+            ].itertuples(index=False)
+        },
     )
 # Estimativa de reajuste por competência (11/10/2026): cenário separado, só lê os contratos do exercício.
 render_estimativa_reajuste(

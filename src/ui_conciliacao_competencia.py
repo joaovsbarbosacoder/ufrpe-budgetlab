@@ -82,6 +82,7 @@ CSS = f"""
 .cmp-risco {{ text-decoration:line-through; opacity:.75; }}
 .cmp-alerta {{ background:{SURFACE_ALT} !important; border-radius:6px; padding:1px 7px; color:{WARNING} !important; font-weight:600; }}
 .cmp-ok {{ color:{POSITIVE} !important; font-weight:600; }}
+.cmp-credor {{ color:{TEXT_MUTED} !important; font-size:11px; font-weight:400; }}
 .cmp-mes.cmp-conf {{ border-left:4px solid {POSITIVE}; padding-left:8px; background:rgba(10,143,61,.07) !important; }}
 .cmp-mes.cmp-rej {{ border-left:4px solid {NEGATIVE}; padding-left:8px; }}
 .cmp-decisao {{ margin:4px 0 2px 200px; font-size:12px; font-weight:600; }}
@@ -136,6 +137,15 @@ def _compacto(valor: float | None) -> str:
     return texto.replace(".", ",")
 
 
+def _credor_html(linha: dict) -> str:
+    """Nome do credor (do cadastro de Contínuos) logo abaixo do número do contrato; sem credor, nada."""
+
+    credor = linha.get("credor")
+    if credor is None or (isinstance(credor, float) and pd.isna(credor)) or not str(credor).strip():
+        return ""
+    return f'<br><span class="cmp-credor">{escape(str(credor).strip())}</span>'
+
+
 def html_consolidada(linhas: list[dict]) -> str:
     """Matriz contratos × 12 meses: o valor do relatório (ou, se só há nota, o da nota, em itálico) com a cor da classe do
     mês; o título de cada célula traz os valores exatos e a causa. Linha final com os totais por mês. Textos escapados."""
@@ -162,7 +172,7 @@ def html_consolidada(linhas: list[dict]) -> str:
                 texto += "*"
             celulas.append(f'<td class="c k-{classe}" title="{escape(titulo)}">{texto}</td>')
         corpo.append(
-            f"<tr><td><b>{escape(linha['contrato'])}</b></td>{''.join(celulas)}"
+            f"<tr><td><b>{escape(linha['contrato'])}</b>{_credor_html(linha)}</td>{''.join(celulas)}"
             f"<td><b>{_compacto(linha['total_relatorio'])}</b></td>"
             f"<td>{_compacto(linha.get('total_notas_ajustado', linha['total_notas']))}</td></tr>"
         )
@@ -192,12 +202,17 @@ def html_legenda_consolidada() -> str:
 
 def render_visao_consolidada(
     ligados: list, faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None, relatorio: pd.DataFrame | None, chave: str,
+    credores: dict | None = None,
 ) -> None:
-    """Expansor "todos os contratos": seletor de exercício e matriz calculada sob demanda (leva alguns segundos)."""
+    """Expansor "todos os contratos": seletor de exercício e matriz calculada sob demanda (leva alguns segundos), com o
+    credor de cada contrato (`credores`: número do contrato → nome, do cadastro de Contínuos) e a exportação em PDF/Excel."""
+
+    from datetime import datetime
 
     from src.pendencias_conciliacao import consolidar_exercicio
+    from src.relatorio_conciliacao_consolidada import gerar_pdf, gerar_xlsx
 
-    with st.expander("Liquidação por competência — todos os contratos", expanded=False):
+    with st.expander("Conciliação por competência — todos os contratos", expanded=False):
         if relatorio is None or relatorio.empty:
             st.caption("Sem a base de Liquidação por Competência, não há o que mostrar.")
             return
@@ -214,11 +229,23 @@ def render_visao_consolidada(
                 linhas = consolidar_exercicio(ligados, faturas, empenhos_gov, relatorio, int(ano))
             for linha in linhas:
                 linha["ano"] = int(ano)
-            st.session_state[estado] = (assinatura, linhas)
+                linha["credor"] = (credores or {}).get(linha["contrato"])
+            st.session_state[estado] = (assinatura, linhas, datetime.now().strftime("%d/%m/%Y %H:%M"))
         guardado = st.session_state.get(estado)
         if guardado and guardado[0] == assinatura:
             st.markdown(CSS, unsafe_allow_html=True)
             st.markdown(html_legenda_consolidada() + html_consolidada(guardado[1]), unsafe_allow_html=True)
+            nome = f"conciliacao_competencia_{int(ano)}_{guardado[2][:10].replace('/', '-')}"
+            c_pdf, c_xlsx = st.columns(2)
+            c_pdf.download_button(
+                "Baixar PDF", data=lambda: gerar_pdf(guardado[1], int(ano), guardado[2]), file_name=f"{nome}.pdf",
+                mime="application/pdf", key=f"{chave}_cons_pdf", use_container_width=True,
+            )
+            c_xlsx.download_button(
+                "Baixar Excel", data=lambda: gerar_xlsx(guardado[1], int(ano), guardado[2]), file_name=f"{nome}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"{chave}_cons_xlsx",
+                use_container_width=True,
+            )
 
 
 def _cb_registrar(
