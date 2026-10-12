@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reajuste estimado — maquete repaginada</title>
+<style>
+  :root{--bg:#F5F8FC;--surface:#fff;--alt:#F0F5FA;--border:#D3DFEC;--text:#07133D;--muted:#526584;--faint:#7C8DA8;
+    --accent:#0969DA;--accent-soft:rgba(9,105,218,.10);--pos:#0A8F3D;--pos-soft:rgba(10,143,61,.11);
+    --warn:#C96A00;--warn-soft:rgba(201,106,0,.12);--neg:#D20A16;--neg-soft:rgba(210,10,22,.09);}
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 "Segoe UI",system-ui,sans-serif;padding:24px}
+  .wrap{max-width:1080px;margin:0 auto} h1{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 4px}
+  .aviso{background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:8px 12px;font-size:12px;margin-bottom:16px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:16px}
+  .hero{display:grid;grid-template-columns:1.2fr 2fr;gap:20px;align-items:center}
+  .hero .rot{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+  .hero .valor{font-size:34px;font-weight:700;color:var(--warn);font-variant-numeric:tabular-nums}
+  .hero .sub{font-size:12px;color:var(--faint)}
+  .tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .tile{background:var(--alt);border-radius:10px;padding:10px 12px}
+  .tile .t{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .tile .v{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}
+  .tile .d{font-size:11px;color:var(--faint)}
+  .tile.alerta{background:var(--neg-soft)} .tile.alerta .v{color:var(--neg)}
+  .barra-total{display:flex;height:10px;border-radius:6px;overflow:hidden;margin-top:12px;background:var(--alt)}
+  .f{background:var(--accent)} .p{background:#8CC7FF} .a{background:#B79AE0}
+  .leg{display:flex;gap:14px;font-size:11px;color:var(--muted);margin-top:6px}.leg i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px}
+  h2{font-size:15px;margin:0 0 2px} .leg2{font-size:12px;color:var(--faint);margin-bottom:12px}
+  .linha{display:grid;grid-template-columns:2.2fr 1.1fr 1.6fr 1fr;gap:14px;align-items:center;padding:10px 0;border-top:1px solid var(--border)}
+  .linha:first-of-type{border-top:0}
+  .nome b{display:block} .nome span{font-size:12px;color:var(--muted)}
+  .pill{display:inline-block;border-radius:999px;padding:1px 9px;font-size:11px;font-weight:600}
+  .pill.f{background:var(--accent-soft);color:var(--accent)} .pill.p{background:var(--warn-soft);color:var(--warn)} .pill.r{background:var(--pos-soft);color:var(--pos)} .pill.n{background:var(--neg-soft);color:var(--neg)}
+  .base{font-size:12px;color:var(--muted)} .base b{color:var(--text);font-size:13px}
+  .mini{display:flex;height:8px;border-radius:5px;overflow:hidden;background:var(--alt);margin-top:4px}
+  .num{text-align:right;font-weight:700;font-variant-numeric:tabular-nums} .num small{display:block;font-weight:400;color:var(--faint);font-size:11px}
+  .mais{text-align:center;margin-top:10px}.btn{display:inline-block;border:1px solid var(--border);border-radius:8px;padding:6px 14px;font-size:13px;background:#fff}
+  table.heat{border-collapse:separate;border-spacing:3px;width:100%;font-size:11.5px}
+  .heat th{color:var(--faint);font-weight:600;text-transform:uppercase;font-size:10.5px;text-align:center}
+  .heat td{text-align:center;border-radius:5px;padding:5px 2px;font-variant-numeric:tabular-nums}
+  .heat td.c{text-align:left;font-weight:600;font-size:12px;padding-left:2px;white-space:nowrap}
+  .h0{background:var(--alt);color:var(--faint)} .h1{background:rgba(9,105,218,.12)} .h2{background:rgba(9,105,218,.24)} .h3{background:rgba(9,105,218,.40);color:#fff}
+  .base-ok{outline:2px solid var(--warn);outline-offset:-2px}
+  .tl{display:flex;align-items:center;gap:0;margin:8px 0 14px}
+  .no{flex:1;position:relative;text-align:center;padding-top:20px;font-size:12px}
+  .no:before{content:"";position:absolute;top:6px;left:0;right:0;height:3px;background:var(--border)}
+  .no .pt{position:absolute;top:0;left:50%;margin-left:-7px;width:14px;height:14px;border-radius:50%;background:#fff;border:3px solid var(--accent)}
+  .no.formalizado .pt{background:var(--accent)} .no.projetado .pt{border-color:var(--warn)} .no.registrado .pt{border-color:var(--pos);background:var(--pos)}
+  .no b{display:block}.no span{color:var(--muted)}
+  .grafico{display:flex;align-items:flex-end;gap:6px;height:110px;margin:6px 0 4px;border-bottom:1px solid var(--border)}
+  .col{flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%}
+  .col .b{width:100%;background:var(--alt);border-radius:4px 4px 0 0}
+  .col .ac{width:100%} .col .ac.f{background:var(--accent)} .col .ac.p{background:#8CC7FF}
+  .meses{display:flex;gap:6px;font-size:10.5px;color:var(--faint);text-align:center}.meses div{flex:1}
+  .acoes{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+  .btn.p{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .nota{font-size:12px;color:var(--muted);background:var(--alt);border-radius:8px;padding:8px 12px;margin-top:10px}
+  @media(max-width:820px){.hero{grid-template-columns:1fr}.tiles{grid-template-columns:1fr 1fr}.linha{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body><div class="wrap">
+<div class="aviso"><b>Maquete.</b> Valores e nomes ilustrativos, só para ver o desenho. Na versão real vêm do cadastro, do Contratos.gov e do índice (IPCA).</div>
+
+<h1>Contratos Contínuos · 2026</h1>
+
+<div class="card hero">
+  <div>
+    <div class="rot">Reajuste estimado em 2026</div>
+    <div class="valor">R$ 1.386.420</div>
+    <div class="sub">se confirmados todos os ciclos previstos na vigência dos contratos de 2026</div>
+  </div>
+  <div>
+    <div class="tiles">
+      <div class="tile"><div class="t">Formalizado a confirmar</div><div class="v">R$ 612.300</div><div class="d">assinado no gov, ainda sem valor no cadastro</div></div>
+      <div class="tile"><div class="t">Projetado</div><div class="v">R$ 774.120</div><div class="d">próximos aniversários</div></div>
+      <div class="tile"><div class="t">Exercícios anteriores</div><div class="v">R$ 98.750</div><div class="d">retroativo, fora do total</div></div>
+      <div class="tile alerta"><div class="t">Sem estimativa</div><div class="v">4 contratos</div><div class="d">falta índice ou data-base</div></div>
+    </div>
+    <div class="barra-total"><div class="f" style="width:44%"></div><div class="p" style="width:56%"></div></div>
+    <div class="leg"><span><i class="f"></i>Formalizado 44%</span><span><i class="p"></i>Projetado 56%</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Quem mais pesa em 2026</h2>
+  <div class="leg2">Contratos ordenados pelo acréscimo estimado no exercício.</div>
+  <div class="linha">
+    <div class="nome"><b>Contrato 14/2022</b><span>Inteligência Segurança Privada Ltda</span></div>
+    <div><span class="pill f">Formalizado</span><div class="base">data-base <b>01/09/2026</b></div></div>
+    <div class="base"><b>4,26 %</b> · IPCA 12 meses<div class="mini"><div class="f" style="width:100%"></div></div></div>
+    <div class="num">R$ 318.400<small>formalizado a confirmar</small></div>
+  </div>
+  <div class="linha">
+    <div class="nome"><b>Contrato 02/2026</b><span>SOLL — Serviços, Obras e Locações Ltda</span></div>
+    <div><span class="pill p">Projetado</span><div class="base">data-base <b>15/11/2026</b></div></div>
+    <div class="base"><b>4,26 %</b> · IPCA 12 meses<div class="mini"><div class="p" style="width:70%"></div></div></div>
+    <div class="num">R$ 204.900<small>projetado</small></div>
+  </div>
+  <div class="linha">
+    <div class="nome"><b>Contrato 14/2025</b><span>Serval Serviços e Limpeza Ltda</span></div>
+    <div><span class="pill f">Formalizado</span> <span class="pill p">+ projetado</span><div class="base">data-base <b>01/06/2026</b></div></div>
+    <div class="base"><b>3,90 %</b> · manual<div class="mini"><div class="f" style="width:38%"></div><div class="p" style="width:30%"></div></div></div>
+    <div class="num">R$ 176.050<small>2 ciclos no exercício</small></div>
+  </div>
+  <div class="linha">
+    <div class="nome"><b>Contrato 07/2026</b><span>TARGET Engenharia e Consultoria Ltda</span></div>
+    <div><span class="pill r">Registrado</span><div class="base">já no cadastro</div></div>
+    <div class="base">sem acréscimo a confirmar</div>
+    <div class="num">—<small>nada a estimar</small></div>
+  </div>
+  <div class="linha">
+    <div class="nome"><b>Contrato 21/2024</b><span>Brascon Gestão Ambiental Ltda</span></div>
+    <div><span class="pill n">Sem estimativa</span></div>
+    <div class="base">falta a data-base do contrato</div>
+    <div class="num">—<small>configurar reajuste</small></div>
+  </div>
+  <div class="mais"><span class="btn">Ver mais (36)</span></div>
+</div>
+
+<div class="card">
+  <h2>Mapa do ano</h2>
+  <div class="leg2">Acréscimo estimado por competência. Quanto mais forte a cor, maior o valor; o contorno laranja marca o mês da data-base.</div>
+  <table class="heat"><thead><tr><th></th><th>Jan</th><th>Fev</th><th>Mar</th><th>Abr</th><th>Mai</th><th>Jun</th><th>Jul</th><th>Ago</th><th>Set</th><th>Out</th><th>Nov</th><th>Dez</th></tr></thead><tbody>
+   <tr><td class="c">14/2022</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h3 base-ok">79 mil</td><td class="h3">79 mil</td><td class="h3">79 mil</td><td class="h3">79 mil</td></tr>
+   <tr><td class="c">02/2026</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h2 base-ok">102 mil</td><td class="h2">102 mil</td></tr>
+   <tr><td class="c">14/2025</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h2 base-ok">25 mil</td><td class="h2">25 mil</td><td class="h2">25 mil</td><td class="h2">25 mil</td><td class="h2">25 mil</td><td class="h2">25 mil</td><td class="h2">25 mil</td></tr>
+   <tr><td class="c">07/2026</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td><td class="h0">—</td></tr>
+  </tbody></table>
+</div>
+
+<div class="card">
+  <h2>Contrato 14/2022 — Inteligência Segurança Privada Ltda</h2>
+  <div class="leg2">Ciclos de reajuste e o efeito mês a mês. A base é o liquidado por competência; nos meses futuros, o valor contratado (teto).</div>
+  <div class="tl">
+    <div class="no registrado"><span class="pt"></span><b>01/09/2024</b><span>2,9 % · registrado</span></div>
+    <div class="no registrado"><span class="pt"></span><b>01/09/2025</b><span>5,1 % · registrado</span></div>
+    <div class="no formalizado"><span class="pt"></span><b>01/09/2026</b><span>4,26 % · formalizado</span></div>
+    <div class="no projetado"><span class="pt"></span><b>01/09/2027</b><span>projetado</span></div>
+  </div>
+  <div class="grafico">
+    <div class="col"><div class="b" style="height:70%"></div></div><div class="col"><div class="b" style="height:70%"></div></div>
+    <div class="col"><div class="b" style="height:70%"></div></div><div class="col"><div class="b" style="height:70%"></div></div>
+    <div class="col"><div class="b" style="height:70%"></div></div><div class="col"><div class="b" style="height:70%"></div></div>
+    <div class="col"><div class="b" style="height:70%"></div></div><div class="col"><div class="b" style="height:70%"></div></div>
+    <div class="col"><div class="b" style="height:70%"></div><div class="ac f" style="height:14%"></div></div>
+    <div class="col"><div class="b" style="height:70%"></div><div class="ac f" style="height:14%"></div></div>
+    <div class="col"><div class="b" style="height:70%"></div><div class="ac f" style="height:14%"></div></div>
+    <div class="col"><div class="b" style="height:70%"></div><div class="ac f" style="height:14%"></div></div>
+  </div>
+  <div class="meses"><div>jan</div><div>fev</div><div>mar</div><div>abr</div><div>mai</div><div>jun</div><div>jul</div><div>ago</div><div>set</div><div>out</div><div>nov</div><div>dez</div></div>
+  <div class="leg"><span><i style="background:var(--alt);border:1px solid var(--border)"></i>base do mês</span><span><i class="f"></i>acréscimo formalizado</span><span><i class="p"></i>acréscimo projetado</span></div>
+  <div class="nota">Retroativo no gov (contrato inteiro): R$ 412.000 — só referência, não comparável à parcela da 20RK.</div>
+  <div class="acoes"><span class="btn">Configurar reajuste</span><span class="btn p">Registrar aditivo previsto (01/09/2026)</span><span class="btn">Ver tabela detalhada ▾</span><span class="btn">Baixar Excel</span></div>
+</div>
+</div></body></html>

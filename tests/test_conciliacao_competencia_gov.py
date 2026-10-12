@@ -560,5 +560,5 @@ def test_janela_editar_mostra_o_seletor_de_exercicio_e_os_meses(tmp_path, monkey
     assert "Pendências do exercício" in " ".join(m.value for m in app.markdown)  # painel de pendências
     assert any(c.label.startswith("Mostrar só os meses com pendência") for c in app.checkbox)
     assert any(e.label.startswith("Totais por NE × Execução Mensal") for e in app.expander)  # confronto com a Execução Mensal
-    assert any(e.label.startswith("Liquidação por competência — todos os contratos") for e in app.expander)  # visão consolidada
+    assert any(e.label.startswith("Conciliação por competência — todos os contratos") for e in app.expander)  # visão consolidada
     assert any(b.label == "Calcular a visão consolidada" for b in app.button)
