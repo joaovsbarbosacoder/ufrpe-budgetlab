@@ -82,8 +82,13 @@ CSS = f"""
 .cmp-risco {{ text-decoration:line-through; opacity:.75; }}
 .cmp-alerta {{ background:{SURFACE_ALT} !important; border-radius:6px; padding:1px 7px; color:{WARNING} !important; font-weight:600; }}
 .cmp-ok {{ color:{POSITIVE} !important; font-weight:600; }}
+.cmp-mes.cmp-conf {{ border-left:4px solid {POSITIVE}; padding-left:8px; background:rgba(10,143,61,.07) !important; }}
+.cmp-mes.cmp-rej {{ border-left:4px solid {NEGATIVE}; padding-left:8px; }}
+.cmp-decisao {{ margin:4px 0 2px 200px; font-size:12px; font-weight:600; }}
+.cmp-decisao.conf {{ color:{POSITIVE} !important; }}
+.cmp-decisao.rej {{ color:{NEGATIVE} !important; }}
 .cmp-dif {{ color:{NEGATIVE} !important; font-weight:600; }}
-@media (max-width:760px) {{ .cmp-mes {{ grid-template-columns:1fr; }} .cmp-linha {{ grid-template-columns:1fr; }} .cmp-detalhe, .cmp-fora {{ margin-left:0; }} }}
+@media (max-width:760px) {{ .cmp-mes {{ grid-template-columns:1fr; }} .cmp-linha {{ grid-template-columns:1fr; }} .cmp-detalhe, .cmp-fora, .cmp-decisao {{ margin-left:0; }} }}
 </style>
 """
 
@@ -207,13 +212,23 @@ def render_visao_consolidada(
             st.markdown(html_legenda_consolidada() + html_consolidada(guardado[1]), unsafe_allow_html=True)
 
 
-def _cb_registrar(prefixo: str, contrato: str, ano_mes: int, classe: str, assinatura: str, decisao: str) -> None:
-    """`on_click` do botão Confirmar/Rejeitar: grava o evento antes do redesenho (a janela do contrato não fecha)."""
+def _cb_registrar(
+    prefixo: str, contrato: str, ano_mes: int, classe: str, assinatura: str, decisao: str, alternativas=(),
+) -> None:
+    """`on_click` do botão Confirmar/Rejeitar: grava o evento antes do redesenho (a janela do contrato não fecha).
+    `alternativas` (mês ambíguo): por NE, as combinações possíveis de notas [(nota, ne, valor), ...]; a escolhida em cada
+    seletor vira `notas_desconsideradas` — só ao CONFIRMAR."""
 
     try:
+        escolhidas = None
+        if decisao == "confirmada" and alternativas:
+            escolhidas = []
+            for k, combos in enumerate(alternativas):
+                escolhidas.extend(combos[st.session_state.get(f"{prefixo}_alt_{k}", 0)])
         registrar_decisao(
             contrato=contrato, ano_mes=ano_mes, classe=classe, assinatura=assinatura, decisao=decisao,
             justificativa=st.session_state.get(f"{prefixo}_just", ""), responsavel=st.session_state.get(f"{prefixo}_resp", ""),
+            notas_desconsideradas=escolhidas,
         )
         st.session_state[f"{prefixo}_msg"] = ""
     except ErroDecisao as erro:
@@ -231,7 +246,20 @@ def _cb_desfazer(prefixo: str, decisao_id: str) -> None:
         st.session_state[f"{prefixo}_msg"] = str(erro)
 
 
-def _render_decisao(contrato: str, completo: MesConciliado, classe_original: str, assinatura: str, decisao, chave: str) -> None:
+def _alternativas_do_mes(visto: MesConciliado, ajuste: AjusteMes | None) -> list[tuple[str, list[tuple]]]:
+    """Mês ambíguo: por NE, as combinações de notas candidatas a canceladas, como [(nota, ne, valor), ...]."""
+
+    if ajuste is None:
+        return []
+    return [
+        (ne, [tuple((visto.itens[i].nota, visto.itens[i].ne, round(visto.itens[i].valor, 2)) for i in combo) for combo in combos])
+        for ne, combos in ajuste.alternativas
+    ]
+
+
+def _render_decisao(
+    contrato: str, completo: MesConciliado, classe_original: str, assinatura: str, decisao, chave: str, alternativas=(),
+) -> None:
     """Formulário do mês: decisão ativa (com desfazer) ou Confirmar/Rejeitar a sugestão. Grava por callback."""
 
     ativa = decisao is not None and decisao.assinatura == assinatura and classe_original in CLASSES_COM_SUGESTAO
@@ -246,6 +274,11 @@ def _render_decisao(contrato: str, completo: MesConciliado, classe_original: str
                 f"Sugestão {decisao.decisao} por {decisao.responsavel} em {decisao.registrado_em[:19].replace('T', ' ')}: "
                 f"{decisao.justificativa}"
             )
+            if decisao.notas_desconsideradas:
+                st.caption(
+                    "Notas indicadas como canceladas: "
+                    + "; ".join(f"nota {n} ({_brl(v)}, NE {ne})" for n, ne, v in decisao.notas_desconsideradas)
+                )
             st.text_input("Motivo para desfazer", key=f"{prefixo}_mot")
             st.text_input("Responsável", key=f"{prefixo}_resp")
             st.button("Desfazer decisão", key=f"{prefixo}_desfazer", on_click=_cb_desfazer, args=(prefixo, decisao.id))
@@ -254,13 +287,25 @@ def _render_decisao(contrato: str, completo: MesConciliado, classe_original: str
                 f"Sugestão do sistema para {rotulo}: {CLASSES[classe_original].lower()}. Confirmar tira o mês das pendências; "
                 "rejeitar mantém a pendência. A decisão é gravada com responsável e justificativa e pode ser desfeita."
             )
+            if classe_original == "ambiguo":
+                st.caption(
+                    "Mais de uma nota fecha o valor e o sistema não escolhe. Se você sabe qual está cancelada ou repetida, "
+                    "indique-a abaixo e confirme; a escolha fica registrada e pode ser desfeita. Sem saber, rejeite."
+                )
+                for k, (ne, combos) in enumerate(alternativas):
+                    st.selectbox(
+                        f"Nota cancelada/repetida — NE {ne}", range(len(combos)), key=f"{prefixo}_alt_{k}",
+                        format_func=lambda i, combos=combos: " + ".join(f"nota {n} ({_brl(v)})" for n, _ne, v in combos[i]),
+                    )
             st.text_input("Responsável", key=f"{prefixo}_resp")
             st.text_area("Justificativa (mínimo de 10 caracteres)", key=f"{prefixo}_just", height=70)
             c1, c2 = st.columns(2)
             c1.button(
-                "Confirmar sugestão", key=f"{prefixo}_confirmar", disabled=classe_original == "ambiguo",
-                help="Mês ambíguo só pode ser rejeitado: o sistema não escolhe qual nota foi cancelada.",
-                on_click=_cb_registrar, args=(prefixo, contrato, completo.ano * 100 + completo.mes, classe_original, assinatura, "confirmada"),
+                "Confirmar sugestão", key=f"{prefixo}_confirmar", disabled=classe_original == "ambiguo" and not alternativas,
+                help="Mês ambíguo: a nota cancelada é a que você escolheu acima.",
+                on_click=_cb_registrar,
+                args=(prefixo, contrato, completo.ano * 100 + completo.mes, classe_original, assinatura, "confirmada",
+                      [c for _ne, c in alternativas]),
             )
             c2.button(
                 "Rejeitar sugestão", key=f"{prefixo}_rejeitar", on_click=_cb_registrar,
@@ -310,10 +355,12 @@ def html_causa(mes: MesConciliado, causa: Causa) -> str:
 
 def html_mes(
     mes: MesConciliado, empenhos: dict[str, EmpenhoInfo] | None = None, ajuste: AjusteMes | None = None,
-    causas: list[Causa] | None = None,
+    causas: list[Causa] | None = None, decisao=None,
 ) -> str:
     """O bloco de um mês: relatório e notas empilhados, com o detalhe por NE e o aviso do que ficou fora do filtro.
-    `empenhos` (opcional) acrescenta a ação de cada NE que não é da 20RK. Textos escapados."""
+    `empenhos` (opcional) acrescenta a ação de cada NE que não é da 20RK. `decisao` (a decisão ATIVA do mês, se houver)
+    troca a marca de diferença por "conciliado por decisão" (confirmada) ou mantém a diferença avisando que a sugestão foi
+    rejeitada, e mostra quem decidiu e por quê. Textos escapados."""
 
     rel_vazio = '<span class="cmp-valor cmp-vazio">sem registro</span>'
     if mes.relatorio is None:
@@ -344,6 +391,15 @@ def html_mes(
             marca = '<span class="cmp-alerta">sem registro no relatório de competência</span>'
         else:
             marca = ""
+        escolhidas = list(getattr(decisao, "notas_desconsideradas", ()) or ()) if decisao is not None else []
+        if decisao is not None and decisao.decisao == "confirmada" and escolhidas:
+            marca = (
+                f'<span class="cmp-ok">✓ batem, desconsiderando {len(escolhidas)} nota(s) por decisão</span> '
+                '<span class="cmp-alerta">cancelamento indicado pelo usuário</span>'
+            )
+        elif decisao is not None and decisao.decisao == "confirmada":
+            aceita = f" (diferença de {_brl(mes.diferenca)} aceita)" if mes.diferenca is not None else ""
+            marca = f'<span class="cmp-ok">✓ conciliado por decisão{aceita}</span>'
         linha_notas = (
             f'<div class="cmp-linha"><span class="cmp-fonte">Contratos.gov (notas)</span>'
             f'<span class="cmp-valor">{valor}</span><span>{marca}</span></div>'
@@ -354,8 +410,15 @@ def html_mes(
         mostrar_elemento = mes.relatorio is None
         linhas = []
         retiradas = set(ajuste.retiradas) if ajuste is not None else set()
+        # notas que o usuário indicou como canceladas: uma por escolha (nota, ne, valor), a primeira que casar
+        pendentes_escolha = [tuple(n) for n in (getattr(decisao, "notas_desconsideradas", ()) or ())] if decisao is not None else []
         for indice, item in enumerate(mes.itens):
             sufixos = []
+            chave_item = (item.nota, item.ne, round(item.valor, 2))
+            escolhida = chave_item in pendentes_escolha
+            if escolhida:
+                pendentes_escolha.remove(chave_item)
+                sufixos.append('<span class="cmp-alerta">desconsiderada por decisão</span>')
             if indice in retiradas:
                 sufixos.append('<span class="cmp-alerta">sugerida como cancelada (não somada no ajuste)</span>')
             if item.duplicada:
@@ -368,7 +431,7 @@ def html_mes(
             if mostrar_elemento or item.elemento == "92":
                 sufixos.append(_tag_elemento(item))
             texto = f"Nota {escape(item.nota)} · NE {escape(item.ne)} · {_brl(item.valor)}"
-            if indice in retiradas:
+            if indice in retiradas or escolhida:
                 texto = f'<span class="cmp-risco">{texto}</span>'
             linhas.append(f"<div>{texto}{' · ' + ' · '.join(sufixos) if sufixos else ''}</div>")
         for causa in causas or []:
@@ -396,7 +459,16 @@ def html_mes(
             f"({escape(', '.join(mes.nes_fora))})</div>"
         )
     rotulo = f'<div class="cmp-rot">{_MESES[mes.mes - 1]}/{mes.ano}</div>'
-    return f'<div class="cmp-mes">{rotulo}<div>{linha_rel}{linha_notas}{detalhe}{fora}</div></div>'
+    decidido, classe_css = "", ""
+    if decisao is not None:
+        conf = decisao.decisao == "confirmada"
+        classe_css = " cmp-conf" if conf else " cmp-rej"
+        verbo = "Sugestão confirmada" if conf else "Sugestão rejeitada (a pendência continua)"
+        decidido = (
+            f'<div class="cmp-decisao {"conf" if conf else "rej"}">{verbo} por {escape(decisao.responsavel)} em '
+            f'{escape(decisao.registrado_em[:16].replace("T", " "))}: {escape(decisao.justificativa)}</div>'
+        )
+    return f'<div class="cmp-mes{classe_css}">{rotulo}<div>{linha_rel}{linha_notas}{detalhe}{decidido}{fora}</div></div>'
 
 
 def render_conciliacao_competencia(
@@ -496,7 +568,10 @@ def render_conciliacao_competencia(
                 key=f"{chave}_cmp_{completo.ano}_{completo.mes}",
                 format_func=lambda ne: _rotulo_ne(ne, empenhos),
             )
-        bloco.markdown(html_mes(visto, empenhos, ajuste, causas), unsafe_allow_html=True)
+        bloco.markdown(
+            html_mes(visto, empenhos, ajuste, causas, decisao if classe in ("confirmada", "rejeitada") else None),
+            unsafe_allow_html=True,
+        )
         if original in CLASSES_COM_SUGESTAO or decisao is not None:
             with bloco:
-                _render_decisao(contrato, completo, original, assinatura, decisao, chave)
+                _render_decisao(contrato, completo, original, assinatura, decisao, chave, _alternativas_do_mes(visto, ajuste))

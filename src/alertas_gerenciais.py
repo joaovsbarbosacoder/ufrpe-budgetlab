@@ -102,3 +102,29 @@ def emendas_rp6_nao_executadas(dotacao: pd.DataFrame, execucao: pd.DataFrame, an
             "valor": saldo,
         }
     ]
+
+
+_MESES_ABREV = ("jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez")
+
+
+def pendencias_conciliacao_novas(novas, decisoes) -> list[dict]:
+    """Itens do alerta "Conciliação por competência — pendências novas": as pendências que APARECERAM na última
+    atualização do Contratos.gov (`novas` do baseline: {(contrato, ano_mes, classe)}), agrupadas por contrato.
+
+    Sai do alerta o que o usuário CONFIRMOU depois (decisão ativa, mesma classe do mês): entre uma atualização e outra
+    os dados não mudam, então a decisão registrada vale para a pendência listada. Rejeitada continua pendente.
+    `novas` None/vazio (sem baseline ou nada novo) = sem itens. Sem valor em R$ (`valor` = 0): a pendência é de
+    conciliação, não de risco financeiro — a página não soma nem mostra "R$ em risco" para esta categoria."""
+
+    por_contrato: dict[str, list[tuple[int, str]]] = {}
+    for contrato, ano_mes, classe in novas or ():
+        decisao = (decisoes or {}).get((contrato, int(ano_mes)))
+        if decisao is not None and decisao.decisao == "confirmada" and decisao.classe == classe:
+            continue
+        por_contrato.setdefault(contrato, []).append((int(ano_mes), classe))
+    itens = []
+    for contrato in sorted(por_contrato):
+        meses = sorted(por_contrato[contrato])
+        lista = ", ".join(f"{_MESES_ABREV[am % 100 - 1]}/{am // 100} ({classe})" for am, classe in meses)
+        itens.append({"nome": f"Contrato {contrato}", "detalhe": f"{len(meses)} pendência(s) nova(s): {lista}", "valor": 0})
+    return itens

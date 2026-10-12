@@ -271,17 +271,24 @@ def carregar_baseline(diretorio: Path | None = None) -> dict | None:
         return {
             "fotografia": bruto["fotografia"], "gerado_em": bruto["gerado_em"],
             "pendencias": {c: {(int(am), classe) for am, classe in pares} for c, pares in bruto["pendencias"].items()},
+            # delta da última atualização (baseline antigo não tinha: vem vazio)
+            "novas": {(c, int(am), classe) for c, am, classe in bruto.get("novas", [])},
+            "resolvidas": {(c, int(am), classe) for c, am, classe in bruto.get("resolvidas", [])},
         }
     except (OSError, ValueError, KeyError, TypeError) as erro:
         raise ErroBaseline(f"Não foi possível ler {caminho}: {erro}") from erro
 
 
-def salvar_baseline(pendencias: dict, fotografia: str, diretorio: Path | None = None) -> Path:
+def salvar_baseline(
+    pendencias: dict, fotografia: str, diretorio: Path | None = None, novas=(), resolvidas=(),
+) -> Path:
     caminho = _caminho(diretorio)
     caminho.parent.mkdir(parents=True, exist_ok=True)
     conteudo = {
         "versao_schema": VERSAO_SCHEMA, "fotografia": fotografia, "gerado_em": datetime.now().replace(microsecond=0).isoformat(),
         "pendencias": {c: sorted([am, classe] for am, classe in pares) for c, pares in pendencias.items()},
+        "novas": sorted([c, am, classe] for c, am, classe in novas),
+        "resolvidas": sorted([c, am, classe] for c, am, classe in resolvidas),
     }
     temporario = caminho.with_name(caminho.name + ".tmp")
     temporario.write_text(json.dumps(conteudo, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
@@ -353,7 +360,9 @@ def atualizar_apos_gravacao(fotografia: dict, referencia, diretorio: Path | None
     atual = calcular_pendencias(ligados, faturas, empenhos, relatorio, reconstruir_decisoes(carregar_eventos()))
     anterior = carregar_baseline(diretorio)
     novas, resolvidas = comparar(None if anterior is None else anterior["pendencias"], atual)
-    salvar_baseline(atual, fotografia=str(fotografia.get("_sha256", ""))[:12], diretorio=diretorio)
+    salvar_baseline(
+        atual, fotografia=str(fotografia.get("_sha256", ""))[:12], diretorio=diretorio, novas=novas, resolvidas=resolvidas
+    )
     total = sum(len(pares) for pares in atual.values())
     if anterior is None:
         return f"Conciliação por competência: primeira referência registrada ({total} pendência(s) em {len(atual)} contrato(s))."
