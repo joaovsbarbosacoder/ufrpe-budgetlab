@@ -2154,15 +2154,20 @@ _render_resumo_consolidado(
     filtrado, tempo_por_ne_curta, source_key, liquidacao_competencia_por_mes,
     meses_liquidados_por_ne, ano_selecionado, (_por_ne_topo, _sem_ne_topo), _modo_execucao,
 )
+# Relatório (PDF/Excel) acompanha a base escolhida no topo (12/10/2026): valor contratual = Relatório de Necessidade de
+# Empenho (grade mês a mês do contrato); projeção pela execução = relatório "Projeção pela execução" (grade Jan–Dez com o
+# realizado, o projetado pela execução e a necessidade pela execução ao lado da contratual). Só um dos dois por vez
+# neste bloco — em modo execução não se repete o mesmo relatório logo abaixo.
 if _modo_execucao:
     st.caption(
-        "O relatório de Necessidade de Empenho abaixo (PDF/Excel) continua pelo VALOR CONTRATUAL, com a grade mês a mês "
-        "do contrato; para o relatório pela execução use 'Projeção pela execução'."
+        "Base: projeção pela execução — o relatório abaixo (PDF/Excel) é o da Projeção pela execução, com a necessidade "
+        "pela execução ao lado da contratual. Para o relatório pelo valor contratual, volte o seletor do topo."
     )
-_render_relatorio_necessidade(
-    filtrado, meses_liquidados_por_ne, liquidacao_competencia_por_mes, source_key, ano_selecionado, busca,
-    manifesto_execucao_mensal, via_competencia=indice_liquidado_competencia is not None,
-)
+else:
+    _render_relatorio_necessidade(
+        filtrado, meses_liquidados_por_ne, liquidacao_competencia_por_mes, source_key, ano_selecionado, busca,
+        manifesto_execucao_mensal, via_competencia=indice_liquidado_competencia is not None,
+    )
 _render_relatorio_projecao_execucao(
     filtrado, liquidacao_competencia_por_mes, source_key, ano_selecionado, manifesto_execucao_mensal,
     via_competencia=indice_liquidado_competencia is not None,

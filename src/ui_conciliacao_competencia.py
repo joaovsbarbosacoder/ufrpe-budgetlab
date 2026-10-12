@@ -145,7 +145,9 @@ def html_consolidada(linhas: list[dict]) -> str:
     for linha in linhas:
         celulas = []
         for i, mes in enumerate(linha["meses"]):
-            rel, notas, classe = mes["relatorio"], mes["notas"], mes["classe"]
+            rel, bruto, classe = mes["relatorio"], mes["notas"], mes["classe"]
+            ajustado = mes.get("notas_ajustadas")
+            notas = ajustado if ajustado is not None else bruto  # decisão confirmada: sem as notas indicadas como canceladas
             if rel is not None:
                 tot_rel[i] = (tot_rel[i] or 0.0) + rel
             if notas is not None:
@@ -153,12 +155,16 @@ def html_consolidada(linhas: list[dict]) -> str:
             texto = _compacto(rel) if rel is not None else (f"<i>{_compacto(notas)}</i>" if notas is not None else "—")
             titulo = (
                 f"{_MESES[i]}/{linha.get('ano', '')}: {CLASSES[classe]} · relatório "
-                f"{'sem registro' if rel is None else formatar_brl(rel)} · notas {'sem registro' if notas is None else formatar_brl(notas)}"
+                f"{'sem registro' if rel is None else formatar_brl(rel)} · notas {'sem registro' if bruto is None else formatar_brl(bruto)}"
+                + (f" (ajustado por decisão: {formatar_brl(ajustado)})" if ajustado is not None else "")
             )
+            if ajustado is not None:
+                texto += "*"
             celulas.append(f'<td class="c k-{classe}" title="{escape(titulo)}">{texto}</td>')
         corpo.append(
             f"<tr><td><b>{escape(linha['contrato'])}</b></td>{''.join(celulas)}"
-            f"<td><b>{_compacto(linha['total_relatorio'])}</b></td><td>{_compacto(linha['total_notas'])}</td></tr>"
+            f"<td><b>{_compacto(linha['total_relatorio'])}</b></td>"
+            f"<td>{_compacto(linha.get('total_notas_ajustado', linha['total_notas']))}</td></tr>"
         )
     totais = "".join(f"<td>{_compacto(v)}</td>" for v in tot_rel)
     soma_rel = sum(v for v in tot_rel if v is not None) if any(v is not None for v in tot_rel) else None
@@ -178,7 +184,10 @@ def html_legenda_consolidada() -> str:
     itens = "".join(
         f'<span class="k-{c}" style="padding:1px 8px;border-radius:4px;margin-right:8px">{escape(t)}</span>' for c, t in cores.items()
     )
-    return f'<div class="cmp-cons"><div style="font-size:12px;margin:4px 0 8px">{itens}</div></div>'
+    return (
+        f'<div class="cmp-cons"><div style="font-size:12px;margin:4px 0 8px">{itens}'
+        '<span>* valor das notas ajustado por decisão (nota indicada como cancelada)</span></div></div>'
+    )
 
 
 def render_visao_consolidada(

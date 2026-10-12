@@ -240,6 +240,52 @@ class EfeitoNasVisoesTests(unittest.TestCase):
             self.assertIn((202601, "deslocamento"), pend)
 
 
+class ConsolidadaAjustadaPorDecisaoTests(unittest.TestCase):
+    """Decisão confirmada com nota indicada: o valor das notas na visão consolidada desconta a nota cancelada."""
+
+    def setUp(self) -> None:
+        self.faturas = pd.DataFrame([
+            _nota("1", "A", 1310.24, NE_B, 2026, 1), _nota("2", "B", 1250.0, NE_B, 2026, 1), _nota("3", "C", 1250.0, NE_B, 2026, 1),
+        ])
+        self.relatorio = pd.DataFrame([(NE_B, 202601, 2560.24)], columns=["ne_curta", "ano_mes", "valor"])
+        self.contratos = [("23/2025", "1", NE_B)]
+
+    def _linha(self, decisoes=None):
+        return consolidar_exercicio(self.contratos, self.faturas, _empenhos(), self.relatorio, 2026, decisoes)[0]
+
+    def _decidir(self, tmp, **extra):
+        assinatura = self._linha()["meses"][0]["assinatura"]
+        _registrar(Path(tmp), classe="ambiguo", assinatura=assinatura, **extra)
+        return reconstruir_decisoes(carregar_eventos(Path(tmp)))
+
+    def test_sem_decisao_o_mes_e_ambiguo_e_as_notas_ficam_brutas(self) -> None:
+        mes = self._linha()["meses"][0]
+        self.assertEqual((mes["classe"], mes["notas"], mes["notas_ajustadas"]), ("ambiguo", 3810.24, None))
+
+    def test_confirmado_com_nota_indicada_desconta_so_o_valor_da_nota_escolhida(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            decisoes = self._decidir(tmp, decisao="confirmada", notas_desconsideradas=[("C", NE_B, 1250.0)])
+            linha = self._linha(decisoes)
+            mes = linha["meses"][0]
+            self.assertEqual((mes["classe"], mes["notas"], mes["notas_ajustadas"]), ("confirmada", 3810.24, 2560.24))
+            self.assertEqual(linha["total_notas"], 3810.24)         # bruto continua acessível
+            self.assertEqual(linha["total_notas_ajustado"], 2560.24)  # e o ajustado fecha com o relatório
+
+    def test_rejeitada_nao_ajusta_nada(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mes = self._linha(self._decidir(tmp, decisao="rejeitada"))["meses"][0]
+            self.assertEqual((mes["classe"], mes["notas_ajustadas"]), ("rejeitada", None))
+
+    def test_html_mostra_o_valor_ajustado_com_marca(self) -> None:
+        from src.ui_conciliacao_competencia import html_consolidada
+        with tempfile.TemporaryDirectory() as tmp:
+            decisoes = self._decidir(tmp, decisao="confirmada", notas_desconsideradas=[("C", NE_B, 1250.0)])
+            html = html_consolidada([{**self._linha(decisoes), "ano": 2026}])
+            self.assertIn("ajustado por decisão", html)
+        html_sem = html_consolidada([{**self._linha(), "ano": 2026}])
+        self.assertNotIn("ajustado por decisão", html_sem)
+
+
 class MarcaVisualDaDecisaoTests(unittest.TestCase):
     """O mês decidido muda no layout: confirmada vira "conciliado por decisão"; rejeitada mantém a diferença e avisa."""
 
