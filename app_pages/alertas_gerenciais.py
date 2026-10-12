@@ -24,7 +24,13 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from src.alertas_gerenciais import acoes_com_deficit, ano_extracao_execucao, emendas_rp6_nao_executadas
+from src.alertas_gerenciais import (
+    acoes_com_deficit,
+    ano_extracao_execucao,
+    emendas_rp6_nao_executadas,
+    pendencias_conciliacao_novas,
+)
+from src.decisoes_conciliacao import ErroDecisao, carregar_eventos, reconstruir_decisoes
 from src.design_tokens import BORDER, FONT_HEADING, NEGATIVE, POSITIVE, SURFACE, TEXT_MUTED, WARNING
 from src.importacao_dotacao import DIRETORIO_MANIFESTOS_PADRAO as DIR_MANIFESTOS_DOTACAO
 from src.importacao_dotacao import Manifesto as ManifestoDotacao
@@ -34,6 +40,7 @@ from src.importacao_execucao import DIRETORIO_MANIFESTOS_PADRAO as DIR_MANIFESTO
 from src.importacao_execucao import Manifesto as ManifestoExecucao
 from src.importacao_execucao import NOME_PONTEIRO as PONTEIRO_EXECUCAO
 from src.importacao_execucao import carregar_atual as carregar_execucao_atual
+from src.pendencias_conciliacao import ErroBaseline, carregar_baseline
 from src.ui_theme import render_page_header
 
 CATEGORIAS_PLACEHOLDER = [
@@ -145,11 +152,20 @@ def _abrir_categoria(categoria: dict) -> None:
     )
     st.subheader(categoria["titulo"])
     total = sum(item["valor"] for item in categoria["itens"])
-    st.caption(f"{len(categoria['itens'])} {categoria['unidade']} · {_brl(total)} em risco")
+    if categoria.get("sem_valor"):
+        st.caption(f"{len(categoria['itens'])} {categoria['unidade']}")
+    else:
+        st.caption(f"{len(categoria['itens'])} {categoria['unidade']} · {_brl(total)} em risco")
     if not categoria["real"]:
         st.caption("⚠ Dado fictício/placeholder — critério ainda não definido com a PROPLAD.")
     st.divider()
     for item in categoria["itens"]:
+        if categoria.get("sem_valor"):
+            st.markdown(
+                f"**{item['nome']}**  \n<span style='color:{TEXT_MUTED};font-size:12px'>{item['detalhe']}</span>",
+                unsafe_allow_html=True,
+            )
+            continue
         coluna_nome, coluna_valor = st.columns([4, 1])
         coluna_nome.markdown(
             f"**{item['nome']}**  \n<span style='color:{TEXT_MUTED};font-size:12px'>{item['detalhe']}</span>",
@@ -219,6 +235,36 @@ else:
         ]
     ]
 
+def _categoria_conciliacao() -> dict | None:
+    """Pendências NOVAS de conciliação por competência desde a última atualização do Contratos.gov (dado real, fora de
+    Dotação x Execução). Sem baseline (nenhuma atualização feita ainda) a categoria não aparece; falha de leitura
+    avisa em vez de sumir em silêncio."""
+
+    try:
+        baseline = carregar_baseline()
+        decisoes = reconstruir_decisoes(carregar_eventos())
+    except (ErroBaseline, ErroDecisao) as erro:
+        st.warning(f"Alerta de conciliação por competência indisponível: {erro}")
+        return None
+    if baseline is None:
+        return None
+    itens = pendencias_conciliacao_novas(baseline["novas"], decisoes)
+    return {
+        "titulo": "Conciliação por competência — pendências novas",
+        "unidade": "contratos",
+        "severidade": "Atenção" if itens else "Ok",
+        "cor": WARNING if itens else POSITIVE,
+        "real": True,
+        "fonte": f"Dado real (Contratos.gov, atualização de {baseline['gerado_em'].replace('T', ' ')[:16]})",
+        "sem_valor": True,
+        "itens": itens,
+    }
+
+
+_conciliacao = _categoria_conciliacao()
+if _conciliacao is not None:
+    categorias_reais.append(_conciliacao)
+
 CATEGORIAS = categorias_reais + CATEGORIAS_PLACEHOLDER
 
 ordenadas = sorted(CATEGORIAS, key=lambda categoria: (ORDEM_SEVERIDADE[categoria["severidade"]], -len(categoria["itens"])))
@@ -242,7 +288,7 @@ for indice, categoria in enumerate(ordenadas):
                 unsafe_allow_html=True,
             )
             st.markdown(
-                "<span class='ag-real'>Dado real (Dotação x Execução)</span>"
+                f"<span class='ag-real'>{categoria.get('fonte', 'Dado real (Dotação x Execução)')}</span>"
                 if categoria["real"]
                 else "<span class='ag-real'>Fictício/placeholder</span>",
                 unsafe_allow_html=True,
@@ -255,7 +301,12 @@ for indice, categoria in enumerate(ordenadas):
                 "</div>",
                 unsafe_allow_html=True,
             )
-            st.caption(f"{_brl(total)} em risco" if categoria["itens"] else "Nenhum item — checagem em dia")
+            if not categoria["itens"]:
+                st.caption("Nenhum item — checagem em dia")
+            elif categoria.get("sem_valor"):
+                st.caption("Pendências que apareceram na última atualização e ainda não foram confirmadas")
+            else:
+                st.caption(f"{_brl(total)} em risco")
             if categoria["itens"]:
                 if st.button("Ver lista", key=f"alertas_categoria_{indice}"):
                     _abrir_categoria(categoria)

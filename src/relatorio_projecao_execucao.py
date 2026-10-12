@@ -813,3 +813,17 @@ def gerar_pdf(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoEx
     elementos.append(tabela)
     documento.build(elementos)
     return buffer.getvalue()
+
+
+def aplicar_projecao_na_necessidade(por_ne: pd.DataFrame, relatorio: RelatorioProjecaoExecucao) -> pd.DataFrame:
+    """Cópia de `por_ne` (saída de `necessidade_por_ne`) com a Necessidade pela PROJEÇÃO PELA EXECUÇÃO: `necessidade`
+    passa a ser a `necessidade_execucao` do relatório de cada NE, e a contratual fica em `necessidade_contratual`.
+    É a escolha "base da necessidade" da página de Contratos Contínuos (12/10/2026). NE que o relatório não projetou,
+    ou com valor mensal desconhecido (necessidade nula), fica NULA — nunca vira zero; zero projetado continua zero.
+    Não altera as entradas."""
+
+    por_execucao = relatorio.linhas.set_index("ne_curta")["necessidade_execucao"]
+    saida = por_ne.copy()
+    saida["necessidade_contratual"] = saida["necessidade"]
+    saida["necessidade"] = pd.to_numeric(saida["ne_curta"].map(por_execucao), errors="coerce").astype("float64")
+    return saida

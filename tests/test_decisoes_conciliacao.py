@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 
+import src.decisoes_conciliacao as dc_mod
 from src.decisoes_conciliacao import (
     ErroDecisao,
     aplicar_decisao,
@@ -84,6 +85,82 @@ class RegistroTests(unittest.TestCase):
 
     def test_sem_pasta_nao_ha_eventos(self) -> None:
         self.assertEqual(carregar_eventos(Path(tempfile.gettempdir()) / "pasta-que-nao-existe-xyz"), [])
+
+
+class NotaEscolhidaNoAmbiguoTests(unittest.TestCase):
+    """Sem poder corrigir no Contratos.gov, o usuário indica QUAL nota é a cancelada; o sistema só registra a escolha."""
+
+    ESCOLHA = [("2798", NE_B, 1250.0)]
+
+    def test_ambiguo_confirmado_exige_a_nota_escolhida(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ErroDecisao):
+                _registrar(Path(tmp), classe="ambiguo", decisao="confirmada")  # sem escolha: continua recusado
+            self.assertEqual(list(Path(tmp).glob("*.json")), [])
+            _registrar(Path(tmp), classe="ambiguo", decisao="confirmada", notas_desconsideradas=self.ESCOLHA)
+            d = reconstruir_decisoes(carregar_eventos(Path(tmp)))[("23/2025", 202601)]
+            self.assertEqual(d.decisao, "confirmada")
+            self.assertEqual(d.notas_desconsideradas, (("2798", NE_B, 1250.0),))
+
+    def test_nota_escolhida_so_vale_no_ambiguo_confirmado(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            for extra in ({"classe": "deslocamento"}, {"classe": "ambiguo", "decisao": "rejeitada"}):
+                with self.assertRaises(ErroDecisao):
+                    _registrar(Path(tmp), notas_desconsideradas=self.ESCOLHA, **extra)
+
+    def test_sem_escolha_a_decisao_vem_com_tupla_vazia(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            _registrar(Path(tmp))
+            self.assertEqual(reconstruir_decisoes(carregar_eventos(Path(tmp)))[("23/2025", 202601)].notas_desconsideradas, ())
+
+    def test_evento_antigo_sem_o_campo_continua_legivel(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            evento = _registrar(Path(tmp))
+            arquivo = next(Path(tmp).glob("*.json"))
+            bruto = json.loads(arquivo.read_text(encoding="utf-8"))
+            bruto.pop("notas_desconsideradas", None)
+            arquivo.write_text(json.dumps(bruto), encoding="utf-8")
+            self.assertEqual(reconstruir_decisoes(carregar_eventos(Path(tmp)))[("23/2025", 202601)].id, evento["id"])
+
+
+class CallbackDaTelaTests(unittest.TestCase):
+    """O seletor de nota cancelada da tela vira `notas_desconsideradas` — sem Streamlit, com session_state simulado."""
+
+    def _mes_ambiguo(self):
+        from src.conciliacao_competencia_gov import ItemNota, MesConciliado, ajustar_mes
+        itens = [ItemNota(NE_B, 1310.24, "2783", False, False, None), ItemNota(NE_B, 1250.0, "2783", False, False, None),
+                 ItemNota(NE_B, 1250.0, "2798", False, False, None)]
+        mes = MesConciliado(2026, 5, 3810.24, {NE_B: 2560.24}, 2560.24, itens)
+        return mes, ajustar_mes(mes)
+
+    def test_alternativas_do_mes_ambiguo(self) -> None:
+        from src.ui_conciliacao_competencia import _alternativas_do_mes
+        mes, ajuste = self._mes_ambiguo()
+        self.assertEqual(ajuste.situacao, "ambiguo")
+        (ne, combos), = _alternativas_do_mes(mes, ajuste)
+        self.assertEqual(ne, NE_B)
+        self.assertEqual(sorted(combos), [(("2783", NE_B, 1250.0),), (("2798", NE_B, 1250.0),)])
+        self.assertEqual(_alternativas_do_mes(mes, None), [])
+
+    def test_confirmar_grava_a_nota_escolhida_e_rejeitar_nao_grava_escolha(self) -> None:
+        from unittest import mock
+        import src.ui_conciliacao_competencia as ui
+        mes, ajuste = self._mes_ambiguo()
+        alternativas = [c for _ne, c in ui._alternativas_do_mes(mes, ajuste)]
+        ordenadas = sorted(alternativas[0])  # a ordem das combinações não importa: escolho a da nota 2798 pelo índice
+        indice_2798 = alternativas[0].index((("2798", NE_B, 1250.0),))
+        with tempfile.TemporaryDirectory() as tmp:
+            estado = {"p_resp": "Maria", "p_just": "Nota 2798 é repetição da 2783.", "p_alt_0": indice_2798}
+            falso = mock.Mock(session_state=estado)
+            with mock.patch.object(ui, "st", falso), mock.patch.object(dc_mod, "DIRETORIO_DECISOES", Path(tmp)):
+                ui._cb_registrar("p", "23/2025", 202605, "ambiguo", "sig", "confirmada", alternativas)
+                self.assertEqual(estado["p_msg"], "")
+                d = reconstruir_decisoes(carregar_eventos(Path(tmp)))[("23/2025", 202605)]
+                self.assertEqual(d.notas_desconsideradas, (("2798", NE_B, 1250.0),))
+                ui._cb_registrar("p", "23/2025", 202605, "ambiguo", "sig", "rejeitada", alternativas)
+                d = reconstruir_decisoes(carregar_eventos(Path(tmp)))[("23/2025", 202605)]
+                self.assertEqual((d.decisao, d.notas_desconsideradas), ("rejeitada", ()))
+        self.assertEqual(len(ordenadas), 2)
 
 
 class AplicacaoTests(unittest.TestCase):
@@ -161,6 +238,58 @@ class EfeitoNasVisoesTests(unittest.TestCase):
             decisoes = reconstruir_decisoes(carregar_eventos(Path(tmp)))
             pend = calcular_pendencias(self.contratos, self.faturas, _empenhos(), self.relatorio, decisoes)["23/2025"]
             self.assertIn((202601, "deslocamento"), pend)
+
+
+class MarcaVisualDaDecisaoTests(unittest.TestCase):
+    """O mês decidido muda no layout: confirmada vira "conciliado por decisão"; rejeitada mantém a diferença e avisa."""
+
+    def _mes(self):
+        from src.conciliacao_competencia_gov import MesConciliado
+        return MesConciliado(2026, 1, 11240.24, {NE_B: 2560.24}, 2560.24, [])
+
+    def _decisao(self, decisao):
+        from src.decisoes_conciliacao import Decisao
+        return Decisao("id1", "23/2025", 202601, "deslocamento", "sig", decisao, "Conferido com o SIAFI.", "Maria", "2026-10-12T09:30:15.123456")
+
+    def test_sem_decisao_nada_muda(self) -> None:
+        from src.ui_conciliacao_competencia import html_mes
+        html = html_mes(self._mes())
+        self.assertIn("diferença", html)
+        self.assertNotIn("conciliado por decisão", html)
+        self.assertNotIn("cmp-conf", html)
+
+    def test_confirmada_troca_a_diferenca_e_mostra_quem_decidiu(self) -> None:
+        from src.ui_conciliacao_competencia import html_mes
+        html = html_mes(self._mes(), decisao=self._decisao("confirmada"))
+        self.assertIn("conciliado por decisão", html)
+        self.assertNotIn('class="cmp-dif"', html)
+        self.assertIn("cmp-conf", html)
+        self.assertIn("Maria", html)
+        self.assertIn("2026-10-12 09:30", html)
+        self.assertIn("Conferido com o SIAFI.", html)
+
+    def test_ambiguo_confirmado_risca_a_nota_escolhida_e_diz_quem_escolheu(self) -> None:
+        from src.conciliacao_competencia_gov import ItemNota, MesConciliado
+        from src.decisoes_conciliacao import Decisao
+        from src.ui_conciliacao_competencia import html_mes
+        itens = [ItemNota(NE_B, 1310.24, "2783", False, False, None), ItemNota(NE_B, 1250.0, "2783", False, False, None),
+                 ItemNota(NE_B, 1250.0, "2798", False, False, None)]
+        mes = MesConciliado(2026, 5, 3810.24, {NE_B: 2560.24}, 2560.24, itens)
+        d = Decisao("i", "23/2025", 202605, "ambiguo", "sig", "confirmada", "Nota 2798 é repetição.", "Maria",
+                    "2026-10-12T10:00:00", (("2798", NE_B, 1250.0),))
+        html = html_mes(mes, decisao=d)
+        self.assertIn("desconsiderando 1 nota(s) por decisão", html)
+        self.assertIn("cmp-risco", html)
+        self.assertEqual(html.count("cmp-risco"), 1)  # só a nota 2798; a 2783 de mesmo valor NÃO é riscada
+        self.assertNotIn('class="cmp-dif"', html)
+
+    def test_rejeitada_mantem_a_diferenca_e_avisa(self) -> None:
+        from src.ui_conciliacao_competencia import html_mes
+        html = html_mes(self._mes(), decisao=self._decisao("rejeitada"))
+        self.assertIn('class="cmp-dif"', html)
+        self.assertNotIn("conciliado por decisão", html)
+        self.assertIn("cmp-rej", html)
+        self.assertIn("rejeitada", html)
 
 
 if __name__ == "__main__":

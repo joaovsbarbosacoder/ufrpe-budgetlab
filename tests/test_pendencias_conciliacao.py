@@ -179,6 +179,34 @@ class BaselineTests(unittest.TestCase):
             with self.assertRaises(ErroBaseline):
                 carregar_baseline(Path(tmp))  # nunca vira "sem baseline" em silêncio
 
+    def test_guarda_as_novas_e_resolvidas_da_ultima_atualizacao(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            novas = {("23/2025", 202601, "deslocamento")}
+            resolvidas = {("10/2024", 202511, "cancelamento")}
+            salvar_baseline({"23/2025": {(202601, "deslocamento")}}, "abc", Path(tmp), novas=novas, resolvidas=resolvidas)
+            lido = carregar_baseline(Path(tmp))
+            self.assertEqual(lido["novas"], novas)
+            self.assertEqual(lido["resolvidas"], resolvidas)
+
+    def test_baseline_antigo_sem_novas_carrega_com_conjuntos_vazios(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            salvar_baseline({}, "x", Path(tmp))
+            self.assertEqual((carregar_baseline(Path(tmp))["novas"], carregar_baseline(Path(tmp))["resolvidas"]), (set(), set()))
+            bruto = json.loads((Path(tmp) / "ultima.json").read_text(encoding="utf-8"))
+            bruto.pop("novas"); bruto.pop("resolvidas")
+            (Path(tmp) / "ultima.json").write_text(json.dumps(bruto), encoding="utf-8")
+            self.assertEqual(carregar_baseline(Path(tmp))["novas"], set())
+
+    def test_atualizar_apos_gravacao_registra_as_novas(self) -> None:
+        from unittest import mock
+        import src.pendencias_conciliacao as pc
+        with tempfile.TemporaryDirectory() as tmp:
+            salvar_baseline({"23/2025": set()}, "velha", Path(tmp))
+            atual = {"23/2025": {(202601, "deslocamento")}}
+            with mock.patch.object(pc, "entradas_da_conciliacao", return_value=([], None, None, None)),                  mock.patch.object(pc, "calcular_pendencias", return_value=atual),                  mock.patch.object(pc, "carregar_eventos", return_value=[]):
+                pc.atualizar_apos_gravacao({"_sha256": "nova"}, None, Path(tmp))
+            self.assertEqual(carregar_baseline(Path(tmp))["novas"], {("23/2025", 202601, "deslocamento")})
+
     def test_formato_versionado(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             salvar_baseline({}, fotografia="x", diretorio=Path(tmp))

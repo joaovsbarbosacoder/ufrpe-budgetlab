@@ -234,7 +234,12 @@ from src.relatorio_necessidade_empenho import (
     necessidade_por_ne,
     valor_estimado_em_previstos,
 )
-from src.relatorio_projecao_execucao import ContextoProjecaoExecucao, ORIGEM_EXECUCAO, ORIGEM_SEM_HISTORICO
+from src.relatorio_projecao_execucao import (
+    ContextoProjecaoExecucao,
+    ORIGEM_EXECUCAO,
+    ORIGEM_SEM_HISTORICO,
+    aplicar_projecao_na_necessidade,
+)
 from src.relatorio_projecao_execucao import fatores_por_ne as fatores_projecao_execucao
 from src.relatorio_projecao_execucao import gerar_pdf as gerar_pdf_projecao_execucao
 from src.relatorio_projecao_execucao import gerar_xlsx as gerar_xlsx_projecao_execucao
@@ -1347,6 +1352,29 @@ def _render_rodape_resumo(valor_empenhado_total: float, saldo_total: float, nece
         )
 
 
+BASE_CONTRATUAL = "Valor contratual"
+BASE_EXECUCAO = "Projeção pela execução"
+
+
+def _necessidade_pela_execucao(
+    por_ne: pd.DataFrame, filtrado: pd.DataFrame, liquidacao_competencia_por_mes: pd.DataFrame,
+    ano_exercicio: int, manifesto: ManifestoExecucaoMensal, source_key: str,
+) -> pd.DataFrame:
+    """`por_ne` (de `necessidade_por_ne`) com a Necessidade pela PROJEÇÃO PELA EXECUÇÃO (12/10/2026): o mesmo número do
+    relatório "Projeção pela execução" (`necessidade_execucao`), inclusive com os contratos antecessores que o usuário já
+    escolheu ali nesta sessão. Contrato sem NE não tem execução para medir: continua pelo valor contratual."""
+
+    mes_referencia = mes_referencia_do_exercicio(datetime.fromisoformat(manifesto.data_extracao).date(), ano_exercicio)
+    por_ne_contratual, _ = necessidade_por_ne(filtrado, None, ano_exercicio)
+    fatores = fatores_projecao_execucao(por_ne_contratual, liquidacao_competencia_por_mes, ano_exercicio, mes_referencia)
+    antecessores = {
+        ne: escolha for ne in fatores
+        if (escolha := st.session_state.get(f"cc_projexec_antecessor_{source_key}_{ne}")) in fatores
+    }
+    relatorio, _ = projecao_contratos(filtrado, liquidacao_competencia_por_mes, ano_exercicio, mes_referencia, antecessores)
+    return aplicar_projecao_na_necessidade(por_ne, relatorio)
+
+
 def _render_resumo_consolidado(
     filtrado: pd.DataFrame,
     tempo_por_ne_curta: pd.DataFrame | None,
@@ -1354,6 +1382,8 @@ def _render_resumo_consolidado(
     liquidacao_competencia_por_mes: pd.DataFrame | None = None,
     meses_liquidados_por_ne: pd.DataFrame | None = None,
     ano_exercicio: int | None = None,
+    base_necessidade: tuple[pd.DataFrame, pd.DataFrame] | None = None,
+    modo_execucao: bool = False,
 ) -> None:
     """Card único, visível de início (antes de abrir qualquer cartão), listando — uma linha
     por NE, não por item de licitação nem um total agregado — o valor empenhado, o saldo e a
@@ -1422,7 +1452,11 @@ def _render_resumo_consolidado(
     # mesmo NE. Diferente do quadro "Empenhado × Liquidado" (saldo sempre por lançamento, ali
     # por ser o saldo formal comparado contra o TG): aqui não há essa comparação, então o
     # saldo pode acompanhar a fonte mais correta do Liquidado sem gerar contradição visível.
-    por_ne, sem_ne = necessidade_por_ne(filtrado, meses_liquidados_por_ne, ano_exercicio)
+    # `base_necessidade` (12/10/2026): (por_ne, sem_ne) já escolhidos no topo da página (valor contratual ou projeção
+    # pela execução) — o card concorda com o cartão do topo e com a coluna "A empenhar" do registro.
+    por_ne, sem_ne = base_necessidade if base_necessidade is not None else necessidade_por_ne(
+        filtrado, meses_liquidados_por_ne, ano_exercicio
+    )
     algum_ne_via_competencia = bool(
         (por_ne["liquidado_via_competencia"].fillna(False) & por_ne["valor_liquidado_execucao"].notna()).any()
     )
@@ -1468,7 +1502,13 @@ def _render_resumo_consolidado(
             unsafe_allow_html=True,
         )
         sem_necessidade_por_vigencia = int((por_ne["meses_vigentes"] == 0).sum() + (sem_ne["meses_vigentes"] == 0).sum())
-        if ano_exercicio is not None:
+        if modo_execucao:
+            st.caption(
+                "Base: PROJEÇÃO PELA EXECUÇÃO — necessidade = despesa projetada pelo que o contrato de fato liquida "
+                "(fator de execução dos últimos 6 meses fechados) menos o saldo do empenho; é o mesmo número do relatório "
+                "'Projeção pela execução'. Contrato sem NE continua pelo valor contratual."
+            )
+        elif ano_exercicio is not None:
             st.caption(
                 "Necessidade = o que falta empenhar para cobrir os meses do exercício (despesa mensal × meses "
                 "restantes). Respeita o início da execução e o fim da vigência (meses inicial e final "
@@ -2057,6 +2097,21 @@ if filtrado.empty:
 # Necessidade de Empenho até Dezembro — a MESMA conta do "Resumo Consolidado" (`necessidade_por_ne`) —
 # e a grade de indicadores do exercício. Substitui a antiga linha de 4 métricas.
 _por_ne_topo, _sem_ne_topo = necessidade_por_ne(filtrado, meses_liquidados_por_ne, ano_selecionado)
+# Base da necessidade (12/10/2026): valor contratual (padrão) ou projeção pela execução. Um seletor só muda o cartão do
+# topo, o Resumo Consolidado e a coluna "A empenhar"/situação do Registro de contratos; a projeção mede a execução pela
+# Liquidação por Competência — sem ela o seletor não aparece.
+_modo_execucao = False
+if indice_liquidado_competencia is not None and liquidacao_competencia_por_mes is not None:
+    _modo_execucao = BASE_EXECUCAO == st.radio(
+        "Base da necessidade de empenho", [BASE_CONTRATUAL, BASE_EXECUCAO], horizontal=True,
+        key=f"cc_base_necessidade_{source_key}",
+        help="Valor contratual: despesa mensal cheia × meses restantes. Projeção pela execução: o que o contrato de fato "
+             "liquida (fator de execução por competência), como no relatório 'Projeção pela execução'.",
+    )
+    if _modo_execucao:
+        _por_ne_topo = _necessidade_pela_execucao(
+            _por_ne_topo, filtrado, liquidacao_competencia_por_mes, ano_selecionado, manifesto_execucao_mensal, source_key
+        )
 # "A empenhar" e situação do Registro de contratos (06/10/2026): a mesma Necessidade até dezembro do
 # Resumo Consolidado, por linha (NE compartilhada: o valor da NE em cada linha dela).
 filtrado = filtrado.assign(necessidade_ate_dezembro=necessidade_por_linha(filtrado, _por_ne_topo, _sem_ne_topo))
@@ -2073,6 +2128,7 @@ st.markdown(
             "detalhe": (
                 f"{len(_por_ne_topo)} NE(s) e {len(_sem_ne_topo)} contrato(s) sem NE consideradas, "
                 "conforme o Resumo Consolidado"
+                + (" · base: projeção pela execução" if _modo_execucao else "")
                 + (
                     f" · inclui {formatar_brl(_estimado_previstos)} estimados em aditivos previstos"
                     if filtrado["tem_aditivo_previsto"].any() else ""
@@ -2096,8 +2152,13 @@ st.markdown(
 
 _render_resumo_consolidado(
     filtrado, tempo_por_ne_curta, source_key, liquidacao_competencia_por_mes,
-    meses_liquidados_por_ne, ano_selecionado,
+    meses_liquidados_por_ne, ano_selecionado, (_por_ne_topo, _sem_ne_topo), _modo_execucao,
 )
+if _modo_execucao:
+    st.caption(
+        "O relatório de Necessidade de Empenho abaixo (PDF/Excel) continua pelo VALOR CONTRATUAL, com a grade mês a mês "
+        "do contrato; para o relatório pela execução use 'Projeção pela execução'."
+    )
 _render_relatorio_necessidade(
     filtrado, meses_liquidados_por_ne, liquidacao_competencia_por_mes, source_key, ano_selecionado, busca,
     manifesto_execucao_mensal, via_competencia=indice_liquidado_competencia is not None,

@@ -11,6 +11,8 @@ justificativa. Padrão de `src/ajustes_dotacao_emendas.py`:
   * A decisão vale para (contrato, competência) e leva a ASSINATURA do que foi sugerido (`assinatura_mes`: classe, NEs,
     notas e valores). Se os dados mudam e a assinatura difere, a decisão fica OBSOLETA e é ignorada: o mês volta a
     aparecer como pendente.
+  * Ambíguo pode ser CONFIRMADO desde que o usuário indique a(s) nota(s) cancelada(s) (`notas_desconsideradas`): a
+    escolha é dele, registrada e desfazível; o sistema nunca desempata sozinho.
   * Confirmada = o mês deixa de ser pendência (classe "confirmada"); rejeitada = continua pendente (classe "rejeitada").
     Ambíguo só pode ser rejeitado: o sistema não escolhe qual nota (nem o usuário pode por aqui).
 
@@ -18,7 +20,8 @@ Contrato público:
     ErroDecisao
     DECISOES, CLASSES_COM_SUGESTAO
     assinatura_mes(classe, nes, notas, valor_notas, valor_relatorio) -> str
-    registrar_decisao(*, contrato, ano_mes, classe, assinatura, decisao, justificativa, responsavel, diretorio=None) -> dict
+    registrar_decisao(*, contrato, ano_mes, classe, assinatura, decisao, justificativa, responsavel, diretorio=None,
+                      notas_desconsideradas=None) -> dict
     desfazer_decisao(*, decisao_id, motivo, responsavel, diretorio=None) -> dict
     carregar_eventos(diretorio=None) -> list[dict]
     reconstruir_decisoes(eventos) -> {(contrato, ano_mes): Decisao}
@@ -58,6 +61,8 @@ class Decisao:
     justificativa: str
     responsavel: str
     registrado_em: str
+    #: só no ambíguo CONFIRMADO: as notas que o usuário indicou como canceladas, (nota, ne, valor) — o sistema não escolhe
+    notas_desconsideradas: tuple = ()
 
 
 def assinatura_mes(classe: str, nes, notas, valor_notas: float | None, valor_relatorio: float | None) -> str:
@@ -108,14 +113,21 @@ def carregar_eventos(diretorio: Path | None = None) -> list[dict]:
 
 def registrar_decisao(
     *, contrato: str, ano_mes: int, classe: str, assinatura: str, decisao: str, justificativa: str, responsavel: str,
-    diretorio: Path | None = None,
+    diretorio: Path | None = None, notas_desconsideradas=None,
 ) -> dict:
     if classe not in CLASSES_COM_SUGESTAO:
         raise ErroDecisao(f"Só sugestões recebem decisão ({', '.join(CLASSES_COM_SUGESTAO)}); este mês é '{classe}'.")
     if decisao not in DECISOES:
         raise ErroDecisao(f"Decisão inválida: {decisao!r}. Use {' ou '.join(DECISOES)}.")
+    notas = [(str(n), str(ne), round(float(v), 2)) for n, ne, v in (notas_desconsideradas or [])]
     if classe == "ambiguo" and decisao == "confirmada":
-        raise ErroDecisao("Mês ambíguo só pode ser rejeitado: mais de uma nota fecha o valor e o sistema não escolhe qual.")
+        if not notas:
+            raise ErroDecisao(
+                "Mês ambíguo: mais de uma nota fecha o valor e o sistema não escolhe qual. Para confirmar, indique a(s) "
+                "nota(s) que você sabe estar(em) cancelada(s)/repetida(s)."
+            )
+    elif notas:
+        raise ErroDecisao("A escolha de notas só vale ao confirmar um mês ambíguo.")
     if len(justificativa.strip()) < MIN_JUSTIFICATIVA:
         raise ErroDecisao(f"Informe a justificativa (mínimo de {MIN_JUSTIFICATIVA} caracteres).")
     if not responsavel.strip():
@@ -124,6 +136,7 @@ def registrar_decisao(
         "versao_schema": VERSAO_SCHEMA, "tipo": "decisao", "id": uuid.uuid4().hex, "contrato": str(contrato),
         "ano_mes": int(ano_mes), "classe": classe, "assinatura": assinatura, "decisao": decisao,
         "justificativa": justificativa.strip(), "responsavel": responsavel.strip(), "registrado_em": _agora(),
+        "notas_desconsideradas": [list(n) for n in notas],
     }
     _gravar(evento, diretorio)
     return evento
@@ -156,6 +169,7 @@ def reconstruir_decisoes(eventos: list[dict]) -> dict[tuple[str, int], Decisao]:
         vigentes[(e["contrato"], int(e["ano_mes"]))] = Decisao(
             e["id"], e["contrato"], int(e["ano_mes"]), e["classe"], e["assinatura"], e["decisao"], e["justificativa"],
             e["responsavel"], e["registrado_em"],
+            tuple((str(n), str(ne), float(v)) for n, ne, v in e.get("notas_desconsideradas", [])),
         )
     return vigentes
 
