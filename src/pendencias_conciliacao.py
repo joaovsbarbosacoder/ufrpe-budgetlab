@@ -129,16 +129,17 @@ def meses_analisados(
             ajuste = ajustar_mes(visto, explicadas)
             classe = classificar_mes(visto, ajuste, causas)
             assinatura = assinatura_mes(classe, escolhidas, [i.nota for i in visto.itens], visto.notas, visto.relatorio)
-            notas_ajustadas = None
+            notas_ajustadas, decisao_ativa = None, None
             if decisoes and numero is not None:
                 decisao = decisoes.get((str(numero), ano * 100 + completo.mes))
                 classe = aplicar_decisao(classe, decisao, assinatura)
                 if classe == "confirmada":
                     notas_ajustadas = _notas_sem_as_indicadas(visto, decisao)
+                    decisao_ativa = decisao
             linhas.append({
                 "assinatura": assinatura, "classe": classe, "ano_mes": ano * 100 + completo.mes, "nes": sorted(escolhidas),
                 "notas": sorted({i.nota for i in visto.itens}), "valor_notas": visto.notas, "valor_relatorio": visto.relatorio,
-                "valor_notas_ajustado": notas_ajustadas,
+                "valor_notas_ajustado": notas_ajustadas, "decisao": decisao_ativa,
                 "acao": _acao_sugerida(classe, causas, ajuste, visto) if classe not in CLASSES_OK else "",
             })
     return linhas
@@ -230,8 +231,49 @@ def tabela_inconsistencias(
     return pd.DataFrame(linhas).sort_values(["Contrato", "_ordem"]).drop(columns="_ordem").reset_index(drop=True)[COLUNAS_INCONSISTENCIAS]
 
 
-def excel_inconsistencias(tabela: pd.DataFrame) -> bytes:
-    """Excel com a aba "Resumo por causa" e a aba "Pendências"."""
+COLUNAS_DECISOES_INTERNAS = [
+    "Contrato", "Competência", "NEs", "Notas desconsideradas", "Valor nas notas", "Valor das notas ajustado",
+    "Valor no relatório", "Responsável", "Registrada em", "Justificativa", "Observação",
+]
+
+
+def tabela_decisoes_internas(
+    contratos: list[tuple], faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None, relatorio: pd.DataFrame | None,
+    a_partir_do_ano: int | None = None, decisoes: dict | None = None,
+) -> pd.DataFrame:
+    """Meses CONFIRMADOS pelo usuário com nota(s) indicada(s) como cancelada(s) (ambíguo resolvido internamente): a nota
+    desconsiderada, o valor das notas bruto e ajustado, quem decidiu e a justificativa. É decisão interna do BudgetLab —
+    não é cancelamento confirmado no Contratos.gov —, por isso a observação; serve para quem alimenta o gov conferir e,
+    se for o caso, corrigir na origem. Mesmo filtro de `a_partir_do_ano` do relatório de pendências."""
+
+    linhas = []
+    for numero, cid, ne in contratos:
+        if cid is None or (isinstance(cid, float) and pd.isna(cid)):
+            continue
+        for l in meses_analisados(cid, ne, faturas, empenhos_gov, relatorio, str(numero), decisoes):
+            decisao = l["decisao"]
+            if decisao is None or not decisao.notas_desconsideradas:
+                continue
+            if a_partir_do_ano is not None and l["ano_mes"] // 100 < a_partir_do_ano:
+                continue
+            linhas.append({
+                "Contrato": str(numero), "Competência": f"{l['ano_mes'] % 100:02d}/{l['ano_mes'] // 100}",
+                "NEs": ", ".join(l["nes"]),
+                "Notas desconsideradas": "; ".join(f"{n} (NE {ne_nota}, R$ {v:,.2f})" for n, ne_nota, v in decisao.notas_desconsideradas),
+                "Valor nas notas": l["valor_notas"], "Valor das notas ajustado": l["valor_notas_ajustado"],
+                "Valor no relatório": l["valor_relatorio"], "Responsável": decisao.responsavel,
+                "Registrada em": decisao.registrado_em[:19].replace("T", " "), "Justificativa": decisao.justificativa,
+                "Observação": "Decisão interna do BudgetLab: a nota consta como cancelada só aqui; conferir/corrigir no Contratos.gov.",
+                "_ordem": l["ano_mes"],
+            })
+    if not linhas:
+        return pd.DataFrame(columns=COLUNAS_DECISOES_INTERNAS)
+    return pd.DataFrame(linhas).sort_values(["Contrato", "_ordem"]).drop(columns="_ordem").reset_index(drop=True)[COLUNAS_DECISOES_INTERNAS]
+
+
+def excel_inconsistencias(tabela: pd.DataFrame, decisoes_internas: pd.DataFrame | None = None) -> bytes:
+    """Excel com a aba "Resumo por causa" e a aba "Pendências"; com `decisoes_internas` não vazio, também a aba
+    "Decisões internas" (sem decisões o arquivo é idêntico ao de antes)."""
 
     from io import BytesIO
 
@@ -243,6 +285,8 @@ def excel_inconsistencias(tabela: pd.DataFrame) -> bytes:
     with pd.ExcelWriter(buffer, engine="openpyxl") as escritor:
         resumo.to_excel(escritor, sheet_name="Resumo por causa", index=False)
         tabela.to_excel(escritor, sheet_name="Pendências", index=False)
+        if decisoes_internas is not None and not decisoes_internas.empty:
+            decisoes_internas.to_excel(escritor, sheet_name="Decisões internas", index=False)
         for aba in escritor.book.worksheets:
             for coluna in aba.columns:
                 aba.column_dimensions[coluna[0].column_letter].width = min(
@@ -377,7 +421,10 @@ def gerar_relatorio_inconsistencias(fotografia: dict, referencia, a_partir_do_an
 
     ligados, faturas, empenhos, relatorio = entradas_da_conciliacao(fotografia, referencia)
     decisoes = reconstruir_decisoes(carregar_eventos())  # confirmadas saem do relatório; rejeitadas ficam
-    return excel_inconsistencias(tabela_inconsistencias(ligados, faturas, empenhos, relatorio, a_partir_do_ano, decisoes))
+    return excel_inconsistencias(
+        tabela_inconsistencias(ligados, faturas, empenhos, relatorio, a_partir_do_ano, decisoes),
+        tabela_decisoes_internas(ligados, faturas, empenhos, relatorio, a_partir_do_ano, decisoes),
+    )
 
 
 def atualizar_apos_gravacao(fotografia: dict, referencia, diretorio: Path | None = None) -> str:

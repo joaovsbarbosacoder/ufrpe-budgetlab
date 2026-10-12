@@ -1696,7 +1696,7 @@ def _render_relatorio_projecao_execucao(
         "execução sobre o custo contratado, pela execução dos últimos 6 meses fechados), incluindo o restante "
         "dos meses ainda em aberto, e compara com a projeção pelo valor contratado e com a Necessidade até "
         f"dezembro contratual. Pela execução: necessidade de {formatar_brl(relatorio.total_necessidade_execucao)} "
-        f"(contratual: {formatar_brl(relatorio.total_necessidade_contratual)}). Respeita a busca."
+        f"(contratual: {formatar_brl(relatorio.total_necessidade_contratual)}). Respeita a busca.".replace("$", r"\$")
     )
     nome_arquivo = f"projecao_execucao_contratos_continuos_{ano_exercicio}_{datetime.now():%Y-%m-%d}"
     col_pdf, col_xlsx = st.columns(2)
@@ -2163,15 +2163,15 @@ if _modo_execucao:
         "Base: projeção pela execução — o relatório abaixo (PDF/Excel) é o da Projeção pela execução, com a necessidade "
         "pela execução ao lado da contratual. Para o relatório pelo valor contratual, volte o seletor do topo."
     )
+    _render_relatorio_projecao_execucao(
+        filtrado, liquidacao_competencia_por_mes, source_key, ano_selecionado, manifesto_execucao_mensal,
+        via_competencia=indice_liquidado_competencia is not None,
+    )
 else:
     _render_relatorio_necessidade(
         filtrado, meses_liquidados_por_ne, liquidacao_competencia_por_mes, source_key, ano_selecionado, busca,
         manifesto_execucao_mensal, via_competencia=indice_liquidado_competencia is not None,
     )
-_render_relatorio_projecao_execucao(
-    filtrado, liquidacao_competencia_por_mes, source_key, ano_selecionado, manifesto_execucao_mensal,
-    via_competencia=indice_liquidado_competencia is not None,
-)
 # Visão consolidada da liquidação por competência de todos os contratos (11/10/2026): matriz sob demanda
 if faturas_gov is not None and _empenhos_gov is not None:
     render_visao_consolidada(

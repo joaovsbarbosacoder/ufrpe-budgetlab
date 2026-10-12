@@ -286,6 +286,57 @@ class ConsolidadaAjustadaPorDecisaoTests(unittest.TestCase):
         self.assertNotIn("ajustado por decisão", html_sem)
 
 
+class ExcelDeDecisoesInternasTests(unittest.TestCase):
+    """O Excel de inconsistências ganha a aba "Decisões internas": meses confirmados com nota indicada como cancelada."""
+
+    def setUp(self) -> None:
+        self.faturas = pd.DataFrame([
+            _nota("1", "A", 1310.24, NE_B, 2026, 1), _nota("2", "B", 1250.0, NE_B, 2026, 1), _nota("3", "C", 1250.0, NE_B, 2026, 1),
+        ])
+        self.relatorio = pd.DataFrame([(NE_B, 202601, 2560.24)], columns=["ne_curta", "ano_mes", "valor"])
+        self.contratos = [("23/2025", "1", NE_B)]
+
+    def _decisoes(self, tmp, **extra):
+        meses = consolidar_exercicio(self.contratos, self.faturas, _empenhos(), self.relatorio, 2026)[0]["meses"]
+        _registrar(Path(tmp), classe="ambiguo", assinatura=meses[0]["assinatura"], **extra)
+        return reconstruir_decisoes(carregar_eventos(Path(tmp)))
+
+    def _tabela(self, decisoes):
+        from src.pendencias_conciliacao import tabela_decisoes_internas
+        return tabela_decisoes_internas(self.contratos, self.faturas, _empenhos(), self.relatorio, None, decisoes)
+
+    def test_lista_o_mes_confirmado_com_a_nota_desconsiderada_e_quem_decidiu(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tabela = self._tabela(self._decisoes(tmp, decisao="confirmada", notas_desconsideradas=[("C", NE_B, 1250.0)]))
+            self.assertEqual(len(tabela), 1)
+            linha = tabela.iloc[0]
+            self.assertEqual((linha["Contrato"], linha["Competência"]), ("23/2025", "01/2026"))
+            self.assertIn("C", linha["Notas desconsideradas"])
+            self.assertEqual((linha["Valor nas notas"], linha["Valor das notas ajustado"], linha["Valor no relatório"]),
+                             (3810.24, 2560.24, 2560.24))
+            self.assertEqual((linha["Responsável"], linha["Justificativa"]), ("Maria", "Competência trocada no gov; conferido com o SIAFI."))
+            self.assertIn("decisão interna", linha["Observação"].lower())
+
+    def test_sem_decisao_ou_rejeitada_ou_sem_nota_indicada_nao_aparece(self) -> None:
+        self.assertTrue(self._tabela({}).empty)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertTrue(self._tabela(self._decisoes(tmp, decisao="rejeitada")).empty)
+
+    def test_excel_ganha_a_aba_so_quando_ha_decisoes_e_as_outras_abas_nao_mudam(self) -> None:
+        from io import BytesIO
+        from src.pendencias_conciliacao import excel_inconsistencias, tabela_inconsistencias
+        base = tabela_inconsistencias(self.contratos, self.faturas, _empenhos(), self.relatorio)
+        sem = pd.ExcelFile(BytesIO(excel_inconsistencias(base)))
+        self.assertEqual(sem.sheet_names, ["Resumo por causa", "Pendências"])
+        with tempfile.TemporaryDirectory() as tmp:
+            internas = self._tabela(self._decisoes(tmp, decisao="confirmada", notas_desconsideradas=[("C", NE_B, 1250.0)]))
+            com = pd.ExcelFile(BytesIO(excel_inconsistencias(base, internas)))
+            self.assertEqual(com.sheet_names, ["Resumo por causa", "Pendências", "Decisões internas"])
+            self.assertEqual(len(com.parse("Decisões internas")), 1)
+            self.assertEqual(com.parse("Pendências").shape, sem.parse("Pendências").shape)
+        self.assertEqual(pd.ExcelFile(BytesIO(excel_inconsistencias(base, internas.iloc[0:0]))).sheet_names, ["Resumo por causa", "Pendências"])
+
+
 class MarcaVisualDaDecisaoTests(unittest.TestCase):
     """O mês decidido muda no layout: confirmada vira "conciliado por decisão"; rejeitada mantém a diferença e avisa."""
 
