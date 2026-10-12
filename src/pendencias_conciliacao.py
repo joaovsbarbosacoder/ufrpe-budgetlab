@@ -82,6 +82,24 @@ def _acao_sugerida(classe: str, causas: list, ajuste, visto) -> str:
     return "Conferir a nota e o lançamento no Tesouro: diferença sem causa identificada."
 
 
+def _notas_sem_as_indicadas(visto, decisao) -> float | None:
+    """Soma das notas do mês SEM as que o usuário indicou como canceladas na decisão confirmada (cada indicação casa com
+    UM item (nota, NE, valor)); None se a decisão não indicou nota (confirmou só a diferença) ou o mês não tem nota."""
+
+    indicadas = [tuple(n) for n in getattr(decisao, "notas_desconsideradas", ()) or ()]
+    if not indicadas or visto.notas is None:
+        return None
+    restantes = list(indicadas)
+    total = 0.0
+    for item in visto.itens:
+        chave = (item.nota, item.ne, round(item.valor, 2))
+        if chave in restantes:
+            restantes.remove(chave)
+            continue
+        total += item.valor
+    return round(total, 2)
+
+
 def meses_analisados(
     cid: object, ne_cadastro: object, faturas: pd.DataFrame | None, empenhos_gov: pd.DataFrame | None,
     relatorio: pd.DataFrame | None, numero: str | None = None, decisoes: dict | None = None,
@@ -111,11 +129,16 @@ def meses_analisados(
             ajuste = ajustar_mes(visto, explicadas)
             classe = classificar_mes(visto, ajuste, causas)
             assinatura = assinatura_mes(classe, escolhidas, [i.nota for i in visto.itens], visto.notas, visto.relatorio)
+            notas_ajustadas = None
             if decisoes and numero is not None:
-                classe = aplicar_decisao(classe, decisoes.get((str(numero), ano * 100 + completo.mes)), assinatura)
+                decisao = decisoes.get((str(numero), ano * 100 + completo.mes))
+                classe = aplicar_decisao(classe, decisao, assinatura)
+                if classe == "confirmada":
+                    notas_ajustadas = _notas_sem_as_indicadas(visto, decisao)
             linhas.append({
                 "assinatura": assinatura, "classe": classe, "ano_mes": ano * 100 + completo.mes, "nes": sorted(escolhidas),
                 "notas": sorted({i.nota for i in visto.itens}), "valor_notas": visto.notas, "valor_relatorio": visto.relatorio,
+                "valor_notas_ajustado": notas_ajustadas,
                 "acao": _acao_sugerida(classe, causas, ajuste, visto) if classe not in CLASSES_OK else "",
             })
     return linhas
@@ -154,13 +177,20 @@ def consolidar_exercicio(
             l = por_mes.get(ano * 100 + mes)
             meses.append(
                 {"mes": mes, "relatorio": l["valor_relatorio"], "notas": l["valor_notas"], "classe": l["classe"],
-                 "acao": l["acao"], "assinatura": l["assinatura"]} if l else
-                {"mes": mes, "relatorio": None, "notas": None, "classe": "sem_registro", "acao": "", "assinatura": ""}
+                 "acao": l["acao"], "assinatura": l["assinatura"], "notas_ajustadas": l["valor_notas_ajustado"]} if l else
+                {"mes": mes, "relatorio": None, "notas": None, "classe": "sem_registro", "acao": "", "assinatura": "",
+                 "notas_ajustadas": None}
             )
         def total(campo):
             valores = [m[campo] for m in meses if m[campo] is not None]
             return round(sum(valores), 2) if valores else None
-        resultado.append({"contrato": str(numero), "meses": meses, "total_relatorio": total("relatorio"), "total_notas": total("notas")})
+        # total das notas com as notas indicadas pelo usuário (decisão confirmada) descontadas; o bruto continua em `total_notas`
+        ajustados = [m["notas_ajustadas"] if m["notas_ajustadas"] is not None else m["notas"] for m in meses]
+        valores = [v for v in ajustados if v is not None]
+        resultado.append({
+            "contrato": str(numero), "meses": meses, "total_relatorio": total("relatorio"), "total_notas": total("notas"),
+            "total_notas_ajustado": round(sum(valores), 2) if valores else None,
+        })
     return resultado
 
 
