@@ -273,6 +273,7 @@ from src.ui_cadastro import (
 )
 from src.ui_cadastro import css as css_cadastro
 from src.ui_relatorio_reforco_empenho import render_botao_relatorio
+from src import preferencias_ui
 from src.pendencias_conciliacao import contratos_ligados
 from src.ui_conciliacao_competencia import render_conciliacao_competencia, render_visao_consolidada
 from src.ui_faturas import render_faturas_do_contrato
@@ -1352,6 +1353,18 @@ def _render_rodape_resumo(valor_empenhado_total: float, saldo_total: float, nece
 
 BASE_CONTRATUAL = "Valor contratual"
 BASE_EXECUCAO = "Projeção pela execução"
+PREFERENCIA_BASE_NECESSIDADE = "contratos_continuos.base_necessidade"
+_CHAVE_ERRO_BASE = "cc_base_necessidade_erro"
+
+
+def _lembrar_base_necessidade(chave: str) -> None:
+    """`on_change` do seletor da base: grava a escolha; falha de gravação vira aviso na página, sem perder a escolha da sessão."""
+
+    try:
+        preferencias_ui.salvar(PREFERENCIA_BASE_NECESSIDADE, st.session_state[chave])
+        st.session_state.pop(_CHAVE_ERRO_BASE, None)
+    except preferencias_ui.ErroPreferencia as erro:
+        st.session_state[_CHAVE_ERRO_BASE] = str(erro)
 
 
 def _necessidade_pela_execucao(
@@ -2094,12 +2107,25 @@ _por_ne_topo, _sem_ne_topo = necessidade_por_ne(filtrado, meses_liquidados_por_n
 # Liquidação por Competência — sem ela o seletor não aparece.
 _modo_execucao = False
 if indice_liquidado_competencia is not None and liquidacao_competencia_por_mes is not None:
+    # A escolha é lembrada (12/10/2026, persistência autorizada): ao voltar de outra página, ou numa nova sessão, o botão
+    # começa na última base escolhida (`data/preferencias/ui.json`, ver `src/preferencias_ui.py`).
+    _chave_base = f"cc_base_necessidade_{source_key}"
+    if _chave_base not in st.session_state:
+        try:
+            st.session_state[_chave_base] = preferencias_ui.carregar(
+                PREFERENCIA_BASE_NECESSIDADE, BASE_CONTRATUAL, validas=(BASE_CONTRATUAL, BASE_EXECUCAO)
+            )
+        except preferencias_ui.ErroPreferencia as erro:
+            st.warning(f"Preferências de tela ilegíveis ({erro}) — usando o valor contratual.")
+            st.session_state[_chave_base] = BASE_CONTRATUAL
     _modo_execucao = BASE_EXECUCAO == st.radio(
         "Base da necessidade de empenho", [BASE_CONTRATUAL, BASE_EXECUCAO], horizontal=True,
-        key=f"cc_base_necessidade_{source_key}",
+        key=_chave_base, on_change=_lembrar_base_necessidade, args=(_chave_base,),
         help="Valor contratual: despesa mensal cheia × meses restantes. Projeção pela execução: o que o contrato de fato "
              "liquida (fator de execução por competência), como no relatório 'Projeção pela execução'.",
     )
+    if st.session_state.get(_CHAVE_ERRO_BASE):
+        st.warning(f"Não foi possível lembrar a escolha da base: {st.session_state.pop(_CHAVE_ERRO_BASE)}")
     if _modo_execucao:
         _por_ne_topo = _necessidade_pela_execucao(
             _por_ne_topo, filtrado, liquidacao_competencia_por_mes, ano_selecionado, manifesto_execucao_mensal, source_key
