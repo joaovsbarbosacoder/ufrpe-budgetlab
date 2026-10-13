@@ -19,11 +19,12 @@ from xml.sax.saxutils import escape
 import pandas as pd
 import streamlit as st
 
-from src.contratos_aditivos import aditivo_para_registro, aditivos_do_registro, validar_aditivos
+from src.contratos_aditivos import Aditivo, aditivo_para_registro, aditivos_do_registro, validar_aditivos
 from src.contratos_continuos_cadastro import atualizar_contrato
 from src.estimativa_reajuste import (
     ParametrosReajuste,
     aditivo_previsto_do_ciclo,
+    aditivos_sugeridos_dos_ciclos_formalizados,
     estimar_contrato,
     liquidado_do_contrato,
     nes_do_gov,
@@ -270,6 +271,60 @@ def _itens_do_ranking(resumo: pd.DataFrame, ano: int) -> list[dict]:
     return itens
 
 
+def _render_registro_formalizado(
+    registro: dict, aditivos: list[Aditivo], sugeridos: list[Aditivo], ano: int, source_key: str,
+) -> None:
+    """Formulário "Registrar reajuste formalizado": para um ciclo assinado no gov que ainda não está no cadastro, grava o
+    aditivo de Reajuste ASSINADO com o novo valor mensal. O valor vem SUGERIDO (valor em vigor × (1 + percentual)), mas só
+    é gravado depois de conferido/editado e confirmado pelo botão; data já com aditivo é recusada (sem duplicar)."""
+
+    base = f"rj_{source_key}_{registro.get('id')}_reg"
+    st.markdown(
+        '<div class="rj-titulo">Registrar reajuste formalizado</div><div class="rj-leg2">Reajuste já assinado no Contratos.gov '
+        "e ainda sem valor no cadastro. Confira o valor sugerido (pelo índice) e ajuste ao do termo antes de registrar; só é "
+        "gravado ao confirmar.</div>",
+        unsafe_allow_html=True,
+    )
+    por_data = {sugerido.data_inicio.isoformat(): sugerido for sugerido in sugeridos}
+    escolhida = st.selectbox(
+        "Ciclo a registrar", list(por_data), format_func=lambda dia: f"{por_data[dia].data_inicio:%d/%m/%Y}", key=f"{base}_ciclo"
+    )
+    sugerido = por_data[escolhida]
+    chave = f"{base}_{escolhida}"
+    colunas = st.columns(2)
+    numero = colunas[0].text_input("Nº do termo", value=sugerido.numero, key=f"{chave}_numero")
+    valor = colunas[1].number_input(
+        "Novo valor mensal (R$)", value=sugerido.valor_mensal, step=0.01, format="%.2f", key=f"{chave}_valor",
+        help="Sugestão: valor em vigor × (1 + percentual do ciclo). Sem percentual ou sem valor em vigor, informe o do termo.",
+    )
+    if st.button("Registrar reajuste", key=f"{chave}_registrar"):
+        if valor is None:
+            st.error("Informe o novo valor mensal do termo.")
+        else:
+            # mesma data: o aditivo de Reajuste assinado SEM valor é completado (sem duplicar); qualquer outro aditivo na data
+            # é conflito e nada é gravado
+            existentes = [a for a in aditivos if a.data_inicio == sugerido.data_inicio]
+            completavel = next(
+                (a for a in existentes if a.tipo == "REAJUSTE" and a.situacao == "ASSINADO" and a.valor_mensal is None), None
+            )
+            if existentes and completavel is None:
+                st.error("Já existe um aditivo com esta data de início: nada foi gravado.")
+                return
+            novo = Aditivo(
+                numero=numero.strip(), tipo="REAJUSTE", situacao="ASSINADO", data_inicio=sugerido.data_inicio,
+                valor_mensal=float(valor),
+            )
+            novos = [novo if a is completavel else a for a in aditivos] if completavel is not None else [*aditivos, novo]
+            erros = validar_aditivos(aditivos_do_registro([aditivo_para_registro(a) for a in novos]))
+            if erros:
+                st.error(_md(" ".join(erros)))
+            else:
+                atualizado = dict(registro)
+                atualizado["aditivos"] = [aditivo_para_registro(a) for a in novos]
+                atualizar_contrato(ano, atualizado)
+                st.rerun()
+
+
 def _alternar_mais(chave: str) -> None:
     st.session_state[chave] = not st.session_state.get(chave, False)
 
@@ -413,6 +468,10 @@ def render_estimativa_reajuste(
             atualizado["aditivos"] = [aditivo_para_registro(a) for a in novos]
             atualizar_contrato(ano, atualizado)
             st.rerun()
+
+    sugeridos = aditivos_sugeridos_dos_ciclos_formalizados(estimativa, aditivos, item["linha"].get("despesa_mensal"))
+    if registro is not None and sugeridos:
+        _render_registro_formalizado(registro, aditivos, sugeridos, ano, source_key)
 
     # ---- tabela completa (todas as colunas, para conferir os números)
     with st.expander("Tabela completa por contrato", expanded=False):

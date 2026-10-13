@@ -461,6 +461,37 @@ def aditivo_previsto_do_ciclo(
     return None
 
 
+def aditivos_sugeridos_dos_ciclos_formalizados(
+    estimativa: EstimativaContrato, aditivos: list[Aditivo], despesa_mensal: object
+) -> list[Aditivo]:
+    """Aditivos REAJUSTE/ASSINADO que o usuário pode registrar para os ciclos FORMALIZADOS ("a confirmar": assinados no
+    gov, sem valor no cadastro) que ainda não têm aditivo com valor na mesma data (o aditivo assinado sem valor é proposto
+    para ser completado). `data_inicio` = data-base; `valor_mensal`
+    sugerido = valor mensal em vigor × (1 + percentual) — só uma sugestão, editada e confirmada por quem registra; nulo
+    (nunca zero) quando o percentual ou o valor em vigor é desconhecido. Em ordem cronológica. Não grava nada."""
+
+    # aditivo de Reajuste assinado SEM valor já está no cadastro: é completado (mantém o nº do termo), não duplicado
+    a_completar = {
+        a.data_inicio: a for a in aditivos
+        if a.tipo == "REAJUSTE" and a.situacao == "ASSINADO" and a.valor_mensal is None and a.data_inicio is not None
+    }
+    ocupadas = {a.data_inicio for a in aditivos if a.data_inicio is not None and a.data_inicio not in a_completar}
+    sugeridos = []
+    for ciclo in estimativa.ciclos:
+        if ciclo.estado != "formalizado" or ciclo.data_base in ocupadas:
+            continue
+        vigente, _ = valor_vigente_em(despesa_mensal, aditivos, ciclo.data_base)
+        valor = None
+        if ciclo.percentual is not None and vigente is not None:
+            valor = round(vigente * (1.0 + ciclo.percentual / 100.0), 2)
+        sugeridos.append(Aditivo(
+            numero=a_completar[ciclo.data_base].numero if ciclo.data_base in a_completar else f"Reajuste {ciclo.data_base:%m/%Y}",
+            tipo="REAJUSTE", situacao="ASSINADO",
+            data_inicio=ciclo.data_base, valor_mensal=valor,
+        ))
+    return sugeridos
+
+
 def nes_em_conflito(registros: list[dict]) -> dict[str, set[str]]:
     """NEs ligadas a mais de um `contrato_numero` (entre os registros de todos os exercícios). Uma NE
     pertence a um único contrato: a repetição é inconsistência de cadastro — sinalizada, e o liquidado dessa
