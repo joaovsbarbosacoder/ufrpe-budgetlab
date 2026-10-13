@@ -1,9 +1,9 @@
 {
   "base": "dotacao_anual",
-  "arquivo": "BI CPOC - DOTAÇÃO - Por Ano (5).xlsx",
-  "sha256": "431a5282a268a8ad69026abeb02daa885034b2cddae977527ad644bd87f2eece",
-  "data_extracao": "2026-10-07T13:31:05",
-  "importado_em": "2026-10-07T13:31:06-03:00",
+  "arquivo": "BI CPOC - DOTAÇÃO - Por Ano (6).xlsx",
+  "sha256": "b36791c315215a383d78562a7d0e023cd41ee910bcc5f583fe77b095f944b5a6",
+  "data_extracao": "2026-10-13T09:24:24",
+  "importado_em": "2026-10-13T09:24:25-03:00",
   "anos": [
     2020,
     2021,
@@ -15,8 +15,8 @@
   ],
   "totais": {
     "dotacao_inicial": 5035354458.0,
-    "dotacao_suplementar": 707146019.0,
-    "dotacao_atualizada": 5220011994.0,
+    "dotacao_suplementar": 707431189.0,
+    "dotacao_atualizada": 5220297164.0,
     "dotacao_cancelada_remanejada": -522495483.0
   },
   "totais_por_ano": {
@@ -58,15 +58,15 @@
     },
     "2026": {
       "dotacao_inicial": 908319687.0,
-      "dotacao_suplementar": 15483132.0,
-      "dotacao_atualizada": 914300562.0,
+      "dotacao_suplementar": 15768302.0,
+      "dotacao_atualizada": 914585732.0,
       "dotacao_cancelada_remanejada": -9502257.0
     }
   },
   "contagens": {
     "abas_reconhecidas": 1,
     "linhas_normalizadas": 7952,
-    "nulos": 6404,
+    "nulos": 6402,
     "zeros": 334,
     "negativos": 225
   }
