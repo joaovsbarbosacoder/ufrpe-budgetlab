@@ -146,6 +146,45 @@ class CiclosEGraficoTests(unittest.TestCase):
         self.assertIn("set", html)
         self.assertIn("Sem estimativa", html_grafico_mensal(pd.DataFrame(), 2026))
 
+    def _matriz_so_base(self) -> pd.DataFrame:
+        return pd.DataFrame({
+            "ano": [2026] * 4, "mes": [6, 7, 10, 11], "base_valor": [None, 704241.49, 792141.84, 792141.84],
+            "base_origem": ["sem_liquidado", "liquidado", "contratado", "contratado"],
+            "acrescimo_formalizado": [0.0] * 4, "acrescimo_projetado": [0.0] * 4, "acrescimo": [0.0] * 4,
+        })
+
+    def test_valor_sobre_cada_barra_e_origem_da_base_diferenciada(self) -> None:
+        html = html_grafico_mensal(self._matriz_so_base(), 2026)
+        self.assertIn("704 mil", html)   # valor compacto sobre a barra
+        self.assertIn("792 mil", html)
+        self.assertEqual(html.count('class="b teto"'), 2)   # meses de teto contratado, em estilo próprio
+        self.assertEqual(html.count('class="b"'), 1)        # o liquidado (julho)
+        self.assertIn("sem liquidado apurado", html)        # legenda dos meses sem barra
+
+    def test_acrescimo_fica_empilhado_em_cima_da_base(self) -> None:
+        matriz = pd.DataFrame({
+            "ano": [2026], "mes": [9], "base_valor": [1000.0], "base_origem": ["liquidado"],
+            "acrescimo_formalizado": [40.0], "acrescimo_projetado": [20.0], "acrescimo": [60.0],
+        })
+        coluna = html_grafico_mensal(matriz, 2026).split('title="set/2026')[1].split("</div></div>")[0]
+        # de cima para baixo: valor, formalizado, projetado, base
+        self.assertLess(coluna.index("rj-v"), coluna.index("rj-ac-f"))
+        self.assertLess(coluna.index("rj-ac-f"), coluna.index("rj-ac-p"))
+        self.assertLess(coluna.index("rj-ac-p"), coluna.index('class="b"'))
+        self.assertIn("1,1 mil", coluna)  # valor sobre a coluna = base + acréscimo
+
+    def test_sem_acrescimo_no_exercicio_avisa_que_so_ha_a_base(self) -> None:
+        html = html_grafico_mensal(self._matriz_so_base(), 2026)
+        self.assertIn("Sem acréscimo de reajuste neste exercício", html)
+        com_acrescimo = self._matriz_so_base().assign(acrescimo_formalizado=[0.0, 0.0, 10.0, 10.0], acrescimo=[0.0, 0.0, 10.0, 10.0])
+        self.assertNotIn("Sem acréscimo de reajuste neste exercício", html_grafico_mensal(com_acrescimo, 2026))
+
+    def test_mes_sem_base_nao_ganha_barra_nem_valor_inventado(self) -> None:
+        html = html_grafico_mensal(self._matriz_so_base(), 2026)
+        import re
+        coluna_junho = re.search(r'title="jun/2026[^"]*">(.*?)<div class="rj-col"', html, re.S).group(1)
+        self.assertEqual(coluna_junho, "</div>")  # coluna vazia: sem barra e sem valor
+
 
 if __name__ == "__main__":
     unittest.main()
