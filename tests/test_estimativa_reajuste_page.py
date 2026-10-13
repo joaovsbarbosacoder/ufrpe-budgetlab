@@ -161,3 +161,66 @@ def test_linha_do_tempo_do_contrato_mostra_o_reajuste_ja_registrado(tmp_path, mo
     html = _html(app)
     assert "R$ 1.100,00/mês · registrado" in html
     assert "10/09/2026" in html
+
+
+def _com_reajuste_assinado_sem_valor(tmp_path, monkeypatch):
+    """13/2026 (início 10/09/2026) com um aditivo de Reajuste ASSINADO sem valor mensal um ano depois (10/09/2027): ciclo
+    formalizado "a confirmar" (a regra de anualidade ignora reajuste a menos de um ano do início do contrato)."""
+    _ambiente(tmp_path, monkeypatch, com_fotografia=True)
+    registro = next(r for r in cadastro.carregar_contratos(2026) if r["contrato_numero"] == "13/2026")
+    sem_valor = Aditivo(numero="TA 5", tipo="REAJUSTE", situacao="ASSINADO", data_inicio=date(2027, 9, 10), valor_mensal=None)
+    cadastro.atualizar_contrato(2026, {**registro, "reajuste_percentual_manual": 5.0, "aditivos": [aditivo_para_registro(sem_valor)]})
+    return registro["id"]
+
+
+def _abrir_detalhe_13_2026() -> AppTest:
+    app = _abrir()
+    next(s for s in app.selectbox if s.label == "Detalhar contrato").select("13/2026").run()
+    assert not app.exception, [e.value for e in app.exception]
+    return app
+
+
+def test_registrar_reajuste_formalizado_completa_o_aditivo_sem_duplicar(tmp_path, monkeypatch) -> None:
+    id_registro = _com_reajuste_assinado_sem_valor(tmp_path, monkeypatch)
+    app = _abrir_detalhe_13_2026()
+
+    assert "Registrar reajuste formalizado" in _html(app)
+    campo = next(n for n in app.number_input if n.label == "Novo valor mensal (R$)")
+    assert campo.value == pytest.approx(1050.0)  # sugestão: R$ 1.000 em vigor × (1 + 5%)
+    assert next(t for t in app.text_input if t.label == "Nº do termo").value == "TA 5"  # mantém o termo já cadastrado
+
+    campo.set_value(1100.0).run()
+    next(b for b in app.button if b.label == "Registrar reajuste").click().run()
+    assert not app.exception, [e.value for e in app.exception]
+
+    gravado = next(r for r in cadastro.carregar_contratos(2026) if r["id"] == id_registro)
+    assert len(gravado["aditivos"]) == 1  # completou o existente: nada de duplicata
+    assert gravado["aditivos"][0]["numero"] == "TA 5" and gravado["aditivos"][0]["valor_mensal"] == 1100.0
+    app = _abrir_detalhe_13_2026()
+    assert "R$ 1.100,00/mês · registrado" in _html(app)
+    assert "Registrar reajuste formalizado" not in _html(app)  # o ciclo saiu do "a confirmar"
+
+
+def test_sem_percentual_nao_ha_valor_sugerido_e_registrar_sem_valor_nao_grava_nada(tmp_path, monkeypatch) -> None:
+    id_registro = _com_reajuste_assinado_sem_valor(tmp_path, monkeypatch)
+    registro = next(r for r in cadastro.carregar_contratos(2026) if r["id"] == id_registro)
+    # sem percentual manual e com índice desconhecido: o ciclo continua formalizado, mas sem percentual → sem valor sugerido
+    cadastro.atualizar_contrato(2026, {**registro, "reajuste_percentual_manual": None, "reajuste_indice": "SEM_INDICE"})
+    app = _abrir_detalhe_13_2026()
+
+    campo = next(n for n in app.number_input if n.label == "Novo valor mensal (R$)")
+    assert campo.value is None  # nada inventado: sem percentual, o campo começa vazio (nunca 0)
+    next(b for b in app.button if b.label == "Registrar reajuste").click().run()
+
+    assert any("Informe o novo valor mensal" in e.value for e in app.error)
+    gravado = next(r for r in cadastro.carregar_contratos(2026) if r["id"] == id_registro)
+    assert gravado["aditivos"][0]["valor_mensal"] is None  # nada foi gravado
+
+
+def test_nada_e_gravado_ao_abrir_a_pagina_nem_ao_ver_o_formulario(tmp_path, monkeypatch) -> None:
+    id_registro = _com_reajuste_assinado_sem_valor(tmp_path, monkeypatch)
+    antes = next(r for r in cadastro.carregar_contratos(2026) if r["id"] == id_registro)
+
+    _abrir_detalhe_13_2026()
+
+    assert next(r for r in cadastro.carregar_contratos(2026) if r["id"] == id_registro) == antes
