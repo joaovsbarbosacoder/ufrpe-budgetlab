@@ -561,6 +561,29 @@ atualizar a página e a reiniciar o app. Uma célula gravada que sumiu da Dotaç
 reimportação) é mantida no arquivo e avisada como "célula selecionada ausente da base". Arquivo ausente
 equivale a nada marcado; arquivo corrompido gera erro visível e a página não grava por cima.
 
+**Histórico do resultado (13/10/2026).** Seção "6. Histórico do resultado": uma fotografia por dia com o
+resultado, a dotação, o empenhado por origem, a necessidade por origem, o número de células marcadas e as
+extrações usadas, e, para cada par de fotografias consecutivas, a variação **por componente** da fórmula, com o
+efeito de cada um no resultado (dotação maior melhora; empenhado ou necessidade maiores pioram; os efeitos somam a
+variação do resultado). **Persistência aprovada em 13/10/2026:** `data/resultado_orcamentario/<exercício>/historico/AAAA-MM-DD.json`
+(fora do git, gravação atômica; `src/resultado_orcamentario_historico.py`). Grava ao abrir a página, **só com a
+seleção de células salva** (a seleção em edição não vira história), arquivos de seleção e despesas legíveis e ao
+menos uma célula marcada; a última do dia substitui a anterior e abrir sem mudança não reescreve. O histórico começa
+no primeiro registro: o passado não é reconstruível. Componente nulo (indisponível) em qualquer ponta gera variação
+nula, nunca zero; arquivo ilegível mostra erro e nunca é sobrescrito.
+**Mudança de situação (13/10/2026).** A tabela dos dias ganhou a coluna "Mudança de situação", preenchida quando a
+situação do dia (Superávit, Déficit, Equilíbrio ou Incompleto) difere da fotografia anterior, por exemplo
+"Superávit → Déficit". Qualquer mudança conta, inclusive de e para Equilíbrio e Incompleto (resultado indisponível), pois
+nulo, zero e negativo são estados distintos. É só uma marca na tabela: nenhum valor muda e não há alerta em Alertas
+Gerenciais.
+
+**Dotação por célula (13/10/2026).** A fotografia guarda também a Dotação Atualizada de cada célula marcada
+(`dotacao_por_celula`, chave = os 7 códigos separados por `|`, com zeros à esquerda). Entre duas fotografias, a tabela
+"Células que moveram a dotação" lista, da maior variação para a menor, as células com dotação alterada, marcadas ou
+desmarcadas (marcar/desmarcar move o valor inteiro; a ponta em que a célula não estava fica nula, não zero) e as de
+dotação nula em alguma ponta (efeito não calculável). A soma dos efeitos fecha com a variação da dotação quando nenhuma
+é nula. Fotografias anteriores a esse registro não têm o detalhe: a página avisa que ele está indisponível.
+
 **Nulo não é zero.** Célula marcada sem Dotação Atualizada aparece como "—" e com aviso; não vira zero na
 soma e o resultado é marcado como **incompleto**. O mesmo vale para empenhado nulo em célula marcada.
 Dotação zero ou negativa e empenhado negativo (estorno líquido) entram como estão.

@@ -157,3 +157,97 @@ def test_menu_tem_pagina(diretorio: Path) -> None:
     app.run()
     assert not app.exception, [e.value for e in app.exception]
     assert any(titulo.value == "Resultado Orçamentário" for titulo in app.title)
+
+
+def test_historico_sem_selecao_nao_grava_e_avisa(diretorio: Path) -> None:
+    app = _abrir()
+    assert any("Histórico do resultado" in s.value for s in app.subheader)
+    assert "Ainda não há fotografias" in _textos(app)
+    assert not list(diretorio.glob("*/historico/*.json"))
+
+
+def test_historico_grava_fotografia_so_com_selecao_salva(diretorio: Path) -> None:
+    app = _abrir()
+    exercicio = _exercicio(app)
+    # marcar sem salvar: a seleção em edição não vira história
+    app.checkbox(key=f"ro_cel_{exercicio}_0").check().run()
+    assert not app.exception, [e.value for e in app.exception]
+    assert not list(diretorio.glob("*/historico/*.json"))
+    # salvar: a próxima execução grava a fotografia do dia
+    app.button(key="ro_salvar_selecao").click().run()
+    assert not app.exception, [e.value for e in app.exception]
+    arquivos = list((diretorio / str(exercicio) / "historico").glob("*.json"))
+    assert len(arquivos) == 1
+    foto = json.loads(arquivos[0].read_text(encoding="utf-8"))
+    assert foto["exercicio"] == exercicio and foto["celulas_marcadas"] == 1
+    assert "Ainda não há fotografias" not in _textos(app)
+    assert "Há só uma fotografia" in _textos(app)
+
+
+def test_historico_arquivo_corrompido_avisa_e_nao_sobrescreve(diretorio: Path) -> None:
+    app = _abrir()
+    exercicio = _exercicio(app)
+    pasta = diretorio / str(exercicio) / "historico"
+    pasta.mkdir(parents=True)
+    (pasta / "2026-01-01.json").write_text("{quebrado", encoding="utf-8")
+    app.checkbox(key=f"ro_cel_{exercicio}_0").check().run()
+    app.button(key="ro_salvar_selecao").click().run()
+    assert not app.exception, [e.value for e in app.exception]
+    assert "O histórico não pôde ser lido" in "\n".join(str(e.value) for e in app.error)
+    assert (pasta / "2026-01-01.json").read_text(encoding="utf-8") == "{quebrado"
+    assert len(list(pasta.glob("*.json"))) == 1
+
+
+def test_historico_com_duas_fotografias_mostra_o_que_levou_a_alteracao(diretorio: Path) -> None:
+    from src import resultado_orcamentario_historico as historico_ro
+
+    app = _abrir()
+    exercicio = _exercicio(app)
+    antiga = historico_ro.Fotografia(
+        data="2026-01-01", exercicio=exercicio, resultado=100.0, incompleto=False, dotacao=500.0,
+        empenhado={"Contratos Contínuos": 250.0}, empenhado_total=250.0,
+        necessidade={"Contratos Contínuos": 150.0}, celulas_marcadas=1,
+    )
+    historico_ro.registrar(antiga, diretorio)
+    app.checkbox(key=f"ro_cel_{exercicio}_0").check().run()
+    app.button(key="ro_salvar_selecao").click().run()
+    assert not app.exception, [e.value for e in app.exception]
+    seletor = app.selectbox(key="ro_historico_periodo")
+    assert seletor.value.startswith("2026-01-01 → ")
+    assert "Variação do resultado" in _textos(app) or "não é calculável" in _textos(app)
+
+
+def _semear_fotografia_antiga(diretorio: Path, exercicio: int, detalhe) -> None:
+    from src import resultado_orcamentario_historico as historico_ro
+
+    historico_ro.registrar(
+        historico_ro.Fotografia(
+            data="2026-01-01", exercicio=exercicio, resultado=100.0, incompleto=False, dotacao=500.0,
+            empenhado={"Contratos Contínuos": 250.0}, empenhado_total=250.0,
+            necessidade={"Contratos Contínuos": 150.0}, celulas_marcadas=0, dotacao_por_celula=detalhe,
+        ),
+        diretorio,
+    )
+
+
+def test_historico_sem_detalhe_por_celula_avisa_que_esta_indisponivel(diretorio: Path) -> None:
+    app = _abrir()
+    exercicio = _exercicio(app)
+    _semear_fotografia_antiga(diretorio, exercicio, None)
+    app.checkbox(key=f"ro_cel_{exercicio}_0").check().run()
+    app.button(key="ro_salvar_selecao").click().run()
+    assert not app.exception, [e.value for e in app.exception]
+    assert "Detalhe da dotação por célula indisponível" in _textos(app)
+
+
+def test_historico_com_detalhe_mostra_celula_marcada_que_moveu_a_dotacao(diretorio: Path) -> None:
+    app = _abrir()
+    exercicio = _exercicio(app)
+    _semear_fotografia_antiga(diretorio, exercicio, {})  # detalhe existe, mas nenhuma célula estava marcada
+    app.checkbox(key=f"ro_cel_{exercicio}_0").check().run()
+    app.button(key="ro_salvar_selecao").click().run()
+    assert not app.exception, [e.value for e in app.exception]
+    assert "Células que moveram a dotação" in _textos(app)
+    fotos = list((diretorio / str(exercicio) / "historico").glob("*.json"))
+    hoje = next(json.loads(f.read_text(encoding="utf-8")) for f in fotos if f.stem != "2026-01-01")
+    assert len(hoje["dotacao_por_celula"]) == 1  # a célula marcada, com a chave dos 7 códigos
