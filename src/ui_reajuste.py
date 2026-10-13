@@ -32,7 +32,19 @@ from src.estimativa_reajuste import (
 )
 from src.indices_economicos import INDICE_PADRAO, INDICES, ErroIndiceEconomico, variacoes_bcb
 from src.ui_cadastro import formatar_brl
-from src.ui_reajuste_visual import CSS, html_ciclos, html_destaque, html_grafico_mensal, html_mapa, html_ranking
+from src.ui_reajuste_visual import (
+    CSS,
+    ROTULO_ESTADO,
+    ROTULO_ORIGEM_BASE,
+    ROTULO_ORIGEM_PERCENTUAL,
+    html_ciclos,
+    html_destaque,
+    html_grafico_mensal,
+    html_mapa,
+    html_ranking,
+    html_tabela_competencias,
+    html_tabela_resumo,
+)
 
 ROTULO_SITUACAO = {
     "estimado": "Estimado",
@@ -40,12 +52,6 @@ ROTULO_SITUACAO = {
     "sem_data_base": "Sem data-base (informe o início ou a data)",
     "sem_vigencia_fim": "Sem fim de vigência",
     "sem_reajuste_na_vigencia": "Sem reajuste previsto na vigência",
-}
-ROTULO_ESTADO = {"formalizado": "Formalizado, a confirmar", "projetado": "Projetado"}
-ROTULO_ORIGEM_BASE = {"liquidado": "Liquidado", "contratado": "Contratado (teto)", "sem_liquidado": "Sem liquidado apurado"}
-ROTULO_ORIGEM_PERCENTUAL = {
-    "manual": "Manual", "oficial": "Oficial (12 meses)", "oficial_ultimo": "Oficial (último disponível)",
-    "sem_indice": "Sem índice",
 }
 _PADRAO = f"Padrão ({INDICE_PADRAO})"
 
@@ -356,7 +362,8 @@ def render_estimativa_reajuste(
         "forte a cor, maior o valor; o contorno laranja marca o mês da data-base; traço = sem estimativa.</div>",
         unsafe_allow_html=True,
     )
-    st.markdown(html_mapa(pivot, escolhido, bases), unsafe_allow_html=True)
+    credores = {str(i["linha"]["contrato_numero"]): i["linha"].get("fornecedor") for i in resultados}
+    st.markdown(html_mapa(pivot, escolhido, bases, credores), unsafe_allow_html=True)
 
     # ---- detalhe de um contrato
     rotulos = {
@@ -384,26 +391,7 @@ def render_estimativa_reajuste(
         )
     if not estimativa.matriz.empty:
         with st.expander("Ver tabela detalhada das competências", expanded=False):
-            detalhe = estimativa.matriz[[
-                "competencia", "exercicio_anterior", "base_valor", "base_origem", "ciclo", "estado_ciclo", "percentual",
-                "percentual_origem", "acrescimo_formalizado", "acrescimo_projetado", "acrescimo", "prorrogacao_prevista",
-            ]].rename(columns={
-                "competencia": "Competência", "exercicio_anterior": "Exercício anterior", "base_valor": "Base",
-                "base_origem": "Origem da base", "ciclo": "Ciclo", "estado_ciclo": "Estado do ciclo",
-                "percentual": "Percentual (%)", "percentual_origem": "Origem do %",
-                "acrescimo_formalizado": "Formalizado", "acrescimo_projetado": "Projetado", "acrescimo": "Acréscimo",
-                "prorrogacao_prevista": "Prorrogação prevista",
-            })
-            detalhe["Origem da base"] = detalhe["Origem da base"].map(ROTULO_ORIGEM_BASE)
-            detalhe["Origem do %"] = detalhe["Origem do %"].map(ROTULO_ORIGEM_PERCENTUAL)
-            detalhe["Estado do ciclo"] = detalhe["Estado do ciclo"].map(ROTULO_ESTADO)
-            st.dataframe(
-                detalhe, hide_index=True, use_container_width=True,
-                column_config={
-                    coluna: st.column_config.NumberColumn(format="R$ %.2f")
-                    for coluna in ("Base", "Formalizado", "Projetado", "Acréscimo")
-                },
-            )
+            st.markdown(html_tabela_competencias(estimativa.matriz), unsafe_allow_html=True)
 
     registro = next((r for r in registros if str(r.get("id")) == str(item["linha"].get("id"))), None)
     acoes = st.columns(2)
@@ -426,17 +414,7 @@ def render_estimativa_reajuste(
 
     # ---- tabela completa (todas as colunas, para conferir os números)
     with st.expander("Tabela completa por contrato", expanded=False):
-        moedas = [
-            f"Formalizado a confirmar {ano}", f"Projetado {ano}", f"Acréscimo {ano}", "Exercícios anteriores",
-            "Acréscimo na vigência", "Retroativo no gov (contrato inteiro)",
-        ]
-        st.dataframe(
-            resumo, hide_index=True, use_container_width=True,
-            column_config={
-                "Data-base": st.column_config.DateColumn(format="DD/MM/YYYY"),
-                **{coluna: st.column_config.NumberColumn(format="R$ %.2f") for coluna in moedas},
-            },
-        )
+        st.markdown(html_tabela_resumo(resumo, ano), unsafe_allow_html=True)
     st.download_button(
         "Baixar estimativa (Excel)", _excel(resumo, matriz), file_name=f"estimativa_reajuste_{ano}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=f"rj_{source_key}_excel",

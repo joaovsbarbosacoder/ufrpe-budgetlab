@@ -42,6 +42,13 @@ from src.ui_cadastro import formatar_brl
 
 _MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
 
+ROTULO_ESTADO = {"formalizado": "Formalizado, a confirmar", "projetado": "Projetado"}
+ROTULO_ORIGEM_BASE = {"liquidado": "Liquidado", "contratado": "Contratado (teto)", "sem_liquidado": "Sem liquidado apurado"}
+ROTULO_ORIGEM_PERCENTUAL = {
+    "manual": "Manual", "oficial": "Oficial (12 meses)", "oficial_ultimo": "Oficial (último disponível)",
+    "sem_indice": "Sem índice",
+}
+
 CSS = f"""<style>
 .rj-card {{ background:{SURFACE}; border:1px solid {BORDER}; border-radius:14px; padding:16px 20px; margin:0 0 14px; }}
 .rj-hero {{ display:grid; grid-template-columns:1.2fr 2fr; gap:20px; align-items:center; }}
@@ -72,7 +79,18 @@ CSS = f"""<style>
 table.rj-heat {{ border-collapse:separate; border-spacing:3px; width:100%; font-size:11.5px; }}
 .rj-heat th {{ color:{TEXT_FAINT} !important; font-weight:600; text-transform:uppercase; font-size:10.5px; text-align:center; }}
 .rj-heat td {{ text-align:center; border-radius:5px; padding:5px 2px; font-variant-numeric:tabular-nums; }}
-.rj-heat td.c {{ text-align:left; font-weight:600; font-size:12px; white-space:nowrap; }}
+.rj-heat td.c {{ text-align:left; font-weight:600; font-size:12px; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }}
+.rj-credor {{ font-weight:400; color:{TEXT_MUTED} !important; margin-left:6px; }}
+.rj-rolagem {{ overflow-x:auto; }} .rj-rolagem.alta {{ max-height:420px; overflow-y:auto; }}
+table.rj-tab {{ border-collapse:collapse; width:100%; font-size:12.5px; }}
+.rj-tab th {{ position:sticky; top:0; background:{SURFACE}; z-index:1; text-align:left; font-size:10.5px; text-transform:uppercase;
+  letter-spacing:.04em; color:{TEXT_FAINT} !important; padding:6px 8px; border-bottom:2px solid {BORDER}; white-space:nowrap; }}
+.rj-tab td {{ padding:7px 8px; border-bottom:1px solid {BORDER}; vertical-align:top; }}
+.rj-tab td.n, .rj-tab th.n {{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }}
+.rj-tab .peq {{ display:block; color:{TEXT_FAINT} !important; font-size:11px; }}
+.rj-zero {{ color:{TEXT_FAINT} !important; }} .rj-nada {{ color:{TEXT_FAINT} !important; }}
+.rj-tag {{ display:inline-block; border:1px solid {BORDER}; border-radius:6px; padding:0 6px; font-size:10.5px; color:{TEXT_MUTED} !important; margin-left:4px; }}
+.rj-tab tr.rj-total td {{ font-weight:700; border-top:2px solid {BORDER}; border-bottom:0; background:{SURFACE_ALT}; }}
 .rj-h0 {{ background:{SURFACE_ALT}; color:{TEXT_FAINT} !important; }} .rj-h1 {{ background:rgba(9,105,218,.12); }}
 .rj-h2 {{ background:rgba(9,105,218,.24); }} .rj-h3 {{ background:rgba(9,105,218,.42); color:#fff !important; }}
 .rj-heat td.rj-base {{ outline:2px solid {WARNING}; outline-offset:-2px; }}
@@ -213,9 +231,12 @@ def html_ranking(itens: list[dict], limite: int | None = None) -> str:
     return f'<div class="rj-card">{"".join(linhas) or "<div class=rj-leg2>Nenhum contrato.</div>"}</div>'
 
 
-def html_mapa(pivot: pd.DataFrame, ano: int, bases_por_contrato: dict[str, set[int]]) -> str:
+def html_mapa(
+    pivot: pd.DataFrame, ano: int, bases_por_contrato: dict[str, set[int]], credores: dict[str, str] | None = None,
+) -> str:
     """Mapa de calor contrato × mês do acréscimo estimado no exercício: quanto mais forte a cor, maior o valor; o mês da
-    data-base fica contornado; nulo = traço (sem estimativa), zero conhecido = 0."""
+    data-base fica contornado; nulo = traço (sem estimativa), zero conhecido = 0. `credores` (número do contrato → nome,
+    do cadastro de Contínuos) acompanha o número do contrato em cada linha."""
 
     if pivot is None or pivot.empty:
         return '<div class="rj-card"><div class="rj-leg2">Sem estimativa mensal para mostrar.</div></div>'
@@ -244,7 +265,10 @@ def html_mapa(pivot: pd.DataFrame, ano: int, bases_por_contrato: dict[str, set[i
                 nivel += " rj-base"
             titulo = f"{_MESES[mes - 1]}/{ano}: {formatar_brl(valor)}"
             celulas.append(f'<td class="{nivel}" title="{escape(titulo)}">{texto}</td>')
-        corpo.append(f'<tr><td class="c">{escape(str(contrato))}</td>{"".join(celulas)}</tr>')
+        credor = (credores or {}).get(str(contrato))
+        nome = f'<span class="rj-credor">{escape(str(credor))}</span>' if credor and str(credor).strip() else ""
+        titulo_linha = escape(f"{contrato} — {credor}" if nome else str(contrato))
+        corpo.append(f'<tr><td class="c" title="{titulo_linha}"><b>{escape(str(contrato))}</b>{nome}</td>{"".join(celulas)}</tr>')
     return (
         f'<div class="rj-card"><table class="rj-heat"><thead><tr><th></th>{cabecalho}</tr></thead>'
         f'<tbody>{"".join(corpo)}</tbody></table>'
@@ -303,3 +327,123 @@ def html_grafico_mensal(matriz: pd.DataFrame, ano: int) -> str:
         '<span><i class="rj-f"></i>acréscimo formalizado</span><span><i class="rj-p"></i>acréscimo projetado</span></div>'
     ) % (SURFACE_ALT, BORDER)
     return f'<div class="rj-grafico">{"".join(colunas)}</div><div class="rj-meses">{meses}</div>{legenda}'
+
+
+# ---------------------------------------------------------------- tabelas (12/10/2026)
+def _valor_html(valor: object) -> str:
+    """Moeda pt-BR: nulo = traço; zero conhecido = "R$ 0,00" esmaecido (nunca confundido com nulo)."""
+
+    if _nulo(valor):
+        return '<span class="rj-nada">—</span>'
+    if valor == 0:
+        return '<span class="rj-zero">R$ 0,00</span>'
+    return formatar_brl(valor)
+
+
+def _percentual_html(valor: object) -> str:
+    return '<span class="rj-nada">—</span>' if _nulo(valor) else f"{float(valor):.2f} %".replace(".", ",")
+
+
+def _soma(serie: pd.Series) -> float | None:
+    total = serie.sum(skipna=True, min_count=1)
+    return None if pd.isna(total) else float(total)
+
+
+def _estado_pill(estado: object) -> str:
+    texto = str(estado or "")
+    if not texto:
+        return ""
+    formalizado = texto.lower().startswith("formalizado")
+    return f'<span class="rj-pill {"f" if formalizado else "p"}">{"Formalizado" if formalizado else "Projetado"}</span>'
+
+
+def _situacao_html(situacao: object) -> str:
+    item = {"situacao": situacao}
+    if str(situacao or "").startswith("Estimado"):
+        return '<span class="rj-pill f">Estimado</span>'
+    pills, motivo = _pills_e_motivo(item)
+    return f'{pills}<span class="peq">{motivo}</span>' if motivo else pills
+
+
+def html_tabela_resumo(resumo: pd.DataFrame, ano: int) -> str:
+    """Tabela completa por contrato (substitui o `st.dataframe` de 15 colunas): contrato com o nome do credor, situação, próximo
+    ciclo (data-base, estado, percentual e origem), os valores do exercício, exercícios anteriores, acréscimo na vigência e as
+    observações (ciclos a confirmar, competências sem estimativa, retroativo do gov), mais a linha de totais."""
+
+    col_f, col_p, col_a = f"Formalizado a confirmar {ano}", f"Projetado {ano}", f"Acréscimo {ano}"
+    linhas = []
+    for _, linha in resumo.iterrows():
+        data_base = linha["Data-base"]
+        if not _nulo(data_base):
+            ciclo = (
+                f'<b>{data_base:%d/%m/%Y}</b> {_estado_pill(linha["Estado do ciclo"])}'
+                f'<span class="peq">{_percentual_html(linha["Percentual (%)"])} · {escape(str(linha["Origem do %"] or ""))}</span>'
+            )
+        else:
+            ciclo = '<span class="rj-nada">—</span>'
+        observacoes = []
+        if not _nulo(linha["Ciclos a confirmar"]):
+            observacoes.append(f"Ciclos a confirmar: {escape(str(linha['Ciclos a confirmar']))}")
+        if not _nulo(linha["Competências sem estimativa"]) and int(linha["Competências sem estimativa"]) > 0:
+            observacoes.append(f"{int(linha['Competências sem estimativa'])} competência(s) sem estimativa")
+        if not _nulo(linha["Retroativo no gov (contrato inteiro)"]):
+            observacoes.append(f"Retroativo no gov: {formatar_brl(linha['Retroativo no gov (contrato inteiro)'])} (contrato inteiro)")
+        credor = linha["Fornecedor"]
+        credor = escape(str(credor)) if not _nulo(credor) and str(credor).strip() else "sem credor no cadastro"
+        linhas.append(
+            f'<tr><td><b>{escape(str(linha["Contrato"]))}</b><span class="peq">{credor}</span></td>'
+            f'<td>{_situacao_html(linha["Situação"])}</td><td>{ciclo}</td>'
+            f'<td class="n">{_valor_html(linha[col_f])}</td><td class="n">{_valor_html(linha[col_p])}</td>'
+            f'<td class="n"><b>{_valor_html(linha[col_a])}</b></td><td class="n">{_valor_html(linha["Exercícios anteriores"])}</td>'
+            f'<td class="n">{_valor_html(linha["Acréscimo na vigência"])}</td>'
+            f'<td>{"".join(f'<span class="peq">{o}</span>' for o in observacoes)}</td></tr>'
+        )
+    total = (
+        '<tr class="rj-total"><td>Total</td><td></td><td></td>'
+        + "".join(
+            f'<td class="n">{_valor_html(_soma(resumo[c]))}</td>'
+            for c in (col_f, col_p, col_a, "Exercícios anteriores", "Acréscimo na vigência")
+        )
+        + "<td></td></tr>"
+    )
+    cabecalho = (
+        f'<tr><th>Contrato / credor</th><th>Situação</th><th>Próximo ciclo</th><th class="n">Formalizado a confirmar {ano}</th>'
+        f'<th class="n">Projetado {ano}</th><th class="n">Acréscimo {ano}</th><th class="n">Exercícios anteriores</th>'
+        '<th class="n">Acréscimo na vigência</th><th>Observações</th></tr>'
+    )
+    return f'<div class="rj-rolagem"><table class="rj-tab rj-resumo"><thead>{cabecalho}</thead><tbody>{"".join(linhas)}{total}</tbody></table></div>'
+
+
+def html_tabela_competencias(matriz: pd.DataFrame) -> str:
+    """Detalhe por competência de um contrato: base (valor e origem), ciclo (data-base e estado), percentual (e origem), os
+    acréscimos formalizado/projetado/total e as marcas de exercício anterior e prorrogação prevista."""
+
+    if matriz is None or matriz.empty:
+        return '<div class="rj-leg2">Sem estimativa por competência para mostrar.</div>'
+    linhas = []
+    for _, linha in matriz.iterrows():
+        marcas = ""
+        if bool(linha.get("exercicio_anterior")):
+            marcas += '<span class="rj-tag">exercício anterior</span>'
+        if bool(linha.get("prorrogacao_prevista")):
+            marcas += '<span class="rj-tag">prorrogação prevista</span>'
+        origem_base = ROTULO_ORIGEM_BASE.get(linha.get("base_origem"), "")
+        tem_ciclo = not _nulo(linha.get("data_base")) and not _nulo(linha.get("ciclo")) and int(linha["ciclo"]) > 0
+        ciclo = (
+            f'{linha["data_base"]:%d/%m/%Y} {_estado_pill(linha.get("estado_ciclo"))}' if tem_ciclo
+            else '<span class="rj-nada">—</span>'
+        )
+        origem_pct = ROTULO_ORIGEM_PERCENTUAL.get(linha.get("percentual_origem"), "")
+        linhas.append(
+            f'<tr><td><b>{escape(str(linha["competencia"]))}</b>{marcas}</td>'
+            f'<td class="n">{_valor_html(linha.get("base_valor"))}<span class="peq">{escape(origem_base)}</span></td>'
+            f'<td>{ciclo}</td><td class="n">{_percentual_html(linha.get("percentual"))}<span class="peq">{escape(origem_pct)}</span></td>'
+            f'<td class="n">{_valor_html(linha.get("acrescimo_formalizado"))}</td>'
+            f'<td class="n">{_valor_html(linha.get("acrescimo_projetado"))}</td>'
+            f'<td class="n"><b>{_valor_html(linha.get("acrescimo"))}</b></td></tr>'
+        )
+    cabecalho = (
+        '<tr><th>Competência</th><th class="n">Base</th><th>Ciclo</th><th class="n">Percentual</th><th class="n">Formalizado</th>'
+        '<th class="n">Projetado</th><th class="n">Acréscimo</th></tr>'
+    )
+    return f'<div class="rj-rolagem alta"><table class="rj-tab rj-comp"><thead>{cabecalho}</thead><tbody>{"".join(linhas)}</tbody></table></div>'
