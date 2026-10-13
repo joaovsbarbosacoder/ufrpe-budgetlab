@@ -107,5 +107,35 @@ class TestProcessos(unittest.TestCase):
         self.assertIn("processo_contratacao", cadastro.CAMPOS_IDENTIDADE)
 
 
+class TestPagoValorVariavel(unittest.TestCase):
+    """Campo de 16/10/2026: marca o auxílio por demanda (sem bolsa inteira). Registro antigo = falso."""
+
+    def test_padrao_do_registro_novo_e_falso(self) -> None:
+        self.assertIs(cadastro.novo_programa(qtd_efetiva=1, valor_unitario=1.0)["pago_valor_variavel"], False)
+        self.assertTrue(cadastro.como_dataframe([cadastro.novo_programa(qtd_efetiva=1)]).loc[0, "pago_valor_variavel"] == False)  # noqa: E712
+
+    def test_registro_antigo_sem_o_campo_vale_falso(self) -> None:
+        antigo = cadastro.novo_programa(qtd_efetiva=1, valor_unitario=1.0)
+        del antigo["pago_valor_variavel"]
+        marcado = cadastro.novo_programa(qtd_efetiva=1, valor_unitario=1.0, pago_valor_variavel=True)
+        lido = cadastro.como_dataframe([antigo, marcado])
+        self.assertEqual(lido["pago_valor_variavel"].tolist(), [False, True])
+        self.assertEqual(str(lido["pago_valor_variavel"].dtype), "bool")
+        # sem nenhuma coluna no conjunto (todos antigos) a coluna ainda existe
+        sem_coluna = cadastro.como_dataframe([antigo])
+        self.assertEqual(sem_coluna["pago_valor_variavel"].tolist(), [False])
+
+    def test_grava_le_e_copia_ao_duplicar(self) -> None:
+        self.assertIn("pago_valor_variavel", cadastro.CAMPOS_IDENTIDADE)
+        with tempfile.TemporaryDirectory() as tmp, patch.object(cadastro, "DIRETORIO_PADRAO", Path(tmp)):
+            registro = cadastro.novo_programa(
+                programa_bolsa="AUXILIO", qtd_efetiva=1, valor_unitario=30000.0, pago_valor_variavel=True,
+            )
+            cadastro.salvar_programa(2026, registro)
+            self.assertTrue(cadastro.carregar_programas(2026)[0]["pago_valor_variavel"])
+            copiados = cadastro.duplicar_exercicio(2026, 2027)
+            self.assertTrue(copiados[0]["pago_valor_variavel"])
+
+
 if __name__ == "__main__":
     unittest.main()
