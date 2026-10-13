@@ -10,7 +10,8 @@ cadastrados — o módulo só LÊ o contrato e devolve a estimativa. Essas proje
 registrar o aditivo de Reajuste com valor transforma o ciclo em "registrado" e ele sai daqui (sem dupla contagem).
 
 Ciclos de reajuste (ver `ciclos_do_contrato`):
-  * registrado — aditivo de Reajuste ASSINADO com valor no cadastro: já está no valor mensal; só ancora.
+  * registrado — aditivo de Reajuste ASSINADO com valor no cadastro (ou Prorrogação ASSINADA com valor na MESMA data de um
+    reajuste do gov, que já o inclui — regra do usuário de 13/10/2026): já está no valor mensal; só ancora.
   * formalizado — reajuste no Contratos.gov (termo aditivo com REAJUSTE, ou APOSTILAMENTO com novo valor — o
     reajuste por índice costuma ser formalizado por apostila) ou aditivo assinado sem valor, sem valor no cadastro:
     ESTIMADO pelo índice. ANUALIDADE: evento a menos de ~1 ano (`ANUALIDADE_DIAS`) do reajuste anterior (ou do
@@ -116,6 +117,9 @@ class EstimativaContrato:
     ciclos: list[Ciclo] = field(default_factory=list)
     #: apostilamentos retroativos do gov assinados no exercício (referência)
     retroativos_exercicio: list[Retroativo] = field(default_factory=list)
+    #: Prorrogações ASSINADAS com valor na mesma data de um reajuste do gov: já incluem o reajuste (regra de 13/10/2026) —
+    #: contam como reajuste REGISTRADO (a linha do tempo as mostra como tal)
+    registrados_por_prorrogacao: list[Aditivo] = field(default_factory=list)
 
     @property
     def datas_base(self) -> list[date]:
@@ -220,6 +224,31 @@ def implantacao_do_ciclo(data_base: date, apostilamentos: list[Apostilamento] | 
     return None
 
 
+def _datas_de_termo(aditivos: list[Aditivo], reajustes_gov: list | None) -> list[date]:
+    """Datas de reajuste "por termo": as do Contratos.gov e as dos aditivos de Reajuste ASSINADOS sem valor."""
+
+    reajustes_assinados = [a for a in aditivos if a.tipo == "REAJUSTE" and a.situacao == "ASSINADO" and a.data_inicio]
+    return sorted({
+        *(d for d in (_como_data(x) for x in reajustes_gov or []) if d is not None),
+        *(a.data_inicio for a in reajustes_assinados if a.valor_mensal is None),
+    })
+
+
+def prorrogacoes_que_incluem_reajuste(aditivos: list[Aditivo], reajustes_gov: list | None) -> list[Aditivo]:
+    """Prorrogações ASSINADAS com valor mensal na MESMA data de um reajuste "por termo" (gov ou aditivo de Reajuste assinado
+    sem valor). Regra confirmada pelo usuário (13/10/2026): o valor da prorrogação já inclui o reajuste, então o ciclo conta
+    como registrado. Prorrogação sem valor, prevista ou em outra data não entra."""
+
+    datas = set(_datas_de_termo(aditivos, reajustes_gov))
+    return sorted(
+        (
+            a for a in aditivos
+            if a.tipo == "PRORROGACAO" and a.situacao == "ASSINADO" and a.valor_mensal is not None and a.data_inicio in datas
+        ),
+        key=lambda a: a.data_inicio,
+    )
+
+
 def ciclos_do_contrato(
     *, inicio_contrato: object, fim_efetivo: object, aditivos: list[Aditivo], reajustes_gov: list | None,
     retroativos: list[Retroativo] | None, data_base_manual: object, inicio_exercicio: date,
@@ -237,10 +266,9 @@ def ciclos_do_contrato(
     reajustes_assinados = [a for a in aditivos if a.tipo == "REAJUSTE" and a.situacao == "ASSINADO" and a.data_inicio]
     registrados = sorted({a.data_inicio for a in reajustes_assinados if a.valor_mensal is not None})
     apostilamentos = sorted(apostilamentos or [], key=lambda a: (a.assinatura, a.novo_valor))
-    por_termo = sorted({
-        *(d for d in (_como_data(x) for x in reajustes_gov or []) if d is not None),
-        *(a.data_inicio for a in reajustes_assinados if a.valor_mensal is None),
-    })
+    por_termo = _datas_de_termo(aditivos, reajustes_gov)
+    # a prorrogação com valor na data do reajuste já o inclui: é reajuste REGISTRADO (só ancora)
+    registrados = sorted({*registrados, *(a.data_inicio for a in prorrogacoes_que_incluem_reajuste(aditivos, reajustes_gov))})
     # reajuste por apostila: só o apostilamento sem termo de reajuste a menos de um ano dele (perto de um termo, o
     # apostilamento é a implantação daquele reajuste — ver `implantacao_do_ciclo` —, não um ciclo próprio)
     por_apostila = {
@@ -364,6 +392,7 @@ def estimar_contrato(
     )
     if fim_efetivo is None:
         return EstimativaContrato(pd.DataFrame(columns=COLUNAS_MATRIZ), "sem_vigencia_fim", [], retroativos_exercicio)
+    registrados_por_prorrogacao = prorrogacoes_que_incluem_reajuste(aditivos, reajustes_gov)
 
     ciclos = []
     for data_base, estado, desde in brutos:
@@ -435,7 +464,7 @@ def estimar_contrato(
         situacao = "sem_indice"
     else:
         situacao = "estimado"
-    return EstimativaContrato(matriz, situacao, ciclos, retroativos_exercicio)
+    return EstimativaContrato(matriz, situacao, ciclos, retroativos_exercicio, registrados_por_prorrogacao)
 
 
 def aditivo_previsto_do_ciclo(

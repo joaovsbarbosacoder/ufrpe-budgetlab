@@ -173,6 +173,13 @@ class CiclosEGraficoTests(unittest.TestCase):
         self.assertLess(html.index("01/09/2026"), html.index("01/09/2027"))
         self.assertIn("rj-no registrado", html)
 
+    def test_prorrogacao_que_ja_inclui_o_reajuste_aparece_como_registrada_nela(self) -> None:
+        prorrogacao = self._aditivo(numero="02/2026", tipo="PRORROGACAO", data_inicio=date(2026, 8, 24), valor_mensal=21199.17)
+        html = html_ciclos([], [prorrogacao])
+        self.assertIn("24/08/2026", html)
+        self.assertIn("R$ 21.199,17/mês · registrado na prorrogação 02/2026", html)
+        self.assertIn("rj-no registrado", html)
+
     def test_so_registrados_sem_ciclos_ainda_mostra_o_historico(self) -> None:
         html = html_ciclos([], [self._aditivo()])
         self.assertIn("registrado", html)
