@@ -102,7 +102,9 @@ table.rj-tab {{ border-collapse:collapse; width:100%; font-size:12.5px; }}
 .rj-no b {{ display:block; }} .rj-no span {{ color:{TEXT_MUTED} !important; }}
 .rj-grafico {{ display:flex; align-items:flex-end; gap:6px; height:110px; margin:6px 0 4px; border-bottom:1px solid {BORDER}; }}
 .rj-col {{ flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; height:100%; }}
-.rj-col .b {{ width:100%; background:{SURFACE_ALT}; border:1px solid {BORDER}; border-bottom:0; border-radius:4px 4px 0 0; }}
+.rj-col .b {{ width:100%; background:#C5D4E6; border:1px solid #9FB4CE; border-bottom:0; border-radius:4px 4px 0 0; }}
+.rj-col .b.teto {{ background:repeating-linear-gradient(45deg,#E6EDF6,#E6EDF6 4px,#CBD8E8 4px,#CBD8E8 8px); border-style:dashed; }}
+.rj-v {{ font-size:9.5px; color:{TEXT_MUTED} !important; margin-bottom:2px; white-space:nowrap; }}
 .rj-ac-f {{ width:100%; background:{ACCENT}; }} .rj-ac-p {{ width:100%; background:#8CC7FF; }}
 .rj-meses {{ display:flex; gap:6px; font-size:10.5px; color:{TEXT_FAINT} !important; text-align:center; }} .rj-meses div {{ flex:1; }}
 .rj-nota {{ font-size:12px; color:{TEXT_MUTED} !important; background:{SURFACE_ALT}; border-radius:8px; padding:8px 12px; margin-top:10px; }}
@@ -294,39 +296,56 @@ def html_ciclos(ciclos: list) -> str:
 
 
 def html_grafico_mensal(matriz: pd.DataFrame, ano: int) -> str:
-    """Barras do exercício: base do mês (liquidado, ou contratado como teto) e, empilhado, o acréscimo formalizado e o
-    projetado. Mês sem base e sem acréscimo fica vazio (nulo, não zero)."""
+    """Barras do exercício: a base do mês (liquidado = barra cheia; valor contratado, o teto, = barra listrada) e, empilhado
+    em cima dela, o acréscimo formalizado e o projetado, com o valor compacto sobre cada coluna. Mês sem base apurada não
+    ganha barra nem valor (nulo, não zero). Sem nenhum acréscimo no exercício, avisa que o gráfico mostra só a base."""
 
     do_ano = matriz[matriz["ano"] == ano] if matriz is not None and not matriz.empty else pd.DataFrame()
     if do_ano.empty:
         return '<div class="rj-leg2">Sem estimativa mensal para mostrar.</div>'
     por_mes = do_ano.set_index("mes")
+
+    def valor(coluna: str, mes: int):
+        return por_mes[coluna].get(mes) if coluna in por_mes.columns and mes in por_mes.index else None
+
     topos = [
-        (0.0 if _nulo(por_mes["base_valor"].get(m)) else por_mes["base_valor"].get(m))
-        + (0.0 if _nulo(por_mes["acrescimo"].get(m)) else por_mes["acrescimo"].get(m))
+        (0.0 if _nulo(valor("base_valor", m)) else valor("base_valor", m)) + (0.0 if _nulo(valor("acrescimo", m)) else valor("acrescimo", m))
         for m in range(1, 13)
     ]
     escala = max(topos, default=0.0) or 1.0
     colunas = []
+    tem_acrescimo = False
     for mes in range(1, 13):
-        base = por_mes["base_valor"].get(mes) if mes in por_mes.index else None
-        f = por_mes["acrescimo_formalizado"].get(mes) if mes in por_mes.index else None
-        p = por_mes["acrescimo_projetado"].get(mes) if mes in por_mes.index else None
+        base, f, p = valor("base_valor", mes), valor("acrescimo_formalizado", mes), valor("acrescimo_projetado", mes)
+        teto = valor("base_origem", mes) == "contratado"
+        # de cima para baixo: valor, formalizado, projetado, base (o acréscimo fica EM CIMA da base)
         partes = []
-        if not _nulo(base) and base > 0:
-            partes.append(f'<div class="b" style="height:{base / escala * 100:.1f}%"></div>')
-        if not _nulo(p) and p > 0:
-            partes.append(f'<div class="rj-ac-p" style="height:{p / escala * 100:.1f}%"></div>')
+        tem_base = not _nulo(base) and base > 0
+        if tem_base:
+            partes.append(f'<div class="rj-v">{_compacto(topos[mes - 1])}</div>')
         if not _nulo(f) and f > 0:
+            tem_acrescimo = True
             partes.append(f'<div class="rj-ac-f" style="height:{f / escala * 100:.1f}%"></div>')
+        if not _nulo(p) and p > 0:
+            tem_acrescimo = True
+            partes.append(f'<div class="rj-ac-p" style="height:{p / escala * 100:.1f}%"></div>')
+        if tem_base:
+            partes.append(f'<div class="b{" teto" if teto else ""}" style="height:{base / escala * 100:.1f}%"></div>')
         titulo = f"{_MESES[mes - 1]}/{ano}: base {formatar_brl(base)} · formalizado {formatar_brl(f)} · projetado {formatar_brl(p)}"
         colunas.append(f'<div class="rj-col" title="{escape(titulo)}">{"".join(partes)}</div>')
     meses = "".join(f"<div>{m}</div>" for m in _MESES)
     legenda = (
-        '<div class="rj-leg"><span><i style="background:%s;border:1px solid %s"></i>base do mês (liquidado; futuro = teto contratado)</span>'
-        '<span><i class="rj-f"></i>acréscimo formalizado</span><span><i class="rj-p"></i>acréscimo projetado</span></div>'
-    ) % (SURFACE_ALT, BORDER)
-    return f'<div class="rj-grafico">{"".join(colunas)}</div><div class="rj-meses">{meses}</div>{legenda}'
+        '<div class="rj-leg"><span><i style="background:#C5D4E6;border:1px solid #9FB4CE"></i>base: liquidado</span>'
+        '<span><i style="background:repeating-linear-gradient(45deg,#E6EDF6,#E6EDF6 2px,#CBD8E8 2px,#CBD8E8 4px);border:1px dashed #9FB4CE"></i>'
+        "base: valor contratado (teto, mês ainda sem liquidado)</span>"
+        '<span><i class="rj-f"></i>acréscimo formalizado</span><span><i class="rj-p"></i>acréscimo projetado</span>'
+        "<span>mês sem barra = sem liquidado apurado</span></div>"
+    )
+    aviso = (
+        "" if tem_acrescimo
+        else '<div class="rj-nota">Sem acréscimo de reajuste neste exercício — o gráfico mostra só a base do mês.</div>'
+    )
+    return f'<div class="rj-grafico">{"".join(colunas)}</div><div class="rj-meses">{meses}</div>{legenda}{aviso}'
 
 
 # ---------------------------------------------------------------- tabelas (12/10/2026)
