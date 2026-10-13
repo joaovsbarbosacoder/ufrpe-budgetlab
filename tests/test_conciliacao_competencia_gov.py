@@ -20,6 +20,8 @@ from src.conciliacao_competencia_gov import (
     ajustar_mes,
     causas_do_mes,
     classificar_mes,
+    EmpenhoInfo,
+    acao_confere,
     totais_por_ne,
     construir_contexto,
     filtrar_mes,
@@ -366,6 +368,68 @@ class TotaisPorNeTests(unittest.TestCase):
         rel = _relatorio(("2026NE000001", 202601, 1000.0))
         linha = totais_por_ne(rel, self.itens, self.execucao, self.empenhos)[0]
         self.assertEqual((linha.dif_relatorio, linha.situacao), (-500.0, "diverge_relatorio"))
+
+    def test_acao_e_ptres_do_relatorio_acompanham_a_ne_sem_mudar_os_totais(self) -> None:
+        rel = self.relatorio.assign(acoes="20RK", ptres="169150")
+        com = {l.ne: l for l in totais_por_ne(rel, self.itens, self.execucao, self.empenhos)}
+        sem = {l.ne: l for l in totais_por_ne(self.relatorio, self.itens, self.execucao, self.empenhos)}
+        a = com["2026NE000001"]
+        self.assertEqual((a.acoes_relatorio, a.ptres_relatorio), ("20RK", "169150"))
+        self.assertEqual((a.notas, a.relatorio, a.execucao), (1500.0, 1500.0, 1500.0))
+        # NE sem linha no relatório: sem dimensão (nulo), não texto vazio
+        self.assertEqual((com["2026NE000002"].acoes_relatorio, com["2026NE000002"].ptres_relatorio), (None, None))
+        # relatório sem as colunas (layout antigo): tudo igual, dimensões nulas
+        self.assertEqual((sem["2026NE000001"].acoes_relatorio, sem["2026NE000001"].ptres_relatorio), (None, None))
+        self.assertEqual(sem["2026NE000001"].relatorio, com["2026NE000001"].relatorio)
+
+    def test_acao_confere_so_compara_quando_as_duas_existem(self) -> None:
+        pi_20rk = EmpenhoInfo("339039 - X", "M20RKG01SCN - GESTAO", da_20rk=True)
+        pi_20rl = EmpenhoInfo("339039 - X", "L20RLP01SCN - TI")
+        sem_pi = EmpenhoInfo("339039 - X", None)
+        self.assertTrue(acao_confere(pi_20rk, "20RK"))
+        self.assertFalse(acao_confere(pi_20rk, "4002"))
+        self.assertTrue(acao_confere(pi_20rl, "20RL"))
+        self.assertFalse(acao_confere(pi_20rl, "20RK"))
+        self.assertTrue(acao_confere(pi_20rl, "4002 / 20RL"))  # várias ações: confere se alguma bate
+        self.assertFalse(acao_confere(pi_20rl, "4002 / 20RK"))
+        self.assertIsNone(acao_confere(pi_20rl, None))  # layout antigo: sem ação no relatório
+        self.assertIsNone(acao_confere(None, "20RK"))
+        self.assertIsNone(acao_confere(sem_pi, "20RK"))  # sem plano interno: não comparável (nulo ≠ divergente)
+
+    def test_divergencia_de_acao_nao_muda_totais_nem_situacao(self) -> None:
+        sem = {l.ne: l for l in totais_por_ne(self.relatorio, self.itens, self.execucao, self.empenhos)}
+        com = {l.ne: l for l in totais_por_ne(
+            self.relatorio.assign(acoes="4002", ptres="1"), self.itens, self.execucao, self.empenhos
+        )}
+        a = com["2026NE000001"]  # 20RK no cadastro × 4002 no relatório
+        self.assertIs(a.acao_confere, False)
+        self.assertIsNone(sem["2026NE000001"].acao_confere)
+        for ne in sem:
+            self.assertEqual(
+                (sem[ne].notas, sem[ne].relatorio, sem[ne].execucao, sem[ne].situacao),
+                (com[ne].notas, com[ne].relatorio, com[ne].execucao, com[ne].situacao),
+            )
+
+    def test_html_avisa_divergencia_de_acao_so_quando_ha(self) -> None:
+        from src.ui_conciliacao_competencia import html_totais
+
+        diverge = html_totais(totais_por_ne(
+            self.relatorio.assign(acoes="4002"), self.itens, self.execucao, self.empenhos))
+        confere = html_totais(totais_por_ne(
+            self.relatorio.assign(acoes="20RK"), self.itens, self.execucao, self.empenhos))
+        antigo = html_totais(totais_por_ne(self.relatorio, self.itens, self.execucao, self.empenhos))
+        self.assertIn("conferir: ação do relatório não aparece no plano interno", diverge)
+        self.assertNotIn("conferir: ação do relatório", confere)
+        self.assertNotIn("conferir: ação do relatório", antigo)
+
+    def test_html_mostra_acao_e_ptres_do_relatorio_so_quando_existem(self) -> None:
+        from src.ui_conciliacao_competencia import html_totais
+
+        rel = self.relatorio.assign(acoes="20RK / 4002", ptres="169150")
+        com = html_totais(totais_por_ne(rel, self.itens, self.execucao, self.empenhos))
+        sem = html_totais(totais_por_ne(self.relatorio, self.itens, self.execucao, self.empenhos))
+        self.assertIn("relatório: ação 20RK / 4002 · PTRES 169150", com)
+        self.assertNotIn("relatório: ação", sem)
 
 
 class ConciliarTests(unittest.TestCase):

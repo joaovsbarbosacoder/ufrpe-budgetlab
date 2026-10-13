@@ -122,6 +122,13 @@ Liquidado vem da base Liquidação por Competência quando ela está disponível
 (`data/raw/Liquidação por Competência.xlsx`), senão do mês de lançamento. Quando uma NE não
 tem correspondência, os campos de comparação ficam nulos, nunca zero.
 
+**Layouts aceitos da Liquidação por Competência (13/10/2026).** O leitor (`src/liquidacao_competencia.py`) detecta
+pelo cabeçalho um de dois layouts: o antigo, de 7 colunas, e o do relatório "Liquidação por competência - JVSB",
+de 12 colunas, que traz antes delas Ação Governo, PTRES e DH - Credor (código + descrição). As dimensões novas ficam
+no DataFrame (`acao_cod`, `acao_desc`, `ptres`, `credor_cod`, `credor_desc`; nulas no layout antigo) e nenhuma
+regra existente as usa ainda. Qualquer outro cabeçalho continua sendo rejeitado (`ErroLayoutBase`). O envio é feito
+pela página Atualizar planilhas, que valida com este leitor e guarda backup do arquivo substituído.
+
 **Campos de período (sempre do cadastro).** Status (`ATIVO`, `VENCIDO` ou `SUSPENSO`), Vigência
 (fim), Início da Execução (por data ou pelo botão de mês), Data da Suspensão e Meses no Ano. A regra comum (`src/necessidade_empenho.py::meses_vigentes_no_exercicio`):
 

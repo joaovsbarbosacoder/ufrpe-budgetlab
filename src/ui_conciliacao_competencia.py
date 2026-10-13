@@ -111,6 +111,15 @@ def html_totais(linhas) -> str:
     for l in linhas:
         rotulo, tom = _SITUACAO_TOTAL[l.situacao]
         acao = f"{l.empenho.acao}" + (f" · {l.empenho.elemento}" if l.empenho and l.empenho.elemento else "") if l.empenho else "—"
+        if l.acoes_relatorio or l.ptres_relatorio:
+            acao += " · relatório: " + " · ".join(
+                parte for parte in (
+                    f"ação {l.acoes_relatorio}" if l.acoes_relatorio else "",
+                    f"PTRES {l.ptres_relatorio}" if l.ptres_relatorio else "",
+                ) if parte
+            )
+        if l.acao_confere is False:
+            acao += " · conferir: ação do relatório não aparece no plano interno do empenho"
         corpo.append([
             celula_principal(l.ne, acao), celula_valor(l.notas, vazio="sem nota"), celula_valor(l.relatorio, vazio="sem relatório"),
             celula_valor(l.execucao, vazio="sem lançamento"), celula_valor(l.dif_relatorio, vazio="—"),
@@ -539,7 +548,11 @@ def render_conciliacao_competencia(
     # confronto de totais por NE com a Execução Mensal (11/10/2026): só o total é comparável (lançamento ≠ competência)
     totais = totais_por_ne(relatorio_por_mes, itens, execucao_mensal, empenhos)
     if totais:
-        with st.expander(f"Totais por NE × Execução Mensal ({len(totais)} NE(s))", expanded=False):
+        divergentes = sum(1 for t in totais if t.acao_confere is False)
+        rotulo_totais = f"Totais por NE × Execução Mensal ({len(totais)} NE(s))" + (
+            f" · {divergentes} com ação do relatório a conferir" if divergentes else ""
+        )
+        with st.expander(rotulo_totais, expanded=False):
             st.caption(
                 "Total de cada NE em todas as competências: liquidado nas notas, no relatório de competência e na "
                 "Execução Mensal. A Execução Mensal é por mês de LANÇAMENTO (não por competência) e só cobre 2024 em "
