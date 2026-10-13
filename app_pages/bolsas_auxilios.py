@@ -473,6 +473,12 @@ def _dialogo_editar_programa(linha: pd.Series, ano: int, source_key: str, sugest
     meses_no_ano = v[3].number_input(
         "Meses/ano", value=int(_ou_zero(linha["meses_no_ano"]) or 12), step=1, min_value=1, format="%d", key=f"{k}_mesesano",
     )
+    pago_valor_variavel = st.checkbox(
+        "Pago em valor variável (auxílio por demanda)", value=bool(linha.get("pago_valor_variavel", False)),
+        key=f"{k}_valorvariavel",
+        help="Marque quando o valor pago varia a cada mês e não há bolsa inteira (quantidade × valor unitário é só "
+             "referência). A Projeção pela execução não arredonda essa NE em bolsas inteiras.",
+    )
 
     _secao("Empenho e execução")
     e = st.columns(4)
@@ -562,6 +568,7 @@ def _dialogo_editar_programa(linha: pd.Series, ano: int, source_key: str, sugest
             "fonte_cod": fonte or None, "natureza_despesa_cod": nd or None, "ugr_cod": ugr or None,
             "pi_cod": pi or None, "ne_curta": ne_curta.strip() or None, "meses_no_ano": meses_no_ano,
             "qtd_inicial": qtd_inicial, "qtd_efetiva": qtd_efetiva, "valor_unitario": valor_unitario,
+            "pago_valor_variavel": bool(pago_valor_variavel),
             "valor_mensal_excepcional": (
                 float(valor_mensal_excepcional) if pd.notna(valor_mensal_excepcional) else None
             ),
@@ -628,6 +635,10 @@ def _dialogo_novo_programa(ano: int, source_key: str) -> None:
         qtd_inicial = v[1].number_input("Qtd. inicial", min_value=0, step=1)
         qtd_efetiva = v[2].number_input("Qtd. efetiva", min_value=0, step=1)
         valor_unitario = v[3].number_input("Valor unitário (R$)", min_value=0.0, step=10.0)
+        pago_valor_variavel = st.checkbox(
+            "Pago em valor variável (auxílio por demanda)",
+            help="Marque quando o valor pago varia a cada mês e não há bolsa inteira.",
+        )
 
         _secao("Empenho e execução")
         e = st.columns(3)
@@ -648,7 +659,8 @@ def _dialogo_novo_programa(ano: int, source_key: str) -> None:
                     acao_cod=acao, ptres=ptres, fonte_cod=fonte, natureza_despesa_cod=nd,
                     ugr_cod=ugr, pi_cod=pi, ne_curta=ne_curta.strip() or None,
                     meses_no_ano=meses_no_ano, qtd_inicial=qtd_inicial, qtd_efetiva=qtd_efetiva,
-                    valor_unitario=valor_unitario, valor_empenhado_tg=valor_empenhado,
+                    valor_unitario=valor_unitario, pago_valor_variavel=bool(pago_valor_variavel),
+                    valor_empenhado_tg=valor_empenhado,
                     saldo_colado_planilha=saldo_colado, situacao_tg="SEM EMPENHO",
                     meses_empenhados=meses_empenhados, meses_liquidados=meses_liquidados,
                 )

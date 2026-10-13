@@ -21,6 +21,11 @@ adicional `valor_mensal_excepcional` preserva explicitamente valores financeiros
 na origem que não sejam iguais a `qtd_efetiva * valor_unitario`; quando nula, a fórmula
 continua sendo a fonte do valor mensal.
 
+`pago_valor_variavel` (16/10/2026, booleano; ausente/nulo nos registros antigos = falso): marca o
+programa cujo pagamento mensal varia (auxílio por demanda, estágio), em que "quantidade × valor
+unitário" é só uma referência e não há bolsa inteira. Só o relatório "Projeção pela execução" lê o campo:
+a NE marcada não é arredondada em bolsas inteiras (`src.projecao_execucao_bolsas`).
+
 Migração única (`migrar_de_planilha`): lê a planilha antiga com `ler_bolsas_auxilios` e grava
 cada linha como um registro nativo do exercício informado (2026, na migração feita para este
 projeto) — depois disso a planilha não é mais lida pela página; existe só como o histórico de
@@ -69,7 +74,7 @@ DIRETORIO_PADRAO = Path("data/bolsas_auxilios")
 CAMPOS_IDENTIDADE = [
     "processo", "processo_contratacao", "programa_bolsa", "unidade_cod", "acao_cod", "ptres", "fonte_cod",
     "natureza_despesa_cod", "ugr_cod", "pi_cod", "meses_no_ano", "qtd_inicial",
-    "qtd_efetiva", "valor_unitario", "valor_mensal_excepcional",
+    "qtd_efetiva", "valor_unitario", "valor_mensal_excepcional", "pago_valor_variavel",
 ]
 
 #: em branco/zerados no exercício novo — o vínculo com a Execução Anual se refaz quando o
@@ -100,7 +105,7 @@ _COLUNAS_NUMERICAS = [
 ]
 _COLUNAS_VAZIAS = [
     "id", *_COLUNAS_TEXTO, *_COLUNAS_NUMERICAS,
-    "valor_mensal", "valor_anual", "meses_a_empenhar", "valor_a_empenhar",
+    "valor_mensal", "valor_anual", "meses_a_empenhar", "valor_a_empenhar", "pago_valor_variavel",
 ]
 
 
@@ -110,6 +115,7 @@ def novo_programa(**campos: object) -> dict:
     (`CAMPOS_EXECUCAO_PADRAO`, ex.: situação "SEM EMPENHO")."""
 
     base = {chave: None for chave in CAMPOS_IDENTIDADE}
+    base["pago_valor_variavel"] = False
     base.update(CAMPOS_EXECUCAO_PADRAO)
     base.update({chave: valor for chave, valor in campos.items() if chave in base})
     return novo_registro(**base)
@@ -158,6 +164,11 @@ def como_dataframe(programas: list[dict]) -> pd.DataFrame:
         if coluna not in df.columns:
             df[coluna] = pd.NA
         df[coluna] = pd.to_numeric(df[coluna], errors="coerce")
+
+    # `pago_valor_variavel`: ausente ou nulo (registro antigo) = falso
+    if "pago_valor_variavel" not in df.columns:
+        df["pago_valor_variavel"] = False
+    df["pago_valor_variavel"] = df["pago_valor_variavel"].map(lambda v: False if pd.isna(v) else bool(v)).astype(bool)
 
     valor_calculado = df["qtd_efetiva"] * df["valor_unitario"]
     df["valor_mensal"] = df["valor_mensal_excepcional"].fillna(valor_calculado)

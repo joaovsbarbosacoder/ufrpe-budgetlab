@@ -13,6 +13,8 @@ import pandas as pd
 from src import bolsas_auxilios as _bolsas
 from src import contratos_continuos as _contratos
 from src.projecao_execucao_bolsas import entrada_relatorio as _entrada_projecao_bolsas
+from src.projecao_execucao_bolsas import nes_valor_variavel as _nes_valor_variavel
+from src.projecao_execucao_bolsas import unidades_por_ne as _unidades_bolsas
 from src.relatorio_necessidade_empenho import necessidade_por_ne
 from src.relatorio_projecao_execucao import BOLSAS_AUXILIOS, RelatorioProjecaoExecucao, montar_relatorio
 
@@ -112,6 +114,7 @@ def projecao_bolsas(
     por_ne, sem_ne, custos = _entrada_projecao_bolsas(tabela, competencia, exercicio)
     relatorio = montar_relatorio(
         por_ne, sem_ne, competencia, exercicio, mes_referencia, custos=custos, rotulos=BOLSAS_AUXILIOS,
+        unidades=_unidades_bolsas(tabela), nes_valor_variavel=_nes_valor_variavel(tabela),
     )
     # Correção (08/10/2026, revisão final): em Bolsas o valor da necessidade dos itens sem NE vive na coluna
     # privada `_necessidade`; renomeia para `necessidade` (contrato do aviso e da tela). A página de Bolsas

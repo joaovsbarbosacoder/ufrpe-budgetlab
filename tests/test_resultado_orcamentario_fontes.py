@@ -17,6 +17,7 @@ from src.execucao_ne_utils import ne_curta as _ne_curta_execucao
 from src.execucao_ne_utils import saldo_por_ne
 from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne, liquidado_por_ne_e_mes
 from src.projecao_execucao_bolsas import entrada_relatorio as entrada_projecao_execucao
+from src.projecao_execucao_bolsas import unidades_por_ne
 from src.relatorio_necessidade_empenho import necessidade_por_ne
 from src.relatorio_projecao_execucao import BOLSAS_AUXILIOS
 from src.relatorio_projecao_execucao import montar_relatorio as montar_relatorio_projecao_execucao
@@ -173,6 +174,7 @@ class TestBolsas(_Base):
         por_ne, sem_ne_antigo, custos = entrada_projecao_execucao(tabela, self.competencia, EXERCICIO)
         antigo = montar_relatorio_projecao_execucao(
             por_ne, sem_ne_antigo, self.competencia, EXERCICIO, MES_REFERENCIA, custos=custos, rotulos=BOLSAS_AUXILIOS,
+            unidades=unidades_por_ne(tabela),  # bolsas inteiras (16/10/2026), como a página
         )
         novo, sem_ne = projecao_bolsas(tabela, self.competencia, EXERCICIO, MES_REFERENCIA)
         pd.testing.assert_frame_equal(novo.linhas, antigo.linhas)
