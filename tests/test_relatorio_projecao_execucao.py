@@ -12,15 +12,22 @@ from openpyxl import load_workbook
 
 from src.relatorio_necessidade_empenho import necessidade_por_ne
 from src.relatorio_projecao_execucao import (
+    BASE_COMPETENCIA,
+    LEGENDA_GRADE,
+    liquidado_abatido,
+    BASE_LANCAMENTO,
     ORIGEM_EXECUCAO,
     ORIGEM_HERDADO,
     ORIGEM_SEM_HISTORICO,
     TIPO_PROJETADO,
     TIPO_RESTANTE_ABERTO,
+    COLUNAS_LINHAS,
     ContextoProjecaoExecucao,
     FatorExecucao,
     fator_de_execucao,
     gerar_pdf,
+    _LARGURAS_RESUMO_PDF,
+    _cabecalho_resumo_pdf,
     gerar_xlsx,
     herdar_fator,
     montar_relatorio,
@@ -105,6 +112,31 @@ class TestProjetarMeses(unittest.TestCase):
         self.assertAlmostEqual(projecao.projetado[9], 1000.0)
         self.assertIsNone(projecao.projetado[10])
         self.assertIsNone(projecao.projetado[11])
+
+    def test_mes_da_extracao_ja_liquidado_por_inteiro_fica_realizado(self):
+        # liquidado 1.000 = esperado 1.000 em out (mês da extração): nada a projetar, o mês aparece como Realizado
+        projecao = projetar_meses({10: 1000.0}, CUSTO_1000, 1.0, 10)
+        self.assertEqual(projecao.tipos[9], "Realizado")
+        self.assertEqual(projecao.realizado[9], 1000.0)
+        self.assertIsNone(projecao.projetado[9])
+        self.assertEqual(projecao.total_projetado, 4000.0)  # ago e set (abertos) + nov e dez seguem projetados
+
+    def test_mes_da_extracao_liquidado_parcial_continua_projetando_o_restante(self):
+        projecao = projetar_meses({10: 400.0}, CUSTO_1000, 1.0, 10)
+        self.assertEqual(projecao.tipos[9], TIPO_PROJETADO)
+        self.assertEqual(projecao.projetado[9], 600.0)
+
+    def test_teto_limita_o_esperado_do_mes(self):
+        # custo 1.000, teto 700: ago e set (abertos, sem registro) 700 cada; out–dez 700 cada → 3.500; cheio sem teto
+        projecao = projetar_meses({}, CUSTO_1000, 1.0, 10, teto_mensal=700.0)
+        self.assertEqual(projecao.total_projetado, 3500.0)
+        self.assertEqual(projecao.total_valor_cheio, 5000.0)
+        self.assertTrue(projecao.limitado_pelo_teto)
+
+    def test_teto_acima_do_esperado_nao_muda_nada(self):
+        projecao = projetar_meses({}, CUSTO_1000, 0.5, 10, teto_mensal=900.0)
+        self.assertEqual(projecao.total_projetado, 2500.0)
+        self.assertFalse(projecao.limitado_pelo_teto)
 
     def test_exercicio_encerrado_nao_projeta(self):
         self.assertEqual(projetar_meses({}, CUSTO_1000, 1.0, 12).total_projetado, 0.0)
@@ -262,5 +294,164 @@ class TestArquivos(unittest.TestCase):
         self.assertAlmostEqual(linha_grade[cab_grade.index("Out")], 900.0)  # projetado
 
 
+class TestCabecalhoResumoPdf(unittest.TestCase):
+    """Cabeçalho do resumo no PDF (13/10/2026): rótulos longos invadiam a coluna vizinha. Agora quebram de linha,
+    então basta que a MAIOR PALAVRA de cada rótulo caiba na coluna (descontado o espaço lateral de 3 pt de cada lado)."""
+
+    def test_maior_palavra_de_cada_rotulo_cabe_na_coluna(self):
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+
+        rotulos = _relatorio().rotulos
+        cabecalho = _cabecalho_resumo_pdf(rotulos)
+        self.assertEqual(len(cabecalho), len(_LARGURAS_RESUMO_PDF))
+        for rotulo, largura in zip(cabecalho, _LARGURAS_RESUMO_PDF):
+            maior = max(stringWidth(palavra, "Helvetica-Bold", 6.5) for palavra in rotulo.split())
+            self.assertLessEqual(maior, largura - 6, f"{rotulo!r} estoura a coluna de {largura} pt")
+
+    def test_tabela_cabe_na_pagina_a4_paisagem(self):
+        self.assertLessEqual(sum(_LARGURAS_RESUMO_PDF), 841.89 - 2 * 10 * 72 / 25.4)
+
+
+class TestRelatorioSemNenhumaNE(unittest.TestCase):
+    """Regressão (13/10/2026): busca em Contratos Contínuos que isola só contratos sem NE gerava `linhas` sem coluna
+    alguma e quebrava `aplicar_projecao_na_necessidade` com KeyError: 'ne_curta'."""
+
+    def _so_sem_ne(self):
+        filtrado = _filtrado().iloc[[2]]  # só o contrato SEM NE
+        por_ne, sem_ne = necessidade_por_ne(filtrado, None, 2026)
+        return por_ne, montar_relatorio(por_ne, sem_ne, _liquidacao(), 2026, 10)
+
+    def test_linhas_vazias_mantem_as_colunas(self):
+        _, relatorio = self._so_sem_ne()
+        self.assertTrue(relatorio.linhas.empty)
+        self.assertEqual(list(relatorio.linhas.columns), COLUNAS_LINHAS)
+        self.assertEqual(relatorio.qtd_sem_ne, 1)
+
+    def test_aplicar_projecao_na_necessidade_aceita_relatorio_vazio(self):
+        from src.relatorio_projecao_execucao import aplicar_projecao_na_necessidade
+
+        por_ne, relatorio = self._so_sem_ne()
+        saida = aplicar_projecao_na_necessidade(por_ne, relatorio)
+        self.assertEqual(len(saida), len(por_ne))
+
+    def test_colunas_fixas_batem_com_o_relatorio_cheio(self):
+        self.assertEqual(list(_relatorio().linhas.columns), COLUNAS_LINHAS)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBaseDaLiquidacao(unittest.TestCase):
+    """13/10/2026: cada NE informa de onde vem o liquidado (competência ou mês do lançamento)."""
+
+    def _montar(self, **extra):
+        por_ne, sem_ne = necessidade_por_ne(_filtrado(), None, 2026)
+        return montar_relatorio(por_ne, sem_ne, _liquidacao(), 2026, 10, **extra)
+
+    def test_padrao_e_competencia(self):
+        self.assertEqual(set(self._montar().linhas["base_liquidacao"]), {BASE_COMPETENCIA})
+
+    def test_ne_informada_vira_lancamento_sem_mudar_a_conta(self):
+        antes = self._montar().linhas.set_index("ne_curta")
+        depois_rel = self._montar(nes_pelo_lancamento={NE_EST})
+        depois = depois_rel.linhas.set_index("ne_curta")
+        self.assertEqual(depois.loc[NE_EST, "base_liquidacao"], BASE_LANCAMENTO)
+        self.assertEqual(depois.loc[NE_NOVA, "base_liquidacao"], BASE_COMPETENCIA)
+        self.assertAlmostEqual(depois.loc[NE_EST, "necessidade_execucao"], antes.loc[NE_EST, "necessidade_execucao"])
+
+    def test_xlsx_e_pdf_trazem_a_base(self):
+        relatorio = self._montar(nes_pelo_lancamento={NE_EST})
+        contexto = ContextoProjecaoExecucao(2026, "01/10/2026", "abcd1234", "13/10/2026 10:00", "arquivo")
+        planilha = load_workbook(BytesIO(gerar_xlsx(relatorio, contexto)))
+        textos = [str(c.value) for aba in planilha for linha in aba.iter_rows() for c in linha if c.value]
+        self.assertIn("Base da liquidação", textos)
+        self.assertIn(BASE_LANCAMENTO, textos)
+        self.assertTrue(gerar_pdf(relatorio, contexto).startswith(b"%PDF"))
+
+
+class TestTetoSemHistorico(unittest.TestCase):
+    """14/10/2026: NE sem histórico fechado não projeta acima do maior mês já liquidado (só com a opção ligada)."""
+
+    def _montar(self, liquidacao, **extra):
+        por_ne, sem_ne = necessidade_por_ne(_filtrado(), None, 2026)
+        return montar_relatorio(por_ne, sem_ne, liquidacao, 2026, 10, **extra)
+
+    def _liquidacao_nova(self):
+        # NE_NOVA liquidou só em ago/2026: 600 (< custo 1.000); sem 3 meses fechados → sem histórico
+        extra = pd.DataFrame({"ne_curta": [NE_NOVA], "ano_mes": [202608], "valor": [600.0]})
+        return pd.concat([_liquidacao(), extra], ignore_index=True)
+
+    def test_desligado_por_padrao(self):
+        linha = self._montar(self._liquidacao_nova()).linhas.set_index("ne_curta").loc[NE_NOVA]
+        self.assertFalse(linha["limitada_ao_maior_mes"])
+
+    def test_ligado_limita_ao_maior_mes_liquidado(self):
+        sem = self._montar(self._liquidacao_nova()).linhas.set_index("ne_curta").loc[NE_NOVA]
+        com_rel = self._montar(self._liquidacao_nova(), teto_sem_historico=True)
+        com = com_rel.linhas.set_index("ne_curta").loc[NE_NOVA]
+        self.assertTrue(com["limitada_ao_maior_mes"])
+        self.assertLess(com["projetado_execucao"], sem["projetado_execucao"])
+        # set (aberto, sem registro) + out–dez a 600 = 2.400 (ago já liquidado 600 = 100% do teto: completo)
+        self.assertAlmostEqual(com["projetado_execucao"], 2400.0)
+        self.assertAlmostEqual(com["projetado_valor_cheio"], sem["projetado_valor_cheio"])  # comparação não leva teto
+        self.assertTrue(any(NE_NOVA in aviso and "maior mês" in aviso for aviso in com_rel.avisos))
+
+    def test_sem_nenhum_mes_liquidado_nao_ha_teto(self):
+        linha = self._montar(_liquidacao(), teto_sem_historico=True).linhas.set_index("ne_curta").loc[NE_NOVA]
+        self.assertFalse(linha["limitada_ao_maior_mes"])
+
+    def test_ne_com_historico_nao_tem_teto(self):
+        linha = self._montar(_liquidacao(), teto_sem_historico=True).linhas.set_index("ne_curta").loc[NE_EST]
+        self.assertFalse(linha["limitada_ao_maior_mes"])
+
+
+class TestLegendaDaGrade(unittest.TestCase):
+    def test_legenda_no_excel_e_no_pdf_diz_que_o_saldo_nao_e_descontado(self):
+        por_ne, sem_ne = necessidade_por_ne(_filtrado(), None, 2026)
+        relatorio = montar_relatorio(por_ne, sem_ne, _liquidacao(), 2026, 10)
+        contexto = ContextoProjecaoExecucao(2026, "01/10/2026", "abcd1234", "14/10/2026 10:00", "arquivo")
+        planilha = load_workbook(BytesIO(gerar_xlsx(relatorio, contexto)))
+        textos_grade = [c.value for linha in planilha["Grade mensal"].iter_rows() for c in linha if c.value]
+        textos_parametros = [c.value for linha in planilha["Parâmetros"].iter_rows() for c in linha if c.value]
+        for texto in LEGENDA_GRADE:
+            self.assertIn(texto, textos_grade)
+            self.assertIn(texto, textos_parametros)
+        self.assertTrue(any("SALDO DO EMPENHO NÃO" in texto for texto in LEGENDA_GRADE))
+        self.assertTrue(gerar_pdf(relatorio, contexto).startswith(b"%PDF"))
+
+
+class TestLiquidadoAbatido(unittest.TestCase):
+    """14/10/2026: o mês projetado que já descontou liquidado do próprio mês é marcado (*) e detalhado."""
+
+    def _relatorio(self):
+        por_ne, sem_ne = necessidade_por_ne(_filtrado(), None, 2026)
+        # NE_EST: jan–jul a 900 (fator 0,9) e out parcial de 400 → out projeta 900 − 400 = 500
+        extra = pd.DataFrame({"ne_curta": [NE_EST], "ano_mes": [202610], "valor": [400.0]})
+        return montar_relatorio(por_ne, sem_ne, pd.concat([_liquidacao(), extra], ignore_index=True), 2026, 10)
+
+    def test_marca_so_o_mes_com_liquidado_no_proprio_mes(self):
+        relatorio = self._relatorio()
+        indice = relatorio.linhas.index[relatorio.linhas["ne_curta"] == NE_EST][0]
+        self.assertTrue(liquidado_abatido(relatorio, indice, 10))  # out: projetado 500 depois de abater 400
+        self.assertFalse(liquidado_abatido(relatorio, indice, 11))  # nov: sem liquidação no mês
+        self.assertFalse(liquidado_abatido(relatorio, indice, 3))  # mar: realizado, não projetado
+        self.assertAlmostEqual(relatorio.mensal.at[indice, "p10"], 500.0)
+        self.assertAlmostEqual(relatorio.mensal.at[indice, "e10"], 900.0)
+
+    def test_excel_traz_formato_com_asterisco_e_detalhe_com_esperado(self):
+        relatorio = self._relatorio()
+        contexto = ContextoProjecaoExecucao(2026, "01/10/2026", "abcd1234", "14/10/2026 10:00", "arquivo")
+        planilha = load_workbook(BytesIO(gerar_xlsx(relatorio, contexto)))
+        grade = planilha["Grade mensal"]
+        linha_est = next(i for i, l in enumerate(grade.iter_rows(values_only=True), start=1) if l[0] == NE_EST)
+        coluna_out = [c.value for c in grade[1]].index("Out") + 1
+        self.assertIn('"*"', grade.cell(row=linha_est, column=coluna_out).number_format)
+        self.assertNotIn('"*"', grade.cell(row=linha_est, column=coluna_out + 1).number_format)
+        detalhe = list(planilha["Detalhe mensal"].iter_rows(values_only=True))
+        cabecalho = list(detalhe[0])
+        self.assertIn("Esperado do mês (custo × fator)", cabecalho)
+        out = next(l for l in detalhe[1:] if l[0] == NE_EST and l[cabecalho.index("Mês")] == "Out")
+        self.assertAlmostEqual(out[cabecalho.index("Esperado do mês (custo × fator)")], 900.0)
+        self.assertEqual(out[cabecalho.index("Liquidado abatido")], "Sim")
+        self.assertTrue(gerar_pdf(relatorio, contexto).startswith(b"%PDF"))

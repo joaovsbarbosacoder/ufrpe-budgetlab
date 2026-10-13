@@ -223,6 +223,7 @@ from src.importacao_execucao_mensal import Manifesto as ManifestoExecucaoMensal
 from src.importacao_execucao_mensal import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO_MENSAL
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
 from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne, liquidado_por_ne_e_mes
+from src.liquidacao_consumo import competencia_pelo_consumo
 from src.necessidade_empenho import calcular_necessidade_empenho
 from src.relatorio_necessidade_empenho import ContextoRelatorioNecessidade
 from src.relatorio_necessidade_empenho import gerar_pdf as gerar_pdf_necessidade
@@ -1646,6 +1647,7 @@ def _render_relatorio_projecao_execucao(
     ano_exercicio: int,
     manifesto: ManifestoExecucaoMensal,
     via_competencia: bool,
+    nes_pelo_lancamento: list[str] | None = None,
 ) -> None:
     """Botões PDF/Excel do relatório SEPARADO "Projeção pela Execução" (pedido de 06/10/2026 —
     `src/relatorio_projecao_execucao.py`): a despesa projetada pelo fator de execução de cada NE, ao
@@ -1676,15 +1678,28 @@ def _render_relatorio_projecao_execucao(
 
     antecessores: dict[str, str] = {}
     if sem_historico and candidatas:
-        with st.expander(f"Contrato antecessor (opcional) — {len(sem_historico)} NE(s) sem histórico de execução"):
+        # NEs sem histórico cuja projeção o teto do maior mês liquidado reduziu (14/10/2026): são as que mais pedem um
+        # antecessor. Prévia sem antecessores; só para destacar quem escolher (a emissão abaixo usa as escolhas).
+        previa, _ = projecao_contratos(
+            filtrado, liquidacao_competencia_por_mes, ano_exercicio, mes_referencia, None,
+            nes_pelo_lancamento=nes_pelo_lancamento,
+        )
+        limitadas = set(previa.linhas.loc[previa.linhas["limitada_ao_maior_mes"].fillna(False).astype(bool), "ne_curta"])
+        sem_historico = sorted(sem_historico, key=lambda ne: ne not in limitadas)
+        destaque = f" — {len(limitadas & set(sem_historico))} com projeção limitada ao maior mês liquidado" if limitadas else ""
+        with st.expander(
+            f"Contrato antecessor (opcional) — {len(sem_historico)} NE(s) sem histórico de execução{destaque}",
+            expanded=bool(limitadas & set(sem_historico)),
+        ):
             st.caption(
-                "NE com menos de 3 meses fechados é projetada pelo valor mensal cheio. Se ela substitui um "
-                "contrato anterior do mesmo serviço, escolha a NE dele para herdar o fator de execução. A "
-                "escolha vale só para esta emissão (não é gravada no cadastro)."
+                "NE com menos de 3 meses fechados é projetada pelo valor mensal cheio, sem passar do maior mês já "
+                "liquidado da NE (marcadas com ⚠). Se ela substitui um contrato anterior do mesmo serviço, escolha a "
+                "NE dele para herdar o fator de execução. A escolha vale só para esta emissão (não é gravada no cadastro)."
             )
             for ne in sem_historico:
                 escolha = st.selectbox(
-                    rotulos[ne], ["(nenhum — valor cheio)", *candidatas],
+                    rotulos[ne] + (" ⚠ limitada ao maior mês liquidado" if ne in limitadas else ""),
+                    ["(nenhum — valor cheio)", *candidatas],
                     format_func=lambda opcao: rotulos.get(opcao, opcao),
                     key=f"cc_projexec_antecessor_{source_key}_{ne}",
                 )
@@ -1692,7 +1707,8 @@ def _render_relatorio_projecao_execucao(
                     antecessores[ne] = escolha
 
     relatorio, _ = projecao_contratos(
-        filtrado, liquidacao_competencia_por_mes, ano_exercicio, mes_referencia, antecessores
+        filtrado, liquidacao_competencia_por_mes, ano_exercicio, mes_referencia, antecessores,
+        nes_pelo_lancamento=nes_pelo_lancamento,
     )
     modificado = datetime.fromtimestamp(CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime)
     contexto = ContextoProjecaoExecucao(
@@ -2020,6 +2036,13 @@ if CAMINHO_LIQUIDACAO_COMPETENCIA.exists():
 # silenciosa de sempre.
 meses_liquidados_por_ne = _meses_liquidados_por_ne_curta(liquidacao_competencia_por_mes)
 
+# Liquidação por competência medida pelo CONSUMO do orçamento (13/10/2026, `src/liquidacao_consumo.py`): NE cuja competência
+# cai em exercício posterior (liquidada de uma vez, paga antecipado) vale pelo mês do lançamento. Só alimenta a Necessidade
+# de Empenho e a Projeção pela execução; o pop-up da linha do tempo, "Meses liquidados" e a conciliação com o Contratos.gov
+# continuam pela competência.
+competencia_consumo = competencia_pelo_consumo(liquidacao_competencia_por_mes, tempo_por_ne_curta, ano_selecionado)
+liquidacao_consumo_por_mes = None if competencia_consumo is None else competencia_consumo.dados
+
 # Dotação Anual, para o quadro "Cobertura Orçamentária por PTRES" — diferente da Execução
 # Anual (obrigatória acima), essa base é só um complemento: sem ela, o quadro não aparece,
 # mas o resto da tela (cartões, resumo, saldo via Execução) continua funcionando normal.
@@ -2128,7 +2151,7 @@ if indice_liquidado_competencia is not None and liquidacao_competencia_por_mes i
         st.warning(f"Não foi possível lembrar a escolha da base: {st.session_state.pop(_CHAVE_ERRO_BASE)}")
     if _modo_execucao:
         _por_ne_topo = _necessidade_pela_execucao(
-            _por_ne_topo, filtrado, liquidacao_competencia_por_mes, ano_selecionado, manifesto_execucao_mensal, source_key
+            _por_ne_topo, filtrado, liquidacao_consumo_por_mes, ano_selecionado, manifesto_execucao_mensal, source_key
         )
 # "A empenhar" e situação do Registro de contratos (06/10/2026): a mesma Necessidade até dezembro do
 # Resumo Consolidado, por linha (NE compartilhada: o valor da NE em cada linha dela).
@@ -2176,18 +2199,21 @@ _render_resumo_consolidado(
 # Empenho (grade mês a mês do contrato); projeção pela execução = relatório "Projeção pela execução" (grade Jan–Dez com o
 # realizado, o projetado pela execução e a necessidade pela execução ao lado da contratual). Só um dos dois por vez
 # neste bloco — em modo execução não se repete o mesmo relatório logo abaixo.
+for _aviso_consumo in (competencia_consumo.avisos() if competencia_consumo is not None else []):
+    st.caption(_aviso_consumo.replace("$", r"\$"))
 if _modo_execucao:
     st.caption(
         "Base: projeção pela execução — o relatório abaixo (PDF/Excel) é o da Projeção pela execução, com a necessidade "
         "pela execução ao lado da contratual. Para o relatório pelo valor contratual, volte o seletor do topo."
     )
     _render_relatorio_projecao_execucao(
-        filtrado, liquidacao_competencia_por_mes, source_key, ano_selecionado, manifesto_execucao_mensal,
+        filtrado, liquidacao_consumo_por_mes, source_key, ano_selecionado, manifesto_execucao_mensal,
         via_competencia=indice_liquidado_competencia is not None,
+        nes_pelo_lancamento=None if competencia_consumo is None else competencia_consumo.nes_trocadas,
     )
 else:
     _render_relatorio_necessidade(
-        filtrado, meses_liquidados_por_ne, liquidacao_competencia_por_mes, source_key, ano_selecionado, busca,
+        filtrado, meses_liquidados_por_ne, liquidacao_consumo_por_mes, source_key, ano_selecionado, busca,
         manifesto_execucao_mensal, via_competencia=indice_liquidado_competencia is not None,
     )
 # Visão consolidada da liquidação por competência de todos os contratos (11/10/2026): matriz sob demanda

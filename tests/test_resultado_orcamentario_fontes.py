@@ -99,7 +99,7 @@ class TestContratos(_Base):
         tabela = self._tabela_antiga(com_pagos=False)
         por_ne, sem_ne_antigo = necessidade_por_ne(tabela, None, EXERCICIO)
         antigo = montar_relatorio_projecao_execucao(
-            por_ne, sem_ne_antigo, self.competencia, EXERCICIO, MES_REFERENCIA, {}
+            por_ne, sem_ne_antigo, self.competencia, EXERCICIO, MES_REFERENCIA, {}, teto_sem_historico=True,
         )
         novo, sem_ne = projecao_contratos(tabela, self.competencia, EXERCICIO, MES_REFERENCIA)
         pd.testing.assert_frame_equal(novo.linhas, antigo.linhas)
@@ -119,7 +119,7 @@ class TestContratos(_Base):
         nes = por_ne["ne_curta"].tolist()
         antecessores = {nes[0]: nes[1]}
         antigo = montar_relatorio_projecao_execucao(
-            por_ne, sem_ne, self.competencia, EXERCICIO, MES_REFERENCIA, antecessores
+            por_ne, sem_ne, self.competencia, EXERCICIO, MES_REFERENCIA, antecessores, teto_sem_historico=True,
         )
         novo, _ = projecao_contratos(tabela, self.competencia, EXERCICIO, MES_REFERENCIA, antecessores)
         pd.testing.assert_frame_equal(novo.linhas, antigo.linhas)

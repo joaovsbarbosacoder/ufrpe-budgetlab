@@ -83,6 +83,7 @@ def projecao_contratos(
     exercicio: int,
     mes_referencia: int,
     antecessores: dict[str, str] | None = None,
+    nes_pelo_lancamento: list[str] | None = None,
 ) -> tuple[RelatorioProjecaoExecucao, pd.DataFrame]:
     """`(relatorio, sem_ne)` do "Projeção pela Execução" de Contratos. A necessidade vem de
     `necessidade_por_ne(tabela, None, exercicio)` — só LÊ o que o resto da página já calcula.
@@ -90,7 +91,10 @@ def projecao_contratos(
     Orçamentário não passa nenhum."""
 
     por_ne, sem_ne = necessidade_por_ne(tabela, None, exercicio)
-    relatorio = montar_relatorio(por_ne, sem_ne, competencia, exercicio, mes_referencia, antecessores)
+    relatorio = montar_relatorio(
+        por_ne, sem_ne, competencia, exercicio, mes_referencia, antecessores, nes_pelo_lancamento=nes_pelo_lancamento,
+        teto_sem_historico=True,
+    )
     return relatorio, sem_ne
 
 
