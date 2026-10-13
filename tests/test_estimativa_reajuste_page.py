@@ -43,8 +43,14 @@ def _html(app: AppTest) -> str:
     return " ".join(m.value for m in app.markdown)
 
 
-def _tabela_resumo(app):
-    return next(d.value for d in app.dataframe if "Competências sem estimativa" in d.value.columns)
+def _tabela_resumo(app) -> str:
+    """HTML da "Tabela completa por contrato" (todas as linhas, com os totais)."""
+    return next(m.value for m in app.markdown if "rj-resumo" in m.value)
+
+
+def _linha(app, contrato: str) -> str:
+    """A linha (<tr>) de um contrato na tabela completa."""
+    return _tabela_resumo(app).split(f"<b>{contrato}</b>")[1].split("</tr>")[0]
 
 
 def test_pagina_lista_cada_contrato_e_usa_o_percentual_manual(tmp_path, monkeypatch) -> None:
@@ -55,22 +61,22 @@ def test_pagina_lista_cada_contrato_e_usa_o_percentual_manual(tmp_path, monkeypa
     app = _abrir()
 
     assert "Reajuste estimado em 2026" in _html(app)
-    resumo = _tabela_resumo(app).set_index("Contrato")
-    assert {"13/2026", "29/2021", "99/2026", "18/2014"} <= set(resumo.index)
+    for contrato in ("13/2026", "29/2021", "99/2026", "18/2014"):
+        assert f"<b>{contrato}</b>" in _tabela_resumo(app)
     # 13/2026: ligado ao gov (início 10/09/2026, fim 10/09/2027) → data-base 10/09/2027, 5% manual. O único
     # acréscimo é o de 09/2027: 10 de 30 dias em vigor (R$ 1.000 × 10/30) × 5% × 21/30 do mês após a data-base
-    assert resumo.loc["13/2026", "Situação"] == "Estimado"
-    assert resumo.loc["13/2026", "Percentual (%)"] == 5.0
-    assert resumo.loc["13/2026", "Origem do %"] == "Manual"
-    assert resumo.loc["13/2026", "Acréscimo 2026"] == 0.0  # antes da data-base nada incide: zero conhecido
-    assert resumo.loc["13/2026", "Acréscimo na vigência"] == pytest.approx(1000 * 10 / 30 * 0.05 * 21 / 30)
+    linha = _linha(app, "13/2026")
+    assert "Estimado" in linha and "5,00 %" in linha and "Manual" in linha
+    assert "R$ 0,00" in linha  # acréscimo de 2026: antes da data-base nada incide — zero conhecido
+    assert "R$ 11,67" in linha  # acréscimo na vigência: 1000 × 10/30 × 5% × 21/30
     # sem início de vigência (não ligado ao gov) e sem data manual: acréscimo desconhecido (nulo), nunca zero
-    assert resumo.loc["99/2026", "Situação"].startswith("Sem data-base")
-    assert pd.isna(resumo.loc["99/2026", "Acréscimo na vigência"])
-    assert resumo.loc["99/2026", "Competências sem estimativa"] == 13
+    linha = _linha(app, "99/2026")
+    assert "Sem estimativa" in linha and "falta a data-base" in linha
+    assert "13 competência(s) sem estimativa" in linha
+    assert "R$" not in linha  # nenhum valor (nem R$ 0,00): tudo nulo
     # contratos encerrados no cadastro: sem ciclo na vigência, e sem valor (não R$ 0,00)
-    assert resumo.loc["29/2021", "Situação"].startswith("Sem reajuste previsto")
-    assert pd.isna(resumo.loc["29/2021", "Acréscimo na vigência"])
+    linha = _linha(app, "29/2021")
+    assert "Sem reajuste previsto" in linha and "R$" not in linha
 
 
 def test_lista_mostra_numero_com_o_nome_do_credor_e_contrato_sem_estimativa_visivel(tmp_path, monkeypatch) -> None:
@@ -90,9 +96,9 @@ def test_sem_configuracao_o_indice_padrao_e_o_ipca_oficial(tmp_path, monkeypatch
 
     app = _abrir()
 
-    resumo = _tabela_resumo(app).set_index("Contrato")
-    assert resumo.loc["13/2026", "Origem do %"] == "Oficial (12 meses)"
-    assert resumo.loc["13/2026", "Percentual (%)"] == pytest.approx((1.004**12 - 1) * 100, abs=1e-3)
+    linha = _linha(app, "13/2026")
+    assert "Oficial (12 meses)" in linha
+    assert f"{(1.004**12 - 1) * 100:.2f} %".replace(".", ",") in linha  # 4,91 %
 
 
 def test_resumo_separa_formalizado_projetado_e_exercicios_anteriores(tmp_path, monkeypatch) -> None:
@@ -100,11 +106,10 @@ def test_resumo_separa_formalizado_projetado_e_exercicios_anteriores(tmp_path, m
 
     app = _abrir()
 
-    resumo = _tabela_resumo(app)
-    for coluna in ("Formalizado a confirmar 2026", "Projetado 2026", "Exercícios anteriores", "Ciclos a confirmar",
-                   "Retroativo no gov (contrato inteiro)", "Estado do ciclo"):
-        assert coluna in resumo.columns, coluna
-    assert resumo.set_index("Contrato").loc["13/2026", "Estado do ciclo"] == "Projetado"  # sem reajuste no gov
+    tabela = _tabela_resumo(app)
+    for cabecalho in ("Formalizado a confirmar 2026", "Projetado 2026", "Exercícios anteriores", "Observações", "Próximo ciclo"):
+        assert cabecalho in tabela, cabecalho
+    assert "Projetado" in _linha(app, "13/2026")  # sem reajuste no gov: o próximo ciclo é projetado
     html = _html(app)
     for rotulo in ("Formalizado a confirmar", "Projetado", "Exercícios anteriores", "Sem estimativa"):
         assert rotulo in html, rotulo
@@ -115,13 +120,14 @@ def test_configuracao_vazia_nao_inventa_percentual(tmp_path, monkeypatch) -> Non
 
     app = _abrir()
 
-    resumo = _tabela_resumo(app)
-    assert resumo["Percentual (%)"].isna().all()  # sem índice nem manual: nulo, nunca 0%
+    tabela = _tabela_resumo(app)
+    assert " %" not in tabela.replace("Percentual", "")  # sem índice nem manual: nenhum percentual (nulo, nunca 0%)
     html = _html(app)
     # nenhum contrato tem valor: o destaque mostra traço, nunca "R$ 0"
     destaque = html[html.index("Reajuste estimado em 2026"):][:1500]
     assert "R$ 0" not in destaque
-    assert f"{len(resumo)} contratos" in destaque  # todos sem data-base
+    contratos = tabela.count("<tr><td><b>")
+    assert f"{contratos} contratos" in destaque  # todos sem data-base
     assert not app.exception
 
 

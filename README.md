@@ -230,8 +230,9 @@ em Contínuos, o aviso quando o fim do gov difere do fim efetivo do cadastro. Ab
 (`app_pages/reajuste_estimado.py`; antes uma seção de Contratos Contínuos), repaginada em 12/10/2026: cartão de
 destaque (total do exercício = formalizado a confirmar + projetado, exercícios anteriores e contratos sem estimativa),
 lista "Quem mais pesa" (número do contrato acompanhado do nome do credor, etiqueta Formalizado/Projetado, data-base,
-percentual e origem), mapa de calor do ano (só contratos com acréscimo; contorno no mês da data-base), detalhe de um
-contrato (linha do tempo dos ciclos e gráfico mensal) e a tabela completa recolhida; nada do cálculo mudou
+percentual e origem), mapa de calor do ano (só contratos com acréscimo, com o credor ao lado do número; contorno no mês da data-base), detalhe de um
+contrato (linha do tempo dos ciclos, gráfico mensal e tabela das competências) e a tabela completa por contrato, ambas
+recolhidas e em HTML (moeda pt-BR, traço para nulo, zero esmaecido, totais); nada do cálculo mudou
 (`src/ui_reajuste_visual.py` desenha; maquete em `docs/superpowers/specs/2026-10-12-estimativa-reajuste-repaginada-mockup.html`)
 (`src/estimativa_reajuste.py`, `src/indices_economicos.py`, `src/ui_reajuste.py`; spec em
 `docs/superpowers/specs/2026-10-11-estimativa-reajuste-contratos-design.md`). **Cenário separado**: não altera
