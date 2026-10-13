@@ -8,6 +8,7 @@ a integração da tela. Limitação do AppTest: só a primeira execução de um 
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -15,6 +16,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 import src.contratos_continuos_cadastro as cadastro
+from src.contratos_aditivos import Aditivo, aditivo_para_registro
 from tests._apptest import TEMPO_LIMITE_APPTEST, aquecer_pagina
 from tests.test_contratos_continuos_gov_page import FIXTURE, MANIFESTO_EXECUCAO, REF, _ambiente
 
@@ -141,3 +143,21 @@ def test_botao_configurar_abre_a_janela_com_os_campos(tmp_path, monkeypatch) -> 
     assert not app.exception, [e.value for e in app.exception]
     assert "Índice" in [s.label for s in app.selectbox]
     assert "Percentual manual (%)" in [n.label for n in app.number_input]
+
+
+def test_linha_do_tempo_do_contrato_mostra_o_reajuste_ja_registrado(tmp_path, monkeypatch) -> None:
+    _ambiente(tmp_path, monkeypatch, com_fotografia=True)
+    registro = next(r for r in cadastro.carregar_contratos(2026) if r["contrato_numero"] == "13/2026")
+    registrado = Aditivo(
+        numero="1", tipo="REAJUSTE", situacao="ASSINADO", data_inicio=date(2026, 9, 10), valor_mensal=1100.0,
+    )
+    cadastro.atualizar_contrato(2026, {**registro, "aditivos": [aditivo_para_registro(registrado)]})
+
+    app = _abrir()
+    seletor = next(s for s in app.selectbox if s.label == "Detalhar contrato")
+    seletor.select("13/2026").run()
+
+    assert not app.exception, [e.value for e in app.exception]
+    html = _html(app)
+    assert "R$ 1.100,00/mês · registrado" in html
+    assert "10/09/2026" in html

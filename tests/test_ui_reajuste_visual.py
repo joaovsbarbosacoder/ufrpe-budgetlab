@@ -12,7 +12,15 @@ from types import SimpleNamespace
 
 import pandas as pd
 
-from src.ui_reajuste_visual import html_ciclos, html_destaque, html_grafico_mensal, html_mapa, html_ranking
+from src.contratos_aditivos import Aditivo
+from src.ui_reajuste_visual import (
+    html_ciclos,
+    html_destaque,
+    html_grafico_mensal,
+    html_mapa,
+    html_ranking,
+    reajustes_registrados,
+)
 
 
 def _item(**extra) -> dict:
@@ -132,6 +140,48 @@ class CiclosEGraficoTests(unittest.TestCase):
         self.assertIn("projetado", html)
         self.assertIn("sem percentual", html)  # percentual nulo não vira 0 %
         self.assertIn("Nenhum ciclo", html_ciclos([]))
+
+    def _aditivo(self, **extra) -> Aditivo:
+        base = dict(numero="1", tipo="REAJUSTE", situacao="ASSINADO", data_inicio=date(2025, 9, 1), valor_mensal=1050.0)
+        base.update(extra)
+        return Aditivo(**base)
+
+    def test_reajustes_registrados_filtra_so_o_que_ja_esta_no_cadastro_com_valor(self) -> None:
+        aditivos = [
+            self._aditivo(numero="a", data_inicio=date(2025, 9, 1)),
+            self._aditivo(numero="b", data_inicio=date(2024, 9, 1)),
+            self._aditivo(numero="prev", situacao="PREVISTO"),             # previsto: ainda não é histórico
+            self._aditivo(numero="sem", valor_mensal=None),                 # assinado sem valor: é "a confirmar", não registrado
+            self._aditivo(numero="pror", tipo="PRORROGACAO"),               # outro tipo de aditivo
+            self._aditivo(numero="semdata", data_inicio=None),
+        ]
+        self.assertEqual([a.numero for a in reajustes_registrados(aditivos)], ["b", "a"])  # em ordem cronológica
+        self.assertEqual(reajustes_registrados([]), [])
+        self.assertEqual(reajustes_registrados(None), [])
+
+    def test_linha_do_tempo_mistura_registrados_e_ciclos_em_ordem_sem_duplicar(self) -> None:
+        ciclos = [
+            SimpleNamespace(data_base=date(2026, 9, 1), estado="formalizado", percentual=4.26, origem="oficial"),
+            SimpleNamespace(data_base=date(2027, 9, 1), estado="projetado", percentual=None, origem="sem_indice"),
+        ]
+        html = html_ciclos(ciclos, [self._aditivo(data_inicio=date(2025, 9, 1), valor_mensal=1234.5)])
+        self.assertIn("01/09/2025", html)
+        self.assertIn("R$ 1.234,50/mês", html)
+        self.assertIn("registrado", html)
+        self.assertEqual(html.count("01/09/2026"), 1)   # o ciclo formalizado aparece uma vez
+        self.assertLess(html.index("01/09/2025"), html.index("01/09/2026"))
+        self.assertLess(html.index("01/09/2026"), html.index("01/09/2027"))
+        self.assertIn("rj-no registrado", html)
+
+    def test_so_registrados_sem_ciclos_ainda_mostra_o_historico(self) -> None:
+        html = html_ciclos([], [self._aditivo()])
+        self.assertIn("registrado", html)
+        self.assertNotIn("Nenhum ciclo", html)
+
+    def test_sem_registrados_a_linha_do_tempo_e_a_de_antes(self) -> None:
+        ciclos = [SimpleNamespace(data_base=date(2026, 9, 1), estado="projetado", percentual=3.0, origem="manual")]
+        self.assertEqual(html_ciclos(ciclos), html_ciclos(ciclos, []))
+        self.assertNotIn("registrado", html_ciclos(ciclos))
 
     def test_grafico_mensal_barras_base_e_acrescimo(self) -> None:
         matriz = pd.DataFrame({

@@ -99,6 +99,7 @@ table.rj-tab {{ border-collapse:collapse; width:100%; font-size:12.5px; }}
 .rj-no:before {{ content:""; position:absolute; top:6px; left:0; right:0; height:3px; background:{BORDER}; }}
 .rj-no .pt {{ position:absolute; top:0; left:50%; margin-left:-7px; width:14px; height:14px; border-radius:50%; background:#fff; border:3px solid {WARNING}; }}
 .rj-no.formalizado .pt {{ background:{ACCENT}; border-color:{ACCENT}; }}
+.rj-no.registrado .pt {{ background:{POSITIVE}; border-color:{POSITIVE}; }}
 .rj-no b {{ display:block; }} .rj-no span {{ color:{TEXT_MUTED} !important; }}
 .rj-grafico {{ display:flex; align-items:flex-end; gap:6px; height:110px; margin:6px 0 4px; border-bottom:1px solid {BORDER}; }}
 .rj-col {{ flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; height:100%; }}
@@ -280,19 +281,42 @@ def html_mapa(
     )
 
 
-def html_ciclos(ciclos: list) -> str:
-    """Linha do tempo dos ciclos de reajuste do contrato (data-base, percentual e estado)."""
+def reajustes_registrados(aditivos) -> list:
+    """Reajustes JÁ registrados no cadastro: aditivos de tipo REAJUSTE, assinados, com data e com o novo valor mensal
+    informado (o assinado sem valor é "a confirmar", não registrado; o previsto ainda não é histórico), em ordem
+    cronológica. É o que a linha do tempo mostra como "registrado" ao lado dos ciclos estimados."""
 
-    if not ciclos:
-        return '<div class="rj-leg2">Nenhum ciclo de reajuste na vigência.</div>'
+    return sorted(
+        (
+            a for a in (aditivos or [])
+            if a.tipo == "REAJUSTE" and a.situacao == "ASSINADO" and a.data_inicio is not None and a.valor_mensal is not None
+        ),
+        key=lambda a: a.data_inicio,
+    )
+
+
+def html_ciclos(ciclos: list, registrados: list | None = None) -> str:
+    """Linha do tempo do contrato: os reajustes já registrados no cadastro (`registrados`, de `reajustes_registrados`) e os
+    ciclos estimados (data-base, percentual e estado), em ordem cronológica. Os ciclos nunca repetem um registrado (o
+    cálculo já os exclui)."""
+
     nos = []
+    for aditivo in registrados or []:
+        nos.append((
+            aditivo.data_inicio,
+            f'<div class="rj-no registrado"><span class="pt"></span><b>{aditivo.data_inicio:%d/%m/%Y}</b>'
+            f"<span>{formatar_brl(aditivo.valor_mensal)}/mês · registrado</span></div>",
+        ))
     for ciclo in ciclos:
         pct = "sem percentual" if _nulo(ciclo.percentual) else f"{ciclo.percentual:.2f} %".replace(".", ",")
-        nos.append(
+        nos.append((
+            ciclo.data_base,
             f'<div class="rj-no {escape(ciclo.estado)}"><span class="pt"></span><b>{ciclo.data_base:%d/%m/%Y}</b>'
-            f'<span>{pct} · {escape(ciclo.estado)}</span></div>'
-        )
-    return f'<div class="rj-tl">{"".join(nos)}</div>'
+            f"<span>{pct} · {escape(ciclo.estado)}</span></div>",
+        ))
+    if not nos:
+        return '<div class="rj-leg2">Nenhum ciclo de reajuste na vigência.</div>'
+    return f'<div class="rj-tl">{"".join(html for _, html in sorted(nos, key=lambda n: n[0]))}</div>'
 
 
 def html_grafico_mensal(matriz: pd.DataFrame, ano: int) -> str:

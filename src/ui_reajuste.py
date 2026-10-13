@@ -44,6 +44,7 @@ from src.ui_reajuste_visual import (
     html_ranking,
     html_tabela_competencias,
     html_tabela_resumo,
+    reajustes_registrados,
 )
 
 ROTULO_SITUACAO = {
@@ -379,7 +380,8 @@ def render_estimativa_reajuste(
         f'<div class="rj-titulo">{escape(rotulos[escolhido_contrato])}</div>'
         f'<div class="rj-leg2">{escape(ROTULO_SITUACAO.get(estimativa.situacao, estimativa.situacao))}. Ciclos de reajuste e o '
         "efeito mês a mês: a base é o liquidado por competência; nos meses futuros, o valor contratado (teto).</div>"
-        + html_ciclos(estimativa.ciclos) + html_grafico_mensal(estimativa.matriz, escolhido),
+        + html_ciclos(estimativa.ciclos, reajustes_registrados(list(item["linha"].get("aditivos") or [])))
+        + html_grafico_mensal(estimativa.matriz, escolhido),
         unsafe_allow_html=True,
     )
     retroativo = resumo.set_index("Contrato").loc[item["linha"]["contrato_numero"], "Retroativo no gov (contrato inteiro)"]
