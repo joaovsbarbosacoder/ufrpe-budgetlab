@@ -302,10 +302,12 @@ def html_ciclos(ciclos: list, registrados: list | None = None) -> str:
 
     nos = []
     for aditivo in registrados or []:
+        # a Prorrogação que já inclui o reajuste (regra de 13/10/2026) é "registrado na prorrogação <termo>"
+        origem = f" na prorrogação {escape(str(aditivo.numero))}" if aditivo.tipo == "PRORROGACAO" else ""
         nos.append((
             aditivo.data_inicio,
             f'<div class="rj-no registrado"><span class="pt"></span><b>{aditivo.data_inicio:%d/%m/%Y}</b>'
-            f"<span>{formatar_brl(aditivo.valor_mensal)}/mês · registrado</span></div>",
+            f"<span>{formatar_brl(aditivo.valor_mensal)}/mês · registrado{origem}</span></div>",
         ))
     for ciclo in ciclos:
         pct = "sem percentual" if _nulo(ciclo.percentual) else f"{ciclo.percentual:.2f} %".replace(".", ",")
@@ -508,8 +510,8 @@ def _aviso_bloqueados(bloqueados: list[dict]) -> str:
     plural = "s" if n != 1 else ""
     return (
         f'<div class="rj-nota">{n} reajuste{plural} formalizado{plural} não aparecem acima: já existe outro aditivo na mesma '
-        f"data (ex.: prorrogação), e o sistema não cria um segundo aditivo na data.{soma} Se o valor reajustado já consta "
-        f"nesse aditivo, o cadastro do contrato é o lugar de ajustá-lo.{itens}</div>"
+        f"data (ex.: prorrogação ainda sem valor), e o sistema não cria um segundo aditivo na data.{soma} Se esse aditivo "
+        f"já traz o valor reajustado, informe o valor mensal nele, pelo cadastro do contrato.{itens}</div>"
     )
 
 

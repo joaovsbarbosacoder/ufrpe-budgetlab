@@ -529,7 +529,10 @@ def render_estimativa_reajuste(
         f'<div class="rj-titulo">{escape(rotulos[escolhido_contrato])}</div>'
         f'<div class="rj-leg2">{escape(ROTULO_SITUACAO.get(estimativa.situacao, estimativa.situacao))}. Ciclos de reajuste e o '
         "efeito mês a mês: a base é o liquidado por competência; nos meses futuros, o valor contratado (teto).</div>"
-        + html_ciclos(estimativa.ciclos, reajustes_registrados(list(item["linha"].get("aditivos") or [])))
+        + html_ciclos(
+            estimativa.ciclos,
+            [*reajustes_registrados(list(item["linha"].get("aditivos") or [])), *estimativa.registrados_por_prorrogacao],
+        )
         + html_grafico_mensal(estimativa.matriz, escolhido),
         unsafe_allow_html=True,
     )
