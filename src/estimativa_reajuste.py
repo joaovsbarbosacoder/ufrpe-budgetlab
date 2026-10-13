@@ -482,7 +482,7 @@ def aditivos_sugeridos_dos_ciclos_formalizados(
             continue
         vigente, _ = valor_vigente_em(despesa_mensal, aditivos, ciclo.data_base)
         valor = None
-        if ciclo.percentual is not None and vigente is not None:
+        if ciclo.percentual is not None and vigente is not None and vigente > 0:  # valor em vigor 0: nada a sugerir
             valor = round(vigente * (1.0 + ciclo.percentual / 100.0), 2)
         sugeridos.append(Aditivo(
             numero=a_completar[ciclo.data_base].numero if ciclo.data_base in a_completar else f"Reajuste {ciclo.data_base:%m/%Y}",

@@ -58,10 +58,45 @@ class SugestaoTests(unittest.TestCase):
         (sem_valor,) = aditivos_sugeridos_dos_ciclos_formalizados(_est(_ciclo(date(2026, 9, 1))), [], None)
         self.assertIsNone(sem_valor.valor_mensal)
 
+    def test_valor_em_vigor_zero_nao_gera_sugestao_de_zero(self) -> None:
+        (a,) = aditivos_sugeridos_dos_ciclos_formalizados(_est(_ciclo(date(2026, 9, 1))), [], 0.0)
+        self.assertIsNone(a.valor_mensal)  # 0 × (1 + %) = 0 não é sugestão: o valor do termo precisa ser informado
+
     def test_varios_ciclos_em_ordem_e_sem_ciclos(self) -> None:
         est = _est(_ciclo(date(2025, 9, 1)), _ciclo(date(2026, 9, 1)))
         self.assertEqual([a.data_inicio for a in aditivos_sugeridos_dos_ciclos_formalizados(est, [], 1000.0)], [date(2025, 9, 1), date(2026, 9, 1)])
         self.assertEqual(aditivos_sugeridos_dos_ciclos_formalizados(_est(), [], 1000.0), [])
+
+
+class BloqueadosTests(unittest.TestCase):
+    """Quem fica FORA do quadro "A registrar": ciclo formalizado cuja data já tem outro aditivo (ex.: prorrogação)."""
+
+    def _resultado(self, contrato, aditivos, ciclos):
+        return {"linha": {"contrato_numero": contrato, "fornecedor": f"Credor {contrato}", "aditivos": aditivos, "despesa_mensal": 1000.0},
+                "estimativa": _est(*ciclos)}
+
+    def _resumo(self, **formalizado):
+        return pd.DataFrame({"Contrato": list(formalizado), "Formalizado a confirmar 2026": list(formalizado.values())})
+
+    def test_prorrogacao_na_mesma_data_bloqueia_e_aparece_com_o_valor_a_confirmar(self) -> None:
+        from src.ui_reajuste import _bloqueados_por_outro_aditivo, _pendentes_a_registrar
+        prorrogacao = Aditivo(numero="02/2026", tipo="PRORROGACAO", situacao="ASSINADO", data_inicio=date(2026, 8, 24), valor_mensal=21199.17)
+        res = [self._resultado("29/2024", [prorrogacao], [_ciclo(date(2026, 8, 24))])]
+        resumo = self._resumo(**{"29/2024": 2825.65})
+        (b,) = _bloqueados_por_outro_aditivo(res, resumo, 2026)
+        self.assertEqual((b["contrato"], b["data"], b["outro"], b["acrescimo"]), ("29/2024", date(2026, 8, 24), "02/2026 (Prorrogação)", 2825.65))
+        # e ele NÃO é proposto no quadro
+        self.assertEqual(_pendentes_a_registrar(res, [{"id": None}], resumo, 2026), [])
+
+    def test_reajuste_assinado_sem_valor_nao_bloqueia_e_projetado_ou_sem_aditivo_tambem_nao(self) -> None:
+        from src.ui_reajuste import _bloqueados_por_outro_aditivo
+        sem_valor = Aditivo(numero="TA 5", tipo="REAJUSTE", situacao="ASSINADO", data_inicio=date(2026, 9, 1), valor_mensal=None)
+        res = [
+            self._resultado("A", [sem_valor], [_ciclo(date(2026, 9, 1))]),                              # será completado
+            self._resultado("B", [], [_ciclo(date(2026, 9, 1))]),                                       # sem aditivo na data
+            self._resultado("C", [Aditivo("1", "PRORROGACAO", "ASSINADO", date(2026, 9, 1))], [_ciclo(date(2026, 9, 1), estado="projetado")]),
+        ]
+        self.assertEqual(_bloqueados_por_outro_aditivo(res, self._resumo(A=1.0, B=1.0, C=1.0), 2026), [])
 
 
 if __name__ == "__main__":

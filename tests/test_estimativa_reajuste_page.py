@@ -224,3 +224,46 @@ def test_nada_e_gravado_ao_abrir_a_pagina_nem_ao_ver_o_formulario(tmp_path, monk
     _abrir_detalhe_13_2026()
 
     assert next(r for r in cadastro.carregar_contratos(2026) if r["id"] == id_registro) == antes
+
+
+def test_quadro_a_registrar_lista_o_ciclo_formalizado_e_fica_vazio_sem_ele(tmp_path, monkeypatch) -> None:
+    _ambiente(tmp_path, monkeypatch, com_fotografia=True)
+    assert "Nenhum reajuste formalizado a registrar" in _html(_abrir())  # sem ciclo formalizado: nada a registrar
+
+    _com_reajuste_assinado_sem_valor(tmp_path, monkeypatch)
+    html = _html(_abrir())
+
+    assert "1 reajuste formalizado a registrar" in html
+    assert "<b>13/2026</b>" in html and "ciclo de <b>10/09/2027</b>" in html
+    assert "R$ 1.050,00" in html  # novo valor mensal sugerido: R$ 1.000 × (1 + 5%)
+
+
+def test_registrar_pelo_quadro_completa_o_aditivo_sem_duplicar_e_o_item_sai_da_lista(tmp_path, monkeypatch) -> None:
+    id_registro = _com_reajuste_assinado_sem_valor(tmp_path, monkeypatch)
+    app = _abrir()
+
+    campo = next(n for n in app.number_input if n.label == "Novo valor mensal do termo (R$)")
+    assert campo.value == pytest.approx(1050.0)
+    assert next(t for t in app.text_input if t.label == "Nº do termo do reajuste").value == "TA 5"
+    campo.set_value(1100.0).run()
+    next(b for b in app.button if b.label == "Registrar reajuste selecionado").click().run()
+    assert not app.exception, [e.value for e in app.exception]
+
+    gravado = next(r for r in cadastro.carregar_contratos(2026) if r["id"] == id_registro)
+    assert len(gravado["aditivos"]) == 1 and gravado["aditivos"][0]["valor_mensal"] == 1100.0
+    assert "Nenhum reajuste formalizado a registrar" in _html(_abrir())
+
+
+def test_quadro_sem_percentual_nao_sugere_valor_e_vazio_nao_grava(tmp_path, monkeypatch) -> None:
+    id_registro = _com_reajuste_assinado_sem_valor(tmp_path, monkeypatch)
+    registro = next(r for r in cadastro.carregar_contratos(2026) if r["id"] == id_registro)
+    cadastro.atualizar_contrato(2026, {**registro, "reajuste_percentual_manual": None, "reajuste_indice": "SEM_INDICE"})
+    app = _abrir()
+
+    assert "informe o valor do termo" in _html(app)
+    campo = next(n for n in app.number_input if n.label == "Novo valor mensal do termo (R$)")
+    assert campo.value is None  # nunca 0
+    next(b for b in app.button if b.label == "Registrar reajuste selecionado").click().run()
+
+    assert any("Informe o novo valor mensal" in e.value for e in app.error)
+    assert next(r for r in cadastro.carregar_contratos(2026) if r["id"] == id_registro)["aditivos"][0]["valor_mensal"] is None

@@ -490,3 +490,62 @@ def html_tabela_competencias(matriz: pd.DataFrame) -> str:
         '<th class="n">Projetado</th><th class="n">Acréscimo</th></tr>'
     )
     return f'<div class="rj-rolagem alta"><table class="rj-tab rj-comp"><thead>{cabecalho}</thead><tbody>{"".join(linhas)}</tbody></table></div>'
+
+
+def _aviso_bloqueados(bloqueados: list[dict]) -> str:
+    """Aviso dos reajustes formalizados que o quadro NÃO propõe porque já existe outro aditivo na mesma data."""
+
+    if not bloqueados:
+        return ""
+    n = len(bloqueados)
+    por_contrato = {b["contrato"]: b["acrescimo"] for b in bloqueados if not _nulo(b.get("acrescimo"))}
+    soma = f" Formalizado a confirmar neles: {formatar_brl(sum(por_contrato.values()))}." if por_contrato else ""
+    itens = "".join(
+        f'<div class="rj-base"><b>{escape(str(b["contrato"]))}</b> — {escape(str(b.get("fornecedor") or "sem credor no cadastro"))} · '
+        f'ciclo de {b["data"]:%d/%m/%Y} · já há o aditivo {escape(str(b["outro"]))} nesta data</div>'
+        for b in sorted(bloqueados, key=lambda b: (str(b["contrato"]), b["data"]))
+    )
+    plural = "s" if n != 1 else ""
+    return (
+        f'<div class="rj-nota">{n} reajuste{plural} formalizado{plural} não aparecem acima: já existe outro aditivo na mesma '
+        f"data (ex.: prorrogação), e o sistema não cria um segundo aditivo na data.{soma} Se o valor reajustado já consta "
+        f"nesse aditivo, o cadastro do contrato é o lugar de ajustá-lo.{itens}</div>"
+    )
+
+
+def html_a_registrar(pendentes: list[dict], ano: int, bloqueados: list[dict] | None = None) -> str:
+    """Quadro "A registrar": todos os reajustes FORMALIZADOS (assinados no gov, sem valor no cadastro) de todos os contratos,
+    para registrar um a um. Cada item: `contrato`, `fornecedor`, `data` (data-base), `percentual`, `origem`,
+    `valor_sugerido` (novo valor mensal sugerido; nulo = informe o do termo) e `acrescimo` (formalizado a confirmar do
+    contrato no exercício; nulo não entra no total). Cabeçalho com a contagem e o total a confirmar. `bloqueados`: ciclos
+    formalizados que NÃO podem ser registrados aqui porque já há outro aditivo (ex.: prorrogação) na mesma data — listados
+    num aviso, com o formalizado a confirmar deles, para o total fechar com o cartão (`outro` = rótulo do aditivo)."""
+
+    aviso = _aviso_bloqueados(bloqueados or [])
+    if not pendentes:
+        return f'<div class="rj-card"><div class="rj-leg2">Nenhum reajuste formalizado a registrar.</div>{aviso}</div>'
+    ordenados = sorted(pendentes, key=lambda p: (str(p["contrato"]), p["data"]))
+    n = len(ordenados)
+    acrescimos = {p["contrato"]: p["acrescimo"] for p in ordenados if not _nulo(p.get("acrescimo"))}  # por contrato, sem repetir
+    total = sum(acrescimos.values()) if acrescimos else None
+    cabecalho = f'<div class="rj-titulo">{n} reajuste{"s" if n != 1 else ""} formalizado{"s" if n != 1 else ""} a registrar</div>'
+    if total is not None:
+        cabecalho += f'<div class="rj-leg2">Formalizado a confirmar em {ano}: {formatar_brl(total)}.</div>'
+    linhas = []
+    for posicao, p in enumerate(ordenados):
+        pct = (
+            f'<b>{_percentual_html(p.get("percentual"))}</b> · {escape(str(p.get("origem") or ""))}'
+            if not _nulo(p.get("percentual")) else '<span class="rj-nada">sem percentual</span>'
+        )
+        if _nulo(p.get("valor_sugerido")):
+            sugerido = '<span class="rj-nada">—</span><small>informe o valor do termo</small>'
+        else:
+            sugerido = f'{formatar_brl(p["valor_sugerido"])}<small>novo valor mensal sugerido</small>'
+        classe = "rj-linha primeira" if posicao == 0 else "rj-linha"
+        credor = escape(str(p.get("fornecedor") or "sem credor no cadastro"))
+        linhas.append(
+            f'<div class="{classe}"><div class="rj-nome"><b>{escape(str(p["contrato"]))}</b> <span>— {credor}</span></div>'
+            f'<div class="rj-base">ciclo de <b>{p["data"]:%d/%m/%Y}</b></div><div class="rj-base">{pct}</div>'
+            f'<div class="rj-num">{sugerido}</div></div>'
+        )
+    return f'<div class="rj-card">{cabecalho}{"".join(linhas)}{aviso}</div>'

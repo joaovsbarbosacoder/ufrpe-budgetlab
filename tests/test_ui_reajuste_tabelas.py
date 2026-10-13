@@ -11,7 +11,7 @@ from datetime import date
 
 import pandas as pd
 
-from src.ui_reajuste_visual import html_mapa, html_tabela_competencias, html_tabela_resumo
+from src.ui_reajuste_visual import html_a_registrar, html_mapa, html_tabela_competencias, html_tabela_resumo
 
 ANO = 2026
 
@@ -128,6 +128,75 @@ class TabelaCompetenciasTests(unittest.TestCase):
 
     def test_vazio_nao_quebra(self) -> None:
         self.assertIn("Sem estimativa", html_tabela_competencias(pd.DataFrame()))
+
+
+def _pendente(**extra) -> dict:
+    base = {
+        "contrato": "14/2022", "fornecedor": "Inteligência Segurança Privada Ltda", "data": date(2026, 9, 1),
+        "percentual": 4.2576, "origem": "Oficial (12 meses)", "valor_sugerido": 1050.0, "acrescimo": 318400.5,
+    }
+    base.update(extra)
+    return base
+
+
+class QuadroARegistrarTests(unittest.TestCase):
+    def test_lista_numero_com_credor_data_percentual_e_valor_sugerido(self) -> None:
+        html = html_a_registrar([_pendente()], 2026)
+        self.assertIn("<b>14/2022</b>", html)
+        self.assertIn("Inteligência Segurança Privada Ltda", html)
+        self.assertIn("01/09/2026", html)
+        self.assertIn("4,26 %", html)
+        self.assertIn("R$ 1.050,00", html)
+        self.assertNotIn("None", html)
+
+    def test_cabecalho_com_a_contagem_e_o_total_a_confirmar(self) -> None:
+        html = html_a_registrar([_pendente(), _pendente(contrato="21/2017", acrescimo=100.0)], 2026)
+        self.assertIn("2 reajustes formalizados a registrar", html)
+        self.assertIn("R$ 318.500,50", html)  # soma do formalizado a confirmar em 2026
+        self.assertIn("1 reajuste formalizado a registrar", html_a_registrar([_pendente()], 2026))
+
+    def test_sem_valor_sugerido_mostra_traco_e_avisa_que_precisa_do_valor_do_termo(self) -> None:
+        html = html_a_registrar([_pendente(valor_sugerido=None, percentual=None, origem="Sem índice", acrescimo=None)], 2026)
+        self.assertIn("—", html)
+        self.assertIn("informe o valor do termo", html)
+        self.assertNotIn("R$ 0,00", html)
+
+    def test_acrescimo_nulo_nao_vira_zero_no_total(self) -> None:
+        html = html_a_registrar([_pendente(acrescimo=None)], 2026)
+        self.assertNotIn("R$ 0,00", html)
+
+    def test_escapado_e_ordenado_por_contrato_e_data(self) -> None:
+        html = html_a_registrar(
+            [_pendente(contrato="B", fornecedor="A & B <Ltda>"), _pendente(contrato="A"), _pendente(contrato="B", data=date(2025, 9, 1))],
+            2026,
+        )
+        self.assertIn("A &amp; B &lt;Ltda&gt;", html)
+        self.assertLess(html.index("<b>A</b>"), html.index("<b>B</b>"))
+        self.assertLess(html.index("01/09/2025"), html.rindex("01/09/2026"))
+
+    def test_aviso_dos_que_ficaram_de_fora_por_ja_terem_outro_aditivo_na_data(self) -> None:
+        bloqueados = [
+            {"contrato": "29/2024", "fornecedor": "Brascon Gestão Ambiental Ltda", "data": date(2026, 8, 24),
+             "outro": "02/2026 (Prorrogação)", "acrescimo": 2825.65},
+            {"contrato": "10/2022", "fornecedor": None, "data": date(2026, 6, 18), "outro": "5/2026 (Prorrogação)", "acrescimo": None},
+        ]
+        html = html_a_registrar([_pendente()], 2026, bloqueados)
+        self.assertIn("2 reajustes formalizados não aparecem acima", html)
+        self.assertIn("<b>29/2024</b>", html)
+        self.assertIn("02/2026 (Prorrogação)", html)
+        self.assertIn("24/08/2026", html)
+        self.assertIn("R$ 2.825,65", html)  # só o que tem valor entra na soma; o nulo não vira zero
+        self.assertNotIn("R$ 0,00", html)
+        self.assertNotIn("não aparecem acima", html_a_registrar([_pendente()], 2026))  # sem bloqueados, sem aviso
+
+    def test_so_bloqueados_ainda_mostra_o_aviso(self) -> None:
+        bloqueados = [{"contrato": "29/2024", "fornecedor": "X", "data": date(2026, 8, 24), "outro": "02/2026 (Prorrogação)", "acrescimo": 1.0}]
+        html = html_a_registrar([], 2026, bloqueados)
+        self.assertIn("Nenhum reajuste formalizado a registrar", html)
+        self.assertIn("<b>29/2024</b>", html)
+
+    def test_vazio_diz_que_nao_ha_nada_a_registrar(self) -> None:
+        self.assertIn("Nenhum reajuste formalizado a registrar", html_a_registrar([], 2026))
 
 
 class MapaComCredorTests(unittest.TestCase):
