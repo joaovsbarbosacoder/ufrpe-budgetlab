@@ -51,6 +51,7 @@ from src.importacao_execucao_mensal import Manifesto as ManifestoExecucaoMensal
 from src.importacao_execucao_mensal import NOME_PONTEIRO as PONTEIRO_EXECUCAO_MENSAL
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
 from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne, liquidado_por_ne_e_mes
+from src.liquidacao_consumo import competencia_pelo_consumo
 from src.relatorio_necessidade_empenho import mes_referencia_do_exercicio
 from src.resultado_orcamentario import (
     ORIGEM_BOLSAS,
@@ -136,6 +137,16 @@ def _cached_execucao(
     return empenhado, por_ne_execucao, primeiro_mes_com_empenho_por_ne(tempo)
 
 
+@st.cache_data(show_spinner="Lendo a liquidação por mês de lançamento...")
+def _cached_lancamento(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
+    """Liquidado por (NE, mês de LANÇAMENTO) da Execução Mensal, com `ne_curta` — usado só para medir pelo consumo
+    do orçamento as NEs com competência em exercício posterior (`src/liquidacao_consumo.py`)."""
+
+    tempo = linha_do_tempo_por_ne(carregar_execucao_mensal_atual())
+    tempo["ne_curta"] = tempo["ne_ccor"].apply(_ne_curta_execucao)
+    return tempo
+
+
 @st.cache_data(show_spinner="Lendo a Liquidação por Competência...")
 def _cached_liquidacao_competencia(caminho: str, mtime: float) -> tuple[pd.Series, pd.DataFrame]:
     """`(total liquidado por NE curta, liquidado por NE e mês com ne_curta)` — as duas leituras que
@@ -176,6 +187,7 @@ def _necessidade(
     indice_competencia: pd.Series | None,
     competencia: pd.DataFrame | None,
     mes_referencia: int,
+    lancamento: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame | None, pd.DataFrame, str | None, list[str]]:
     """`(cadastro com colunas derivadas, linhas da projeção ou None, sem_ne, motivo da indisponibilidade,
     avisos do relatório de projeção)`.
@@ -197,7 +209,12 @@ def _necessidade(
         return tabela, None, vazio, "a Liquidação por Competência não está disponível", []
     if origem == ORIGEM_CONTRATOS:
         # Sem `antecessores` de propósito (spec §10a): NE sem histórico = fator 1, valor mensal cheio.
-        relatorio, sem_ne = projecao_contratos(tabela, competencia, exercicio, mes_referencia)
+        # Mesma troca da página de Contratos (13/10/2026): competência futura vale pelo mês do lançamento.
+        pelo_consumo = competencia_pelo_consumo(competencia, lancamento, exercicio)
+        relatorio, sem_ne = projecao_contratos(
+            tabela, pelo_consumo.dados, exercicio, mes_referencia, nes_pelo_lancamento=pelo_consumo.nes_trocadas,
+        )
+        return tabela, relatorio.linhas, sem_ne, None, [*pelo_consumo.avisos(), *relatorio.avisos]
     else:
         relatorio, sem_ne = projecao_bolsas(tabela, competencia, exercicio, mes_referencia)
     return tabela, relatorio.linhas, sem_ne, None, relatorio.avisos
@@ -457,11 +474,13 @@ chaves_celulas: list[CelulaChave] = list(celulas["chave"])
 avisos_extras: list[str] = []
 indice_competencia: pd.Series | None = None
 competencia: pd.DataFrame | None = None
+lancamento: pd.DataFrame | None = None
 if CAMINHO_LIQUIDACAO_COMPETENCIA.exists():
     try:
         indice_competencia, competencia = _cached_liquidacao_competencia(
             str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime
         )
+        lancamento = _cached_lancamento(str(ponteiro_execucao), ponteiro_execucao.stat().st_mtime)
     except Exception as erro:
         avisos_extras.append(f"Não foi possível ler a Liquidação por Competência ({erro}).")
 else:
@@ -472,7 +491,7 @@ fontes: dict[str, tuple[pd.DataFrame, pd.DataFrame | None, pd.DataFrame, list[st
 for origem in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS):
     try:
         tabela, linhas, sem_ne, motivo, avisos_projecao = _necessidade(
-            origem, exercicio, por_ne_execucao, sugestao_inicio, indice_competencia, competencia, mes_referencia,
+            origem, exercicio, por_ne_execucao, sugestao_inicio, indice_competencia, competencia, mes_referencia, lancamento,
         )
     except Exception as erro:
         tabela, linhas, sem_ne, motivo, avisos_projecao = (
