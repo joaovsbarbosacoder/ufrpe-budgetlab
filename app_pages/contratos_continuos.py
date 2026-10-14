@@ -1706,7 +1706,7 @@ def _render_relatorio_projecao_execucao(
         destaque = f" — {len(limitadas & set(sem_historico))} com projeção limitada ao maior mês liquidado" if limitadas else ""
         with st.expander(
             f"Contrato antecessor (opcional) — {len(sem_historico)} NE(s) sem histórico de execução{destaque}",
-            expanded=bool(limitadas & set(sem_historico)),
+            expanded=False,  # 14/10/2026: nunca abre sozinha; o rótulo já avisa quantas NEs estão limitadas
         ):
             st.caption(
                 "NE com menos de 3 meses fechados é projetada pelo valor mensal cheio, sem passar do maior mês já "
