@@ -224,6 +224,7 @@ from src.importacao_execucao_mensal import NOME_PONTEIRO as NOME_PONTEIRO_EXECUC
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
 from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne, liquidado_por_ne_e_mes
 from src.liquidacao_consumo import competencia_pelo_consumo
+from src.projecao_ajustes import ErroAjuste, ajustes_vigentes
 from src.necessidade_empenho import calcular_necessidade_empenho
 from src.relatorio_necessidade_empenho import ContextoRelatorioNecessidade
 from src.relatorio_necessidade_empenho import gerar_pdf as gerar_pdf_necessidade
@@ -1371,6 +1372,7 @@ def _lembrar_base_necessidade(chave: str) -> None:
 def _necessidade_pela_execucao(
     por_ne: pd.DataFrame, filtrado: pd.DataFrame, liquidacao_competencia_por_mes: pd.DataFrame,
     ano_exercicio: int, manifesto: ManifestoExecucaoMensal, source_key: str,
+    ajustes: dict[str, dict[int, float]] | None = None,
 ) -> pd.DataFrame:
     """`por_ne` (de `necessidade_por_ne`) com a Necessidade pela PROJEÇÃO PELA EXECUÇÃO (12/10/2026): o mesmo número do
     relatório "Projeção pela execução" (`necessidade_execucao`), inclusive com os contratos antecessores que o usuário já
@@ -1383,7 +1385,9 @@ def _necessidade_pela_execucao(
         ne: escolha for ne in fatores
         if (escolha := st.session_state.get(f"cc_projexec_antecessor_{source_key}_{ne}")) in fatores
     }
-    relatorio, _ = projecao_contratos(filtrado, liquidacao_competencia_por_mes, ano_exercicio, mes_referencia, antecessores)
+    relatorio, _ = projecao_contratos(
+        filtrado, liquidacao_competencia_por_mes, ano_exercicio, mes_referencia, antecessores, ajustes=ajustes,
+    )
     return aplicar_projecao_na_necessidade(por_ne, relatorio)
 
 
@@ -1648,6 +1652,7 @@ def _render_relatorio_projecao_execucao(
     manifesto: ManifestoExecucaoMensal,
     via_competencia: bool,
     nes_pelo_lancamento: list[str] | None = None,
+    ajustes: dict[str, dict[int, float]] | None = None,
 ) -> None:
     """Botões PDF/Excel do relatório SEPARADO "Projeção pela Execução" (pedido de 06/10/2026 —
     `src/relatorio_projecao_execucao.py`): a despesa projetada pelo fator de execução de cada NE, ao
@@ -1682,7 +1687,7 @@ def _render_relatorio_projecao_execucao(
         # antecessor. Prévia sem antecessores; só para destacar quem escolher (a emissão abaixo usa as escolhas).
         previa, _ = projecao_contratos(
             filtrado, liquidacao_competencia_por_mes, ano_exercicio, mes_referencia, None,
-            nes_pelo_lancamento=nes_pelo_lancamento,
+            nes_pelo_lancamento=nes_pelo_lancamento, ajustes=ajustes,
         )
         limitadas = set(previa.linhas.loc[previa.linhas["limitada_ao_maior_mes"].fillna(False).astype(bool), "ne_curta"])
         sem_historico = sorted(sem_historico, key=lambda ne: ne not in limitadas)
@@ -1708,7 +1713,7 @@ def _render_relatorio_projecao_execucao(
 
     relatorio, _ = projecao_contratos(
         filtrado, liquidacao_competencia_por_mes, ano_exercicio, mes_referencia, antecessores,
-        nes_pelo_lancamento=nes_pelo_lancamento,
+        nes_pelo_lancamento=nes_pelo_lancamento, ajustes=ajustes,
     )
     modificado = datetime.fromtimestamp(CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime)
     contexto = ContextoProjecaoExecucao(
@@ -2043,6 +2048,14 @@ meses_liquidados_por_ne = _meses_liquidados_por_ne_curta(liquidacao_competencia_
 competencia_consumo = competencia_pelo_consumo(liquidacao_competencia_por_mes, tempo_por_ne_curta, ano_selecionado)
 liquidacao_consumo_por_mes = None if competencia_consumo is None else competencia_consumo.dados
 
+# Ajustes manuais do esperado de cada mês (14/10/2026, `src/projecao_ajustes.py`): valem para a Projeção pela execução e
+# para a Necessidade nesse modo. Log ilegível: aviso, metodologia, e nada é gravado por cima.
+erro_ajustes_projecao: str | None = None
+try:
+    ajustes_projecao = ajustes_vigentes(ano_selecionado)
+except ErroAjuste as _erro_ajustes:
+    ajustes_projecao, erro_ajustes_projecao = {}, str(_erro_ajustes)
+
 # Dotação Anual, para o quadro "Cobertura Orçamentária por PTRES" — diferente da Execução
 # Anual (obrigatória acima), essa base é só um complemento: sem ela, o quadro não aparece,
 # mas o resto da tela (cartões, resumo, saldo via Execução) continua funcionando normal.
@@ -2151,7 +2164,8 @@ if indice_liquidado_competencia is not None and liquidacao_competencia_por_mes i
         st.warning(f"Não foi possível lembrar a escolha da base: {st.session_state.pop(_CHAVE_ERRO_BASE)}")
     if _modo_execucao:
         _por_ne_topo = _necessidade_pela_execucao(
-            _por_ne_topo, filtrado, liquidacao_consumo_por_mes, ano_selecionado, manifesto_execucao_mensal, source_key
+            _por_ne_topo, filtrado, liquidacao_consumo_por_mes, ano_selecionado, manifesto_execucao_mensal, source_key,
+            ajustes=ajustes_projecao,
         )
 # "A empenhar" e situação do Registro de contratos (06/10/2026): a mesma Necessidade até dezembro do
 # Resumo Consolidado, por linha (NE compartilhada: o valor da NE em cada linha dela).
@@ -2206,10 +2220,15 @@ if _modo_execucao:
         "Base: projeção pela execução — o relatório abaixo (PDF/Excel) é o da Projeção pela execução, com a necessidade "
         "pela execução ao lado da contratual. Para o relatório pelo valor contratual, volte o seletor do topo."
     )
+    if erro_ajustes_projecao:
+        st.warning(
+            f"Ajustes da projeção ilegíveis — usando a metodologia e sem gravar por cima: {erro_ajustes_projecao}"
+        )
     _render_relatorio_projecao_execucao(
         filtrado, liquidacao_consumo_por_mes, source_key, ano_selecionado, manifesto_execucao_mensal,
         via_competencia=indice_liquidado_competencia is not None,
         nes_pelo_lancamento=None if competencia_consumo is None else competencia_consumo.nes_trocadas,
+        ajustes=ajustes_projecao,
     )
 else:
     _render_relatorio_necessidade(

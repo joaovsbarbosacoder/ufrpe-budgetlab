@@ -52,6 +52,7 @@ from src.importacao_execucao_mensal import NOME_PONTEIRO as PONTEIRO_EXECUCAO_ME
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
 from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne, liquidado_por_ne_e_mes
 from src.liquidacao_consumo import competencia_pelo_consumo
+from src.projecao_ajustes import ErroAjuste, ajustes_vigentes
 from src.relatorio_necessidade_empenho import mes_referencia_do_exercicio
 from src.resultado_orcamentario import (
     ORIGEM_BOLSAS,
@@ -211,10 +212,18 @@ def _necessidade(
         # Sem `antecessores` de propósito (spec §10a): NE sem histórico = fator 1, valor mensal cheio.
         # Mesma troca da página de Contratos (13/10/2026): competência futura vale pelo mês do lançamento.
         pelo_consumo = competencia_pelo_consumo(competencia, lancamento, exercicio)
+        # Ajustes manuais do esperado (14/10/2026): log ilegível → metodologia, avisado, e nada é gravado por cima.
+        avisos_ajustes: list[str] = []
+        try:
+            ajustes = ajustes_vigentes(exercicio)
+        except ErroAjuste as erro:
+            ajustes = {}
+            avisos_ajustes.append(f"Ajustes da projeção ilegíveis — usada a metodologia: {erro}")
         relatorio, sem_ne = projecao_contratos(
             tabela, pelo_consumo.dados, exercicio, mes_referencia, nes_pelo_lancamento=pelo_consumo.nes_trocadas,
+            ajustes=ajustes,
         )
-        return tabela, relatorio.linhas, sem_ne, None, [*pelo_consumo.avisos(), *relatorio.avisos]
+        return tabela, relatorio.linhas, sem_ne, None, [*avisos_ajustes, *pelo_consumo.avisos(), *relatorio.avisos]
     else:
         relatorio, sem_ne = projecao_bolsas(tabela, competencia, exercicio, mes_referencia)
     return tabela, relatorio.linhas, sem_ne, None, relatorio.avisos
