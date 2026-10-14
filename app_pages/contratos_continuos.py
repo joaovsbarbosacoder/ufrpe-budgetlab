@@ -225,6 +225,7 @@ from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_m
 from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne, liquidado_por_ne_e_mes
 from src.liquidacao_consumo import competencia_pelo_consumo
 from src.projecao_ajustes import ErroAjuste, ajustes_vigentes
+from src.ui_projecao_execucao import render_edicao_projecao
 from src.necessidade_empenho import calcular_necessidade_empenho
 from src.relatorio_necessidade_empenho import ContextoRelatorioNecessidade
 from src.relatorio_necessidade_empenho import gerar_pdf as gerar_pdf_necessidade
@@ -242,6 +243,7 @@ from src.relatorio_projecao_execucao import (
     ORIGEM_SEM_HISTORICO,
     aplicar_projecao_na_necessidade,
 )
+from src.relatorio_projecao_execucao import RelatorioProjecaoExecucao
 from src.relatorio_projecao_execucao import fatores_por_ne as fatores_projecao_execucao
 from src.relatorio_projecao_execucao import gerar_pdf as gerar_pdf_projecao_execucao
 from src.relatorio_projecao_execucao import gerar_xlsx as gerar_xlsx_projecao_execucao
@@ -1653,7 +1655,7 @@ def _render_relatorio_projecao_execucao(
     via_competencia: bool,
     nes_pelo_lancamento: list[str] | None = None,
     ajustes: dict[str, dict[int, float]] | None = None,
-) -> None:
+) -> RelatorioProjecaoExecucao | None:
     """Botões PDF/Excel do relatório SEPARADO "Projeção pela Execução" (pedido de 06/10/2026 —
     `src/relatorio_projecao_execucao.py`): a despesa projetada pelo fator de execução de cada NE, ao
     lado da projeção pelo valor contratado e da Necessidade até dezembro contratual. Só LÊ o que o
@@ -1745,6 +1747,7 @@ def _render_relatorio_projecao_execucao(
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             width="stretch", on_click="ignore", key=f"cc_projexec_xlsx_{source_key}",
         )
+    return relatorio
 
 
 def _render_empenhado_liquidado(
@@ -2224,12 +2227,17 @@ if _modo_execucao:
         st.warning(
             f"Ajustes da projeção ilegíveis — usando a metodologia e sem gravar por cima: {erro_ajustes_projecao}"
         )
-    _render_relatorio_projecao_execucao(
+    relatorio_projecao = _render_relatorio_projecao_execucao(
         filtrado, liquidacao_consumo_por_mes, source_key, ano_selecionado, manifesto_execucao_mensal,
         via_competencia=indice_liquidado_competencia is not None,
         nes_pelo_lancamento=None if competencia_consumo is None else competencia_consumo.nes_trocadas,
         ajustes=ajustes_projecao,
     )
+    # Edição do esperado de cada mês por NE (14/10/2026): a matriz e o formulário leem o mesmo relatório emitido acima.
+    if relatorio_projecao is not None:
+        render_edicao_projecao(
+            relatorio_projecao, ano_selecionado, manifesto_execucao_mensal.sha256[:8], f"cc_{source_key}",
+        )
 else:
     _render_relatorio_necessidade(
         filtrado, meses_liquidados_por_ne, liquidacao_consumo_por_mes, source_key, ano_selecionado, busca,
