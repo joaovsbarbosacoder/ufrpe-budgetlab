@@ -31,13 +31,16 @@ Necessidade de Empenho pelo valor contratual; alerta em Alertas Gerenciais.
 
 ## 1. Dados e persistência (**persistência nova — aprovação explícita do usuário, 14/10/2026**)
 
-- Arquivo `data/projecao_execucao/<exercício>.json`, fora do git, gravação atômica (mesmo padrão de
-  `src/resultado_orcamentario_historico.py` e dos cadastros). Arquivo ilegível: erro visível e nunca sobrescrito.
-- **Log de eventos que só acrescenta** (estilo `src/decisoes_conciliacao.py`). Evento:
-  `{id, tipo: "ajustar" | "refazer_ne" | "refazer_tudo", ne_curta, ano_mes, esperado, em, extracao}` — `extracao` é o
+- Pasta `data/projecao_execucao/<exercício>/`, **um arquivo JSON por evento**, fora do git, gravação atômica (tmp +
+  replace), exatamente o padrão de `src/decisoes_conciliacao.py`. Arquivo ilegível: erro visível e nunca sobrescrito.
+  (Revisão de 14/10/2026: a primeira versão deste desenho previa um arquivo único por exercício; o padrão do projeto é um
+  arquivo por evento e foi mantido.)
+- **Log de eventos que só acrescenta.** Evento:
+  `{versao_schema, id, tipo: "ajustar" | "refazer_ne" | "refazer_tudo", ne_curta, valores, registrado_em, extracao}` —
+  `valores` é `{mês (1-12): esperado | null}` (só em "ajustar"; `null` = voltar este mês à metodologia) e `extracao` é o
   hash curto da Execução Mensal vigente quando o ajuste foi feito.
-- O estado atual é **reconstruído** do log: o último "ajustar" de cada (NE, mês) vale, a menos que um "refazer" posterior
-  o tenha desfeito.
+- O estado atual é **reconstruído** do log, em ordem: "ajustar" define os meses informados (o último vence; `null`
+  remove), "refazer_ne" limpa a NE, "refazer_tudo" limpa o exercício.
 - Valor: zero é válido (esperado 0,00); campo vazio na tela = sem ajuste, nunca zero. Valor negativo é recusado.
 - Códigos como identificador: `ne_curta` é texto (ex.: `2026NE000551`), nunca número.
 
