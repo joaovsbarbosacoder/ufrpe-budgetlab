@@ -504,14 +504,15 @@ class TestAjustesDoMes(unittest.TestCase):
         self.assertAlmostEqual(com.metodologia[10], 900.0)
         self.assertIsNone(com.metodologia[4])  # mês fechado não é editável
 
-    def test_mes_aberto_com_ajuste_segue_a_regra_dos_50_por_cento(self):
-        completo = projetar_meses({8: 500.0}, CUSTO_1000, 0.9, 10, ajustes={8: 900.0})  # 500 ≥ 450
-        self.assertEqual(completo.tipos[7], "Realizado")
-        self.assertIsNone(completo.projetado[7])
-        self.assertTrue(completo.ajustado[7])
-        aberto = projetar_meses({8: 500.0}, CUSTO_1000, 0.9, 10, ajustes={8: 2000.0})  # 500 < 1000
-        self.assertEqual(aberto.tipos[7], TIPO_RESTANTE_ABERTO)
-        self.assertEqual(aberto.projetado[7], 1500.0)
+    def test_mes_aberto_com_ajuste_vale_o_numero_do_usuario(self):
+        # decisão da revisão (14/10/2026): o ajuste não passa pela regra dos 50% da metodologia
+        ajustado = projetar_meses({8: 500.0}, CUSTO_1000, 0.9, 10, ajustes={8: 900.0})
+        self.assertEqual(ajustado.tipos[7], TIPO_RESTANTE_ABERTO)
+        self.assertEqual(ajustado.projetado[7], 400.0)
+        self.assertTrue(ajustado.ajustado[7])
+        sem = projetar_meses({8: 500.0}, CUSTO_1000, 0.9, 10)  # metodologia: 500 ≥ 450 → completo
+        self.assertEqual(sem.tipos[7], "Realizado")
+        self.assertIsNone(sem.projetado[7])
 
     def test_valor_cheio_nao_leva_ajuste(self):
         projecao = projetar_meses({}, CUSTO_1000, 0.9, 10, ajustes={11: 5000.0})
@@ -587,3 +588,56 @@ class TestRelatorioComAjustes(unittest.TestCase):
 
     def test_legenda_cita_o_ajuste(self):
         self.assertTrue(any("†" in texto for texto in LEGENDA_GRADE))
+
+
+class TestCorrecoesDaRevisao(unittest.TestCase):
+    """Correções da revisão final (14/10/2026)."""
+
+    def test_ajuste_em_mes_aberto_nao_sofre_a_regra_dos_50_por_cento(self):
+        # liquidado 600 ≥ 50% de 1.000: a metodologia daria "completo", mas o número do usuário vale → projeta 400
+        projecao = projetar_meses({9: 600.0}, CUSTO_1000, 0.9, 10, ajustes={9: 1000.0})
+        self.assertEqual(projecao.projetado[8], 400.0)
+        self.assertEqual(projecao.tipos[8], TIPO_RESTANTE_ABERTO)
+        self.assertTrue(projecao.ajustado[8])
+
+    def test_ajuste_ja_coberto_pelo_liquidado_vira_realizado(self):
+        projecao = projetar_meses({9: 1200.0}, CUSTO_1000, 0.9, 10, ajustes={9: 1000.0})
+        self.assertEqual(projecao.tipos[8], "Realizado")
+        self.assertIsNone(projecao.projetado[8])
+
+    def test_valor_cheio_nao_muda_com_o_ajuste_em_mes_aberto(self):
+        sem = projetar_meses({9: 600.0}, CUSTO_1000, 0.9, 10)
+        com = projetar_meses({9: 600.0}, CUSTO_1000, 0.9, 10, ajustes={9: 2000.0})
+        self.assertEqual(com.projetado_valor_cheio, sem.projetado_valor_cheio)
+
+    def test_ne_sem_valor_mensal_conta_o_ajuste_do_usuario(self):
+        por_ne, sem_ne = necessidade_por_ne(_filtrado(), None, 2026)
+        custos = {NE_EST: [None] * 12, NE_NOVA: [None] * 12}
+        sem = montar_relatorio(por_ne, sem_ne, _liquidacao(), 2026, 10, custos=custos)
+        com = montar_relatorio(por_ne, sem_ne, _liquidacao(), 2026, 10, custos=custos, ajustes={NE_NOVA: {11: 5000.0}})
+        antes = sem.linhas.set_index("ne_curta").loc[NE_NOVA]
+        depois = com.linhas.set_index("ne_curta").loc[NE_NOVA]
+        self.assertTrue(pd.isna(antes["necessidade_execucao"]))  # valor mensal desconhecido: nulo, não zero
+        self.assertAlmostEqual(depois["projetado_execucao"], 5000.0)
+        self.assertFalse(pd.isna(depois["necessidade_execucao"]))
+        self.assertTrue(pd.isna(com.linhas.set_index("ne_curta").loc[NE_EST, "necessidade_execucao"]))  # sem ajuste: segue nulo
+
+    def test_bolsas_nao_ganha_legenda_nem_colunas_de_ajuste(self):
+        from src.relatorio_projecao_execucao import BOLSAS_AUXILIOS
+        por_ne, sem_ne = necessidade_por_ne(_filtrado(), None, 2026)
+        custos = {NE_EST: [1000.0] * 12, NE_NOVA: [1000.0] * 12}
+        relatorio = montar_relatorio(por_ne, sem_ne, _liquidacao(), 2026, 10, custos=custos, rotulos=BOLSAS_AUXILIOS)
+        contexto = ContextoProjecaoExecucao(2026, "01/10/2026", "abcd1234", "14/10/2026 10:00", "arquivo")
+        planilha = load_workbook(BytesIO(gerar_xlsx(relatorio, contexto)))
+        self.assertNotIn("Ajustado manualmente", [c.value for c in planilha["Resumo por NE"][1]])
+        self.assertNotIn("Ajustado", [c.value for c in planilha["Detalhe mensal"][1]])
+        textos = [c.value for aba in planilha for linha in aba.iter_rows() for c in linha if isinstance(c.value, str)]
+        self.assertFalse(any("†" in t for t in textos))
+        self.assertTrue(gerar_pdf(relatorio, contexto).startswith(b"%PDF"))
+
+    def test_contratos_continua_com_legenda_e_colunas(self):
+        relatorio = montar_relatorio(*necessidade_por_ne(_filtrado(), None, 2026), _liquidacao(), 2026, 10)
+        contexto = ContextoProjecaoExecucao(2026, "01/10/2026", "abcd1234", "14/10/2026 10:00", "arquivo")
+        planilha = load_workbook(BytesIO(gerar_xlsx(relatorio, contexto)))
+        self.assertIn("Ajustado manualmente", [c.value for c in planilha["Resumo por NE"][1]])
+        self.assertIn("Ajustado", [c.value for c in planilha["Detalhe mensal"][1]])

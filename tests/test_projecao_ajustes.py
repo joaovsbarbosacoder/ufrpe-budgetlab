@@ -115,6 +115,45 @@ class TestLog(_Base):
         self.assertEqual(len(list((self.pasta / "2026").glob("*.json"))), 2)
 
 
+class TestEventoValidoPorFora(_Base):
+    """Evento JSON válido mas incompleto/estranho não pode derrubar quem lê: vira `ErroAjuste`."""
+
+    def _escrever(self, evento: dict, nome="0001_evento.json"):
+        import json
+        pasta = self.pasta / "2026"
+        pasta.mkdir(parents=True, exist_ok=True)
+        (pasta / nome).write_text(json.dumps(evento), encoding="utf-8")
+
+    def _base(self, **mudancas):
+        evento = {"versao_schema": 1, "tipo": "ajustar", "id": "abc", "registrado_em": "2026-10-14T10:00:00",
+                  "extracao": "x", "ne_curta": NE, "valores": {"9": 100.0}}
+        evento.update(mudancas)
+        return evento
+
+    def test_eventos_incompletos_ou_invalidos_levantam_erro_ajuste(self):
+        casos = {
+            "sem_ne": {k: v for k, v in self._base().items() if k != "ne_curta"},
+            "ne_vazia": self._base(ne_curta="  "),
+            "valores_nao_dict": self._base(valores=[1, 2]),
+            "valor_texto": self._base(valores={"9": "abc"}),
+            "valor_negativo": self._base(valores={"9": -5}),
+            "mes_fora": self._base(valores={"13": 1.0}),
+            "mes_texto": self._base(valores={"x": 1.0}),
+            "refazer_ne_sem_ne": {"versao_schema": 1, "tipo": "refazer_ne", "id": "b", "registrado_em": "2026-10-14T10:00:01"},
+        }
+        for nome, evento in casos.items():
+            with self.subTest(caso=nome):
+                for arquivo in (self.pasta / "2026").glob("*.json") if (self.pasta / "2026").exists() else []:
+                    arquivo.unlink()
+                self._escrever(evento)
+                with self.assertRaises(ErroAjuste):
+                    ajustes_vigentes(2026, self.pasta)
+
+    def test_evento_valido_continua_lendo(self):
+        self._escrever(self._base())
+        self.assertEqual(ajustes_vigentes(2026, self.pasta), {NE: {9: 100.0}})
+
+
 class TestValidacao(_Base):
     def test_valores_invalidos(self):
         casos = [{9: -1.0}, {9: float("nan")}, {9: float("inf")}, {0: 1.0}, {13: 1.0}, {}]

@@ -62,6 +62,30 @@ def _gravar(evento: dict, exercicio: int, diretorio: Path | None) -> None:
     os.replace(temporario, caminho)
 
 
+def _validar_evento(evento: dict) -> None:
+    """Estrutura mínima de um evento lido do disco; qualquer falha vira `ErroAjuste` em `carregar_eventos`. Uma página
+    nunca deve cair por causa de um arquivo editado à mão ou de schema futuro."""
+
+    if not isinstance(evento["registrado_em"], str) or not isinstance(evento["id"], str):
+        raise TypeError("registrado_em/id")
+    if evento["tipo"] == "refazer_tudo":
+        return
+    if not isinstance(evento["ne_curta"], str) or not evento["ne_curta"].strip():
+        raise ValueError("ne_curta")
+    if evento["tipo"] == "refazer_ne":
+        return
+    valores = evento["valores"]
+    if not isinstance(valores, dict) or not valores:
+        raise TypeError("valores")
+    for mes, valor in valores.items():
+        if not 1 <= int(mes) <= 12:
+            raise ValueError(f"mês {mes}")
+        if valor is None:
+            continue
+        if isinstance(valor, bool) or not isinstance(valor, (int, float)) or not math.isfinite(valor) or valor < 0:
+            raise ValueError(f"valor {valor!r}")
+
+
 def carregar_eventos(exercicio: int, diretorio: Path | None = None) -> list[dict]:
     pasta = _pasta(exercicio, diretorio)
     if not pasta.exists():
@@ -72,7 +96,7 @@ def carregar_eventos(exercicio: int, diretorio: Path | None = None) -> list[dict
             evento = json.loads(caminho.read_text(encoding="utf-8"))
             if evento["versao_schema"] != VERSAO_SCHEMA or evento["tipo"] not in TIPOS:
                 raise KeyError("tipo/versão")
-            evento["registrado_em"], evento["id"]  # noqa: B018 — campos obrigatórios para ordenar
+            _validar_evento(evento)
         except (OSError, ValueError, KeyError, TypeError) as erro:
             raise ErroAjuste(f"Não foi possível ler {caminho}: {erro}") from erro
         eventos.append(evento)

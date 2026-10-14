@@ -200,6 +200,10 @@ def projetar_meses(
     encerrado, não vale: vai para `superados`."""
 
     ajustes = {int(mes): float(valor) for mes, valor in (ajustes or {}).items()}
+    # A comparação "valor cheio" não leva ajuste: com ajustes, ela vem da mesma projeção SEM eles.
+    cheio_sem_ajuste = (
+        projetar_meses(realizado, custo, fator, mes_referencia, teto_mensal).projetado_valor_cheio if ajustes else None
+    )
     fechado = ultimo_mes_fechado(mes_referencia)
     abertos = {mes for mes in range(fechado + 1, mes_referencia) if 1 <= mes <= 12}
     realizado_lista: list[float | None] = [_numero(realizado.get(mes)) for mes in range(1, 13)]
@@ -232,8 +236,8 @@ def projetar_meses(
             esperado = metodo
             limitado = limitado or teto_aplicado
         if mes in abertos:
-            if liquidado is not None and liquidado >= LIMIAR_MES_ABERTO * esperado:
-                continue  # mês em aberto que já recebeu a maior parte: completo
+            if mes not in ajustes and liquidado is not None and liquidado >= LIMIAR_MES_ABERTO * esperado:
+                continue  # mês em aberto que já recebeu a maior parte: completo (não vale para o número do usuário)
             tipo = TIPO_RESTANTE_ABERTO
         elif mes < mes_referencia:
             continue
@@ -250,7 +254,10 @@ def projetar_meses(
         projetado[mes - 1] = max(0.0, esperado - ja)
         esperados[mes - 1] = esperado
         tipos[mes - 1] = tipo
-    return ProjecaoMensal(realizado_lista, projetado, cheio, tipos, limitado, esperados, ajustados, metodologias, superados)
+    return ProjecaoMensal(
+        realizado_lista, projetado, cheio if cheio_sem_ajuste is None else cheio_sem_ajuste, tipos, limitado, esperados,
+        ajustados, metodologias, superados,
+    )
 
 
 # ------------------------------------------------------------------ relatório
@@ -531,7 +538,7 @@ def montar_relatorio(
         # meses nulos (`custo_mensal`, `custo_mensal_bolsa`) e nenhum mês era projetado — a necessidade
         # saía 0 e o Resultado Orçamentário herdava esse zero. Agora fica nula ("—"), fora dos totais e
         # avisada; valor mensal zero continua zero. Exercício encerrado não projeta nada de qualquer forma.
-        if mes_referencia < 12 and all(_numero(valor) is None for valor in custo):
+        if mes_referencia < 12 and all(_numero(valor) is None for valor in custo) and not any(projecao.ajustado):
             restante = projetado_execucao = projetado_valor_cheio = necessidade_execucao = None
         registros.append(
             {
@@ -737,6 +744,16 @@ def liquidado_abatido(relatorio: RelatorioProjecaoExecucao, indice: int, mes: in
     return realizado is not None and not pd.isna(realizado) and realizado != 0
 
 
+def _com_ajustes(relatorio: RelatorioProjecaoExecucao) -> bool:
+    """A edição do esperado existe só em Contratos Contínuos: Bolsas e Auxílios não ganha legenda nem colunas de ajuste."""
+
+    return relatorio.rotulos is CONTRATOS
+
+
+def _legenda(relatorio: RelatorioProjecaoExecucao) -> list[str]:
+    return LEGENDA_GRADE if _com_ajustes(relatorio) else [t for t in LEGENDA_GRADE if "†" not in t]
+
+
 def ajustado_no_mes(relatorio: RelatorioProjecaoExecucao, indice: int, mes: int) -> bool:
     """Mês projetado (azul/laranja) cujo esperado é o AJUSTE gravado pelo usuário, e não o da metodologia."""
 
@@ -755,7 +772,7 @@ def _marcas(relatorio: RelatorioProjecaoExecucao, indice: int, mes: int) -> str:
 def _resumo(relatorio: RelatorioProjecaoExecucao) -> pd.DataFrame:
     linhas = relatorio.linhas
     rotulos = relatorio.rotulos
-    return pd.DataFrame(
+    resumo = pd.DataFrame(
         {
             "NE": linhas["ne_curta"].map(_texto).astype(object),
             rotulos.nome: linhas["fornecedor"].map(_texto).astype(object),
@@ -780,6 +797,9 @@ def _resumo(relatorio: RelatorioProjecaoExecucao) -> pd.DataFrame:
             f"Necessidade até dezembro ({rotulos.necessidade_referencia})": linhas["necessidade_contratual"],
         }
     )
+    if not _com_ajustes(relatorio):
+        resumo = resumo.drop(columns=["Ajustado manualmente"])
+    return resumo
 
 
 _COLUNAS_FATOR_XLSX = {"Execução observada", "Peso da execução", "Fator de execução"}
@@ -829,7 +849,7 @@ def gerar_xlsx(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoE
                         "Realizado": None if pd.isna(realizado) else realizado,
                         "Projetado": None if projetado is None or pd.isna(projetado) else projetado,
                         "Liquidado abatido": "Sim" if liquidado_abatido(relatorio, indice, mes) else None,
-                        "Ajustado": "Sim" if ajustado_no_mes(relatorio, indice, mes) else None,
+                        **({"Ajustado": "Sim" if ajustado_no_mes(relatorio, indice, mes) else None} if _com_ajustes(relatorio) else {}),
                     }
                 )
         grade_linhas.append({"NE": linha["ne_curta"], rotulos.nome: _texto(linha["fornecedor"]), "Fator de execução": linha["fator"], **valores,
@@ -839,12 +859,12 @@ def gerar_xlsx(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoE
     detalhe_df = pd.DataFrame(
         detalhe, columns=[
             "NE", rotulos.nome, "Nº do mês", "Mês", "Tipo", "Esperado do mês (custo × fator)", "Realizado", "Projetado",
-            "Liquidado abatido", "Ajustado",
+            "Liquidado abatido", *(["Ajustado"] if _com_ajustes(relatorio) else []),
         ],
     )
     parametros = (
         [("Avisos", aviso) for aviso in relatorio.avisos] + linhas_parametros(relatorio, contexto)
-        + [("Legenda da grade", texto) for texto in LEGENDA_GRADE]
+        + [("Legenda da grade", texto) for texto in _legenda(relatorio)]
     )
     coluna_jan = list(grade.columns).index(MESES[0]) + 1
 
@@ -867,7 +887,7 @@ def gerar_xlsx(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoE
                         celula.number_format = f'#,##0.00"{marcas}"'
         primeira_legenda = len(grade) + 3
         planilha.cell(row=primeira_legenda - 1, column=1, value="Legenda").font = Font(bold=True)
-        for deslocamento, texto in enumerate(LEGENDA_GRADE):
+        for deslocamento, texto in enumerate(_legenda(relatorio)):
             planilha.cell(row=primeira_legenda + deslocamento, column=1, value=texto)
         detalhe_df.to_excel(writer, sheet_name="Detalhe mensal", index=False)
         _formatar_aba(writer.sheets["Detalhe mensal"], detalhe_df, rotulos)
@@ -1016,7 +1036,7 @@ def gerar_pdf(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoEx
     elementos.append(Paragraph(
         "Realizado × projeção mês a mês (projetado sombreado em azul; restante de mês em aberto em laranja)", estilo_secao
     ))
-    for texto in LEGENDA_GRADE:
+    for texto in _legenda(relatorio):
         elementos.append(Paragraph(escape(texto), estilo_celula))
     elementos.append(Spacer(1, 6))
     elementos.append(tabela)

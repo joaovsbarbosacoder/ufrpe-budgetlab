@@ -39,7 +39,7 @@ from src.relatorio_projecao_execucao import (
 )
 from src.ui_cadastro import formatar_brl
 
-_MILHAR = re.compile(r"^\d{1,3}(\.\d{3})+$")
+_MILHAR = re.compile(r"^[1-9]\d{0,2}(\.\d{3})+$")  # 1º grupo sem zero à esquerda: "0.500" é decimal
 _TOLERANCIA = 0.005
 
 CSS = f"""
@@ -73,6 +73,8 @@ def ler_valor_brl(texto: str | None) -> float | None:
     limpo = re.sub(r"(?i)r\$|\s", "", str(texto or ""))
     if not limpo:
         return None
+    if "," in limpo and "." in limpo and limpo.rfind(".") > limpo.rfind(","):
+        raise ValueError(f"Valor ambíguo: {texto!r} (formato inglês). Use vírgula nos centavos, ex.: 1.234,56.")
     if "," in limpo:
         limpo = limpo.replace(".", "").replace(",", ".")
     elif _MILHAR.match(limpo):
@@ -229,6 +231,7 @@ def _cb_refazer_ne(chave: str, exercicio: int, extracao: str, ne: str) -> None:
         st.session_state[f"{chave}_pe_msg"] = ("erro", str(erro))
         return
     _limpar_campos(chave, ne)
+    st.session_state[f"{chave}_pe_confirma_ne_{ne}"] = False
     st.session_state[f"{chave}_pe_msg"] = ("ok", f"{ne} refeita pela metodologia (o histórico dos ajustes continua gravado).")
 
 
@@ -247,6 +250,9 @@ def render_edicao_projecao(relatorio: RelatorioProjecaoExecucao, exercicio: int,
     """Expansor "Editar a projeção pela execução": matriz de leitura e edição por NE. `extracao` é o hash curto da Execução
     Mensal vigente (guardado em cada evento). Log de ajustes ilegível: erro visível e nada é gravado."""
 
+    superado = next((a for a in relatorio.avisos if a.startswith("Ajuste superado")), None)
+    if superado:  # visível sem abrir o expansor: um mês ajustado fechou e passou a valer o realizado
+        st.warning(superado.replace("$", r"\$"))
     with st.expander("Editar a projeção pela execução", expanded=False):
         if relatorio.linhas.empty:
             st.caption("Sem NE no relatório: não há o que editar.")
@@ -305,9 +311,12 @@ def render_edicao_projecao(relatorio: RelatorioProjecaoExecucao, exercicio: int,
             "Gravar ajustes desta NE", key=f"{chave}_pe_gravar", type="primary", on_click=_cb_gravar,
             args=(chave, exercicio, extracao, ne, meses, vigente, metodologia),
         )
+        confirma_ne = st.checkbox(
+            "Confirmo refazer esta NE pela metodologia", key=f"{chave}_pe_confirma_ne_{ne}", disabled=not vigente,
+        )
         st.button(
             "Refazer esta NE pela metodologia", key=f"{chave}_pe_refazer_ne", on_click=_cb_refazer_ne,
-            args=(chave, exercicio, extracao, ne), disabled=not vigente,
+            args=(chave, exercicio, extracao, ne), disabled=not (confirma_ne and vigente),
         )
         confirma = st.checkbox("Confirmo refazer TODAS as NEs do exercício pela metodologia", key=f"{chave}_pe_confirma_tudo")
         st.button(

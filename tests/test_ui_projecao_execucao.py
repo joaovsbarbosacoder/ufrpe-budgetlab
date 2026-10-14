@@ -55,6 +55,16 @@ class TestLerValorBrl(unittest.TestCase):
         self.assertEqual(ler_valor_brl("0"), 0.0)
         self.assertEqual(ler_valor_brl("0,00"), 0.0)
 
+    def test_formato_ingles_com_virgula_de_milhar_e_recusado(self):
+        for texto in ("1,234.56", "12,345,678.90", "1,234.5"):
+            with self.subTest(texto=texto), self.assertRaises(ValueError):
+                ler_valor_brl(texto)
+
+    def test_zero_a_esquerda_e_decimal_e_nao_milhar(self):
+        self.assertEqual(ler_valor_brl("0.500"), 0.5)
+        self.assertEqual(ler_valor_brl("0.125"), 0.125)
+        self.assertEqual(ler_valor_brl("1.500"), 1500.0)
+
     def test_invalidos(self):
         for texto in ("abc", "-5", "-0,01", "nan", "inf", "1,2,3", "12a"):
             with self.subTest(texto=texto), self.assertRaises(ValueError):

@@ -126,6 +126,8 @@ def test_refazer_ne_remove_a_marca_e_o_log_continua(ambiente):
     _campo(app, "Dez").set_value("12345,67")
     _botao(app, "Gravar ajustes desta NE").click().run()
     assert _celulas_ajustadas(app) == 1
+    assert _botao(app, "Refazer esta NE pela metodologia").disabled  # sem confirmar
+    next(c for c in app.checkbox if c.label.startswith("Confirmo refazer esta NE")).check().run()
     _botao(app, "Refazer esta NE pela metodologia").click().run()
     assert not app.exception, [e.value for e in app.exception]
     assert _celulas_ajustadas(app) == 0
@@ -154,3 +156,11 @@ def test_log_corrompido_avisa_usa_a_metodologia_e_nao_sobrescreve(ambiente):
     assert any("Não foi possível ler os ajustes gravados" in e.value for e in app.error)
     assert ruim.read_text(encoding="utf-8") == "{ quebrado"
     assert len(_eventos(ambiente)) == 1
+
+
+def test_ajuste_superado_aparece_na_tela_sem_abrir_o_expansor(ambiente):
+    # ajuste gravado para março: com a extração atual o mês já está fechado → "superado" (vale o realizado)
+    projecao_ajustes.registrar_ajustes(exercicio=2026, ne_curta=NE, valores={3: 1000.0}, extracao="abcd1234")
+    app = _em_modo_projecao()
+    assert any("Ajuste superado" in w.value and NE in w.value for w in app.warning)
+    assert len(_eventos(ambiente)) == 1  # nada foi apagado nem gravado por cima
