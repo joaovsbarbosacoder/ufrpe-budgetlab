@@ -164,3 +164,24 @@ def test_ajuste_superado_aparece_na_tela_sem_abrir_o_expansor(ambiente):
     app = _em_modo_projecao()
     assert any("Ajuste superado" in w.value and NE in w.value for w in app.warning)
     assert len(_eventos(ambiente)) == 1  # nada foi apagado nem gravado por cima
+
+
+def test_contrato_antecessor_comeca_recolhido_mesmo_com_ne_limitada(ambiente):
+    """14/10/2026: a seção "Contrato antecessor" nunca abre sozinha, nem quando há NE limitada pelo teto."""
+
+    import src.contratos_continuos_cadastro as cadastro
+
+    for registro in (
+        # com histórico (jan–jul liquidados): é candidata a antecessora
+        {"contrato_numero": "21/2017", "ne_curta": "2026NE000081", "fornecedor": "RIO AVE IMOVEIS",
+         "vigencia_fim": "2027-12-31", "despesa_mensal": 348839.95},
+        # sem histórico fechado e com custo acima do maior mês liquidado: fica limitada pelo teto
+        {"contrato_numero": "10/2026", "ne_curta": "2026NE000350", "fornecedor": "SERVAL SERVICOS",
+         "vigencia_fim": "2027-12-31", "despesa_mensal": 783156.0},
+    ):
+        cadastro.salvar_contrato(2026, cadastro.novo_contrato(**registro))
+    app = _em_modo_projecao()
+    antecessor = [e for e in app.expander if e.label.startswith("Contrato antecessor")]
+    assert antecessor, "a seção deveria existir neste cenário (NE sem histórico e NE candidata)"
+    assert "limitada" in antecessor[0].label  # há NE limitada pelo teto: o caso que abria sozinho
+    assert not any(e.proto.expanded for e in antecessor)
