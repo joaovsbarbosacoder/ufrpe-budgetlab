@@ -455,3 +455,135 @@ class TestLiquidadoAbatido(unittest.TestCase):
         self.assertAlmostEqual(out[cabecalho.index("Esperado do mês (custo × fator)")], 900.0)
         self.assertEqual(out[cabecalho.index("Liquidado abatido")], "Sim")
         self.assertTrue(gerar_pdf(relatorio, contexto).startswith(b"%PDF"))
+
+
+class TestAjustesDoMes(unittest.TestCase):
+    """14/10/2026: o ajuste do usuário substitui o ESPERADO do mês (custo × fator, com teto); o liquidado do mês
+    continua sendo descontado. Mês de referência 10 → fechados até jul, abertos ago e set."""
+
+    def test_ajuste_substitui_esperado_e_teto(self):
+        projecao = projetar_meses({}, CUSTO_1000, 0.9, 10, teto_mensal=600.0, ajustes={11: 700.0})
+        self.assertEqual(projecao.projetado[10], 700.0)  # nov: ajuste acima do teto
+        self.assertEqual(projecao.projetado[11], 600.0)  # dez: sem ajuste, teto vale
+        self.assertTrue(projecao.ajustado[10])
+        self.assertFalse(projecao.ajustado[11])
+
+    def test_ajuste_abate_o_liquidado_do_mes(self):
+        projecao = projetar_meses({10: 400.0}, CUSTO_1000, 0.9, 10, ajustes={10: 900.0})
+        self.assertEqual(projecao.projetado[9], 500.0)
+        self.assertEqual(projecao.esperado[9], 900.0)
+        self.assertEqual(projecao.tipos[9], TIPO_PROJETADO)
+
+    def test_ajuste_zero_e_valido(self):
+        projecao = projetar_meses({}, CUSTO_1000, 0.9, 10, ajustes={11: 0.0})
+        self.assertEqual(projecao.projetado[10], 0.0)
+        self.assertTrue(projecao.ajustado[10])
+        self.assertEqual(projecao.tipos[10], TIPO_PROJETADO)
+
+    def test_mes_vazio_da_metodologia_e_editavel(self):
+        projecao = projetar_meses({}, [0.0] * 12, 1.0, 10, ajustes={11: 300.0})
+        self.assertEqual(projecao.projetado[10], 300.0)
+        self.assertIsNone(projecao.metodologia[10])
+        self.assertIsNone(projecao.projetado_valor_cheio[10])  # a comparação "valor cheio" não leva ajuste
+
+    def test_mes_fechado_e_superado(self):
+        projecao = projetar_meses({}, CUSTO_1000, 0.9, 10, ajustes={5: 123.0})
+        self.assertEqual(projecao.superados, [5])
+        self.assertIsNone(projecao.projetado[4])
+        self.assertFalse(projecao.ajustado[4])
+
+    def test_exercicio_encerrado_ignora_ajustes(self):
+        projecao = projetar_meses({}, CUSTO_1000, 0.9, 12, ajustes={12: 500.0})
+        self.assertEqual(projecao.total_projetado, 0.0)
+        self.assertEqual(projecao.superados, [12])
+
+    def test_metodologia_e_guardada_mesmo_com_ajuste(self):
+        sem = projetar_meses({}, CUSTO_1000, 0.9, 10)
+        com = projetar_meses({}, CUSTO_1000, 0.9, 10, ajustes={11: 100.0})
+        self.assertAlmostEqual(sem.metodologia[10], 900.0)
+        self.assertAlmostEqual(com.metodologia[10], 900.0)
+        self.assertIsNone(com.metodologia[4])  # mês fechado não é editável
+
+    def test_mes_aberto_com_ajuste_segue_a_regra_dos_50_por_cento(self):
+        completo = projetar_meses({8: 500.0}, CUSTO_1000, 0.9, 10, ajustes={8: 900.0})  # 500 ≥ 450
+        self.assertEqual(completo.tipos[7], "Realizado")
+        self.assertIsNone(completo.projetado[7])
+        self.assertTrue(completo.ajustado[7])
+        aberto = projetar_meses({8: 500.0}, CUSTO_1000, 0.9, 10, ajustes={8: 2000.0})  # 500 < 1000
+        self.assertEqual(aberto.tipos[7], TIPO_RESTANTE_ABERTO)
+        self.assertEqual(aberto.projetado[7], 1500.0)
+
+    def test_valor_cheio_nao_leva_ajuste(self):
+        projecao = projetar_meses({}, CUSTO_1000, 0.9, 10, ajustes={11: 5000.0})
+        self.assertEqual(projecao.projetado_valor_cheio[10], 1000.0)
+
+    def test_sem_ajustes_nada_muda(self):
+        self.assertEqual(projetar_meses({}, CUSTO_1000, 0.9, 10).projetado, projetar_meses({}, CUSTO_1000, 0.9, 10, ajustes={}).projetado)
+
+
+class TestRelatorioComAjustes(unittest.TestCase):
+    def _montar(self, ajustes):
+        por_ne, sem_ne = necessidade_por_ne(_filtrado(), None, 2026)
+        return montar_relatorio(por_ne, sem_ne, _liquidacao(), 2026, 10, ajustes=ajustes)
+
+    def test_ajuste_muda_projetado_e_necessidade_so_da_ne_ajustada(self):
+        # NE_EST sem ajuste: projetado 4.500, necessidade 1.800. Com dez = 5.000: 4.500 − 900 + 5.000 = 8.600 → 5.900.
+        linhas = self._montar({NE_EST: {12: 5000.0}}).linhas.set_index("ne_curta")
+        self.assertAlmostEqual(linhas.loc[NE_EST, "projetado_execucao"], 8600.0)
+        self.assertAlmostEqual(linhas.loc[NE_EST, "necessidade_execucao"], 5900.0)
+        self.assertTrue(linhas.loc[NE_EST, "ajustada_manualmente"])
+        self.assertFalse(linhas.loc[NE_NOVA, "ajustada_manualmente"])
+
+    def test_sem_ajustes_igual_ao_de_sempre(self):
+        base = self._montar(None).linhas
+        com_vazio = self._montar({}).linhas
+        pd.testing.assert_frame_equal(base, com_vazio)
+        self.assertFalse(base["ajustada_manualmente"].any())
+
+    def test_ajuste_de_ne_inexistente_e_ignorado_e_avisado(self):
+        relatorio = self._montar({"2026NE999999": {12: 10.0}})
+        self.assertEqual(relatorio.ajustes_sem_ne, ["2026NE999999"])
+        self.assertTrue(any("2026NE999999" in aviso for aviso in relatorio.avisos))
+        self.assertFalse(relatorio.linhas["ajustada_manualmente"].any())
+
+    def test_ajuste_superado_e_avisado_com_titulo_do_contrato(self):
+        relatorio = self._montar({NE_EST: {5: 10.0}})
+        self.assertEqual(relatorio.superados, {NE_EST: [5]})
+        aviso = next(a for a in relatorio.avisos if "superado" in a.lower())
+        self.assertIn(NE_EST, aviso)
+        self.assertIn("10/2025", aviso)
+        self.assertIn("ESTAVEL", aviso)
+
+    def test_aviso_de_ajustadas_traz_numero_do_contrato_e_fornecedor(self):
+        relatorio = self._montar({NE_EST: {12: 5000.0}})
+        aviso = next(a for a in relatorio.avisos if "manualmente" in a)
+        self.assertIn("10/2025", aviso)
+        self.assertIn("ESTAVEL", aviso)
+        self.assertIn("Dez", aviso)
+
+    def test_mensal_traz_marca_e_metodologia(self):
+        relatorio = self._montar({NE_EST: {12: 5000.0}})
+        indice = relatorio.linhas.index[relatorio.linhas["ne_curta"] == NE_EST][0]
+        self.assertTrue(relatorio.mensal.at[indice, "a12"])
+        self.assertFalse(relatorio.mensal.at[indice, "a11"])
+        self.assertAlmostEqual(relatorio.mensal.at[indice, "m12"], 900.0)
+        self.assertAlmostEqual(relatorio.mensal.at[indice, "e12"], 5000.0)
+
+    def test_excel_traz_coluna_ajustado_e_formato_com_marca(self):
+        relatorio = self._montar({NE_EST: {12: 5000.0}})
+        contexto = ContextoProjecaoExecucao(2026, "01/10/2026", "abcd1234", "14/10/2026 10:00", "arquivo")
+        planilha = load_workbook(BytesIO(gerar_xlsx(relatorio, contexto)))
+        resumo = list(planilha["Resumo por NE"].iter_rows(values_only=True))
+        cab = list(resumo[0])
+        self.assertIn("Ajustado manualmente", cab)
+        linha = next(l for l in resumo[1:] if l[0] == NE_EST)
+        self.assertEqual(linha[cab.index("Ajustado manualmente")], "Sim")
+        grade = planilha["Grade mensal"]
+        linha_est = next(i for i, l in enumerate(grade.iter_rows(values_only=True), start=1) if l[0] == NE_EST)
+        coluna_dez = [c.value for c in grade[1]].index("Dez") + 1
+        self.assertIn("†", grade.cell(row=linha_est, column=coluna_dez).number_format)
+        self.assertNotIn("†", grade.cell(row=linha_est, column=coluna_dez - 1).number_format)
+        self.assertTrue(gerar_pdf(relatorio, contexto).startswith(b"%PDF"))
+
+    def test_legenda_cita_o_ajuste(self):
+        self.assertTrue(any("†" in texto for texto in LEGENDA_GRADE))
