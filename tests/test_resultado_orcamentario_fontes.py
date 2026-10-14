@@ -124,6 +124,25 @@ class TestContratos(_Base):
         novo, _ = projecao_contratos(tabela, self.competencia, EXERCICIO, MES_REFERENCIA, antecessores)
         pd.testing.assert_frame_equal(novo.linhas, antigo.linhas)
 
+    def test_ajustes_sao_repassados(self):
+        tabela = self._tabela_antiga(com_pagos=False)
+        por_ne, _ = necessidade_por_ne(tabela, None, EXERCICIO)
+        ne = por_ne["ne_curta"].tolist()[0]
+        base, _ = projecao_contratos(tabela, self.competencia, EXERCICIO, MES_REFERENCIA)
+        ajustado, _ = projecao_contratos(
+            tabela, self.competencia, EXERCICIO, MES_REFERENCIA, ajustes={ne: {12: 99999.0}},
+        )
+        linhas = ajustado.linhas.set_index("ne_curta")
+        self.assertTrue(linhas.loc[ne, "ajustada_manualmente"])
+        self.assertEqual(int(ajustado.linhas["ajustada_manualmente"].sum()), 1)
+        self.assertGreater(ajustado.total_projetado_execucao, base.total_projetado_execucao)
+
+    def test_sem_ajustes_continua_igual(self):
+        tabela = self._tabela_antiga(com_pagos=False)
+        sem, _ = projecao_contratos(tabela, self.competencia, EXERCICIO, MES_REFERENCIA)
+        vazio, _ = projecao_contratos(tabela, self.competencia, EXERCICIO, MES_REFERENCIA, ajustes={})
+        pd.testing.assert_frame_equal(sem.linhas, vazio.linhas)
+
 
 class TestBolsas(_Base):
     @classmethod

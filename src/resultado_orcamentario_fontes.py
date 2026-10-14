@@ -84,8 +84,10 @@ def projecao_contratos(
     mes_referencia: int,
     antecessores: dict[str, str] | None = None,
     nes_pelo_lancamento: list[str] | None = None,
+    ajustes: dict[str, dict[int, float]] | None = None,
 ) -> tuple[RelatorioProjecaoExecucao, pd.DataFrame]:
-    """`(relatorio, sem_ne)` do "Projeção pela Execução" de Contratos. A necessidade vem de
+    """`(relatorio, sem_ne)` do "Projeção pela Execução" de Contratos. `ajustes` (NE → mês → esperado do mês gravado
+    pelo usuário, `projecao_ajustes.ajustes_vigentes`) vale para relatório, Necessidade e Resultado Orçamentário. A necessidade vem de
     `necessidade_por_ne(tabela, None, exercicio)` — só LÊ o que o resto da página já calcula.
     `antecessores` (herança do fator para NE sem histórico) é escolhido na UI de Contratos; o Resultado
     Orçamentário não passa nenhum."""
@@ -93,7 +95,7 @@ def projecao_contratos(
     por_ne, sem_ne = necessidade_por_ne(tabela, None, exercicio)
     relatorio = montar_relatorio(
         por_ne, sem_ne, competencia, exercicio, mes_referencia, antecessores, nes_pelo_lancamento=nes_pelo_lancamento,
-        teto_sem_historico=True,
+        teto_sem_historico=True, ajustes=ajustes,
     )
     return relatorio, sem_ne
 
