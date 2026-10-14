@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 import re
 from html import escape
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
@@ -30,7 +31,11 @@ from src.projecao_ajustes import (
     registrar_ajustes,
 )
 from src.relatorio_projecao_execucao import (
+    BOLSAS_AUXILIOS,
+    CONTRATOS,
     MESES,
+    TOLERANCIA_BOLSA_INTEIRA,
+    RotulosProjecao,
     TIPO_PROJETADO,
     TIPO_REALIZADO,
     TIPO_RESTANTE_ABERTO,
@@ -87,12 +92,49 @@ def ler_valor_brl(texto: str | None) -> float | None:
     return valor
 
 
+def titulo_documento(rotulos: RotulosProjecao, numero: object, nome: object) -> str:
+    """Título da linha: documento e nome da base (Contrato + fornecedor; Processo + programa em Bolsas e Auxílios)."""
+
+    texto_numero = "" if numero is None or pd.isna(numero) else str(numero).strip()
+    texto_nome = "" if nome is None or pd.isna(nome) else str(nome).strip()
+    return f"{rotulos.documento} {texto_numero or '—'} — {texto_nome or rotulos.sem_nome}"
+
+
 def titulo_contrato(contrato_numero: object, fornecedor: object) -> str:
     """Título do contrato: número e fornecedor (como na conciliação por competência)."""
 
-    numero = "" if contrato_numero is None or pd.isna(contrato_numero) else str(contrato_numero).strip()
-    nome = "" if fornecedor is None or pd.isna(fornecedor) else str(fornecedor).strip()
-    return f"Contrato {numero or '—'} — {nome or '(sem fornecedor)'}"
+    return titulo_documento(CONTRATOS, contrato_numero, fornecedor)
+
+
+def _unidade_valida(unidade: float | None) -> bool:
+    return unidade is not None and not pd.isna(unidade) and unidade > 0
+
+
+def quantidade_de_valor(valor: float | None, unidade: float | None) -> float | None:
+    """Bolsas = valor ÷ valor de UMA bolsa (4 casas). Sem valor ou sem unidade válida: nulo (zero é um valor)."""
+
+    if valor is None or pd.isna(valor) or not _unidade_valida(unidade):
+        return None
+    return round(float(valor) / float(unidade), 4)
+
+
+def valor_de_quantidade(quantidade: float | None, unidade: float | None) -> float | None:
+    """Valor (R$, centavos) = bolsas × valor de UMA bolsa."""
+
+    if quantidade is None or pd.isna(quantidade) or not _unidade_valida(unidade):
+        return None
+    return round(float(quantidade) * float(unidade), 2)
+
+
+def formatar_quantidade(quantidade: float) -> str:
+    """`12` ou `12,5` (até 4 casas, vírgula decimal, sem zeros sobrando)."""
+
+    texto = f"{float(quantidade):.4f}".rstrip("0").rstrip(".")
+    return (texto or "0").replace(".", ",")
+
+
+def quantidade_inteira(quantidade: float) -> bool:
+    return abs(float(quantidade) - round(float(quantidade))) <= TOLERANCIA_BOLSA_INTEIRA
 
 
 def meses_editaveis(relatorio: RelatorioProjecaoExecucao) -> list[int]:
@@ -129,7 +171,14 @@ def _mil(valor: float) -> str:
     return f"{valor / 1000:,.1f} mil".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def _celula(relatorio: RelatorioProjecaoExecucao, indice: int, mes: int) -> str:
+def _bolsas(valor: float, unidade: float | None) -> str:
+    """Quantidade de bolsas do valor, ou vazio sem valor de bolsa."""
+
+    quantidade = quantidade_de_valor(valor, unidade)
+    return "" if quantidade is None else formatar_quantidade(quantidade)
+
+
+def _celula(relatorio: RelatorioProjecaoExecucao, indice: int, mes: int, unidade: float | None = None) -> str:
     tipo = relatorio.mensal.at[indice, f"t{mes}"]
     realizado = relatorio.mensal.at[indice, f"r{mes}"]
     nome = MESES[mes - 1].lower()
@@ -143,22 +192,33 @@ def _celula(relatorio: RelatorioProjecaoExecucao, indice: int, mes: int) -> str:
             f"{nome}: esperado {formatar_brl(float(esperado))} − liquidado {formatar_brl(liquidado)} = projetado "
             f"{formatar_brl(float(projetado))}" + (" (esperado ajustado por você)" if ajustado else "")
         )
-        texto = _mil(float(projetado)) + ("*" if liquidado_abatido(relatorio, indice, mes) else "") + (" ✎" if ajustado else "")
+        bolsas = _bolsas(float(projetado), unidade)
+        if bolsas:
+            titulo += f" · {bolsas} bolsas"
+        texto = (
+            _mil(float(projetado)) + (f" · {bolsas} b" if bolsas else "")
+            + ("*" if liquidado_abatido(relatorio, indice, mes) else "") + (" ✎" if ajustado else "")
+        )
         return f'<td class="c {classe}{" k-edit" if ajustado else ""}" title="{escape(titulo)}">{texto}</td>'
     if tipo == TIPO_REALIZADO and not pd.isna(realizado):
-        return f'<td class="c k-real" title="{escape(f"{nome}: realizado {formatar_brl(float(realizado))}")}">{_mil(float(realizado))}</td>'
+        bolsas = _bolsas(float(realizado), unidade)
+        titulo = f"{nome}: realizado {formatar_brl(float(realizado))}" + (f" · {bolsas} bolsas" if bolsas else "")
+        texto = _mil(float(realizado)) + (f" · {bolsas} b" if bolsas else "")
+        return f'<td class="c k-real" title="{escape(titulo)}">{texto}</td>'
     return '<td class="k-vazio">—</td>'
 
 
-def html_matriz(relatorio: RelatorioProjecaoExecucao) -> str:
-    """Matriz NE × 12 meses; a última coluna e a linha final somam só o projetado (o realizado não entra)."""
+def html_matriz(relatorio: RelatorioProjecaoExecucao, unidades: dict[str, float] | None = None) -> str:
+    """Matriz NE × 12 meses; a última coluna e a linha final somam só o projetado (o realizado não entra).
+    `unidades` (Bolsas e Auxílios): NE → valor de uma bolsa; com ele cada célula mostra também a quantidade de bolsas."""
 
+    unidades = unidades or {}
     cabecalho = "".join(f"<th>{m.lower()}</th>" for m in MESES)
     corpo, totais = [], [0.0] * 12
     for indice, linha in relatorio.linhas.iterrows():
         celulas, soma = [], 0.0
         for mes in range(1, 13):
-            celulas.append(_celula(relatorio, indice, mes))
+            celulas.append(_celula(relatorio, indice, mes, unidades.get(linha["ne_curta"])))
             projetado = relatorio.mensal.at[indice, f"p{mes}"]
             if relatorio.mensal.at[indice, f"t{mes}"] in (TIPO_PROJETADO, TIPO_RESTANTE_ABERTO) and not pd.isna(projetado):
                 soma += float(projetado)
@@ -175,7 +235,7 @@ def html_matriz(relatorio: RelatorioProjecaoExecucao) -> str:
         + "".join(f"<td>{_mil(v) if v else '—'}</td>" for v in totais) + f"<td>{_mil(total_geral)}</td></tr>"
     )
     return (
-        f'<table class="pe-m"><thead><tr><th>Contrato</th>{cabecalho}<th>Projetado até dez.</th></tr></thead>'
+        f'<table class="pe-m"><thead><tr><th>{escape(relatorio.rotulos.documento)}</th>{cabecalho}<th>Projetado até dez.</th></tr></thead>'
         f'<tbody>{"".join(corpo)}</tbody></table>'
     )
 
@@ -196,27 +256,54 @@ def _formatar_campo(valor: float) -> str:
     return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def _ne_rotulo(linha: pd.Series) -> str:
-    """Rótulo do seletor: `<NE> — <fornecedor> — Contrato <nº>`."""
+def _ne_rotulo(linha: pd.Series, rotulos: RotulosProjecao = CONTRATOS) -> str:
+    """Rótulo do seletor: `<NE> — <nome> — <documento> <nº>` (Contrato/fornecedor ou Processo/programa)."""
 
-    numero, fornecedor = titulo_contrato(linha["contrato_numero"], linha["fornecedor"]).split(" — ", 1)
-    return f"{linha['ne_curta']} — {fornecedor} — {numero}"
+    numero, nome = titulo_documento(rotulos, linha["contrato_numero"], linha["fornecedor"]).split(" — ", 1)
+    return f"{linha['ne_curta']} — {nome} — {numero}"
 
 
 def _limpar_campos(chave: str, ne: str | None) -> None:
-    prefixo = f"{chave}_pe_campo_" + (f"{ne}_" if ne else "")
-    for k in [k for k in list(st.session_state.keys()) if isinstance(k, str) and k.startswith(prefixo)]:
-        del st.session_state[k]
+    for tipo in ("campo", "qtd"):  # valor em R$ e (Bolsas) quantidade de bolsas
+        prefixo = f"{chave}_pe_{tipo}_" + (f"{ne}_" if ne else "")
+        for k in [k for k in list(st.session_state.keys()) if isinstance(k, str) and k.startswith(prefixo)]:
+            del st.session_state[k]
 
 
-def _cb_gravar(chave: str, exercicio: int, extracao: str, ne: str, meses: list[int], vigente: dict, metodologia: dict) -> None:
+def _cb_valor_mudou(chave: str, ne: str, mes: int, unidade: float) -> None:
+    """Bolsas e Auxílios: o valor (R$) mudou → atualiza a quantidade de bolsas. Texto inválido não mexe na outra ponta
+    (o erro aparece ao gravar)."""
+
+    try:
+        valor = ler_valor_brl(st.session_state.get(f"{chave}_pe_campo_{ne}_{mes}", ""))
+    except ValueError:
+        return
+    quantidade = quantidade_de_valor(valor, unidade)
+    st.session_state[f"{chave}_pe_qtd_{ne}_{mes}"] = "" if quantidade is None else formatar_quantidade(quantidade)
+
+
+def _cb_quantidade_mudou(chave: str, ne: str, mes: int, unidade: float) -> None:
+    """Bolsas e Auxílios: a quantidade de bolsas mudou → atualiza o valor (R$)."""
+
+    try:
+        quantidade = ler_valor_brl(st.session_state.get(f"{chave}_pe_qtd_{ne}_{mes}", ""))
+    except ValueError:
+        return
+    valor = valor_de_quantidade(quantidade, unidade)
+    st.session_state[f"{chave}_pe_campo_{ne}_{mes}"] = "" if valor is None else _formatar_campo(valor)
+
+
+def _cb_gravar(
+    chave: str, exercicio: int, extracao: str, ne: str, meses: list[int], vigente: dict, metodologia: dict,
+    diretorio: Path | None = None,
+) -> None:
     digitado = {m: st.session_state.get(f"{chave}_pe_campo_{ne}_{m}", "") for m in meses}
     try:
         valores = valores_para_gravar(digitado, vigente, metodologia)
         if not valores:
             st.session_state[f"{chave}_pe_msg"] = ("info", "Nada mudou: nenhum ajuste gravado.")
             return
-        registrar_ajustes(exercicio=exercicio, ne_curta=ne, valores=valores, extracao=extracao)
+        registrar_ajustes(exercicio=exercicio, ne_curta=ne, valores=valores, extracao=extracao, diretorio=diretorio)
     except (ValueError, ErroAjuste) as erro:
         st.session_state[f"{chave}_pe_msg"] = ("erro", str(erro))
         return
@@ -224,9 +311,9 @@ def _cb_gravar(chave: str, exercicio: int, extracao: str, ne: str, meses: list[i
     st.session_state[f"{chave}_pe_msg"] = ("ok", f"{len(valores)} mês(es) gravado(s) para {ne}. A projeção já usa os novos valores.")
 
 
-def _cb_refazer_ne(chave: str, exercicio: int, extracao: str, ne: str) -> None:
+def _cb_refazer_ne(chave: str, exercicio: int, extracao: str, ne: str, diretorio: Path | None = None) -> None:
     try:
-        refazer_ne(exercicio=exercicio, ne_curta=ne, extracao=extracao)
+        refazer_ne(exercicio=exercicio, ne_curta=ne, extracao=extracao, diretorio=diretorio)
     except ErroAjuste as erro:
         st.session_state[f"{chave}_pe_msg"] = ("erro", str(erro))
         return
@@ -235,9 +322,9 @@ def _cb_refazer_ne(chave: str, exercicio: int, extracao: str, ne: str) -> None:
     st.session_state[f"{chave}_pe_msg"] = ("ok", f"{ne} refeita pela metodologia (o histórico dos ajustes continua gravado).")
 
 
-def _cb_refazer_tudo(chave: str, exercicio: int, extracao: str) -> None:
+def _cb_refazer_tudo(chave: str, exercicio: int, extracao: str, diretorio: Path | None = None) -> None:
     try:
-        refazer_tudo(exercicio=exercicio, extracao=extracao)
+        refazer_tudo(exercicio=exercicio, extracao=extracao, diretorio=diretorio)
     except ErroAjuste as erro:
         st.session_state[f"{chave}_pe_msg"] = ("erro", str(erro))
         return
@@ -246,9 +333,15 @@ def _cb_refazer_tudo(chave: str, exercicio: int, extracao: str) -> None:
     st.session_state[f"{chave}_pe_msg"] = ("ok", "Todas as NEs do exercício refeitas pela metodologia.")
 
 
-def render_edicao_projecao(relatorio: RelatorioProjecaoExecucao, exercicio: int, extracao: str, chave: str) -> None:
+def render_edicao_projecao(
+    relatorio: RelatorioProjecaoExecucao, exercicio: int, extracao: str, chave: str, diretorio: Path | None = None,
+) -> None:
     """Expansor "Editar a projeção pela execução": matriz de leitura e edição por NE. `extracao` é o hash curto da Execução
-    Mensal vigente (guardado em cada evento). Log de ajustes ilegível: erro visível e nada é gravado."""
+    Mensal vigente (guardado em cada evento). Log de ajustes ilegível: erro visível e nada é gravado. `diretorio`: pasta
+    base do log (padrão: a de Contratos; Bolsas e Auxílios usa a sua, para um "refazer todas" nunca apagar o do outro).
+    Com `relatorio.rotulos` de Bolsas e Auxílios, a edição mostra o valor (R$) e a quantidade de bolsas vinculados."""
+
+    bolsas = relatorio.rotulos is BOLSAS_AUXILIOS
 
     superado = next((a for a in relatorio.avisos if a.startswith("Ajuste superado")), None)
     if superado:  # visível sem abrir o expansor: um mês ajustado fechou e passou a valer o realizado
@@ -258,7 +351,7 @@ def render_edicao_projecao(relatorio: RelatorioProjecaoExecucao, exercicio: int,
             st.caption("Sem NE no relatório: não há o que editar.")
             return
         try:
-            vigentes = ajustes_vigentes(exercicio)
+            vigentes = ajustes_vigentes(exercicio, diretorio)
         except ErroAjuste as erro:
             st.error(f"Não foi possível ler os ajustes gravados: {erro}")
             return
@@ -269,7 +362,8 @@ def render_edicao_projecao(relatorio: RelatorioProjecaoExecucao, exercicio: int,
             "no relatório, na Necessidade (modo projeção pela execução) e no Resultado Orçamentário. Quando o mês fechar, "
             "vale o realizado."
         )
-        st.markdown(html_legenda() + html_matriz(relatorio), unsafe_allow_html=True)
+        unidades = relatorio.unidades if bolsas else None
+        st.markdown(html_legenda() + html_matriz(relatorio, unidades), unsafe_allow_html=True)
         for tipo, texto in ([st.session_state.pop(f"{chave}_pe_msg")] if f"{chave}_pe_msg" in st.session_state else []):
             {"ok": st.success, "erro": st.error, "info": st.info}[tipo](texto)
         if not meses:
@@ -277,11 +371,12 @@ def render_edicao_projecao(relatorio: RelatorioProjecaoExecucao, exercicio: int,
             return
 
         linhas = relatorio.linhas.reset_index(drop=True)
-        rotulos = {linha["ne_curta"]: _ne_rotulo(linha) for _, linha in linhas.iterrows()}
+        rotulos = {linha["ne_curta"]: _ne_rotulo(linha, relatorio.rotulos) for _, linha in linhas.iterrows()}
         ne = st.selectbox("NE", list(rotulos), format_func=rotulos.get, key=f"{chave}_pe_ne")
         indice = relatorio.linhas.index[relatorio.linhas["ne_curta"] == ne][0]
         linha = relatorio.linhas.loc[indice]
-        st.markdown(f"**{titulo_contrato(linha['contrato_numero'], linha['fornecedor'])}** · NE {ne}")
+        st.markdown(f"**{titulo_documento(relatorio.rotulos, linha['contrato_numero'], linha['fornecedor'])}** · NE {ne}")
+        unidade = relatorio.unidades.get(ne) if bolsas else None
         vigente = vigentes.get(ne, {})
         metodologia = {m: (None if pd.isna(relatorio.mensal.at[indice, f"m{m}"]) else float(relatorio.mensal.at[indice, f"m{m}"])) for m in meses}
         superados = relatorio.superados.get(ne, [])
@@ -290,36 +385,72 @@ def render_edicao_projecao(relatorio: RelatorioProjecaoExecucao, exercicio: int,
                 f'<div class="pe-aviso">Ajuste superado (mês já fechado; vale o realizado): '
                 f'{", ".join(MESES[m - 1] for m in superados if 1 <= m <= 12)}.</div>', unsafe_allow_html=True,
             )
-        colunas = st.columns([1, 2, 2, 2, 2])
-        for rotulo, coluna in zip(("Mês", "Metodologia (esperado)", "Seu ajuste (esperado)", "Liquidado no mês", "Projetado"), colunas):
+        cabecalhos, larguras = ("Mês", "Metodologia (esperado)", "Seu ajuste (esperado)", "Liquidado no mês", "Projetado"), [1, 2, 2, 2, 2]
+        if bolsas:  # valor (R$) e quantidade de bolsas lado a lado, um atualizando o outro
+            cabecalhos = ("Mês", "Metodologia (esperado)", "Bolsas", "Valor esperado (R$)", "Liquidado no mês", "Projetado")
+            larguras = [1, 2, 1.4, 2, 2, 2]
+        for rotulo, coluna in zip(cabecalhos, st.columns(larguras)):
             coluna.markdown(f"**{rotulo}**")
+
+        def _com_bolsas(valor: float | None) -> str:
+            if valor is None or pd.isna(valor):
+                return ""
+            texto = _bolsas(float(valor), unidade)
+            return f" · {texto} bolsas" if texto else ""
+
         for mes in meses:
-            c_mes, c_met, c_aj, c_liq, c_proj = st.columns([1, 2, 2, 2, 2])
+            celulas = st.columns(larguras)
+            c_mes, c_met = celulas[0], celulas[1]
+            c_qtd = celulas[2] if bolsas else None
+            c_aj, c_liq, c_proj = celulas[-3:]
             realizado = relatorio.mensal.at[indice, f"r{mes}"]
             projetado = relatorio.mensal.at[indice, f"p{mes}"]
             metodo = metodologia[mes]
-            c_mes.markdown(f"**{MESES[mes - 1]}/{exercicio}**")
-            c_met.write(formatar_brl(metodo) if metodo is not None else "metodologia não projeta")
+            nome_mes = MESES[mes - 1]
+            c_mes.markdown(f"**{nome_mes}/{exercicio}**")
+            c_met.write((formatar_brl(metodo) + _com_bolsas(metodo)) if metodo is not None else "metodologia não projeta")
+            ajustado = vigente.get(mes)
+            if bolsas and unidade:
+                c_qtd.text_input(
+                    f"Bolsas de {nome_mes}", value=formatar_quantidade(quantidade_de_valor(ajustado, unidade)) if ajustado is not None else "",
+                    placeholder=_bolsas(metodo, unidade) or "bolsas", key=f"{chave}_pe_qtd_{ne}_{mes}",
+                    label_visibility="collapsed", on_change=_cb_quantidade_mudou, args=(chave, ne, mes, unidade),
+                )
+            elif bolsas:
+                c_qtd.write("—")  # NE sem valor único de bolsa (ou paga em valor variável): só o valor em R$
             c_aj.text_input(
-                f"Esperado de {MESES[mes - 1]}", value=_formatar_campo(vigente[mes]) if mes in vigente else "",
+                f"Esperado de {nome_mes}", value=_formatar_campo(ajustado) if ajustado is not None else "",
                 placeholder="sem ajuste" if metodo is not None else "informar esperado",
                 key=f"{chave}_pe_campo_{ne}_{mes}", label_visibility="collapsed",
+                **({"on_change": _cb_valor_mudou, "args": (chave, ne, mes, unidade)} if bolsas and unidade else {}),
             )
-            c_liq.write(formatar_brl(float(realizado)) if not pd.isna(realizado) else "sem registro")
-            c_proj.write(formatar_brl(float(projetado)) if not pd.isna(projetado) else "realizado / —")
+            c_liq.write((formatar_brl(float(realizado)) + _com_bolsas(realizado)) if not pd.isna(realizado) else "sem registro")
+            c_proj.write((formatar_brl(float(projetado)) + _com_bolsas(projetado)) if not pd.isna(projetado) else "realizado / —")
+        if bolsas and unidade:  # bolsa é paga por inteiro: avisa, mas o valor digitado vale
+            for mes in meses:
+                try:
+                    digitado = ler_valor_brl(st.session_state.get(f"{chave}_pe_campo_{ne}_{mes}", ""))
+                except ValueError:
+                    continue
+                quantidade = quantidade_de_valor(digitado, unidade)
+                if quantidade is not None and not quantidade_inteira(quantidade):
+                    st.caption(
+                        f"{MESES[mes - 1]}: {formatar_quantidade(quantidade)} bolsas — não é número inteiro de bolsas "
+                        "(bolsa é paga por inteiro); o valor digitado vale mesmo assim."
+                    )
         st.button(
             "Gravar ajustes desta NE", key=f"{chave}_pe_gravar", type="primary", on_click=_cb_gravar,
-            args=(chave, exercicio, extracao, ne, meses, vigente, metodologia),
+            args=(chave, exercicio, extracao, ne, meses, vigente, metodologia, diretorio),
         )
         confirma_ne = st.checkbox(
             "Confirmo refazer esta NE pela metodologia", key=f"{chave}_pe_confirma_ne_{ne}", disabled=not vigente,
         )
         st.button(
             "Refazer esta NE pela metodologia", key=f"{chave}_pe_refazer_ne", on_click=_cb_refazer_ne,
-            args=(chave, exercicio, extracao, ne), disabled=not (confirma_ne and vigente),
+            args=(chave, exercicio, extracao, ne, diretorio), disabled=not (confirma_ne and vigente),
         )
         confirma = st.checkbox("Confirmo refazer TODAS as NEs do exercício pela metodologia", key=f"{chave}_pe_confirma_tudo")
         st.button(
             "Refazer todas do exercício", key=f"{chave}_pe_refazer_tudo", on_click=_cb_refazer_tudo,
-            args=(chave, exercicio, extracao), disabled=not (confirma and vigentes),
+            args=(chave, exercicio, extracao, diretorio), disabled=not (confirma and vigentes),
         )

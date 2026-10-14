@@ -119,3 +119,7 @@ data/preferencias/
 # Ajustes manuais da Projecao pela Execucao (Contratos Continuos), gravados pelo app (mesmo motivo de data/demandas/ acima)
 data/projecao_execucao/*
 !data/projecao_execucao/.gitkeep
+
+# Ajustes manuais da Projecao pela Execucao de Bolsas e Auxilios (mesmo motivo de data/projecao_execucao/ acima)
+data/projecao_execucao_bolsas/*
+!data/projecao_execucao_bolsas/.gitkeep

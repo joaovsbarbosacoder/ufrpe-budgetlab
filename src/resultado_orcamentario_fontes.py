@@ -107,14 +107,16 @@ def projecao_bolsas(
     competencia: pd.DataFrame,
     exercicio: int,
     mes_referencia: int,
+    ajustes: dict[str, dict[int, float]] | None = None,
 ) -> tuple[RelatorioProjecaoExecucao, pd.DataFrame]:
     """`(relatorio, sem_ne)` do "Projeção pela Execução" de Bolsas e Auxílios (custos mensais e rótulos
-    próprios, sem contrato antecessor)."""
+    próprios, sem contrato antecessor). `ajustes` (NE → mês → esperado do mês gravado pelo usuário, 15/10/2026):
+    mesma regra de Contratos; o teto de NE sem histórico continua só em Contratos."""
 
     por_ne, sem_ne, custos = _entrada_projecao_bolsas(tabela, competencia, exercicio)
     relatorio = montar_relatorio(
         por_ne, sem_ne, competencia, exercicio, mes_referencia, custos=custos, rotulos=BOLSAS_AUXILIOS,
-        unidades=_unidades_bolsas(tabela), nes_valor_variavel=_nes_valor_variavel(tabela),
+        unidades=_unidades_bolsas(tabela), nes_valor_variavel=_nes_valor_variavel(tabela), ajustes=ajustes,
     )
     # Correção (08/10/2026, revisão final): em Bolsas o valor da necessidade dos itens sem NE vive na coluna
     # privada `_necessidade`; renomeia para `necessidade` (contrato do aviso e da tela). A página de Bolsas

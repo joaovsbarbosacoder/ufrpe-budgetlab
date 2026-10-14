@@ -33,6 +33,8 @@ from datetime import datetime
 from pathlib import Path
 
 DIRETORIO_AJUSTES = Path("data/projecao_execucao")
+#: Bolsas e Auxílios grava na SUA pasta (15/10/2026): "refazer todas" de uma base nunca apaga o log da outra
+DIRETORIO_AJUSTES_BOLSAS = Path("data/projecao_execucao_bolsas")
 VERSAO_SCHEMA = 1
 TIPOS = ("ajustar", "refazer_ne", "refazer_tudo")
 

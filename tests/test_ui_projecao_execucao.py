@@ -8,12 +8,18 @@ import pandas as pd
 
 from src.relatorio_necessidade_empenho import necessidade_por_ne
 from src.relatorio_projecao_execucao import montar_relatorio
+from src.relatorio_projecao_execucao import BOLSAS_AUXILIOS, CONTRATOS
 from src.ui_projecao_execucao import (
+    formatar_quantidade,
     html_legenda,
     html_matriz,
     ler_valor_brl,
     meses_editaveis,
+    quantidade_de_valor,
+    quantidade_inteira,
     titulo_contrato,
+    titulo_documento,
+    valor_de_quantidade,
     valores_para_gravar,
 )
 
@@ -78,6 +84,59 @@ class TestTituloContrato(unittest.TestCase):
     def test_faltando_dados(self):
         self.assertEqual(titulo_contrato(None, "Serval"), "Contrato — — Serval")
         self.assertEqual(titulo_contrato("10/2025", ""), "Contrato 10/2025 — (sem fornecedor)")
+
+
+class TestBolsasQuantidadeEValor(unittest.TestCase):
+    """15/10/2026: em Bolsas e Auxílios o valor (R$) e a quantidade de bolsas se vinculam pelo valor de UMA bolsa."""
+
+    def test_quantidade_de_valor(self):
+        self.assertEqual(quantidade_de_valor(1200.0, 400.0), 3.0)
+        self.assertEqual(quantidade_de_valor(1000.0, 400.0), 2.5)
+        self.assertEqual(quantidade_de_valor(0.0, 400.0), 0.0)  # zero é valor, não ausência
+        self.assertAlmostEqual(quantidade_de_valor(100.0, 300.0), 0.3333)  # 4 casas
+
+    def test_sem_unidade_valida_nao_ha_quantidade(self):
+        for unidade in (None, 0.0, -5.0):
+            with self.subTest(unidade=unidade):
+                self.assertIsNone(quantidade_de_valor(1200.0, unidade))
+                self.assertIsNone(valor_de_quantidade(3.0, unidade))
+        self.assertIsNone(quantidade_de_valor(None, 400.0))
+        self.assertIsNone(valor_de_quantidade(None, 400.0))
+
+    def test_valor_de_quantidade(self):
+        self.assertEqual(valor_de_quantidade(3.0, 400.0), 1200.0)
+        self.assertEqual(valor_de_quantidade(2.5, 400.0), 1000.0)
+        self.assertEqual(valor_de_quantidade(0.0, 400.0), 0.0)
+        self.assertEqual(valor_de_quantidade(3.0, 333.33), 999.99)  # centavos
+
+    def test_ida_e_volta_nao_perde_centavos_em_bolsa_inteira(self):
+        for qtd in (1.0, 7.0, 130.0):
+            self.assertEqual(quantidade_de_valor(valor_de_quantidade(qtd, 1400.0), 1400.0), qtd)
+
+    def test_formatar_quantidade(self):
+        self.assertEqual(formatar_quantidade(12.0), "12")
+        self.assertEqual(formatar_quantidade(12.5), "12,5")
+        self.assertEqual(formatar_quantidade(0.3333), "0,3333")
+        self.assertEqual(formatar_quantidade(0.0), "0")
+
+    def test_quantidade_inteira_com_tolerancia(self):
+        self.assertTrue(quantidade_inteira(12.0))
+        self.assertTrue(quantidade_inteira(12.004))
+        self.assertFalse(quantidade_inteira(12.5))
+        self.assertFalse(quantidade_inteira(0.3333))
+
+    def test_titulo_documento_usa_os_rotulos_da_base(self):
+        self.assertEqual(titulo_documento(CONTRATOS, "10/2025", "Serval"), "Contrato 10/2025 — Serval")
+        self.assertEqual(titulo_documento(BOLSAS_AUXILIOS, "23096/2026", "Residência"), "Processo 23096/2026 — Residência")
+        self.assertEqual(titulo_documento(BOLSAS_AUXILIOS, None, ""), "Processo — — (sem programa)")
+
+    def test_matriz_mostra_bolsas_quando_ha_valor_de_bolsa(self):
+        html = html_matriz(_relatorio({NE: {12: 5000.0}}), unidades={NE: 100.0})
+        self.assertIn("bolsas", html)  # title da célula com a quantidade
+        self.assertIn("50 b", html)  # 5.000 ÷ 100 no mês ajustado (texto compacto da célula)
+
+    def test_matriz_sem_unidade_nao_mostra_bolsas(self):
+        self.assertNotIn("bolsas", html_matriz(_relatorio({NE: {12: 5000.0}})))
 
 
 class TestValoresParaGravar(unittest.TestCase):

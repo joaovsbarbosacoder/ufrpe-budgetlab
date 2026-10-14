@@ -52,6 +52,7 @@ from src.importacao_execucao_mensal import NOME_PONTEIRO as PONTEIRO_EXECUCAO_ME
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
 from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne, liquidado_por_ne_e_mes
 from src.liquidacao_consumo import competencia_pelo_consumo
+from src import projecao_ajustes
 from src.projecao_ajustes import ErroAjuste, ajustes_vigentes
 from src.relatorio_necessidade_empenho import mes_referencia_do_exercicio
 from src.resultado_orcamentario import (
@@ -226,7 +227,15 @@ def _necessidade(
         )
         return tabela, relatorio.linhas, sem_ne, None, [*avisos_ajustes, *pelo_consumo.avisos(), *relatorio.avisos]
     else:
-        relatorio, sem_ne = projecao_bolsas(tabela, competencia, exercicio, mes_referencia)
+        # Ajustes manuais de Bolsas (15/10/2026; pasta própria): log ilegível → metodologia, avisado, nada é gravado.
+        avisos_ajustes_bolsas: list[str] = []
+        try:
+            ajustes_b = ajustes_vigentes(exercicio, projecao_ajustes.DIRETORIO_AJUSTES_BOLSAS)
+        except ErroAjuste as erro:
+            ajustes_b = {}
+            avisos_ajustes_bolsas.append(f"Ajustes da projeção de Bolsas ilegíveis — usada a metodologia: {erro}")
+        relatorio, sem_ne = projecao_bolsas(tabela, competencia, exercicio, mes_referencia, ajustes=ajustes_b)
+        return tabela, relatorio.linhas, sem_ne, None, [*avisos_ajustes_bolsas, *relatorio.avisos]
     return tabela, relatorio.linhas, sem_ne, None, relatorio.avisos
 
 

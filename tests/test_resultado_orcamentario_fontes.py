@@ -186,6 +186,22 @@ class TestBolsas(_Base):
         self.assertIn("necessidade", sem_ne.columns)
         self.assertNotIn("_necessidade", sem_ne.columns)
 
+    def test_ajustes_sao_repassados(self):
+        tabela = self._tabela_antiga()
+        base, _ = projecao_bolsas(tabela, self.competencia, EXERCICIO, MES_REFERENCIA)
+        ne = base.linhas["ne_curta"].dropna().tolist()[0]
+        ajustado, _ = projecao_bolsas(tabela, self.competencia, EXERCICIO, MES_REFERENCIA, ajustes={ne: {12: 99999.0}})
+        linhas = ajustado.linhas.set_index("ne_curta")
+        self.assertTrue(linhas.loc[ne, "ajustada_manualmente"])
+        self.assertEqual(int(ajustado.linhas["ajustada_manualmente"].sum()), 1)
+        self.assertGreater(ajustado.total_projetado_execucao, base.total_projetado_execucao)
+
+    def test_sem_ajustes_continua_igual(self):
+        tabela = self._tabela_antiga()
+        sem, _ = projecao_bolsas(tabela, self.competencia, EXERCICIO, MES_REFERENCIA)
+        vazio, _ = projecao_bolsas(tabela, self.competencia, EXERCICIO, MES_REFERENCIA, ajustes={})
+        pd.testing.assert_frame_equal(sem.linhas, vazio.linhas)
+
     def test_sem_ne_devolvido(self):
         relatorio, sem_ne = projecao_bolsas(self._tabela_antiga(), self.competencia, EXERCICIO, MES_REFERENCIA)
         self.assertEqual(len(sem_ne), relatorio.qtd_sem_ne)
