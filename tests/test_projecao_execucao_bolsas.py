@@ -9,6 +9,7 @@ import math
 import unittest
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 from openpyxl import load_workbook
@@ -28,6 +29,8 @@ from src.relatorio_projecao_execucao import (
     TIPO_PROJETADO,
     ContextoProjecaoExecucao,
     gerar_pdf,
+    LEGENDA_BOLSAS,
+    _formatar_bolsas,
     arredondar_em_unidades,
     gerar_xlsx,
     montar_relatorio,
@@ -373,6 +376,47 @@ class TestBolsasInteiras(unittest.TestCase):
         self.assertEqual(len(proprio), 1)
         self.assertIn("2026NE000001", proprio[0])
         self.assertFalse(any("múltiplo do valor da bolsa" in a or "bolsas inteiras" in a for a in relatorio.avisos))
+
+    def test_formatar_bolsas(self):
+        self.assertEqual(_formatar_bolsas(8.0), "8")
+        self.assertEqual(_formatar_bolsas(8.3), "8,3")
+        self.assertEqual(_formatar_bolsas(213.5), "213,5")
+        self.assertEqual(_formatar_bolsas(0.0), "0")
+        self.assertEqual(_formatar_bolsas(10.0), "10")
+        self.assertEqual(_formatar_bolsas(None), "—")
+
+    def _grade_do_pdf(self, unidades: bool) -> list[list]:
+        """Linhas da última tabela do PDF (grade mensal), capturadas na montagem."""
+        import src.relatorio_projecao_execucao as modulo
+
+        capturadas = []
+        original = modulo.Table
+
+        def espiao(dados, *args, **kwargs):
+            capturadas.append(dados)
+            return original(dados, *args, **kwargs)
+
+        contexto = ContextoProjecaoExecucao(2026, "13/10/2026", "abcd1234", "16/10/2026 12:00", "competencia.xlsx")
+        with patch.object(modulo, "Table", espiao):
+            self.assertTrue(gerar_pdf(self._montar(unidades), contexto).startswith(b"%PDF"))
+        return capturadas[-1]
+
+    def test_pdf_traz_linha_de_bolsas_abaixo_do_valor_em_reais(self):
+        grade = self._grade_do_pdf(True)
+        # NE 1 (400 por bolsa): título, linha em reais e linha de bolsas, nessa ordem
+        indice = next(i for i, linha in enumerate(grade) if linha[0] == "2026NE000001")
+        bolsas = grade[indice + 1]
+        self.assertEqual(bolsas[0], "")
+        self.assertIn("bolsas (R$ 400,00)", bolsas[1])
+        # jan–jun 8,3; jul–ago 8; set–dez projetado 8
+        self.assertEqual(bolsas[2:14], ["8,3"] * 6 + ["8"] * 6)
+        # NE 2 (sem unidade): sem linha de bolsas — a linha seguinte já é o título da próxima NE ou o fim
+        self.assertFalse(any("bolsas (R$" in str(l[1]) for l in grade if l is not grade[indice + 1]))
+
+    def test_pdf_sem_unidades_nao_tem_linha_de_bolsas(self):
+        grade = self._grade_do_pdf(False)
+        self.assertFalse(any("bolsas (R$" in str(l[1]) for l in grade))
+        self.assertIn("Linha 'bolsas'", LEGENDA_BOLSAS)
 
     def test_nota_da_regra_menciona_bolsa_inteira(self):
         self.assertIn("arredondado para o número inteiro de bolsas", BOLSAS_AUXILIOS.nota_regra)

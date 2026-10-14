@@ -326,6 +326,14 @@ LEGENDA_GRADE = [
 ]
 
 
+#: linha extra da grade (PDF) e aba "Quantidade de bolsas" (Excel) quando o relatório tem `unidades` (Bolsas)
+LEGENDA_BOLSAS = (
+    "Linha 'bolsas' (itálico cinza, abaixo do valor em reais): valor do mês ÷ valor de uma bolsa. O projetado é "
+    "sempre número inteiro de bolsas, exceto quando o liquidado do mês já abatido não é múltiplo da bolsa; NE paga "
+    "em valor variável (cadastro) não tem essa linha."
+)
+
+
 @dataclass(frozen=True)
 class RotulosProjecao:
     """Textos que mudam conforme a base do relatório (pedido de 07/10/2026: o mesmo relatório em Bolsas e
@@ -769,6 +777,14 @@ def _formatar_brl(valor: object) -> str:
     return texto.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def _formatar_bolsas(valor: object) -> str:
+    """Quantidade de bolsas: inteira sem casas (8), fracionária com até 2 (8,3); nulo vira "—"."""
+
+    if valor is None or pd.isna(valor):
+        return "—"
+    return f"{float(valor):.2f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
 def _formatar_fator(valor: object) -> str:
     return "—" if valor is None or pd.isna(valor) else f"{float(valor):.2f}".replace(".", ",")
 
@@ -1130,13 +1146,15 @@ def gerar_pdf(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoEx
             + (f" — Liquidação: {escape(linha['base_liquidacao'])}" if linha["base_liquidacao"] == BASE_LANCAMENTO else "")
         )
         dados.append([Paragraph(titulo, estilo_celula)] + [""] * (len(_CABECALHO_GRADE_PDF) - 1))
-        celulas = []
+        unidade = relatorio.unidades.get(linha["ne_curta"])
+        celulas, bolsas = [], []
         for mes in range(1, 13):
             tipo = relatorio.mensal.at[indice, f"t{mes}"]
             if tipo in (TIPO_PROJETADO, TIPO_RESTANTE_ABERTO):
                 celulas.append(
                     _formatar_brl(relatorio.mensal.at[indice, f"p{mes}"]) + _marcas(relatorio, indice, mes)
                 )
+                bolsas.append(_formatar_bolsas(_em_bolsas(relatorio.mensal.at[indice, f"p{mes}"], unidade)))
                 cor = _COR_ABERTO if tipo == TIPO_RESTANTE_ABERTO else _COR_PROJETADO
                 comandos += [
                     ("BACKGROUND", (mes + 1, posicao + 1), (mes + 1, posicao + 1), cor),
@@ -1144,12 +1162,20 @@ def gerar_pdf(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoEx
                 ]
             else:
                 celulas.append(_formatar_brl(relatorio.mensal.at[indice, f"r{mes}"]))
+                bolsas.append(_formatar_bolsas(_em_bolsas(relatorio.mensal.at[indice, f"r{mes}"], unidade)))
         dados.append([linha["ne_curta"], _formatar_fator(linha["fator"]), *celulas, _formatar_brl(linha["projetado_execucao"])])
         comandos += [
             ("SPAN", (0, posicao), (-1, posicao)),
             ("BACKGROUND", (0, posicao), (-1, posicao), _COR_TITULO_NE),
-            ("NOSPLIT", (0, posicao), (-1, posicao + 1)),
+            ("NOSPLIT", (0, posicao), (-1, posicao + (2 if unidade is not None else 1))),
         ]
+        if unidade is not None:
+            # linha de quantidade de bolsas (valor do mês ÷ valor da bolsa), logo abaixo da linha em reais
+            dados.append(["", f"bolsas (R$ {_formatar_brl(unidade)})", *bolsas, ""])
+            comandos += [
+                ("TEXTCOLOR", (0, posicao + 2), (-1, posicao + 2), colors.HexColor("#555555")),
+                ("FONTNAME", (0, posicao + 2), (-1, posicao + 2), "Helvetica-Oblique"),
+            ]
     tabela = Table(dados, colWidths=_LARGURAS_GRADE_PDF, repeatRows=1)
     tabela.setStyle(TableStyle(_estilo_base() + [("ALIGN", (1, 0), (-1, -1), "RIGHT")] + comandos))
     elementos.append(Paragraph(
@@ -1157,6 +1183,8 @@ def gerar_pdf(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoEx
     ))
     for texto in _legenda(relatorio):
         elementos.append(Paragraph(escape(texto), estilo_celula))
+    if relatorio.unidades:
+        elementos.append(Paragraph(escape(LEGENDA_BOLSAS), estilo_celula))
     elementos.append(Spacer(1, 6))
     elementos.append(tabela)
     documento.build(elementos)

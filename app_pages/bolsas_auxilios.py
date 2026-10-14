@@ -1195,7 +1195,12 @@ with st.container(border=True, key="cad_registro"):
                 cel = st.columns(_PROPORCOES_REGISTRO, vertical_alignment="center")
                 processo_linha = _ou_vazio(linha["processo"])
                 ne_linha = _ou_vazio(linha["ne_curta"])
-                subtitulo = " · ".join(parte for parte in (f"Processo {processo_linha}" if processo_linha else "", f"NE {ne_linha}" if ne_linha else "") if parte)
+                subtitulo = " · ".join(
+                    parte for parte in (
+                        f"Processo {processo_linha}" if processo_linha else "", f"NE {ne_linha}" if ne_linha else "",
+                        "Pago em valor variável" if bool(linha.get("pago_valor_variavel", False)) else "",
+                    ) if parte
+                )
                 texto_situacao, tom_situacao = _situacao_exibida(linha["situacao_tg"], linha["valor_a_empenhar"])
                 a_empenhar_linha = _ou_zero(linha["valor_a_empenhar"])
                 qtd_linha = linha["qtd_efetiva"]
