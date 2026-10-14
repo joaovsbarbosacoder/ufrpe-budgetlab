@@ -622,17 +622,28 @@ class TestCorrecoesDaRevisao(unittest.TestCase):
         self.assertFalse(pd.isna(depois["necessidade_execucao"]))
         self.assertTrue(pd.isna(com.linhas.set_index("ne_curta").loc[NE_EST, "necessidade_execucao"]))  # sem ajuste: segue nulo
 
-    def test_bolsas_nao_ganha_legenda_nem_colunas_de_ajuste(self):
+    def test_bolsas_tambem_tem_legenda_colunas_e_marca_de_ajuste(self):
+        # 15/10/2026: a edição da projeção passou a existir também em Bolsas e Auxílios (inverte a decisão da revisão)
         from src.relatorio_projecao_execucao import BOLSAS_AUXILIOS
         por_ne, sem_ne = necessidade_por_ne(_filtrado(), None, 2026)
         custos = {NE_EST: [1000.0] * 12, NE_NOVA: [1000.0] * 12}
-        relatorio = montar_relatorio(por_ne, sem_ne, _liquidacao(), 2026, 10, custos=custos, rotulos=BOLSAS_AUXILIOS)
-        contexto = ContextoProjecaoExecucao(2026, "01/10/2026", "abcd1234", "14/10/2026 10:00", "arquivo")
+        relatorio = montar_relatorio(
+            por_ne, sem_ne, _liquidacao(), 2026, 10, custos=custos, rotulos=BOLSAS_AUXILIOS, ajustes={NE_EST: {12: 5000.0}},
+        )
+        contexto = ContextoProjecaoExecucao(2026, "01/10/2026", "abcd1234", "15/10/2026 10:00", "arquivo")
         planilha = load_workbook(BytesIO(gerar_xlsx(relatorio, contexto)))
-        self.assertNotIn("Ajustado manualmente", [c.value for c in planilha["Resumo por NE"][1]])
-        self.assertNotIn("Ajustado", [c.value for c in planilha["Detalhe mensal"][1]])
+        resumo = list(planilha["Resumo por NE"].iter_rows(values_only=True))
+        cab = list(resumo[0])
+        self.assertIn("Ajustado manualmente", cab)
+        self.assertEqual(next(l for l in resumo[1:] if l[0] == NE_EST)[cab.index("Ajustado manualmente")], "Sim")
+        self.assertIn("Ajustado", [c.value for c in planilha["Detalhe mensal"][1]])
+        grade = planilha["Grade mensal"]
+        linha_est = next(i for i, l in enumerate(grade.iter_rows(values_only=True), start=1) if l[0] == NE_EST)
+        coluna_dez = [c.value for c in grade[1]].index("Dez") + 1
+        self.assertIn("†", grade.cell(row=linha_est, column=coluna_dez).number_format)
         textos = [c.value for aba in planilha for linha in aba.iter_rows() for c in linha if isinstance(c.value, str)]
-        self.assertFalse(any("†" in t for t in textos))
+        self.assertTrue(any("†" in t and "AJUSTADO" in t for t in textos))  # legenda da grade
+        self.assertTrue(any("Projeção ajustada manualmente" in t and "Processo" in t for t in textos))  # aviso com o título
         self.assertTrue(gerar_pdf(relatorio, contexto).startswith(b"%PDF"))
 
     def test_contratos_continua_com_legenda_e_colunas(self):

@@ -826,14 +826,10 @@ def liquidado_abatido(relatorio: RelatorioProjecaoExecucao, indice: int, mes: in
     return realizado is not None and not pd.isna(realizado) and realizado != 0
 
 
-def _com_ajustes(relatorio: RelatorioProjecaoExecucao) -> bool:
-    """A edição do esperado existe só em Contratos Contínuos: Bolsas e Auxílios não ganha legenda nem colunas de ajuste."""
-
-    return relatorio.rotulos is CONTRATOS
-
-
 def _legenda(relatorio: RelatorioProjecaoExecucao) -> list[str]:
-    return LEGENDA_GRADE if _com_ajustes(relatorio) else [t for t in LEGENDA_GRADE if "†" not in t]
+    """Legenda da grade. A edição do esperado vale em Contratos Contínuos e, desde 15/10/2026, em Bolsas e Auxílios."""
+
+    return LEGENDA_GRADE
 
 
 def ajustado_no_mes(relatorio: RelatorioProjecaoExecucao, indice: int, mes: int) -> bool:
@@ -890,8 +886,6 @@ def _resumo(relatorio: RelatorioProjecaoExecucao) -> pd.DataFrame:
             f"Necessidade até dezembro ({rotulos.necessidade_referencia})": linhas["necessidade_contratual"],
         }
     )
-    if not _com_ajustes(relatorio):
-        resumo = resumo.drop(columns=["Ajustado manualmente"])
     return resumo
 
 
@@ -947,7 +941,7 @@ def gerar_xlsx(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoE
                         "Realizado": None if pd.isna(realizado) else realizado,
                         "Projetado": None if projetado is None or pd.isna(projetado) else projetado,
                         "Liquidado abatido": "Sim" if liquidado_abatido(relatorio, indice, mes) else None,
-                        **({"Ajustado": "Sim" if ajustado_no_mes(relatorio, indice, mes) else None} if _com_ajustes(relatorio) else {}),
+                        "Ajustado": "Sim" if ajustado_no_mes(relatorio, indice, mes) else None,
                         COLUNAS_QUANTIDADE_DETALHE[0]: _em_bolsas(relatorio.mensal.at[indice, f"e{mes}"], unidade),
                         COLUNAS_QUANTIDADE_DETALHE[1]: _em_bolsas(realizado, unidade),
                         COLUNAS_QUANTIDADE_DETALHE[2]: _em_bolsas(projetado, unidade),
@@ -965,7 +959,7 @@ def gerar_xlsx(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoE
     detalhe_df = pd.DataFrame(
         detalhe, columns=[
             "NE", rotulos.nome, "Nº do mês", "Mês", "Tipo", "Esperado do mês (custo × fator)", "Realizado", "Projetado",
-            "Liquidado abatido", *COLUNAS_QUANTIDADE_DETALHE, *(["Ajustado"] if _com_ajustes(relatorio) else []),
+            "Liquidado abatido", *COLUNAS_QUANTIDADE_DETALHE, "Ajustado",
         ],
     )
     if not relatorio.unidades:
