@@ -115,3 +115,7 @@ data/conciliacao_decisoes/
 
 # Preferências de tela (12/10/2026) — escolhas do usuário, não versionadas
 data/preferencias/
+
+# Ajustes manuais da Projecao pela Execucao (Contratos Continuos), gravados pelo app (mesmo motivo de data/demandas/ acima)
+data/projecao_execucao/*
+!data/projecao_execucao/.gitkeep
