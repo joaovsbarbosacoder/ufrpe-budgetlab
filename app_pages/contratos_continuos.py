@@ -222,7 +222,12 @@ from src.importacao_dotacao import carregar_atual as carregar_dotacao_atual
 from src.importacao_execucao_mensal import Manifesto as ManifestoExecucaoMensal
 from src.importacao_execucao_mensal import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO_MENSAL
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
-from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne, liquidado_por_ne_e_mes
+from src.liquidacao_competencia import (
+    dimensoes_por_ne,
+    ler_liquidacao_competencia,
+    liquidado_por_ne,
+    liquidado_por_ne_e_mes,
+)
 from src.liquidacao_consumo import competencia_pelo_consumo
 from src.projecao_ajustes import ErroAjuste, ajustes_vigentes
 from src.ui_projecao_execucao import render_edicao_projecao
@@ -351,8 +356,13 @@ def _cached_liquidacao_competencia_por_mes(caminho: str, mtime: float) -> pd.Dat
     `_cached_linha_do_tempo` em `app_pages/consulta_empenhos.py`. `mtime` só participa da
     chave de cache."""
 
-    tempo = liquidado_por_ne_e_mes(ler_liquidacao_competencia(caminho))
+    lido = ler_liquidacao_competencia(caminho)
+    tempo = liquidado_por_ne_e_mes(lido)
     tempo["ne_curta"] = tempo["ne_ccor"].apply(_ne_curta_execucao)
+    # Ação/PTRES do relatório (só no layout com dimensões), exibidos na conciliação por competência.
+    dimensoes = dimensoes_por_ne(lido)
+    if dimensoes.notna().any().any():
+        tempo = tempo.merge(dimensoes, left_on="ne_ccor", right_index=True, how="left")
     return tempo
 
 

@@ -12,9 +12,15 @@ com a base BI de liquidado — combinados, ver conversa de definição de escopo
 Camada: regra específica de base (não é leitor genérico, não é analítica, não é interface).
 Depende só de pandas/openpyxl. Não importa Streamlit.
 
-Origem esperada: aba única, cabeçalho de 1 linha, 7 colunas —
-    NE, Documento Hábil, DH - Doc. Contábil, Ano Referência ACC, Mês Referência ACC,
-    Métrica, <valor, coluna sem cabeçalho>.
+Origem esperada: aba única, cabeçalho de 1 linha, em um de dois layouts (detectados pelo
+cabeçalho, nunca por tentativa e erro):
+  * ANTIGO, 7 colunas — NE, Documento Hábil, DH - Doc. Contábil, Ano Referência ACC, Mês
+    Referência ACC, Métrica, <valor, coluna sem cabeçalho>;
+  * COM DIMENSÕES (relatório "Liquidação por competência - JVSB", 13/10/2026), 12 colunas —
+    Ação Governo (código + descrição), PTRES, DH - Credor (código + descrição), depois as 7
+    colunas do layout antigo. As colunas extras (`acao_cod`, `acao_desc`, `ptres`,
+    `credor_cod`, `credor_desc`) ficam no DataFrame; no layout antigo elas existem e são nulas
+    (ausência de dado, não zero nem texto vazio) — o restante do sistema só lê as 7 originais.
 A chave `NE + Documento Hábil + DH - Doc. Contábil + Ano Referência + Mês Referência` é única
 (confirmado na extração de referência: 3.696 linhas = 3.696 chaves).
 
@@ -26,6 +32,7 @@ isoladamente, sempre por NE.
 Contrato público:
     ler_liquidacao_competencia(caminho) -> pd.DataFrame
     liquidado_por_ne_e_mes(df) -> pd.DataFrame
+    dimensoes_por_ne(df) -> pd.DataFrame
     reconciliar(df) -> dict
     validar(df, esperado=None) -> RelatorioValidacao
 """
@@ -57,6 +64,18 @@ COLUNAS = [
     "ano_referencia", "mes_referencia_rotulo", "metrica", "valor",
 ]
 
+#: layout com dimensões: as 5 colunas novas vêm ANTES das 7 do layout antigo. Os cabeçalhos
+#: de descrição/credor-nome e do valor são vazios na origem (célula mesclada/sem rótulo), por
+#: isso só as posições nomeadas são conferidas.
+DIMENSOES_NOVAS = ["acao_cod", "acao_desc", "ptres", "credor_cod", "credor_desc"]
+COLUNAS_COM_DIMENSOES = DIMENSOES_NOVAS + COLUNAS
+#: posição -> início esperado do cabeçalho (comparação sem acento/caixa, ver `_normalizar`).
+CABECALHO_COM_DIMENSOES = {
+    0: "Ação Governo", 2: "PTRES", 3: "DH - Credor",
+    5: "NE", 6: "Documento Hábil", 7: "DH - Doc. Contábil",
+    8: "Ano Referência ACC", 9: "Mês Referência ACC", 10: "Métrica",
+}
+
 #: mês abreviado (Tesouro Gerencial, PT-BR, maiúsculo) -> número do mês — mesmo vocabulário de
 #: `src.tesouro_execucao_mensal._MESES_PT`, duplicado aqui de propósito (cada leitor de base
 #: fica auto-contido, ver AGENTS.md: "mantenha toda regra específica de uma base separada").
@@ -86,14 +105,42 @@ def _rotulo_mes(texto: object) -> tuple[int, int]:
     return int(encontrado.group(2)), _MESES_PT[encontrado.group(1)]
 
 
-def _validar_assinatura(caminho: Path) -> None:
+def _normalizar(texto: object) -> str:
+    return str(texto or "").strip()
+
+
+def _layout(caminho: Path) -> list[str]:
+    """Valida o cabeçalho e devolve os nomes internos das colunas do layout detectado."""
+
     cabecalho = pd.read_excel(caminho, header=None, nrows=1, dtype=str, engine=motor_excel()).iloc[0].tolist()
-    for posicao, esperado in enumerate(CABECALHO_ESPERADO):
-        obtido = str(cabecalho[posicao] or "").strip()
-        if obtido != esperado:
+
+    if _normalizar(cabecalho[0]) == CABECALHO_ESPERADO[0]:
+        for posicao, esperado in enumerate(CABECALHO_ESPERADO):
+            obtido = _normalizar(cabecalho[posicao])
+            if obtido != esperado:
+                raise ErroLayoutBase(
+                    f"Coluna {posicao + 1}: esperado cabeçalho {esperado!r}, obtido {obtido!r}."
+                )
+        return COLUNAS
+
+    if _normalizar(cabecalho[0]) == CABECALHO_COM_DIMENSOES[0]:
+        if len(cabecalho) != len(COLUNAS_COM_DIMENSOES):
             raise ErroLayoutBase(
-                f"Coluna {posicao + 1}: esperado cabeçalho {esperado!r}, obtido {obtido!r}."
+                f"Esperadas {len(COLUNAS_COM_DIMENSOES)} colunas no layout com dimensões, "
+                f"encontradas {len(cabecalho)}."
             )
+        for posicao, esperado in CABECALHO_COM_DIMENSOES.items():
+            obtido = _normalizar(cabecalho[posicao])
+            if obtido != esperado:
+                raise ErroLayoutBase(
+                    f"Coluna {posicao + 1}: esperado cabeçalho {esperado!r}, obtido {obtido!r}."
+                )
+        return COLUNAS_COM_DIMENSOES
+
+    raise ErroLayoutBase(
+        f"Coluna 1: esperado cabeçalho {CABECALHO_ESPERADO[0]!r} (layout antigo) ou "
+        f"{CABECALHO_COM_DIMENSOES[0]!r} (layout com dimensões), obtido {_normalizar(cabecalho[0])!r}."
+    )
 
 
 def _para_numero(serie: pd.Series) -> pd.Series:
@@ -123,14 +170,20 @@ def ler_liquidacao_competencia(caminho: str | Path) -> pd.DataFrame:
     if not caminho.exists():
         raise FileNotFoundError(caminho)
 
-    _validar_assinatura(caminho)
+    colunas = _layout(caminho)
 
     bruto = pd.read_excel(caminho, header=0, dtype=str, engine=motor_excel())
-    if bruto.shape[1] != len(COLUNAS):
-        raise ErroLayoutBase(f"Esperado {len(COLUNAS)} colunas, obtido {bruto.shape[1]}.")
-    bruto.columns = COLUNAS
+    if bruto.shape[1] != len(colunas):
+        raise ErroLayoutBase(f"Esperado {len(colunas)} colunas, obtido {bruto.shape[1]}.")
+    bruto.columns = colunas
 
     resultado = bruto.copy()
+    for coluna in DIMENSOES_NOVAS:
+        if coluna not in resultado.columns:
+            resultado[coluna] = pd.Series(pd.NA, index=resultado.index, dtype="string")
+    # Códigos como identificador (zeros à esquerda: ação "00P1", PTRES), nunca número.
+    for coluna in DIMENSOES_NOVAS:
+        resultado[coluna] = resultado[coluna].astype("string").str.strip()
     for coluna in ("ne_ccor", "documento_habil", "doc_contabil", "mes_referencia_rotulo", "metrica"):
         resultado[coluna] = resultado[coluna].astype("string").str.strip()
     resultado["ano_referencia"] = pd.to_numeric(resultado["ano_referencia"], errors="raise").astype("int16")
@@ -179,6 +232,23 @@ def liquidado_por_ne_e_mes(df: pd.DataFrame) -> pd.DataFrame:
         .rename(columns={"ano_mes_referencia": "ano_mes"})
         .sort_values(["ne_ccor", "ano_mes"])
         .reset_index(drop=True)
+    )
+
+
+def dimensoes_por_ne(df: pd.DataFrame) -> pd.DataFrame:
+    """Ação e PTRES que o relatório associa a cada NE: uma linha por `ne_ccor`, com `acoes` e
+    `ptres` (valores distintos, ordenados, separados por " / "). Uma NE pode aparecer com mais
+    de uma ação/PTRES — todas são listadas, nenhuma é escolhida por conta própria. Nulo quando
+    o relatório não traz a dimensão (layout antigo): ausência de dado, não texto vazio."""
+
+    def _juntar(serie: pd.Series) -> object:
+        valores = sorted({str(v) for v in serie.dropna() if str(v).strip()})
+        return " / ".join(valores) if valores else pd.NA
+
+    return (
+        df.groupby("ne_ccor")[["acao_cod", "ptres"]]
+        .agg(_juntar)
+        .rename(columns={"acao_cod": "acoes"})
     )
 
 

@@ -69,6 +69,7 @@ from src.resultado_orcamentario import (
     soma_ou_nulo,
 )
 from src.resultado_orcamentario_cadastro import ArquivoCorrompido, CelulaChave, DespesaManual
+from src import resultado_orcamentario_historico as historico_ro
 from src.resultado_orcamentario_fontes import projecao_bolsas, projecao_contratos, tabela_bolsas, tabela_contratos
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_cadastro import formatar_brl
@@ -776,6 +777,30 @@ if not despesas_legiveis:
         avisos=[*resultado.avisos, "Outras despesas previstas ilegíveis: resultado incompleto."],
     )
 
+# Histórico (13/10/2026): fotografia do dia, só do que está SALVO — a seleção em edição (não salva) não vira
+# história —, com os arquivos de seleção e de despesas legíveis e ao menos uma célula marcada.
+historico_fotografias: list[historico_ro.Fotografia] = []
+historico_erro: str | None = None
+try:
+    historico_fotografias = historico_ro.carregar_historico(exercicio, diretorio=cadastro.DIRETORIO_PADRAO)
+    if selecao_legivel and despesas_legiveis and selecao_atual and set(selecao_atual) == set(selecao_salva):
+        if historico_ro.registrar(
+            historico_ro.fotografar(
+                resultado, exercicio, len(marcadas),
+                dotacao_extracao=f"{data_dotacao:%d/%m/%Y}", dotacao_sha=manifesto_dotacao.sha256[:8],
+                execucao_extracao=f"{data_execucao:%d/%m/%Y}", execucao_sha=manifesto_execucao.sha256[:8],
+                dotacao_por_celula={
+                    historico_ro.chave_celula(chave): (None if pd.isna(valor) else float(valor))
+                    for chave, valor in zip(celulas["chave"], celulas["dotacao_atualizada"])
+                    if chave in set(marcadas)
+                },
+            ),
+            diretorio=cadastro.DIRETORIO_PADRAO,
+        ):
+            historico_fotografias = historico_ro.carregar_historico(exercicio, diretorio=cadastro.DIRETORIO_PADRAO)
+except ArquivoCorrompido as erro:
+    historico_erro = f"{erro}. O histórico não pôde ser lido; corrija ou restaure o arquivo — a página não grava por cima."
+
 with area_cartoes:
     _render_cartoes(resultado, len(marcadas), len(celulas))
 with area_composicao:
@@ -823,6 +848,70 @@ for origem, sem_ne in ((ORIGEM_CONTRATOS, sem_ne_contratos), (ORIGEM_BOLSAS, sem
                     c: currency_column(c) for c in ("valor_mensal", "necessidade") if c in colunas
                 },
             )
+# --------------------------------------------------------------- Histórico
+st.subheader("6. Histórico do resultado")
+st.caption(
+    "Uma fotografia por dia (a última do dia vale), gravada ao abrir a página com a seleção salva. Só existe a partir "
+    "do primeiro registro: o passado anterior não é reconstruível. A variação mostra quanto cada componente da "
+    "fórmula (Dotação − Empenhado − Necessidade) moveu o resultado desde a fotografia anterior."
+)
+if historico_erro:
+    st.error(historico_erro)
+elif not historico_fotografias:
+    st.info("Ainda não há fotografias neste exercício: elas passam a ser gravadas com a seleção de células salva.")
+else:
+    tabela_dias = historico_ro.tabela_historico(historico_fotografias)
+    st.dataframe(
+        tabela_dias, hide_index=True, width="stretch",
+        column_config={c: currency_column(c) for c in ("Resultado", "Variação")},
+    )
+    mudancas_ro = historico_ro.mudancas(historico_fotografias)
+    if not mudancas_ro:
+        st.caption("Há só uma fotografia; a variação aparece a partir da segunda.")
+    else:
+        rotulos_dias = [f"{m.anterior.data} → {m.atual.data}" for m in mudancas_ro]
+        escolha = st.selectbox("O que levou à alteração", rotulos_dias, key="ro_historico_periodo")
+        mudanca = mudancas_ro[rotulos_dias.index(escolha)]
+        if mudanca.variacao_resultado is None:
+            st.caption("Resultado indisponível em uma das pontas: a variação do resultado não é calculável.")
+        else:
+            st.caption(f"Variação do resultado: {_sem_latex(formatar_brl(mudanca.variacao_resultado))}.")
+        tabela_mud = historico_ro.tabela_mudanca(mudanca)
+        if tabela_mud.empty:
+            st.caption("Nenhum componente variou entre estas duas fotografias.")
+        else:
+            st.dataframe(
+                tabela_mud, hide_index=True, width="stretch",
+                column_config={
+                    c: currency_column(c) for c in ("Antes", "Depois", "Variação", "Efeito no resultado")
+                },
+            )
+        tabela_cel = historico_ro.tabela_celulas(mudanca)
+        if tabela_cel is None:
+            st.caption(
+                "Detalhe da dotação por célula indisponível: alguma das duas fotografias é anterior a esse registro."
+            )
+        elif tabela_cel.empty:
+            st.caption("A dotação de nenhuma célula marcada variou entre estas duas fotografias.")
+        else:
+            st.markdown("**Células que moveram a dotação**")
+            st.dataframe(
+                tabela_cel, hide_index=True, width="stretch",
+                column_config={c: currency_column(c) for c in ("Antes", "Depois", "Efeito na dotação")},
+            )
+        if mudanca.anterior.celulas_marcadas != mudanca.atual.celulas_marcadas:
+            st.caption(
+                f"Células marcadas: {mudanca.anterior.celulas_marcadas} → {mudanca.atual.celulas_marcadas}."
+            )
+        if (mudanca.anterior.dotacao_sha, mudanca.anterior.execucao_sha) != (
+            mudanca.atual.dotacao_sha, mudanca.atual.execucao_sha
+        ):
+            st.caption(
+                "Extrações diferentes entre as fotografias: Dotação "
+                f"{mudanca.anterior.dotacao_extracao} → {mudanca.atual.dotacao_extracao}; Execução Mensal "
+                f"{mudanca.anterior.execucao_extracao} → {mudanca.atual.execucao_extracao}."
+            )
+
 st.info(
     "As extrações de Dotação Anual e de Execução Mensal são independentes: Dotação de "
     f"{data_dotacao:%d/%m/%Y} (hash {manifesto_dotacao.sha256[:8]}) e Execução Mensal de "

@@ -209,6 +209,15 @@ class TotalNE:
     relatorio: float | None  # Liquidação por Competência; None = NE sem linha no relatório (ex.: DEA)
     execucao: float | None  # Execução Mensal (liquidada); None = NE sem lançamento na Execução Mensal
     empenho: EmpenhoInfo | None = None
+    #: Ação e PTRES que o relatório de competência associa à NE (valores distintos, " / "); None = relatório sem a dimensão
+    acoes_relatorio: str | None = None
+    ptres_relatorio: str | None = None
+
+    @property
+    def acao_confere(self) -> bool | None:
+        """A Ação do relatório de competência bate com a do cadastro/gov (`empenho`)? `None` = não comparável (relatório sem
+        Ação, como no layout antigo, ou empenho sem plano interno); só informativo — não muda nenhum total nem a situação."""
+        return acao_confere(self.empenho, self.acoes_relatorio)
 
     @property
     def dif_relatorio(self) -> float | None:
@@ -230,6 +239,24 @@ class TotalNE:
         return "batem"
 
 
+def acao_confere(empenho: EmpenhoInfo | None, acoes_relatorio: str | None) -> bool | None:
+    """Compara a Ação do relatório (código da Ação de Governo, ex. "20RK"; várias separadas por " / ") com o empenho do
+    contrato. DÚVIDA REGISTRADA (13/10/2026): o empenho só traz o PLANO INTERNO (ex. "M20RKG01SCN"), que embute o código da
+    Ação — mesma leitura que `da_20rk` já faz ("20RK" dentro do plano interno). Por isso "confere" = algum código de Ação do
+    relatório aparece no plano interno; a regra contábil exata de correspondência Ação × PI não está definida e não é
+    presumida além disso. NE com várias Ações no relatório confere se QUALQUER uma bate (nunca escolhe uma)."""
+
+    acoes = {parte.strip() for parte in (acoes_relatorio or "").split("/") if parte.strip()}
+    if empenho is None or not acoes:
+        return None
+    if empenho.da_20rk:
+        return "20RK" in acoes
+    plano = (empenho.plano_interno or "").split(" - ")[0].strip()
+    if not plano:
+        return None
+    return any(acao in plano for acao in acoes)
+
+
 def totais_por_ne(
     relatorio: pd.DataFrame | None, itens: pd.DataFrame, execucao: pd.DataFrame | None, empenhos: dict[str, EmpenhoInfo],
 ) -> list[TotalNE]:
@@ -245,13 +272,27 @@ def totais_por_ne(
         recorte = execucao[execucao["ne_curta"].isin(set(empenhos))]
         por_exec = {str(ne): float(v) for ne, v in recorte.groupby("ne_curta")["liquidada"].sum().items()}
     nes = sorted(set(por_rel) | set(por_notas) | set(por_exec))
+    acoes, ptres = _dimensoes_do_relatorio(rel)
     return [
         TotalNE(
             ne, round(por_notas[ne], 2) if ne in por_notas else None, round(por_rel[ne], 2) if ne in por_rel else None,
-            round(por_exec[ne], 2) if ne in por_exec else None, empenhos.get(ne),
+            round(por_exec[ne], 2) if ne in por_exec else None, empenhos.get(ne), acoes.get(ne), ptres.get(ne),
         )
         for ne in nes
     ]
+
+
+def _dimensoes_do_relatorio(rel: pd.DataFrame) -> tuple[dict[str, str], dict[str, str]]:
+    """Ação e PTRES por `ne_curta`, a partir das colunas opcionais `acoes`/`ptres` do relatório (só existem quando o
+    layout do relatório as traz). Sem a coluna ou sem valor, a NE simplesmente não entra no dicionário."""
+
+    def _por_ne(coluna: str) -> dict[str, str]:
+        if coluna not in rel.columns or rel.empty:
+            return {}
+        recorte = rel[["ne_curta", coluna]].dropna(subset=[coluna]).drop_duplicates()
+        return {str(ne): str(v) for ne, v in zip(recorte["ne_curta"], recorte[coluna])}
+
+    return _por_ne("acoes"), _por_ne("ptres")
 
 
 @dataclass(frozen=True)

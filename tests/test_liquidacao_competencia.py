@@ -26,6 +26,7 @@ import openpyxl
 from src.liquidacao_competencia import (
     ErroLayoutBase,
     _rotulo_mes,
+    dimensoes_por_ne,
     ler_liquidacao_competencia,
     liquidado_por_ne_e_mes,
     reconciliar,
@@ -175,3 +176,114 @@ class TestReferenciaContraExtracaoReal(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------------------
+# Layout com dimensões (relatório "Liquidação por competência - JVSB", 13/10/2026): 12
+# colunas — Ação, PTRES e Credor antes das 7 do layout antigo. Planilha sintética, montada
+# em memória (a extração real tem ~24 mil linhas; os valores abaixo são calculados à mão).
+# ---------------------------------------------------------------------------------------
+
+_CABECALHO_COM_DIMENSOES = [
+    "Ação Governo", None, "PTRES", "DH - Credor", None,
+    "NE", "Documento Hábil", "DH - Doc. Contábil",
+    "Ano Referência ACC", "Mês Referência ACC", "Métrica", None,
+]
+_NE_A = "153165152392022NE000484"
+_NE_B = "153165152392023NE000133"
+_LINHAS_COM_DIMENSOES = [
+    ["00P1", "CONCESSAO DE BOLSAS", "169150", "153165", "UFRPE", _NE_A,
+     "153165152392023FL000011", "153165152392023NS000231", 2022, "DEZ/2022", "DetaCusto DH - R$", 35312.37],
+    ["00P1", "CONCESSAO DE BOLSAS", "169150", "153165", "UFRPE", _NE_B,
+     "153165152392023FL000013", "'-8", 2023, "JAN/2023", "DetaCusto DH - R$", 100.00],
+    # estorno: sinal preservado
+    ["00P1", "CONCESSAO DE BOLSAS", "169150", "153165", "UFRPE", _NE_B,
+     "153165152392023FL000025", "'-8", 2023, "FEV/2023", "DetaCusto DH - R$", -40.50],
+]
+
+
+def _gravar_com_dimensoes(destino: Path, linhas=None, cabecalho=None) -> Path:
+    wb = openpyxl.Workbook()
+    aba = wb.active
+    aba.append(cabecalho or _CABECALHO_COM_DIMENSOES)
+    for linha in (_LINHAS_COM_DIMENSOES if linhas is None else linhas):
+        aba.append(linha)
+    wb.save(destino)
+    return destino
+
+
+class TestLayoutComDimensoes(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.caminho = _gravar_com_dimensoes(Path(self._tmp.name) / "liq.xlsx")
+
+    def test_le_o_layout_com_dimensoes(self):
+        df = ler_liquidacao_competencia(self.caminho)
+        self.assertEqual(len(df), 3)
+        self.assertEqual(round(float(df["valor"].sum()), 2), 35371.87)
+        self.assertEqual(round(float(df.loc[df["valor"] < 0, "valor"].sum()), 2), -40.50)
+        self.assertEqual(sorted(df["ano_mes_referencia"]), [202212, 202301, 202302])
+
+    def test_dimensoes_novas_preservadas_como_identificador(self):
+        df = ler_liquidacao_competencia(self.caminho)
+        self.assertEqual(set(df["acao_cod"]), {"00P1"})  # alfanumérico, zeros à esquerda
+        self.assertEqual(set(df["ptres"]), {"169150"})
+        self.assertEqual(set(df["credor_cod"]), {"153165"})
+        self.assertEqual(set(df["credor_desc"]), {"UFRPE"})
+
+    def test_colunas_originais_continuam_as_mesmas(self):
+        df = ler_liquidacao_competencia(self.caminho)
+        for coluna in ("ne_ccor", "documento_habil", "doc_contabil", "ano_referencia", "valor",
+                       "mes_referencia", "ano_mes_referencia", "linha_origem", "arquivo_origem"):
+            self.assertIn(coluna, df.columns)
+        # mesmos consumidores do layout antigo funcionam sem alteração
+        serie = liquidado_por_ne_e_mes(df)
+        self.assertEqual(len(serie), 3)
+
+    def test_validacao_aprova(self):
+        self.assertTrue(validar(ler_liquidacao_competencia(self.caminho)).ok)
+
+    def test_cabecalho_com_dimensoes_alterado_e_rejeitado(self):
+        cab = list(_CABECALHO_COM_DIMENSOES)
+        cab[2] = "Outra Coisa"  # não mais "PTRES"
+        destino = _gravar_com_dimensoes(Path(self._tmp.name) / "ruim.xlsx", cabecalho=cab)
+        with self.assertRaises(ErroLayoutBase):
+            ler_liquidacao_competencia(destino)
+
+    def test_numero_de_colunas_diferente_e_rejeitado(self):
+        cab = _CABECALHO_COM_DIMENSOES + ["Extra"]
+        linhas = [linha + [1] for linha in _LINHAS_COM_DIMENSOES]
+        destino = _gravar_com_dimensoes(Path(self._tmp.name) / "larga.xlsx", linhas=linhas, cabecalho=cab)
+        with self.assertRaises(ErroLayoutBase):
+            ler_liquidacao_competencia(destino)
+
+
+@unittest.skipUnless(CAMINHO_BASE.exists(), f"Planilha ausente em {CAMINHO_BASE}")
+class TestLayoutAntigoTemDimensoesNulas(unittest.TestCase):
+    def test_dimensoes_novas_nulas_no_layout_antigo(self):
+        df = ler_liquidacao_competencia(CAMINHO_BASE)
+        for coluna in ("acao_cod", "acao_desc", "ptres", "credor_cod", "credor_desc"):
+            self.assertIn(coluna, df.columns)
+            self.assertTrue(df[coluna].isna().all())
+
+
+class TestDimensoesPorNe(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
+    def test_lista_todas_as_acoes_e_ptres_da_ne_sem_escolher(self):
+        linhas = [list(l) for l in _LINHAS_COM_DIMENSOES]
+        linhas[2][0], linhas[2][2] = "4002", "169999"  # mesma NE_B, outra ação/PTRES
+        df = ler_liquidacao_competencia(_gravar_com_dimensoes(Path(self._tmp.name) / "d.xlsx", linhas=linhas))
+        dims = dimensoes_por_ne(df)
+        self.assertEqual(dims.loc[_NE_A, "acoes"], "00P1")
+        self.assertEqual(dims.loc[_NE_B, "acoes"], "00P1 / 4002")
+        self.assertEqual(dims.loc[_NE_B, "ptres"], "169150 / 169999")
+
+    @unittest.skipUnless(CAMINHO_BASE.exists(), f"Planilha ausente em {CAMINHO_BASE}")
+    def test_layout_antigo_devolve_nulo(self):
+        dims = dimensoes_por_ne(ler_liquidacao_competencia(CAMINHO_BASE))
+        self.assertTrue(dims["acoes"].isna().all())
+        self.assertTrue(dims["ptres"].isna().all())

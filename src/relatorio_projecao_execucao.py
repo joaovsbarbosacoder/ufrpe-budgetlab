@@ -188,16 +188,44 @@ class ProjecaoMensal:
         ]
 
 
+#: tolerância (em bolsas) para tratar liquidado ÷ valor da bolsa como número inteiro
+TOLERANCIA_BOLSA_INTEIRA = 0.01
+
+
+def arredondar_em_unidades(valor: float, unidade: float | None) -> float:
+    """`valor` arredondado para o múltiplo mais próximo de `unidade` (metade para cima). Sem unidade válida
+    (nula ou não positiva), devolve `valor` como veio. Bolsa é paga por inteiro ou não é paga (16/10/2026)."""
+
+    if unidade is None or unidade <= 0:
+        return valor
+    return math.floor(valor / unidade + 0.5 + 1e-9) * unidade
+
+
+def quantidade_nao_inteira(realizado: dict[int, float], meses: tuple[int, ...], unidade: float) -> bool:
+    """Algum dos `meses` tem liquidado que não é múltiplo de `unidade` (quantidade de bolsas fracionária)."""
+
+    for mes in meses:
+        valor = _numero(realizado.get(mes))
+        if valor is None:
+            continue
+        quantidade = valor / unidade
+        if abs(quantidade - round(quantidade)) > TOLERANCIA_BOLSA_INTEIRA:
+            return True
+    return False
+
+
 def projetar_meses(
     realizado: dict[int, float], custo: list[float], fator: float, mes_referencia: int,
-    teto_mensal: float | None = None, ajustes: dict[int, float] | None = None,
+    teto_mensal: float | None = None, ajustes: dict[int, float] | None = None, unidade: float | None = None,
 ) -> ProjecaoMensal:
     """Grade Jan–Dez de uma NE (ver docstring do módulo). Exercício encerrado (`mes_referencia` ≥ 12,
     mesma regra do relatório de Necessidade): nada é projetado. `teto_mensal` (opcional): o esperado do mês
     (custo × fator) não passa dele. `ajustes` (opcional): mês (1-12) → ESPERADO TOTAL do mês gravado pelo usuário
     (14/10/2026); substitui custo × fator e o teto, em qualquer mês a partir do primeiro em aberto — inclusive nos que
     a metodologia deixa vazios. O liquidado do mês continua descontado. Ajuste de mês já fechado, ou de exercício
-    encerrado, não vale: vai para `superados`."""
+    encerrado, não vale: vai para `superados`. `unidade` (opcional, Bolsas e Auxílios): valor de uma bolsa — o
+    esperado do mês (custo × fator) é arredondado para um número inteiro de bolsas antes do teto e do abatimento do
+    liquidado; a projeção pelo valor cheio não é arredondada."""
 
     ajustes = {int(mes): float(valor) for mes, valor in (ajustes or {}).items()}
     # A comparação "valor cheio" não leva ajuste: com ajustes, ela vem da mesma projeção SEM eles.
@@ -222,7 +250,7 @@ def projetar_meses(
         custo_mes = _numero(custo[mes - 1])
         com_custo = custo_mes is not None and custo_mes > 0
         liquidado = realizado_lista[mes - 1]
-        metodo = custo_mes * fator if com_custo else None
+        metodo = arredondar_em_unidades(custo_mes * fator, unidade) if com_custo else None
         teto_aplicado = metodo is not None and teto_mensal is not None and metodo > teto_mensal
         if teto_aplicado:
             metodo = teto_mensal
@@ -298,6 +326,14 @@ LEGENDA_GRADE = [
 ]
 
 
+#: linha extra da grade (PDF) e aba "Quantidade de bolsas" (Excel) quando o relatório tem `unidades` (Bolsas)
+LEGENDA_BOLSAS = (
+    "Linha 'bolsas' (itálico cinza, abaixo do valor em reais): valor do mês ÷ valor de uma bolsa. O projetado é "
+    "sempre número inteiro de bolsas, exceto quando o liquidado do mês já abatido não é múltiplo da bolsa; NE paga "
+    "em valor variável (cadastro) não tem essa linha."
+)
+
+
 @dataclass(frozen=True)
 class RotulosProjecao:
     """Textos que mudam conforme a base do relatório (pedido de 07/10/2026: o mesmo relatório em Bolsas e
@@ -351,7 +387,9 @@ BOLSAS_AUXILIOS = RotulosProjecao(
     nota_regra=(
         NOTA_REGRA.replace("custo contratado", "custo cadastrado").replace("valor contratado", "valor cadastrado")
         .replace("do contratado (decisão de 06/10/2026)", "do cadastrado (mesma decisão de 06/10/2026 dos contratos)")
-        + " Custo cadastrado da bolsa: quantidade efetiva × valor unitário em cada um dos meses do ano "
+        + " Bolsa é paga por inteiro: o esperado de cada mês projetado (custo × fator) é arredondado para o "
+        "número inteiro de bolsas mais próximo (metade para cima), nunca fracionado (decisão de 16/10/2026). "
+        "Custo cadastrado da bolsa: quantidade efetiva × valor unitário em cada um dos meses do ano "
         "cadastrados, contados a partir do início da execução, até dezembro. Início, nesta ordem: o informado "
         "no cadastro; o primeiro mês do exercício com liquidação positiva por competência da NE; o mês do "
         "primeiro empenho; janeiro (decisão de 07/10/2026)."
@@ -384,6 +422,8 @@ class RelatorioProjecaoExecucao:
     superados: dict[str, list[int]] = field(default_factory=dict)
     #: NEs com ajuste gravado que não estão no relatório (sem NE, ou NE que saiu da base)
     ajustes_sem_ne: list[str] = field(default_factory=list)
+    #: NE → valor de uma bolsa (só Bolsas e Auxílios, ver `montar_relatorio(unidades=)`); vazio nos demais
+    unidades: dict[str, float] = field(default_factory=dict)
 
     def _soma(self, coluna: str) -> float:
         return float(self.linhas[coluna].sum(min_count=1)) if not self.linhas.empty else 0.0
@@ -483,6 +523,8 @@ def montar_relatorio(
     nes_pelo_lancamento: set[str] | frozenset[str] | list[str] | None = None,
     teto_sem_historico: bool = False,
     ajustes: dict[str, dict[int, float]] | None = None,
+    unidades: dict[str, float] | None = None,
+    nes_valor_variavel: set[str] | frozenset[str] | None = None,
 ) -> RelatorioProjecaoExecucao:
     """`por_ne`/`sem_ne`: saída de `necessidade_por_ne(..., exercicio)`. `liquidacao_mensal`:
     `ne_curta`, `ano_mes`, `valor` (Liquidação por Competência). `antecessores`: NE sem histórico →
@@ -491,9 +533,14 @@ def montar_relatorio(
     textos exibidos; sem eles, custo e textos de contrato. `nes_pelo_lancamento`: NEs cujo `liquidacao_mensal`
     já vem pelo mês do lançamento (`liquidacao_consumo.competencia_pelo_consumo`) — só rotula a base de cada
     linha, não muda conta alguma. `teto_sem_historico`: liga o teto do maior mês liquidado para NE sem histórico
-    (ver docstring do módulo); desligado por padrão (Bolsas e Auxílios). `ajustes`: NE → mês → ESPERADO TOTAL do mês gravado pelo usuário
-    (`projecao_ajustes.reconstruir`); ver `projetar_meses`. NE com ajuste que não está em `por_ne` fica em
-    `ajustes_sem_ne`. Não altera as entradas."""
+    (ver docstring do módulo); desligado por padrão (Bolsas e Auxílios). `ajustes`: NE → mês → ESPERADO TOTAL do mês
+    gravado pelo usuário (`projecao_ajustes.reconstruir`); ver `projetar_meses`. NE com ajuste que não está em
+    `por_ne` fica em `ajustes_sem_ne`. `unidades`: NE → valor de uma bolsa
+    (`projecao_execucao_bolsas.unidades_por_ne`); liga a projeção em bolsas inteiras (esperado do mês
+    arredondado ao múltiplo mais próximo da bolsa, decisão de 16/10/2026) e os avisos de quantidade
+    fracionária e de NE sem unidade. Nulo: sem arredondamento (Contratos Contínuos). `nes_valor_variavel`: NEs
+    marcadas no cadastro como pagas em valor variável — projetadas sem arredondar, com aviso próprio (não
+    entram nos avisos de unidade nem de quantidade fracionária). Não altera as entradas."""
 
     antecessores = antecessores or {}
     pelo_lancamento = set(nes_pelo_lancamento or ())
@@ -505,6 +552,8 @@ def montar_relatorio(
 
     registros, mensais = [], []
     avisos_antecessor = []
+    fracionarias, sem_unidade, variaveis = [], [], []
+    marcadas = set(nes_valor_variavel or ())
     for _, linha in por_ne.iterrows():
         ne = linha["ne_curta"]
         custo = _custo(linha, exercicio, custos)
@@ -523,8 +572,16 @@ def montar_relatorio(
         if teto_sem_historico and fator.origem == ORIGEM_SEM_HISTORICO:
             positivos = [v for v in realizados.get(ne, {}).values() if v > 0]
             teto = max(positivos) if positivos else None
+        unidade = None if unidades is None else unidades.get(ne)
+        if unidades is not None:
+            if ne in marcadas:
+                variaveis.append(ne)
+            elif unidade is None:
+                sem_unidade.append(ne)
+            elif quantidade_nao_inteira(realizados.get(ne, {}), fator.meses_usados, unidade):
+                fracionarias.append(ne)
         projecao = projetar_meses(
-            realizados.get(ne, {}), custo, fator.fator, mes_referencia, teto, ajustes=ajustes.get(ne),
+            realizados.get(ne, {}), custo, fator.fator, mes_referencia, teto, ajustes=ajustes.get(ne), unidade=unidade,
         )
         if projecao.superados:
             superados[ne] = projecao.superados
@@ -593,9 +650,26 @@ def montar_relatorio(
     relatorio = RelatorioProjecaoExecucao(
         linhas=linhas, mensal=mensal, exercicio=exercicio, mes_referencia=mes_referencia,
         ultimo_fechado=fechado, qtd_sem_ne=len(sem_ne), rotulos=rotulos, superados=superados,
-        ajustes_sem_ne=sorted(ne for ne in ajustes if ne not in set(por_ne["ne_curta"])),
+        ajustes_sem_ne=sorted(ne for ne in ajustes if ne not in set(por_ne["ne_curta"])), unidades=dict(unidades or {}),
     )
-    relatorio.avisos.extend(_avisos(relatorio) + avisos_antecessor)
+    avisos_bolsas = []
+    if fracionarias:
+        avisos_bolsas.append(
+            "Liquidado por competência que não é múltiplo do valor da bolsa (quantidade de bolsas fracionária) nos "
+            "meses usados no fator — o fator usa o liquidado como veio, sem descarte, e só a quantidade projetada é "
+            "arredondada: " + ", ".join(fracionarias) + "."
+        )
+    if sem_unidade:
+        avisos_bolsas.append(
+            "Valor unitário diferente entre os programas da NE, ou valor mensal diferente de quantidade × valor "
+            "unitário: projetada sem arredondamento em bolsas inteiras: " + ", ".join(sem_unidade) + "."
+        )
+    if variaveis:
+        avisos_bolsas.append(
+            "Marcadas no cadastro como pagas em valor variável (auxílio por demanda, sem bolsa inteira): projetadas "
+            "pelo fator, sem arredondamento: " + ", ".join(variaveis) + "."
+        )
+    relatorio.avisos.extend(_avisos(relatorio) + avisos_antecessor + avisos_bolsas)
     return relatorio
 
 
@@ -703,6 +777,14 @@ def _formatar_brl(valor: object) -> str:
     return texto.replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def _formatar_bolsas(valor: object) -> str:
+    """Quantidade de bolsas: inteira sem casas (8), fracionária com até 2 (8,3); nulo vira "—"."""
+
+    if valor is None or pd.isna(valor):
+        return "—"
+    return f"{float(valor):.2f}".rstrip("0").rstrip(".").replace(".", ",")
+
+
 def _formatar_fator(valor: object) -> str:
     return "—" if valor is None or pd.isna(valor) else f"{float(valor):.2f}".replace(".", ",")
 
@@ -769,6 +851,17 @@ def _marcas(relatorio: RelatorioProjecaoExecucao, indice: int, mes: int) -> str:
     return ("*" if liquidado_abatido(relatorio, indice, mes) else "") + ("†" if ajustado_no_mes(relatorio, indice, mes) else "")
 
 
+COLUNAS_QUANTIDADE_DETALHE = ["Esperado (bolsas)", "Realizado (bolsas)", "Projetado (bolsas)"]
+ABA_QUANTIDADE = "Quantidade de bolsas"
+
+
+def _em_bolsas(valor: object, unidade: float | None) -> float | None:
+    """`valor` ÷ valor da bolsa (4 casas, sem ruído de ponto flutuante); nulo continua nulo."""
+
+    numero = _ou_nulo(valor)
+    return None if numero is None or unidade is None else round(numero / unidade, 4)
+
+
 def _resumo(relatorio: RelatorioProjecaoExecucao) -> pd.DataFrame:
     linhas = relatorio.linhas
     rotulos = relatorio.rotulos
@@ -829,8 +922,12 @@ def gerar_xlsx(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoE
     rotulos = relatorio.rotulos
     resumo = _resumo(relatorio)
     grade_linhas, marcas, detalhe = [], [], []
+    marcas_quantidade: list[list] = []
+    quantidade_linhas = []
     for indice, linha in relatorio.linhas.iterrows():
         valores, tipos = {}, []
+        unidade = relatorio.unidades.get(linha["ne_curta"])
+        quantidades = {}
         for mes in range(1, 13):
             tipo = relatorio.mensal.at[indice, f"t{mes}"]
             projetado = relatorio.mensal.at[indice, f"p{mes}"]
@@ -840,6 +937,7 @@ def gerar_xlsx(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoE
             else:
                 valores[MESES[mes - 1]] = realizado
             tipos.append(tipo)
+            quantidades[MESES[mes - 1]] = _em_bolsas(valores[MESES[mes - 1]], unidade)
             if tipo is not None:
                 detalhe.append(
                     {
@@ -850,18 +948,29 @@ def gerar_xlsx(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoE
                         "Projetado": None if projetado is None or pd.isna(projetado) else projetado,
                         "Liquidado abatido": "Sim" if liquidado_abatido(relatorio, indice, mes) else None,
                         **({"Ajustado": "Sim" if ajustado_no_mes(relatorio, indice, mes) else None} if _com_ajustes(relatorio) else {}),
+                        COLUNAS_QUANTIDADE_DETALHE[0]: _em_bolsas(relatorio.mensal.at[indice, f"e{mes}"], unidade),
+                        COLUNAS_QUANTIDADE_DETALHE[1]: _em_bolsas(realizado, unidade),
+                        COLUNAS_QUANTIDADE_DETALHE[2]: _em_bolsas(projetado, unidade),
                     }
                 )
         grade_linhas.append({"NE": linha["ne_curta"], rotulos.nome: _texto(linha["fornecedor"]), "Fator de execução": linha["fator"], **valores,
                              "Despesa projetada (execução)": linha["projetado_execucao"]})
         marcas.append(tipos)
+        if unidade is not None:
+            quantidade_linhas.append(
+                {"NE": linha["ne_curta"], rotulos.nome: _texto(linha["fornecedor"]), "Valor da bolsa (R$)": unidade, **quantidades}
+            )
+            marcas_quantidade.append(tipos)
     grade = pd.DataFrame(grade_linhas, columns=["NE", rotulos.nome, "Fator de execução", *MESES, "Despesa projetada (execução)"])
     detalhe_df = pd.DataFrame(
         detalhe, columns=[
             "NE", rotulos.nome, "Nº do mês", "Mês", "Tipo", "Esperado do mês (custo × fator)", "Realizado", "Projetado",
-            "Liquidado abatido", *(["Ajustado"] if _com_ajustes(relatorio) else []),
+            "Liquidado abatido", *COLUNAS_QUANTIDADE_DETALHE, *(["Ajustado"] if _com_ajustes(relatorio) else []),
         ],
     )
+    if not relatorio.unidades:
+        detalhe_df = detalhe_df.drop(columns=COLUNAS_QUANTIDADE_DETALHE)
+    quantidade = pd.DataFrame(quantidade_linhas, columns=["NE", rotulos.nome, "Valor da bolsa (R$)", *MESES])
     parametros = (
         [("Avisos", aviso) for aviso in relatorio.avisos] + linhas_parametros(relatorio, contexto)
         + [("Legenda da grade", texto) for texto in _legenda(relatorio)]
@@ -894,6 +1003,32 @@ def gerar_xlsx(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoE
         writer.sheets["Detalhe mensal"].column_dimensions["C"].width = 10
         for celula in writer.sheets["Detalhe mensal"]["C"][1:]:
             celula.number_format = "0"
+        if relatorio.unidades:
+            for cabecalho in COLUNAS_QUANTIDADE_DETALHE:
+                letra = writer.sheets["Detalhe mensal"].cell(row=1, column=list(detalhe_df.columns).index(cabecalho) + 1).column_letter
+                for celula in writer.sheets["Detalhe mensal"][letra][1:]:
+                    celula.number_format = "General"
+        if relatorio.unidades:
+            quantidade.to_excel(writer, sheet_name=ABA_QUANTIDADE, index=False)
+            planilha_q = writer.sheets[ABA_QUANTIDADE]
+            _formatar_aba(planilha_q, quantidade, rotulos)
+            for celula in planilha_q["C"][1:]:
+                celula.number_format = "#,##0.00"
+            for coluna in range(4, 4 + 12):  # Jan–Dez: bolsas (inteiras no projetado; fração só no liquidado)
+                for celula in planilha_q[planilha_q.cell(row=1, column=coluna).column_letter][1:]:
+                    celula.number_format = "General"
+            for numero_linha, tipos in enumerate(marcas_quantidade, start=2):
+                for mes, tipo in enumerate(tipos):
+                    if tipo in (TIPO_PROJETADO, TIPO_RESTANTE_ABERTO):
+                        celula = planilha_q.cell(row=numero_linha, column=4 + mes)
+                        cor = _PREENCHIMENTO_ABERTO if tipo == TIPO_RESTANTE_ABERTO else _PREENCHIMENTO_PROJETADO
+                        celula.fill = PatternFill("solid", fgColor=cor)
+                        celula.font = Font(italic=True)
+            planilha_q.cell(row=len(quantidade) + 3, column=1, value=(
+                "Quantidade de bolsas = valor do mês ÷ valor de uma bolsa. Sombreado: projetado (azul) ou restante de "
+                "mês em aberto (laranja), mesmas cores da grade em reais. NE fora desta aba: valor unitário não "
+                "utilizável (ver avisos)."
+            ))
         pd.DataFrame(parametros, columns=["Parâmetro", "Valor"]).to_excel(writer, sheet_name="Parâmetros", index=False)
         writer.sheets["Parâmetros"].column_dimensions["A"].width = 46
         writer.sheets["Parâmetros"].column_dimensions["B"].width = 120
@@ -1011,13 +1146,15 @@ def gerar_pdf(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoEx
             + (f" — Liquidação: {escape(linha['base_liquidacao'])}" if linha["base_liquidacao"] == BASE_LANCAMENTO else "")
         )
         dados.append([Paragraph(titulo, estilo_celula)] + [""] * (len(_CABECALHO_GRADE_PDF) - 1))
-        celulas = []
+        unidade = relatorio.unidades.get(linha["ne_curta"])
+        celulas, bolsas = [], []
         for mes in range(1, 13):
             tipo = relatorio.mensal.at[indice, f"t{mes}"]
             if tipo in (TIPO_PROJETADO, TIPO_RESTANTE_ABERTO):
                 celulas.append(
                     _formatar_brl(relatorio.mensal.at[indice, f"p{mes}"]) + _marcas(relatorio, indice, mes)
                 )
+                bolsas.append(_formatar_bolsas(_em_bolsas(relatorio.mensal.at[indice, f"p{mes}"], unidade)))
                 cor = _COR_ABERTO if tipo == TIPO_RESTANTE_ABERTO else _COR_PROJETADO
                 comandos += [
                     ("BACKGROUND", (mes + 1, posicao + 1), (mes + 1, posicao + 1), cor),
@@ -1025,12 +1162,20 @@ def gerar_pdf(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoEx
                 ]
             else:
                 celulas.append(_formatar_brl(relatorio.mensal.at[indice, f"r{mes}"]))
+                bolsas.append(_formatar_bolsas(_em_bolsas(relatorio.mensal.at[indice, f"r{mes}"], unidade)))
         dados.append([linha["ne_curta"], _formatar_fator(linha["fator"]), *celulas, _formatar_brl(linha["projetado_execucao"])])
         comandos += [
             ("SPAN", (0, posicao), (-1, posicao)),
             ("BACKGROUND", (0, posicao), (-1, posicao), _COR_TITULO_NE),
-            ("NOSPLIT", (0, posicao), (-1, posicao + 1)),
+            ("NOSPLIT", (0, posicao), (-1, posicao + (2 if unidade is not None else 1))),
         ]
+        if unidade is not None:
+            # linha de quantidade de bolsas (valor do mês ÷ valor da bolsa), logo abaixo da linha em reais
+            dados.append(["", f"bolsas (R$ {_formatar_brl(unidade)})", *bolsas, ""])
+            comandos += [
+                ("TEXTCOLOR", (0, posicao + 2), (-1, posicao + 2), colors.HexColor("#555555")),
+                ("FONTNAME", (0, posicao + 2), (-1, posicao + 2), "Helvetica-Oblique"),
+            ]
     tabela = Table(dados, colWidths=_LARGURAS_GRADE_PDF, repeatRows=1)
     tabela.setStyle(TableStyle(_estilo_base() + [("ALIGN", (1, 0), (-1, -1), "RIGHT")] + comandos))
     elementos.append(Paragraph(
@@ -1038,6 +1183,8 @@ def gerar_pdf(relatorio: RelatorioProjecaoExecucao, contexto: ContextoProjecaoEx
     ))
     for texto in _legenda(relatorio):
         elementos.append(Paragraph(escape(texto), estilo_celula))
+    if relatorio.unidades:
+        elementos.append(Paragraph(escape(LEGENDA_BOLSAS), estilo_celula))
     elementos.append(Spacer(1, 6))
     elementos.append(tabela)
     documento.build(elementos)

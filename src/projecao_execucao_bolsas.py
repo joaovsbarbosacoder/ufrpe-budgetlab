@@ -17,6 +17,9 @@ Bolsas e Auxílios. Bolsa não tem aditivo, vigência nem status de contrato, po
     não marcam início; (3) o mês do primeiro empenho (`inicio_execucao_efetivo`, sugestão da página);
     (4) janeiro. Só para este relatório — o Relatório de Reforço segue usando `inicio_execucao_efetivo`.
 
+Bolsas inteiras (16/10/2026): `unidades_por_ne` dá o valor de uma bolsa por NE e o relatório arredonda o
+esperado de cada mês projetado ao múltiplo mais próximo (metade para cima) — ver `relatorio_projecao_execucao`.
+
 Valores: nulo ≠ zero. Valor mensal desconhecido → custo nulo nos 12 meses (não projeta); valor zero →
 custo zero. Programa sem NE fica fora (contado nos avisos do relatório).
 
@@ -78,6 +81,41 @@ def primeiro_mes_liquidado_por_ne(competencia: pd.DataFrame | None, exercicio: i
     ano_mes = competencia["ano_mes"].astype("int64")
     positivos = competencia[(ano_mes // 100 == exercicio) & (competencia["valor"] > 0)]
     return (positivos["ano_mes"].astype("int64") % 100).groupby(positivos["ne_curta"]).min()
+
+
+def nes_valor_variavel(filtrado: pd.DataFrame) -> set[str]:
+    """NEs com algum programa marcado `pago_valor_variavel` no cadastro (auxílio por demanda: o pagamento
+    mensal varia e não há bolsa inteira). Coluna ausente: nenhuma."""
+
+    if "pago_valor_variavel" not in filtrado.columns:
+        return set()
+    marcado = filtrado["pago_valor_variavel"].map(lambda v: False if pd.isna(v) else bool(v))
+    return {str(ne) for ne in filtrado.loc[marcado & filtrado["ne_curta"].notna(), "ne_curta"]}
+
+
+def unidades_por_ne(filtrado: pd.DataFrame) -> dict[str, float]:
+    """NE → valor de UMA bolsa (`valor_unitario`), para projetar em bolsas inteiras (decisão de 16/10/2026:
+    bolsa é paga por inteiro ou não é paga). Só entra a NE cujos programas têm o mesmo valor unitário
+    positivo e valor mensal igual a quantidade efetiva × valor unitário; as demais ficam de fora (o relatório
+    as projeta sem arredondar e avisa). NE marcada como paga em valor variável (`nes_valor_variavel`) também
+    fica de fora. Não altera `filtrado`."""
+
+    unidades: dict[str, float] = {}
+    variaveis = nes_valor_variavel(filtrado)
+    tem_ne = filtrado["ne_curta"].notna() & filtrado["ne_curta"].astype("string").str.strip().ne("")
+    for ne, grupo in filtrado[tem_ne].groupby("ne_curta", sort=True):
+        if str(ne) in variaveis:
+            continue
+        valores = pd.to_numeric(grupo["valor_unitario"], errors="coerce")
+        if valores.isna().any() or valores.nunique() != 1 or valores.iloc[0] <= 0:
+            continue
+        unidade = float(valores.iloc[0])
+        previsto = pd.to_numeric(grupo["qtd_efetiva"], errors="coerce") * unidade
+        mensal = pd.to_numeric(grupo["valor_mensal"], errors="coerce")
+        if previsto.isna().any() or mensal.isna().any() or ((previsto - mensal).abs() > 0.005).any():
+            continue
+        unidades[ne] = unidade
+    return unidades
 
 
 def _primeiro_valor(serie: pd.Series) -> object:
