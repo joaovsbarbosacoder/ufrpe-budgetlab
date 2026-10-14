@@ -183,11 +183,14 @@ from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_m
 from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne_e_mes
 from src.necessidade_empenho import calcular_necessidade_empenho, necessidade_ate_dezembro
 from src.relatorio_necessidade_empenho import mes_referencia_do_exercicio
-from src.relatorio_projecao_execucao import ContextoProjecaoExecucao
+from src.relatorio_projecao_execucao import ContextoProjecaoExecucao, RelatorioProjecaoExecucao
 from src.relatorio_projecao_execucao import gerar_pdf as gerar_pdf_projecao_execucao
 from src.relatorio_projecao_execucao import gerar_xlsx as gerar_xlsx_projecao_execucao
 from src.relatorio_reforco_empenho import BOLSAS_AUXILIOS as RELATORIO_BOLSAS_AUXILIOS
+from src import projecao_ajustes as ajustes_projecao
+from src.projecao_ajustes import ErroAjuste, ajustes_vigentes
 from src.resultado_orcamentario_fontes import projecao_bolsas, tabela_bolsas
+from src.ui_projecao_execucao import render_edicao_projecao
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_cadastro import (
     aviso_linha_do_tempo,
@@ -812,7 +815,7 @@ def _render_resumo_consolidado(
 
 def _render_relatorio_projecao_execucao(
     filtrado: pd.DataFrame, source_key: str, ano_exercicio: int, manifesto: ManifestoExecucaoMensal,
-) -> None:
+) -> RelatorioProjecaoExecucao | None:
     """Botões PDF/Excel do relatório "Projeção pela execução" (pedido de 07/10/2026: o mesmo de Contratos
     Contínuos, `src/relatorio_projecao_execucao.py`). O custo de cada mês da bolsa vem de
     `src/projecao_execucao_bolsas.py` (meses do ano a partir do início da execução: o do cadastro ou, no
@@ -835,7 +838,14 @@ def _render_relatorio_projecao_execucao(
 
     data_extracao = datetime.fromisoformat(manifesto.data_extracao)
     mes_referencia = mes_referencia_do_exercicio(data_extracao.date(), ano_exercicio)
-    relatorio, _ = projecao_bolsas(filtrado, competencia, ano_exercicio, mes_referencia)
+    # Ajustes manuais do esperado de cada mês (15/10/2026; pasta própria de Bolsas): log ilegível → aviso, metodologia
+    # e nada é gravado por cima.
+    try:
+        ajustes = ajustes_vigentes(ano_exercicio, ajustes_projecao.DIRETORIO_AJUSTES_BOLSAS)
+    except ErroAjuste as erro:
+        ajustes = {}
+        st.warning(f"Ajustes da projeção ilegíveis — usando a metodologia e sem gravar por cima: {erro}")
+    relatorio, _ = projecao_bolsas(filtrado, competencia, ano_exercicio, mes_referencia, ajustes=ajustes)
     contexto = ContextoProjecaoExecucao(
         exercicio=ano_exercicio,
         data_extracao=data_extracao.strftime("%d/%m/%Y"),
@@ -868,6 +878,7 @@ def _render_relatorio_projecao_execucao(
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             width="stretch", on_click="ignore", key=f"bls_projexec_xlsx_{source_key}",
         )
+    return relatorio
 
 
 def _render_card_dotacao(codigo: object, nome: object, grupo: pd.DataFrame) -> None:
@@ -1102,7 +1113,13 @@ st.markdown(
 )
 
 _render_resumo_consolidado(filtrado, tempo_por_ne_curta, source_key)
-_render_relatorio_projecao_execucao(filtrado, source_key, ano_selecionado, manifesto_execucao_mensal)
+relatorio_projecao = _render_relatorio_projecao_execucao(filtrado, source_key, ano_selecionado, manifesto_execucao_mensal)
+# Edição do esperado de cada mês por NE, com valor (R$) e quantidade de bolsas vinculados (15/10/2026).
+if relatorio_projecao is not None:
+    render_edicao_projecao(
+        relatorio_projecao, ano_selecionado, manifesto_execucao_mensal.sha256[:8], f"bls_{source_key}",
+        diretorio=ajustes_projecao.DIRETORIO_AJUSTES_BOLSAS,
+    )
 
 if dotacao_dimensoes is not None:
     st.markdown('<div class="cad-secao-titulo">Cobertura orçamentária por PTRES</div>', unsafe_allow_html=True)
