@@ -420,6 +420,7 @@ def _render_composicao(
     linhas_bolsas: pd.DataFrame | None,
     despesas: list[DespesaManual],
     tabela_sobra: pd.DataFrame | None = None,
+    considerar_outras: bool = True,
 ) -> None:
     """Composição no desenho do protótipo (08/10/2026): linhas compactas com % e valor à direita, barra
     de proporção e o detalhe por NE (ou por despesa) ao abrir a linha. Os avisos da projeção ficam na
@@ -458,12 +459,20 @@ def _render_composicao(
                 detalhe, vazio = _tabela_necessidade(linhas, res.empenhado_por_ne, origem), "Nenhuma NE com necessidade."
             linhas_bloco.append(LinhaComposicao(origem, res.necessidade[origem], detalhe, ("Necessidade",), vazio))
         manual = pd.DataFrame({"Descrição": [d.descricao for d in despesas], "Valor": [d.valor for d in despesas]})
-        linhas_bloco.append(
-            LinhaComposicao(
-                OUTRAS_DESPESAS, res.necessidade[OUTRAS_DESPESAS], manual, ("Valor",),
-                "Nenhuma despesa cadastrada — ver a seção Outras despesas previstas.",
+        if considerar_outras:
+            linhas_bloco.append(
+                LinhaComposicao(
+                    OUTRAS_DESPESAS, res.necessidade[OUTRAS_DESPESAS], manual, ("Valor",),
+                    "Nenhuma despesa cadastrada — ver a seção Outras despesas previstas.",
+                )
             )
-        )
+        else:  # a lista fica à vista, mas o valor da linha (e do total) não a inclui
+            linhas_bloco.append(
+                LinhaComposicao(
+                    f"{OUTRAS_DESPESAS} — desconsideradas", res.necessidade[OUTRAS_DESPESAS], manual, ("Valor",),
+                    "Nenhuma despesa cadastrada. Desconsideradas pelo interruptor da seção 4: não entram na conta.",
+                )
+            )
         st.html(
             html_bloco(
                 "Necessidade de empenho até dezembro", linhas_bloco, total, "Total da necessidade",
@@ -815,6 +824,12 @@ st.caption(
     "Despesas que não estão em Contratos nem em Bolsas e ainda vão ser empenhadas no exercício. "
     "A célula é só informativa: não muda a conta."
 )
+considerar_outras = st.toggle(
+    "Considerar as outras despesas previstas no resultado", value=True, key="ro_considerar_outras",
+    help="Desligado, as despesas cadastradas continuam listadas e editáveis, mas saem da conta (necessidade, resultado, "
+         "cartões e composição). O histórico diário continua gravando, com a marca de que estavam desconsideradas. A "
+         "escolha vale só nesta sessão: ao reabrir a página, volta ligado.",
+)
 if _CHAVE_FLASH in st.session_state:
     st.success(st.session_state.pop(_CHAVE_FLASH))
 
@@ -882,9 +897,11 @@ _relatorios_sobra = {
     ) if relatorio is not None
 }
 _tabela_sobra = sobra_por_ne(_relatorios_sobra, data_execucao.date()) if _relatorios_sobra else None
+# Interruptor da seção 4 (15/10/2026): desligado, as despesas continuam cadastradas e listadas, mas não entram na conta.
+despesas_na_conta = despesas if considerar_outras else []
 resultado = calcular_resultado(
     celulas, empenhado, selecao_atual, tabela_contratos_df, tabela_bolsas_df,
-    linhas_contratos, linhas_bolsas, sem_ne_contratos, sem_ne_bolsas, despesas,
+    linhas_contratos, linhas_bolsas, sem_ne_contratos, sem_ne_bolsas, despesas_na_conta,
     sobra_por_ne=None if _tabela_sobra is None else sobra_elegivel_por_ne(_tabela_sobra),
 )
 if not despesas_legiveis:
@@ -913,6 +930,7 @@ try:
                     for chave, valor in zip(celulas["chave"], celulas["dotacao_atualizada"])
                     if chave in set(marcadas)
                 },
+                outras_despesas_consideradas=considerar_outras,
             ),
             diretorio=cadastro.DIRETORIO_PADRAO,
         ):
@@ -921,6 +939,13 @@ except ArquivoCorrompido as erro:
     historico_erro = f"{erro}. O histórico não pôde ser lido; corrija ou restaure o arquivo — a página não grava por cima."
 
 with area_cartoes:
+    if not considerar_outras:
+        st.warning(
+            _sem_latex(
+                f"Resultado SEM as outras despesas previstas ({formatar_brl(sum(d.valor for d in despesas))} cadastrados): "
+                "elas estão desconsideradas. Religue em 'Outras despesas previstas' (seção 4) para voltar à conta completa."
+            )
+        )
     _render_cartoes(resultado, len(marcadas), len(celulas))
 with area_composicao:
     # contrato ATIVO sem NE entra na necessidade (08/10/2026): aparece também no detalhe de Contratos,
@@ -936,7 +961,9 @@ with area_composicao:
             "necessidade_execucao": pd.to_numeric(ativos_sem_ne["necessidade"], errors="coerce").to_numpy(),
         })
         linhas_contratos_exibidas = pd.concat([linhas_contratos, extras], ignore_index=True)
-    _render_composicao(resultado, linhas_contratos_exibidas, linhas_bolsas, despesas, _tabela_sobra)
+    _render_composicao(
+        resultado, linhas_contratos_exibidas, linhas_bolsas, despesas, _tabela_sobra, considerar_outras=considerar_outras,
+    )
 
 # --------------------------------------------------------------- Avisos
 st.subheader("5. Avisos")
@@ -987,6 +1014,7 @@ else:
             "Dia": st.column_config.TextColumn("Dia", width="small"),
             "Mudança de situação": st.column_config.TextColumn("Mudança de situação", width="medium"),
             "Células marcadas": st.column_config.TextColumn("Células marcadas", width="small"),
+            "Outras despesas": st.column_config.TextColumn("Outras despesas", width="small"),
         },
     )
     mudancas_ro = historico_ro.mudancas(historico_fotografias)
@@ -1000,6 +1028,11 @@ else:
             st.caption("Resultado indisponível em uma das pontas: a variação do resultado não é calculável.")
         else:
             st.caption(f"Variação do resultado: {_sem_latex(formatar_brl(mudanca.variacao_resultado))}.")
+        if mudanca.escolha_outras_despesas:
+            st.warning(
+                f"As outras despesas previstas passaram de {mudanca.escolha_outras_despesas} entre estas fotografias: "
+                "a variação de 'Outras despesas previstas' abaixo vem dessa escolha, não de mudança nas despesas."
+            )
         tabela_mud = historico_ro.tabela_mudanca(mudanca)
         if tabela_mud.empty:
             st.caption("Nenhum componente variou entre estas duas fotografias.")

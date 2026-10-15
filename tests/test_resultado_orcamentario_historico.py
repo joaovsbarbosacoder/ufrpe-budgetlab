@@ -355,5 +355,72 @@ class TestAnulacaoSugerida(unittest.TestCase):
             self.assertIsNone(carregar_historico(2026, Path(tmp))[0].anulacao)
 
 
+
+class TestOutrasDespesasConsideradas(unittest.TestCase):
+    """15/10/2026: o usuário pode desconsiderar as outras despesas previstas na conta; a fotografia do dia continua sendo
+    gravada e guarda se elas estavam consideradas, para a série seguir interpretável."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.pasta = Path(self._tmp.name)
+
+    def _foto_flag(self, dia: str, consideradas, outras=0.0) -> Fotografia:
+        return fotografar(
+            _res(outras=outras), 2026, 5, hoje=date.fromisoformat(dia), dotacao_sha="d1", execucao_sha="e1",
+            **({} if consideradas is None else {"outras_despesas_consideradas": consideradas}),
+        )
+
+    def test_padrao_e_considerar(self):
+        self.assertIs(self._foto_flag("2026-10-10", None).outras_despesas_consideradas, True)
+
+    def test_grava_e_le_o_estado_desconsiderado(self):
+        registrar(self._foto_flag("2026-10-10", False), self.pasta)
+        self.assertIs(carregar_historico(2026, self.pasta)[0].outras_despesas_consideradas, False)
+
+    def test_fotografia_antiga_sem_o_campo_vale_como_considerada(self):
+        registrar(self._foto_flag("2026-10-10", True), self.pasta)
+        arquivo = next((self.pasta / "2026" / "historico").glob("*.json"))
+        dado = json.loads(arquivo.read_text(encoding="utf-8"))
+        dado.pop("outras_despesas_consideradas")  # arquivo gravado antes deste campo existir
+        arquivo.write_text(json.dumps(dado), encoding="utf-8")
+        foto = carregar_historico(2026, self.pasta)[0]
+        self.assertIsNone(foto.outras_despesas_consideradas)
+        self.assertEqual(tabela_historico([foto]).iloc[0]["Outras despesas"], "Consideradas")
+
+    def test_mudar_a_escolha_no_mesmo_dia_regrava_mesmo_com_o_resto_igual(self):
+        self.assertTrue(registrar(self._foto_flag("2026-10-10", True), self.pasta))
+        self.assertFalse(registrar(self._foto_flag("2026-10-10", True), self.pasta))  # igual: não regrava
+        self.assertTrue(registrar(self._foto_flag("2026-10-10", False), self.pasta))  # só a escolha mudou: regrava
+        self.assertIs(carregar_historico(2026, self.pasta)[0].outras_despesas_consideradas, False)
+
+    def test_none_e_true_sao_o_mesmo_conteudo(self):
+        self.assertTrue(registrar(self._foto_flag("2026-10-10", None), self.pasta))
+        self.assertFalse(registrar(self._foto_flag("2026-10-10", True), self.pasta))
+
+    def test_tabela_do_historico_mostra_a_escolha_de_cada_dia(self):
+        historico = [self._foto_flag("2026-10-10", True, outras=40.0), self._foto_flag("2026-10-11", False)]
+        tabela = tabela_historico(historico)
+        self.assertEqual(list(tabela["Dia"]), ["2026-10-11", "2026-10-10"])
+        self.assertEqual(list(tabela["Outras despesas"]), ["Desconsideradas", "Consideradas"])
+
+    def test_comparar_avisa_quando_a_escolha_mudou(self):
+        antes, depois = self._foto_flag("2026-10-10", True, outras=40.0), self._foto_flag("2026-10-11", False)
+        mudanca = comparar(antes, depois)
+        self.assertEqual(mudanca.escolha_outras_despesas, "consideradas → desconsideradas")
+        self.assertEqual(comparar(depois, antes).escolha_outras_despesas, "desconsideradas → consideradas")
+
+    def test_sem_mudanca_de_escolha_nao_ha_aviso(self):
+        a, b = self._foto_flag("2026-10-10", False), self._foto_flag("2026-10-11", False)
+        self.assertIsNone(comparar(a, b).escolha_outras_despesas)
+        antiga, nova = self._foto_flag("2026-10-10", None), self._foto_flag("2026-10-11", True)
+        self.assertIsNone(comparar(antiga, nova).escolha_outras_despesas)  # None ≡ consideradas
+
+    def test_a_variacao_da_necessidade_continua_calculada_com_o_efeito_no_resultado(self):
+        antes, depois = self._foto_flag("2026-10-10", True, outras=40.0), self._foto_flag("2026-10-11", False, outras=0.0)
+        v = next(v for v in comparar(antes, depois).variacoes if v.componente == "Outras despesas previstas")
+        self.assertEqual((v.anterior, v.atual, v.variacao, v.efeito), (40.0, 0.0, -40.0, 40.0))
+
+
 if __name__ == "__main__":
     unittest.main()

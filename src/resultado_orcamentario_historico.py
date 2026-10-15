@@ -59,6 +59,9 @@ class Fotografia:
     #: anulação sugerida por origem (15/10/2026). `None` = fotografia anterior ao registro: o resultado dela não incluía
     #: anulação (equivale a zero a somar). Vale também para origem ausente do dicionário.
     anulacao: dict[str, float | None] | None = None
+    #: as "Outras despesas previstas" estavam na conta? (15/10/2026: o usuário pode desconsiderá-las). `None` = fotografia
+    #: anterior ao registro, quando elas sempre entravam: vale como "consideradas".
+    outras_despesas_consideradas: bool | None = None
     registrado_em: str = field(default="", compare=False)
 
 
@@ -98,6 +101,15 @@ class Mudanca:
     variacao_resultado: float | None
     #: variação da dotação por célula; `None` quando alguma das fotografias não tem o detalhe
     celulas: list[VariacaoCelula] | None = None
+    #: "consideradas → desconsideradas" (ou o inverso) quando a escolha sobre as outras despesas mudou entre as duas
+    #: fotografias: parte da variação da necessidade vem dessa escolha, não de mudança nas despesas. `None` sem mudança.
+    escolha_outras_despesas: str | None = None
+
+
+def _consideradas(foto: Fotografia) -> bool:
+    """Outras despesas na conta da fotografia; ausente (fotografia antiga) vale como consideradas."""
+
+    return foto.outras_despesas_consideradas is not False
 
 
 def _agora() -> str:
@@ -142,6 +154,7 @@ def _para_json(foto: Fotografia) -> dict:
         "execucao_sha": foto.execucao_sha,
         "dotacao_por_celula": foto.dotacao_por_celula,
         "anulacao": foto.anulacao,
+        "outras_despesas_consideradas": foto.outras_despesas_consideradas,
     }
 
 
@@ -171,6 +184,9 @@ def _de_json(dado: dict, caminho: Path) -> Fotografia:
             ),
             anulacao=(
                 None if dado.get("anulacao") is None else {str(k): _numero(v) for k, v in dado["anulacao"].items()}
+            ),
+            outras_despesas_consideradas=(
+                None if dado.get("outras_despesas_consideradas") is None else bool(dado["outras_despesas_consideradas"])
             ),
             registrado_em=str(dado.get("registrado_em", "")),
         )
@@ -227,6 +243,7 @@ def _mesmo_conteudo(a: Fotografia, b: Fotografia) -> bool:
         and _dicts_iguais(a.empenhado, b.empenhado)
         and _dicts_iguais(a.necessidade, b.necessidade)
         and _dicts_iguais(_anulacao_ou_zero(a), _anulacao_ou_zero(b))
+        and _consideradas(a) == _consideradas(b)
         and (a.dotacao_sha, a.execucao_sha) == (b.dotacao_sha, b.execucao_sha)
         and (
             (a.dotacao_por_celula is None and b.dotacao_por_celula is None)
@@ -262,8 +279,10 @@ def fotografar(
     execucao_extracao: str | None = None,
     execucao_sha: str | None = None,
     dotacao_por_celula: dict[str, float | None] | None = None,
+    outras_despesas_consideradas: bool = True,
 ) -> Fotografia:
-    """Fotografia a partir de um `ResultadoOrcamentario` (qualquer objeto com os mesmos atributos)."""
+    """Fotografia a partir de um `ResultadoOrcamentario` (qualquer objeto com os mesmos atributos).
+    `outras_despesas_consideradas`: se as outras despesas previstas entraram na conta do resultado fotografado."""
 
     return Fotografia(
         data=(hoje or date.today()).isoformat(),
@@ -281,6 +300,7 @@ def fotografar(
         execucao_sha=execucao_sha,
         dotacao_por_celula=None if dotacao_por_celula is None else dict(dotacao_por_celula),
         anulacao=dict(getattr(resultado, "anulacao", None) or {}),
+        outras_despesas_consideradas=bool(outras_despesas_consideradas),
     )
 
 
@@ -323,7 +343,11 @@ def comparar(anterior: Fotografia, atual: Fotografia) -> Mudanca:
             "Anulação sugerida", origem, SINAL_RECEITA, anul_antes.get(origem, 0.0), anul_depois.get(origem, 0.0)
         ))
     delta = None if anterior.resultado is None or atual.resultado is None else atual.resultado - anterior.resultado
-    return Mudanca(anterior, atual, variacoes, delta, _variacao_celulas(anterior, atual))
+    escolha = None
+    if _consideradas(anterior) != _consideradas(atual):
+        nome = {True: "consideradas", False: "desconsideradas"}
+        escolha = f"{nome[_consideradas(anterior)]} → {nome[_consideradas(atual)]}"
+    return Mudanca(anterior, atual, variacoes, delta, _variacao_celulas(anterior, atual), escolha)
 
 
 def _variacao_celulas(anterior: Fotografia, atual: Fotografia) -> list[VariacaoCelula] | None:
@@ -410,12 +434,13 @@ def tabela_historico(historico: list[Fotografia]) -> pd.DataFrame:
             "Situação": situacao,
             "Mudança de situação": virada_de_situacao(anterior, foto),
             "Células marcadas": foto.celulas_marcadas,
+            "Outras despesas": "Consideradas" if _consideradas(foto) else "Desconsideradas",
             "Dotação (extração)": foto.dotacao_extracao,
             "Execução Mensal (extração)": foto.execucao_extracao,
         })
         anterior = foto
-    colunas = ["Dia", "Resultado", "Variação", "Situação", "Mudança de situação", "Células marcadas", "Dotação (extração)",
-               "Execução Mensal (extração)"]
+    colunas = ["Dia", "Resultado", "Variação", "Situação", "Mudança de situação", "Células marcadas", "Outras despesas",
+               "Dotação (extração)", "Execução Mensal (extração)"]
     return pd.DataFrame(linhas[::-1], columns=colunas)
 
 
