@@ -2,8 +2,9 @@
 
 Pedido explícito do usuário (08/10/2026): o usuário marca um "bolsão" de células da Dotação Anual
 (IDUSO, resultado primário, ação, PTRES, plano orçamentário, grupo de despesa e fonte detalhada) e a
-página mostra `Resultado = Dotação Atualizada das células − Empenhado nas células − Necessidade de
-empenho até dezembro`. A regra está em `src/resultado_orcamentario.py`; a persistência (seleção de
+página mostra `Resultado = Dotação Atualizada das células − Executado − Projetado a realizar até dezembro`
+(critério de 15/10/2026: Contratos e Bolsas pelo liquidado e pelo que falta da projeção, só as NEs com empenho nas
+células marcadas; as demais origens pelo empenhado). A regra está em `src/resultado_orcamentario.py`; a persistência (seleção de
 células e despesas manuais, aprovada pelo usuário em 08/10/2026) em
 `src/resultado_orcamentario_cadastro.py`; a montagem de Contratos e Bolsas, compartilhada com as
 páginas deles, em `src/resultado_orcamentario_fontes.py`. Especificação e protótipo de layout:
@@ -15,11 +16,10 @@ Decisões de tela (08/10/2026):
     marcar); "Salvar seleção" grava em disco. Enquanto não salvar, a página avisa "Alterações não
     salvas". Motivo: o usuário experimenta o bolsão antes de gravar. Como os cartões ficam acima da
     tabela, eles são desenhados em `st.container` reservados no topo e preenchidos no fim do script.
-  * Necessidade de Contratos e Bolsas = relatório "Projeção pela Execução" SEM contrato antecessor
-    (spec §10a: a escolha do antecessor na página de Contratos não é gravada). Nota sob a Necessidade
-    de Contratos.
+  * Executado e projetado de Contratos e Bolsas = relatório "Projeção pela Execução" SEM contrato antecessor
+    (spec §10a: a escolha do antecessor na página de Contratos não é gravada).
   * Liquidação por Competência ausente/ilegível, ou exercício sem cadastro de Contratos/Bolsas: a
-    necessidade daquela origem fica INDISPONÍVEL ("—"), nunca zero, e o resultado fica incompleto.
+    projeção daquela origem fica INDISPONÍVEL ("—"), nunca zero, e o resultado fica incompleto.
   * Arquivo de seleção ou de despesas corrompido: erro visível e os botões de gravar ficam
     desabilitados (a página não grava por cima). Despesas ilegíveis também deixam o resultado
     incompleto — a página não sabe quanto elas somam.
@@ -74,11 +74,9 @@ from src import resultado_orcamentario_historico as historico_ro
 from src.relatorio_projecao_execucao import RelatorioProjecaoExecucao
 from src.resultado_orcamentario_fontes import projecao_bolsas, projecao_contratos, tabela_bolsas, tabela_contratos
 from src.sobra_empenho import (
-    FAIXAS_NA_ANULACAO,
     ContextoSobra,
     gerar_xlsx as gerar_xlsx_sobra,
     resumo_da_sobra,
-    sobra_elegivel_por_ne,
     sobra_por_ne,
 )
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
@@ -341,19 +339,14 @@ def _dialogo_excluir(exercicio: int, despesa: DespesaManual) -> None:
 def _render_cartoes(res: ResultadoOrcamentario, qtd_selecionadas: int, qtd_celulas: int) -> None:
     """Cartões no desenho do protótipo (08/10/2026): o do Resultado com borda, fundo e selo pela situação."""
 
-    necessidades = list(res.necessidade.values())
-    necessidade_total = None if any(v is None for v in necessidades) else float(sum(necessidades))
     if res.resultado is None:
         rodape = "Nenhuma célula selecionada" if not qtd_selecionadas else "Resultado incompleto — ver Avisos"
     else:
         rodape = f"{_pct(res.resultado, res.dotacao)} da dotação selecionada"
-        if res.anulacao_total > 0:
-            rodape += f" · inclui {formatar_brl(res.anulacao_total)} de anulação sugerida"
     st.html(
         html_cartoes(
             res.dotacao, f"{qtd_selecionadas} de {qtd_celulas} células selecionadas",
-            res.empenhado_total, necessidade_total, res.resultado, rodape,
-            anulacao=res.anulacao_total if res.anulacao else None,
+            res.executado_total, res.projetado_total, res.resultado, rodape,
         )
     )
 
@@ -371,47 +364,51 @@ def _tabela_empenhado(por_ne: pd.DataFrame, origem: str) -> pd.DataFrame:
     return tabela.reset_index(drop=True)
 
 
-def _tabela_necessidade(linhas: pd.DataFrame, por_ne: pd.DataFrame, origem: str) -> pd.DataFrame:
-    selecionadas = set(por_ne.loc[por_ne["celula_selecionada"], "ne_curta"])
-    com_empenho = set(por_ne["ne_curta"])
+def _nomes_da_ne(linhas: pd.DataFrame | None, origem: str) -> pd.DataFrame:
+    """`ne_curta` + colunas de identificação da NE (contrato/fornecedor; na projeção de Bolsas o programa vem em `fornecedor`)."""
 
-    def _situacao(ne: object) -> str:
-        if ne is None or (not isinstance(ne, str) and pd.isna(ne)):
-            return "sem NE (contrato ativo)"
-        if ne in selecionadas:
-            return "selecionada"
-        return "não selecionada" if ne in com_empenho else "sem empenho no exercício"
-
+    if linhas is None or linhas.empty:
+        return pd.DataFrame(columns=["ne_curta", "Contrato", "Fornecedor", "Fator"] if origem == ORIGEM_CONTRATOS else ["ne_curta", "Programa", "Fator"])
     if origem == ORIGEM_CONTRATOS:
-        colunas = {"ne_curta": "NE", "contrato_numero": "Contrato", "fornecedor": "Fornecedor"}
+        nomes = linhas[["ne_curta", "contrato_numero", "fornecedor", "fator"]].rename(
+            columns={"contrato_numero": "Contrato", "fornecedor": "Fornecedor", "fator": "Fator"}
+        )
     else:
-        # na projeção de Bolsas o programa vem na coluna `fornecedor` (ver `src.projecao_execucao_bolsas`)
-        colunas = {"ne_curta": "NE", "fornecedor": "Programa"}
-    tabela = linhas[[*colunas, "fator", "necessidade_execucao"]].rename(
-        columns={**colunas, "fator": "Fator", "necessidade_execucao": "Necessidade"}
-    )
-    tabela["Célula da NE"] = linhas["ne_curta"].map(_situacao)
-    return tabela.reset_index(drop=True)
+        nomes = linhas[["ne_curta", "fornecedor", "fator"]].rename(columns={"fornecedor": "Programa", "fator": "Fator"})
+    return nomes.drop_duplicates("ne_curta")
 
 
-def _tabela_anulacao(tabela_sobra: pd.DataFrame, res: ResultadoOrcamentario, base: str) -> pd.DataFrame:
-    """NEs da base com sobra prevista: faixa, sobra, empenhado nas células marcadas e quanto entra no resultado. NE sem
-    empenho nas células marcadas mostra R$ 0,00 nas duas últimas colunas (a sobra dela não foi cobrada do bolsão); as de
-    faixa fora de `FAIXAS_NA_ANULACAO` também entram com R$ 0,00."""
+def _tabela_executado(res: ResultadoOrcamentario, linhas: pd.DataFrame | None, origem: str) -> pd.DataFrame:
+    """NEs de Contratos/Bolsas contadas na conta (empenho nas células marcadas) e o que cada uma já liquidou."""
 
-    da_base = tabela_sobra[(tabela_sobra["Base"] == base) & (tabela_sobra["SOBRA PREVISTA (saldo − projetado)"].fillna(0.0) > 0.005)]
-    por_ne = res.empenhado_por_ne
-    marcado = por_ne.loc[por_ne["celula_selecionada"]].groupby("ne_curta")["empenhada"].sum(min_count=1).to_dict()
-    valor = {} if res.anulacao_por_ne.empty else res.anulacao_por_ne.set_index("ne_curta")["anulacao"].to_dict()
-    tabela = pd.DataFrame({
-        "NE": da_base["NE"].to_numpy(),
-        "Fornecedor / programa": da_base["Fornecedor / programa"].to_numpy(),
-        "Faixa": da_base["Faixa da sobra"].to_numpy(),
-        "Sobra prevista": da_base["SOBRA PREVISTA (saldo − projetado)"].to_numpy(),
-        "Empenhado nas células marcadas": [marcado.get(ne, 0.0) for ne in da_base["NE"]],
-        "Entra no resultado": [valor.get(ne, 0.0) for ne in da_base["NE"]],
-    })
-    return tabela.reset_index(drop=True)
+    detalhe = res.consumo_por_ne.loc[res.consumo_por_ne["origem"] == origem, ["ne_curta", "executado"]]
+    nomes = _nomes_da_ne(linhas, origem).drop(columns=["Fator"])
+    tabela = detalhe.merge(nomes, on="ne_curta", how="left").sort_values("executado", ascending=False, na_position="first")
+    colunas = ["NE", *[c for c in nomes.columns if c != "ne_curta"], "Executado"]
+    return tabela.rename(columns={"ne_curta": "NE", "executado": "Executado"})[colunas].reset_index(drop=True)
+
+
+def _tabela_projetado(
+    res: ResultadoOrcamentario, linhas: pd.DataFrame | None, origem: str, ativos_sem_ne: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """NEs contadas na conta e o que falta da projeção de cada uma; contrato ATIVO sem NE (Contratos) entra pela necessidade
+    contratual, com a NE em branco."""
+
+    detalhe = res.consumo_por_ne.loc[res.consumo_por_ne["origem"] == origem, ["ne_curta", "projetado"]]
+    nomes = _nomes_da_ne(linhas, origem)
+    tabela = detalhe.merge(nomes, on="ne_curta", how="left").rename(columns={"ne_curta": "NE", "projetado": "Projetado"})
+    colunas = ["NE", *[c for c in nomes.columns if c != "ne_curta"], "Projetado"]
+    tabela = tabela[colunas]
+    if origem == ORIGEM_CONTRATOS and ativos_sem_ne is not None and len(ativos_sem_ne) and "necessidade" in ativos_sem_ne:
+        extras = pd.DataFrame({
+            "NE": [None] * len(ativos_sem_ne),
+            "Contrato": ativos_sem_ne.get("contrato_numero", pd.Series([None] * len(ativos_sem_ne))).to_numpy(),
+            "Fornecedor": ativos_sem_ne.get("fornecedor", pd.Series([None] * len(ativos_sem_ne))).to_numpy(),
+            "Fator": [None] * len(ativos_sem_ne),
+            "Projetado": pd.to_numeric(ativos_sem_ne["necessidade"], errors="coerce").to_numpy(),
+        })
+        tabela = pd.concat([tabela, extras[colunas]], ignore_index=True)
+    return tabela.sort_values("Projetado", ascending=False, na_position="first").reset_index(drop=True)
 
 
 def _render_composicao(
@@ -419,96 +416,77 @@ def _render_composicao(
     linhas_contratos: pd.DataFrame | None,
     linhas_bolsas: pd.DataFrame | None,
     despesas: list[DespesaManual],
-    tabela_sobra: pd.DataFrame | None = None,
+    ativos_sem_ne: pd.DataFrame | None = None,
     considerar_outras: bool = True,
 ) -> None:
     """Composição no desenho do protótipo (08/10/2026): linhas compactas com % e valor à direita, barra
     de proporção e o detalhe por NE (ou por despesa) ao abrir a linha. Os avisos da projeção ficam na
-    seção Avisos."""
+    seção Avisos. Critério de 15/10/2026: Contratos e Bolsas pelo executado e pelo projetado a realizar."""
 
-    col_empenhado, col_necessidade = st.columns(2)
-    with col_empenhado:
+    linhas_por_origem = {ORIGEM_CONTRATOS: linhas_contratos, ORIGEM_BOLSAS: linhas_bolsas}
+    col_executado, col_projetado = st.columns(2)
+    with col_executado:
         # -0,00 (resíduo de ponto flutuante) aparece como 0,00
         diferenca = round(res.diferenca_conferencia, 2) + 0.0
         fecha = abs(res.diferenca_conferencia) < TOLERANCIA_CONFERENCIA
         rodape = (
-            "✓ Soma das linhas = empenhado total das células" if fecha
-            else "✗ Soma das linhas não fecha com o empenhado total das células"
-        ) + f" · diferença {formatar_brl(diferenca)}"
+            "✓ Empenhado das células confere com a Execução Mensal" if fecha
+            else "✗ Empenhado das células não fecha com a Execução Mensal"
+        ) + f" · diferença {formatar_brl(diferenca)}. Contratos e Bolsas: só NEs com empenho nas células marcadas."
+        linhas_bloco = []
+        for origem in ORIGENS_EMPENHADO:
+            if origem in res.executado:
+                linha = linhas_por_origem[origem]
+                if res.executado[origem] is None:
+                    linhas_bloco.append(LinhaComposicao(origem, None, None, ("Executado",), "Indisponível — ver Avisos."))
+                else:
+                    linhas_bloco.append(LinhaComposicao(
+                        origem, res.executado[origem], _tabela_executado(res, linha, origem), ("Executado",),
+                        "Nenhuma NE desta origem nas células selecionadas.",
+                    ))
+            else:
+                linhas_bloco.append(LinhaComposicao(
+                    origem, res.empenhado[origem], _tabela_empenhado(res.empenhado_por_ne, origem),
+                    ("Empenhado",), "Nenhuma NE desta origem nas células selecionadas.",
+                ))
         st.html(
             html_bloco(
-                "Empenhado nas células selecionadas",
-                [
-                    LinhaComposicao(
-                        origem, res.empenhado[origem], _tabela_empenhado(res.empenhado_por_ne, origem),
-                        ("Empenhado",), "Nenhuma NE desta origem nas células selecionadas.",
-                    )
-                    for origem in ORIGENS_EMPENHADO
-                ],
-                res.empenhado_total, "Total empenhado", rodape, "ok" if fecha else "erro",
+                "Executado nas células selecionadas", linhas_bloco, res.executado_total, "Total executado",
+                rodape, "ok" if fecha else "erro",
             )
         )
 
-    with col_necessidade:
-        total = None if any(v is None for v in res.necessidade.values()) else float(sum(res.necessidade.values()))
+    with col_projetado:
         linhas_bloco = []
-        for origem, linhas in ((ORIGEM_CONTRATOS, linhas_contratos), (ORIGEM_BOLSAS, linhas_bolsas)):
+        for origem in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS):
+            linhas = linhas_por_origem[origem]
             if linhas is None:
                 detalhe, vazio = None, "Indisponível — ver Avisos."
             else:
-                detalhe, vazio = _tabela_necessidade(linhas, res.empenhado_por_ne, origem), "Nenhuma NE com necessidade."
-            linhas_bloco.append(LinhaComposicao(origem, res.necessidade[origem], detalhe, ("Necessidade",), vazio))
+                detalhe = _tabela_projetado(res, linhas, origem, ativos_sem_ne)
+                vazio = "Nenhuma NE com projeção nas células selecionadas."
+            linhas_bloco.append(LinhaComposicao(origem, res.projetado[origem], detalhe, ("Projetado",), vazio))
         manual = pd.DataFrame({"Descrição": [d.descricao for d in despesas], "Valor": [d.valor for d in despesas]})
         if considerar_outras:
             linhas_bloco.append(
                 LinhaComposicao(
-                    OUTRAS_DESPESAS, res.necessidade[OUTRAS_DESPESAS], manual, ("Valor",),
+                    OUTRAS_DESPESAS, res.projetado[OUTRAS_DESPESAS], manual, ("Valor",),
                     "Nenhuma despesa cadastrada — ver a seção Outras despesas previstas.",
                 )
             )
         else:  # a lista fica à vista, mas o valor da linha (e do total) não a inclui
             linhas_bloco.append(
                 LinhaComposicao(
-                    f"{OUTRAS_DESPESAS} — desconsideradas", res.necessidade[OUTRAS_DESPESAS], manual, ("Valor",),
+                    f"{OUTRAS_DESPESAS} — desconsideradas", res.projetado[OUTRAS_DESPESAS], manual, ("Valor",),
                     "Nenhuma despesa cadastrada. Desconsideradas pelo interruptor da seção 4: não entram na conta.",
                 )
             )
         st.html(
             html_bloco(
-                "Necessidade de empenho até dezembro", linhas_bloco, total, "Total da necessidade",
-                "Vale para todas as NEs, inclusive as de células não selecionadas. Projeção sem contrato "
-                "antecessor: NE com menos de 3 meses fechados é projetada pelo valor mensal cheio.",
-            )
-        )
-
-    # Anulação sugerida de empenho como RECEITA (15/10/2026): soma ao resultado o empenho que a projeção não vai liquidar
-    if tabela_sobra is None:
-        st.caption("Anulação sugerida indisponível: a projeção pela execução não pôde ser montada (ver Avisos).")
-    else:
-        faixas = "; ".join(FAIXAS_NA_ANULACAO)
-        # quanto da anulação vem da faixa 3 (sem histórico, a mais frágil): a Composição mostra para o valor não enganar
-        faixa3 = sum(
-            float(_tabela_anulacao(tabela_sobra, res, base).query("Faixa.str.startswith('3')", engine="python")["Entra no resultado"].sum())
-            for base in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS)
-        )
-        parte_fragil = (
-            f" Dos quais {formatar_brl(faixa3)} vêm da faixa 3 (sem histórico): a sobra some se o fornecedor faturar o valor cheio."
-            if faixa3 > 0 else ""
-        )
-        st.html(
-            html_bloco(
-                "Anulação sugerida de empenho (receita)",
-                [
-                    LinhaComposicao(
-                        base, res.anulacao.get(base), _tabela_anulacao(tabela_sobra, res, base),
-                        ("Sobra prevista", "Empenhado nas células marcadas", "Entra no resultado"),
-                        "Nenhuma NE desta origem com sobra prevista.",
-                    )
-                    for base in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS)
-                ],
-                res.anulacao_total, "Total da anulação sugerida",
-                f"Soma ao resultado. Conta a sobra das faixas: {faixas}, e no máximo o empenhado da NE nas células "
-                f"marcadas.{parte_fragil} Receita prevista: só se efetiva quando o empenho for de fato anulado.",
+                "Projetado a realizar até dezembro", linhas_bloco, res.projetado_total, "Total projetado",
+                "O que falta da projeção pela execução (com os seus ajustes) nas NEs com empenho nas células marcadas. "
+                "Projeção sem contrato antecessor: NE com menos de 3 meses fechados é projetada pelo valor mensal cheio. "
+                "A necessidade de empenho continua nas páginas de Contratos e Bolsas.",
             )
         )
 
@@ -587,7 +565,7 @@ with col_datas:
     st.caption(
         f"Dotação Anual · extração de {data_dotacao:%d/%m/%Y}  |  "
         f"Execução Mensal · extração de {data_execucao:%d/%m/%Y}  |  "
-        "Necessidade: projeção pela execução"
+        "Executado e projetado: projeção pela execução"
     )
 
 try:
@@ -826,7 +804,7 @@ st.caption(
 )
 considerar_outras = st.toggle(
     "Considerar as outras despesas previstas no resultado", value=True, key="ro_considerar_outras",
-    help="Desligado, as despesas cadastradas continuam listadas e editáveis, mas saem da conta (necessidade, resultado, "
+    help="Desligado, as despesas cadastradas continuam listadas e editáveis, mas saem da conta (projetado, resultado, "
          "cartões e composição). O histórico diário continua gravando, com a marca de que estavam desconsideradas. A "
          "escolha vale só nesta sessão: ao reabrir a página, volta ligado.",
 )
@@ -890,7 +868,7 @@ if incluir:
 # --------------------------------------------------------------- conta e topo
 tabela_contratos_df, linhas_contratos, sem_ne_contratos, avisos_projecao_contratos, relatorio_contratos = fontes[ORIGEM_CONTRATOS]
 tabela_bolsas_df, linhas_bolsas, sem_ne_bolsas, avisos_projecao_bolsas, relatorio_bolsas = fontes[ORIGEM_BOLSAS]
-# Sobra prevista de empenho (15/10/2026): alimenta a "anulação sugerida" (receita) da conta e a seção 7
+# Sobra prevista de empenho (15/10/2026): informativa (seção 7); não entra na conta do resultado.
 _relatorios_sobra = {
     nome: relatorio for nome, relatorio in (
         (ORIGEM_CONTRATOS, relatorio_contratos), (ORIGEM_BOLSAS, relatorio_bolsas),
@@ -902,12 +880,11 @@ despesas_na_conta = despesas if considerar_outras else []
 resultado = calcular_resultado(
     celulas, empenhado, selecao_atual, tabela_contratos_df, tabela_bolsas_df,
     linhas_contratos, linhas_bolsas, sem_ne_contratos, sem_ne_bolsas, despesas_na_conta,
-    sobra_por_ne=None if _tabela_sobra is None else sobra_elegivel_por_ne(_tabela_sobra),
 )
 if not despesas_legiveis:
     resultado = replace(
         resultado,
-        necessidade={**resultado.necessidade, OUTRAS_DESPESAS: None},
+        projetado={**resultado.projetado, OUTRAS_DESPESAS: None},
         resultado=None,
         incompleto=bool(selecao_atual),
         avisos=[*resultado.avisos, "Outras despesas previstas ilegíveis: resultado incompleto."],
@@ -948,21 +925,11 @@ with area_cartoes:
         )
     _render_cartoes(resultado, len(marcadas), len(celulas))
 with area_composicao:
-    # contrato ATIVO sem NE entra na necessidade (08/10/2026): aparece também no detalhe de Contratos,
+    # contrato ATIVO sem NE entra no projetado (08/10/2026): aparece também no detalhe de Contratos,
     # para a tabela fechar com o total da linha
     ativos_sem_ne, _ = separar_ativos_sem_ne(sem_ne_contratos)
-    linhas_contratos_exibidas = linhas_contratos
-    if linhas_contratos is not None and len(ativos_sem_ne) and "necessidade" in ativos_sem_ne:
-        extras = pd.DataFrame({
-            "ne_curta": [None] * len(ativos_sem_ne),
-            "contrato_numero": ativos_sem_ne.get("contrato_numero", pd.Series([None] * len(ativos_sem_ne))).to_numpy(),
-            "fornecedor": ativos_sem_ne.get("fornecedor", pd.Series([None] * len(ativos_sem_ne))).to_numpy(),
-            "fator": [None] * len(ativos_sem_ne),
-            "necessidade_execucao": pd.to_numeric(ativos_sem_ne["necessidade"], errors="coerce").to_numpy(),
-        })
-        linhas_contratos_exibidas = pd.concat([linhas_contratos, extras], ignore_index=True)
     _render_composicao(
-        resultado, linhas_contratos_exibidas, linhas_bolsas, despesas, _tabela_sobra, considerar_outras=considerar_outras,
+        resultado, linhas_contratos, linhas_bolsas, despesas, ativos_sem_ne, considerar_outras=considerar_outras,
     )
 
 # --------------------------------------------------------------- Avisos
@@ -999,7 +966,8 @@ st.subheader("6. Histórico do resultado")
 st.caption(
     "Uma fotografia por dia (a última do dia vale), gravada ao abrir a página com a seleção salva. Só existe a partir "
     "do primeiro registro: o passado anterior não é reconstruível. A variação mostra quanto cada componente da "
-    "fórmula (Dotação − Empenhado − Necessidade + Anulação sugerida) moveu o resultado desde a fotografia anterior."
+    "fórmula (Dotação − Executado − Projetado a realizar) moveu o resultado desde a fotografia anterior. Fotografias "
+    "anteriores a 15/10/2026 usavam Empenhado − Necessidade + Anulação sugerida (coluna Critério)."
 )
 if historico_erro:
     st.error(historico_erro)
@@ -1028,6 +996,11 @@ else:
             st.caption("Resultado indisponível em uma das pontas: a variação do resultado não é calculável.")
         else:
             st.caption(f"Variação do resultado: {_sem_latex(formatar_brl(mudanca.variacao_resultado))}.")
+        if mudanca.mudanca_de_criterio:
+            st.warning(
+                f"Critério da fórmula mudou entre estas fotografias ({mudanca.mudanca_de_criterio}): a variação de "
+                "Contratos e Bolsas mistura a mudança de critério com a mudança real."
+            )
         if mudanca.escolha_outras_despesas:
             st.warning(
                 f"As outras despesas previstas passaram de {mudanca.escolha_outras_despesas} entre estas fotografias: "
@@ -1080,8 +1053,8 @@ else:
     _total_sobra = _resumo_sobra.iloc[-1]
     st.caption(
         "Empenho que, pela projeção pela execução (com os seus ajustes), não será liquidado no exercício: saldo do empenho "
-        "menos a despesa projetada até dezembro. Entra no resultado como anulação sugerida (receita, na Composição), "
-        "limitada ao empenhado nas células marcadas. Não altera o relatório de Anulação."
+        "menos a despesa projetada até dezembro. É informativa: não entra na conta do resultado (que mede o executado e o "
+        "projetado) e alimenta o relatório de Anulação."
     )
     st.markdown(
         _sem_latex(
