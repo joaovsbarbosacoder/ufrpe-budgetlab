@@ -109,11 +109,8 @@ def test_bloco_escapa_html():
     assert "<b>x</b>" not in html and "&lt;b&gt;" in html
 
 
-def test_cartao_de_anulacao_so_aparece_quando_informada():
-    sem = html_cartoes(1000.0, "", 400.0, 100.0, 500.0, "")
-    assert "Anulação sugerida" not in sem
-    com = html_cartoes(1000.0, "", 400.0, 100.0, 550.0, "", anulacao=50.0)
-    assert "(+) Anulação sugerida" in com
-    assert len(re.findall(r'<div class="ro-card[ "]', com)) == 5  # dotação, empenhado, necessidade, anulação e resultado
-    assert "(+) Anulação sugerida" in html_cartoes(1000.0, "", 400.0, 100.0, 500.0, "", anulacao=0.0)  # zero também aparece
-
+def test_cartoes_no_criterio_executado_projetado_sem_cartao_de_anulacao():
+    html = html_cartoes(1000.0, "", 400.0, 100.0, 500.0, "")
+    assert "(−) Executado nas células" in html and "(−) Projetado a realizar" in html
+    assert "Anulação" not in html and "Empenhado nas células" not in html
+    assert len(re.findall(r'<div class="ro-card[ "]', html)) == 4  # dotação, executado, projetado e resultado

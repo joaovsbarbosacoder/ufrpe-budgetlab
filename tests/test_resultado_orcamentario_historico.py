@@ -422,5 +422,74 @@ class TestOutrasDespesasConsideradas(unittest.TestCase):
         self.assertEqual((v.anterior, v.atual, v.variacao, v.efeito), (40.0, 0.0, -40.0, 40.0))
 
 
+@dataclass
+class _ResNovo:
+    """Resultado no critério de 15/10/2026 (executado + projetado)."""
+    dotacao: float | None
+    empenhado: dict
+    executado: dict
+    executado_total: float | None
+    projetado: dict
+    resultado: float | None
+    incompleto: bool = False
+
+
+def _res_novo(dotacao=1000.0, exec_c=250.0, exec_b=80.0, proj_c=150.0, proj_b=40.0) -> _ResNovo:
+    executado = {"Contratos Contínuos": exec_c, "Bolsas e Auxílios": exec_b}
+    projetado = {"Contratos Contínuos": proj_c, "Bolsas e Auxílios": proj_b, "Outras despesas previstas": 0.0}
+    total = sum(executado.values())
+    return _ResNovo(
+        dotacao, {"Contratos Contínuos": 300.0, "Bolsas e Auxílios": 100.0}, executado, total, projetado,
+        dotacao - total - sum(projetado.values()),
+    )
+
+
+class TestCriterioExecutadoProjetado(unittest.TestCase):
+    def _foto_novo(self, dia, **kw):
+        return fotografar(_res_novo(**kw), 2026, 5, hoje=date.fromisoformat(dia), dotacao_sha="d1", execucao_sha="e1")
+
+    def test_fotografia_nova_guarda_executado_e_projetado_com_o_criterio(self):
+        foto = self._foto_novo("2026-10-15")
+        self.assertEqual(foto.criterio, "executado_projetado")
+        self.assertEqual(foto.empenhado["Contratos Contínuos"], 250.0)  # executado, não o empenhado de 300
+        self.assertEqual(foto.empenhado_total, 330.0)
+        self.assertEqual(foto.necessidade["Bolsas e Auxílios"], 40.0)
+        self.assertEqual(foto.anulacao, {})
+        self.assertEqual(foto.resultado, 1000 - 330 - 190)
+
+    def test_criterio_ida_e_volta_pelo_arquivo_e_fotografia_antiga_fica_sem_criterio(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pasta = Path(tmp)
+            registrar(self._foto_novo("2026-10-15"), pasta)
+            registrar(_foto("2026-10-14"), pasta)
+            lidas = {f.data: f for f in carregar_historico(2026, pasta)}
+            self.assertEqual(lidas["2026-10-15"].criterio, "executado_projetado")
+            self.assertIsNone(lidas["2026-10-14"].criterio)  # não é reescrita
+
+    def test_mudar_so_o_criterio_regrava_a_fotografia_do_dia(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pasta = Path(tmp)
+            self.assertTrue(registrar(_foto("2026-10-15", dotacao=1000.0), pasta))
+            self.assertTrue(registrar(self._foto_novo("2026-10-15", exec_c=300.0, exec_b=100.0, proj_c=200.0, proj_b=50.0), pasta))
+            self.assertFalse(registrar(self._foto_novo("2026-10-15", exec_c=300.0, exec_b=100.0, proj_c=200.0, proj_b=50.0), pasta))
+
+    def test_comparar_criterios_diferentes_avisa_e_nomeia_os_grupos_pelo_critério_atual(self):
+        antes, depois = _foto("2026-10-14"), self._foto_novo("2026-10-15")
+        m = comparar(antes, depois)
+        self.assertEqual(m.mudanca_de_criterio, "empenhado + necessidade → executado + projetado")
+        self.assertIn("Executado", {v.grupo for v in m.variacoes})
+        self.assertIn("Projetado a realizar", {v.grupo for v in m.variacoes})
+        self.assertNotIn("Necessidade", {v.grupo for v in m.variacoes})
+
+    def test_mesmo_criterio_nao_avisa(self):
+        a, b = self._foto_novo("2026-10-15"), self._foto_novo("2026-10-16", exec_c=260.0)
+        self.assertIsNone(comparar(a, b).mudanca_de_criterio)
+        self.assertIsNone(comparar(_foto("2026-10-13"), _foto("2026-10-14")).mudanca_de_criterio)
+
+    def test_tabela_do_historico_mostra_o_criterio_de_cada_dia(self):
+        tabela = tabela_historico([_foto("2026-10-14"), self._foto_novo("2026-10-15")])
+        self.assertEqual(list(tabela["Critério"]), ["Executado + projetado", "Empenhado + necessidade"])
+
+
 if __name__ == "__main__":
     unittest.main()

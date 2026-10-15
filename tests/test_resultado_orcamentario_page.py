@@ -90,9 +90,9 @@ def _html(app: AppTest) -> str:
     return "\n".join(str(elemento.proto.body) for elemento in app.get("html"))
 
 
-def test_anulacao_sugerida_aparece_nos_cartoes_e_na_composicao(diretorio: Path) -> None:
-    """15/10/2026: a anulação sugerida (receita) tem cartão próprio e bloco na Composição; com todas as células marcadas
-    cada NE com sobra e empenho nas células entra, limitada ao empenhado dela."""
+def test_cartoes_e_composicao_no_criterio_executado_projetado(diretorio: Path) -> None:
+    """15/10/2026: o resultado mede o executado e o projetado a realizar; a anulação sugerida deixou de ser receita. Com
+    todas as células marcadas nenhuma NE de Contratos/Bolsas fica fora da conta."""
 
     app = _abrir()
     exercicio = _exercicio(app)
@@ -102,10 +102,23 @@ def test_anulacao_sugerida_aparece_nos_cartoes_e_na_composicao(diretorio: Path) 
     html = _html(app)
     if "Indisponível: a projeção pela execução" in _textos(app):
         pytest.skip("Projeção pela execução indisponível neste ambiente")
-    assert "(+) Anulação sugerida" in html
-    assert "Anulação sugerida de empenho (receita)" in html
-    assert "Total da anulação sugerida" in html
-    assert "Entra no resultado" in html  # o detalhe lista também as NEs que não entram (faixa 3)
+    assert "(−) Executado nas células" in html and "(−) Projetado a realizar" in html
+    assert "Executado nas células selecionadas" in html and "Projetado a realizar até dezembro" in html
+    assert "Total executado" in html and "Total projetado" in html
+    assert "Anulação sugerida" not in html and "(−) Necessidade" not in html
+    assert not any("sem empenho nas células marcadas" in a.value for a in app.warning)
+
+
+def test_ne_fora_das_celulas_marcadas_e_avisada_com_valor(diretorio: Path) -> None:
+    """Marcada só a primeira célula, as NEs de Contratos/Bolsas que estão em outras células saem da conta e são avisadas."""
+
+    app = _abrir()
+    exercicio = _exercicio(app)
+    app.checkbox(key=f"ro_cel_{exercicio}_0").check().run()
+    assert not app.exception, [e.value for e in app.exception]
+    if "Indisponível: a projeção pela execução" in _textos(app):
+        pytest.skip("Projeção pela execução indisponível neste ambiente")
+    assert any("sem empenho nas células marcadas ficam fora da conta" in a.value for a in app.warning)
 
 
 def test_sem_selecao_mostra_mensagem(diretorio: Path) -> None:
