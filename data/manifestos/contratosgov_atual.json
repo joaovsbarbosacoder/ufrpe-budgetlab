@@ -1,9 +1,9 @@
 {
   "base": "contratosgov",
-  "arquivo": "contratosgov_48423cd4a05e.json",
-  "sha256": "48423cd4a05ef5a6f44b0d105b402ec34295d4eeaea12621364b0aa08397791e",
-  "data_extracao": "2026-10-14T09:59:23",
-  "importado_em": "2026-10-14T10:01:51",
+  "arquivo": "contratosgov_f900843caa81.json",
+  "sha256": "f900843caa81d699c7bd3114ad8c13b427161911957eb94b146acf22e2a037a6",
+  "data_extracao": "2026-10-15T12:54:11",
+  "importado_em": "2026-10-15T12:56:19",
   "anos": [],
   "totais": {
     "valor_global_vigentes": 138583950.11
@@ -14,7 +14,7 @@
     "vigentes": 44,
     "termos": 712,
     "empenhos": 1520,
-    "faturas": 1344,
+    "faturas": 1347,
     "reconsultados": 44,
     "reaproveitados": 176,
     "delta_contratos_novos": 0,
@@ -26,6 +26,6 @@
     "delta_situacao_alterada": 0,
     "delta_nes_novas": 0,
     "delta_nes_removidas": 0,
-    "delta_nes_movimentadas": 31
+    "delta_nes_movimentadas": 6
   }
 }
