@@ -70,6 +70,44 @@ def test_pagina_abre_sem_excecao(diretorio: Path) -> None:
     assert any(titulo.value == "Resultado Orçamentário" for titulo in app.title)
 
 
+def test_secao_sobra_prevista_de_empenho_com_botao_de_download(diretorio: Path) -> None:
+    """15/10/2026: a seção 7 mostra o resumo da sobra prevista e oferece o Excel; independe das células marcadas."""
+
+    app = _abrir()
+    assert any(sub.value == "7. Sobra prevista de empenho" for sub in app.subheader)
+    textos = _textos(app)
+    assert "NE(s) com sobra prevista" in textos or "Indisponível: a projeção pela execução" in textos
+    if "Indisponível: a projeção pela execução" not in textos:
+        # com a projeção montada: resumo com a linha TOTAL e o botão do relatório
+        assert any(
+            "TOTAL" in df.value.astype(str).to_numpy().ravel().tolist() for df in app.dataframe
+            if "Sobra prevista (R$)" in df.value.columns
+        )
+        assert any(botao.key == "ro_baixar_sobra" for botao in app.get("download_button"))
+
+
+def _html(app: AppTest) -> str:
+    return "\n".join(str(elemento.proto.body) for elemento in app.get("html"))
+
+
+def test_anulacao_sugerida_aparece_nos_cartoes_e_na_composicao(diretorio: Path) -> None:
+    """15/10/2026: a anulação sugerida (receita) tem cartão próprio e bloco na Composição; com todas as células marcadas
+    cada NE com sobra e empenho nas células entra, limitada ao empenhado dela."""
+
+    app = _abrir()
+    exercicio = _exercicio(app)
+    for botao in [b for b in app.button if b.key and b.key.startswith(f"ro_todas_{exercicio}_")]:
+        app.button(key=botao.key).click().run()
+        assert not app.exception, [e.value for e in app.exception]
+    html = _html(app)
+    if "Indisponível: a projeção pela execução" in _textos(app):
+        pytest.skip("Projeção pela execução indisponível neste ambiente")
+    assert "(+) Anulação sugerida" in html
+    assert "Anulação sugerida de empenho (receita)" in html
+    assert "Total da anulação sugerida" in html
+    assert "Entra no resultado" in html  # o detalhe lista também as NEs que não entram (faixa 3)
+
+
 def test_sem_selecao_mostra_mensagem(diretorio: Path) -> None:
     app = _abrir()
     assert "Nenhuma célula selecionada" in _textos(app)

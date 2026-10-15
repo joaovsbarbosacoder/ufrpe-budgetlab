@@ -8,6 +8,13 @@ escolhidos, mesmo quando a NE está em célula não marcada; já o empenhado só
 fato empenhado nas células marcadas. Este módulo é regra pura: não importa Streamlit e não lê
 arquivo. Especificação: docs/superpowers/specs/2026-10-08-resultado-orcamentario-design.md.
 
+ANULAÇÃO SUGERIDA (15/10/2026, pedido do usuário): a sobra prevista de empenho (saldo do empenho acima da despesa projetada
+até dezembro, `src/sobra_empenho.py`) entra como RECEITA — `Resultado = Dotação − Empenhado − Necessidade + Anulação
+sugerida` — para mostrar o valor real quando o empenho antecipado passa do que a NE vai gastar. Só conta a sobra de NE que
+está no empenhado das células marcadas e no máximo o empenhado dela nessas células (a sobra de NE em célula não marcada não
+foi cobrada do bolsão); quais faixas contam está em `sobra_empenho.FAIXAS_NA_ANULACAO`. Sem projeção, não há anulação (zero
+a somar, não nulo): o resultado volta a ser o de antes.
+
 Códigos são sempre texto (zeros à esquerda preservados). Nulo, zero e negativo são estados
 distintos: dotação nula não vira zero (o resultado fica incompleto); estorno líquido (empenhado
 negativo) entra como está.
@@ -60,6 +67,9 @@ _COLUNAS_EMPENHADO_POR_NE = [
 ]
 
 
+COLUNAS_ANULACAO_POR_NE = ["ne_curta", "origem", "sobra_prevista", "empenhado_marcado", "anulacao"]
+
+
 @dataclass
 class ResultadoOrcamentario:
     dotacao: float | None
@@ -71,6 +81,15 @@ class ResultadoOrcamentario:
     incompleto: bool
     empenhado_por_ne: pd.DataFrame
     avisos: list[str] = field(default_factory=list)
+    #: anulação sugerida (receita) por origem — Contratos e Bolsas; vazio quando a projeção não foi informada
+    anulacao: dict[str, float | None] = field(default_factory=dict)
+    #: uma linha por NE com sobra elegível e empenhado nas células marcadas: `ne_curta`, `origem`, `sobra_prevista`,
+    #: `empenhado_marcado`, `anulacao` (= menor dos dois)
+    anulacao_por_ne: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=COLUNAS_ANULACAO_POR_NE))
+
+    @property
+    def anulacao_total(self) -> float:
+        return float(sum(v for v in self.anulacao.values() if v is not None))
 
 
 def _texto_ou_none(valor) -> str | None:
@@ -235,8 +254,11 @@ def calcular_resultado(
     sem_ne_contratos: pd.DataFrame,
     sem_ne_bolsas: pd.DataFrame,
     despesas_manuais: list[DespesaManual],
+    sobra_por_ne: dict[str, float] | None = None,
 ) -> ResultadoOrcamentario:
-    """Resultado = Dotação − Empenhado total − Σ necessidade (ver §3 a §5 da especificação).
+    """Resultado = Dotação − Empenhado total − Σ necessidade + anulação sugerida (ver §3 a §5 da especificação e a
+    docstring do módulo). `sobra_por_ne`: NE → sobra prevista elegível (`sobra_empenho.sobra_elegivel_por_ne`); `None` =
+    sem projeção, nenhuma anulação.
 
     Decisões (08/10/2026):
     - `resultado` é `None` com seleção vazia, dotação indeterminada ou alguma necessidade
@@ -400,13 +422,43 @@ def calcular_resultado(
         if aviso:
             avisos.append(aviso)
 
+    # --- Anulação sugerida (receita) -----------------------------------------------------------
+    anulacao: dict[str, float | None] = {}
+    linhas_anulacao: list[dict] = []
+    if sobra_por_ne is not None:
+        marcado = (
+            selecionados.groupby("ne_curta")
+            .agg(origem=("origem", "first"), empenhado_marcado=("empenhada", lambda s: s.sum(min_count=1)))
+            .reset_index()
+        )
+        for ne, origem, empenhado_marcado in zip(marcado["ne_curta"], marcado["origem"], marcado["empenhado_marcado"]):
+            sobra = sobra_por_ne.get(str(ne))
+            if sobra is None or sobra <= TOLERANCIA_CONFERENCIA / 2 or pd.isna(empenhado_marcado):
+                continue  # empenhado nulo já deixa o resultado incompleto (aviso acima)
+            linhas_anulacao.append(
+                {
+                    "ne_curta": ne, "origem": origem, "sobra_prevista": float(sobra),
+                    "empenhado_marcado": float(empenhado_marcado),
+                    "anulacao": min(float(sobra), max(float(empenhado_marcado), 0.0)),
+                }
+            )
+        for origem in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS):
+            anulacao[origem] = float(sum(l["anulacao"] for l in linhas_anulacao if l["origem"] == origem))
+    anulacao_por_ne = pd.DataFrame(linhas_anulacao, columns=COLUNAS_ANULACAO_POR_NE)
+    anulacao_total = float(sum(anulacao.values()))
+    if anulacao_total > 0:
+        avisos.append(
+            f"O resultado inclui {_brl(anulacao_total)} de anulação sugerida de empenho (sobra prevista das NEs encerradas "
+            "ou com execução medida, limitada ao empenhado nas células marcadas): receita ainda não efetivada."
+        )
+
     # --- Resultado --------------------------------------------------------------------------
     resultado: float | None = None
     if (
         dotacao is not None and empenhado_total is not None and not nes_empenho_nulo
         and all(v is not None for v in necessidade.values())
     ):
-        resultado = dotacao - empenhado_total - float(sum(necessidade.values()))
+        resultado = dotacao - empenhado_total - float(sum(necessidade.values())) + anulacao_total
     incompleto = bool(selecionadas) and resultado is None
 
     return ResultadoOrcamentario(
@@ -419,4 +471,6 @@ def calcular_resultado(
         incompleto=incompleto,
         empenhado_por_ne=por_ne,
         avisos=avisos,
+        anulacao=anulacao,
+        anulacao_por_ne=anulacao_por_ne,
     )

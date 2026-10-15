@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 
 from src.ui_resultado_orcamentario import (
@@ -105,3 +107,13 @@ def test_rodape_totais():
 def test_bloco_escapa_html():
     html = html_bloco("T", [LinhaComposicao("<b>x</b>", 1.0)], 1.0, "Total")
     assert "<b>x</b>" not in html and "&lt;b&gt;" in html
+
+
+def test_cartao_de_anulacao_so_aparece_quando_informada():
+    sem = html_cartoes(1000.0, "", 400.0, 100.0, 500.0, "")
+    assert "Anulação sugerida" not in sem
+    com = html_cartoes(1000.0, "", 400.0, 100.0, 550.0, "", anulacao=50.0)
+    assert "(+) Anulação sugerida" in com
+    assert len(re.findall(r'<div class="ro-card[ "]', com)) == 5  # dotação, empenhado, necessidade, anulação e resultado
+    assert "(+) Anulação sugerida" in html_cartoes(1000.0, "", 400.0, 100.0, 500.0, "", anulacao=0.0)  # zero também aparece
+

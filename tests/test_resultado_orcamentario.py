@@ -385,3 +385,51 @@ def test_contrato_ativo_sem_ne_nao_muda_projecao_indisponivel():
                         "necessidade": [999.0]})
     r = _calc(necessidade_contratos=None, sem_ne_contratos=sem)
     assert r.necessidade[ORIGEM_CONTRATOS] is None
+
+
+# ---- anulação sugerida (receita), 15/10/2026 ------------------------------------------------------------------
+def test_sem_sobra_o_resultado_e_o_de_antes():
+    r = _calc()
+    assert r.resultado == 470
+    assert r.anulacao == {} and r.anulacao_total == 0.0
+    assert r.anulacao_por_ne.empty
+    assert not any("anulação sugerida" in a for a in r.avisos)
+
+
+def test_anulacao_soma_ao_resultado_limitada_ao_empenhado_das_celulas_marcadas():
+    # N1 (contrato, célula A marcada, empenhado 400): sobra 100 → anula 100.
+    # N2 (bolsa, célula B marcada, empenhado 200): sobra 500 > empenhado → anula só 200.
+    # N9 (contrato em célula C NÃO marcada): a sobra de 30 não foi cobrada do bolsão → 0.
+    # N3 ("outros", sem projeção): fora. Resultado = 1500 − 700 − 330 + 300 = 770.
+    r = _calc(sobra_por_ne={"N1": 100.0, "N2": 500.0, "N9": 30.0})
+    assert r.anulacao == {ORIGEM_CONTRATOS: 100.0, ORIGEM_BOLSAS: 200.0}
+    assert r.anulacao_total == 300.0
+    assert r.resultado == 470 + 300 == 770
+    por_ne = r.anulacao_por_ne.set_index("ne_curta")
+    assert list(por_ne.index) == ["N1", "N2"]  # N9 (fora das células marcadas) não aparece
+    assert por_ne.loc["N2", "sobra_prevista"] == 500.0 and por_ne.loc["N2", "empenhado_marcado"] == 200.0
+    assert por_ne.loc["N2", "anulacao"] == 200.0
+    assert any("anulação sugerida" in a and "R$ 300,00" in a for a in r.avisos)
+
+
+def test_sobra_zero_ou_de_ne_sem_empenho_marcado_nao_conta():
+    r = _calc(sobra_por_ne={"N1": 0.0, "N404": 80.0})
+    assert r.anulacao == {ORIGEM_CONTRATOS: 0.0, ORIGEM_BOLSAS: 0.0}
+    assert r.resultado == 470
+
+
+def test_anulacao_nao_esconde_resultado_incompleto():
+    r = _calc(sobra_por_ne={"N1": 100.0}, celulas=_celulas(dot_a=None))
+    assert r.resultado is None and r.incompleto is True
+
+
+def test_necessidade_indisponivel_continua_sem_resultado_mesmo_com_sobra():
+    r = _calc(sobra_por_ne={"N1": 100.0}, necessidade_contratos=None)
+    assert r.resultado is None
+
+
+def test_empenhado_nulo_nao_vira_anulacao():
+    empenhos = _empenhado([("N1", A, None), ("N2", B, 200.0)])
+    r = _calc(empenhado=empenhos, sobra_por_ne={"N1": 100.0, "N2": 50.0})
+    assert r.resultado is None  # empenhado nulo em célula marcada: incompleto
+    assert list(r.anulacao_por_ne["ne_curta"]) == ["N2"]
