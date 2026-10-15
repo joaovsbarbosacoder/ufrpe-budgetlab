@@ -343,8 +343,17 @@ duas colunas e o relatório avisa a diferença.
 Anulação de Saldo de Empenho (PDF nos modelos detalhado e resumido, `src/relatorio_reforco_empenho.py`).
 A sugestão inicial de cada linha respeita status, vigência e início da execução (data, com mês
 inicial proporcional): contrato suspenso sem data, vencido ou com vigência encerrada começa com sugestão
-zero, e a vigência (ou a véspera da suspensão) limita os meses sugeridos. A edição por linha continua livre; a Anulação
-nunca tem sugestão automática.
+zero, e a vigência (ou a véspera da suspensão) limita os meses sugeridos. A edição por linha continua livre; a tabela por
+item da Anulação continua começando zerada.
+
+**Sugestão de anulação no relatório de Anulação (15/10/2026; `src/sobra_empenho.py`, `src/relatorio_reforco_empenho.py`).** Antes
+da tabela editável, o relatório traz o bloco "Sugestão de anulação por NE": uma linha por NE do processo escolhido, com o
+**valor total** da sobra prevista (saldo do empenho − despesa projetada até dezembro pela execução, já com os ajustes
+manuais da projeção), o saldo, o projetado, a faixa de confiança e a observação — **sem rateio** entre itens ou programas.
+O mesmo bloco, com o TOTAL e uma nota de origem, vai nos dois PDFs (detalhado e resumido). É só sugestão: a tabela por item não
+é preenchida. Sobra zero é "nada a anular" (0,00); saldo ou projeção não calculáveis, ou NE fora da projeção, ficam vazios
+("—"), nunca zero. Só a Anulação ganha o bloco; o Reforço não muda. Sem a Liquidação por Competência a tela avisa que a sugestão
+está indisponível. A sugestão é calculada ao abrir o relatório, para Contratos Contínuos e Bolsas e Auxílios.
 
 **Layout dos cadastros.** Contratos Contínuos e Bolsas e Auxílios compartilham o mesmo desenho
 (`src/ui_cadastro.py`): um cartão-resumo no topo (faixa "Necessidade de empenho até dezembro" e grade

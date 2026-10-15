@@ -190,6 +190,7 @@ from src.relatorio_reforco_empenho import BOLSAS_AUXILIOS as RELATORIO_BOLSAS_AU
 from src import projecao_ajustes as ajustes_projecao
 from src.projecao_ajustes import ErroAjuste, ajustes_vigentes
 from src.resultado_orcamentario_fontes import projecao_bolsas, tabela_bolsas
+from src.sobra_empenho import sobra_por_ne
 from src.ui_projecao_execucao import render_edicao_projecao
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_cadastro import (
@@ -813,6 +814,33 @@ def _render_resumo_consolidado(
             )
 
 
+def _sugestao_anulacao_bolsas(
+    tabela: pd.DataFrame, ano_exercicio: int, manifesto: ManifestoExecucaoMensal,
+) -> pd.DataFrame | None:
+    """Sobra prevista por NE (`sobra_empenho.sobra_por_ne`) de Bolsas e Auxílios, para o relatório de Anulação (15/10/2026):
+    a projeção pela execução COM os ajustes manuais vigentes (pasta própria de Bolsas), sobre a tabela inteira. Devolve `None`
+    — sugestão indisponível, nunca zero — sem a Liquidação por Competência ou se a projeção falhar. Chamada só quando o
+    relatório é aberto."""
+
+    if not CAMINHO_LIQUIDACAO_COMPETENCIA.exists():
+        return None
+    try:
+        competencia = _cached_liquidacao_competencia_por_mes(
+            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime
+        )
+        try:
+            ajustes = ajustes_vigentes(ano_exercicio, ajustes_projecao.DIRETORIO_AJUSTES_BOLSAS)
+        except ErroAjuste:  # o aviso de log ilegível já aparece na própria projeção; aqui vale a metodologia
+            ajustes = {}
+        referencia = datetime.fromisoformat(manifesto.data_extracao).date()
+        relatorio, _ = projecao_bolsas(
+            tabela, competencia, ano_exercicio, mes_referencia_do_exercicio(referencia, ano_exercicio), ajustes=ajustes
+        )
+        return sobra_por_ne({"Bolsas e Auxílios": relatorio}, referencia)
+    except Exception:  # noqa: BLE001 — a Anulação continua; só a sugestão fica indisponível
+        return None
+
+
 def _render_relatorio_projecao_execucao(
     filtrado: pd.DataFrame, source_key: str, ano_exercicio: int, manifesto: ManifestoExecucaoMensal,
 ) -> RelatorioProjecaoExecucao | None:
@@ -1065,7 +1093,10 @@ dataframe = tabela_bolsas(dataframe, por_ne_execucao, sugestao_inicio_por_ne)
 
 with col_relatorio:
     st.write("")
-    render_botao_relatorio(dataframe, RELATORIO_BOLSAS_AUXILIOS, f"bolsas_{ano_selecionado}", ano_selecionado)
+    render_botao_relatorio(
+        dataframe, RELATORIO_BOLSAS_AUXILIOS, f"bolsas_{ano_selecionado}", ano_selecionado,
+        sugestao_anulacao=lambda: _sugestao_anulacao_bolsas(dataframe, ano_selecionado, manifesto_execucao_mensal),
+    )
 
 busca = st.text_input(
     "Buscar",

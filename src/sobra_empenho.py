@@ -21,6 +21,7 @@ Faixas (confiança da sobra; não é recomendação de anular):
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 from io import BytesIO
@@ -155,6 +156,47 @@ def sobra_elegivel_por_ne(tabela: pd.DataFrame, faixas: tuple[str, ...] = FAIXAS
     for ne, sobra in zip(elegiveis["NE"], elegiveis[COL_SOBRA]):
         saida[str(ne)] = saida.get(str(ne), 0.0) + float(sobra)
     return saida
+
+
+COLUNAS_SUGESTAO = ["ne_curta", "fornecedor", "saldo", "projetado", "sugestao", "faixa", "observacoes"]
+
+
+def sugestao_anulacao_por_ne(tabela: pd.DataFrame | None, nes: Iterable[str]) -> pd.DataFrame:
+    """Sugestão de anulação por NE para o relatório de Anulação de Saldo de Empenho (15/10/2026): uma linha por NE pedida
+    (`nes`, sem repetir), com o VALOR TOTAL da sobra prevista — sem rateio entre itens ou programas. `tabela`: saída de
+    `sobra_por_ne` da base do relatório. Colunas: `COLUNAS_SUGESTAO`.
+
+    `sugestao` é a sobra da NE quando a faixa dela está em `FAIXAS_NA_ANULACAO` (a mesma regra do Resultado Orçamentário);
+    sobra zero é um valor conhecido (0,00, nada a anular), e saldo desconhecido, NE sem projeção calculável ou NE que não está
+    na projeção ficam NULOS (nunca 0,00). Só sugere: não altera tabela, projeção nem cadastro."""
+
+    ordem = list(dict.fromkeys(str(ne) for ne in nes))
+    if tabela is None or not ordem:  # sem projeção calculada (ou sem NE): não há sugestão — a tela avisa
+        return pd.DataFrame(columns=COLUNAS_SUGESTAO)
+    por_ne = {str(linha["NE"]): linha for _, linha in tabela.iterrows()}
+    registros = []
+    for ne in ordem:
+        linha = por_ne.get(ne)
+        if linha is None:
+            registros.append({
+                "ne_curta": ne, "fornecedor": None, "saldo": None, "projetado": None, "sugestao": None, "faixa": SEM_SOBRA,
+                "observacoes": "NE fora da projeção pela execução (sem projeção calculável): sem sugestão.",
+            })
+            continue
+        sobra = _numero(linha[COL_SOBRA])
+        faixa = linha["Faixa da sobra"]
+        if faixa in FAIXAS_NA_ANULACAO:
+            sugestao = sobra
+        elif sobra is not None and abs(sobra) <= TOLERANCIA:
+            sugestao = 0.0  # nada a anular é um valor conhecido (inclui resíduo de ponto flutuante), não ausência
+        else:
+            sugestao = None
+        registros.append({
+            "ne_curta": ne, "fornecedor": linha["Fornecedor / programa"], "saldo": _numero(linha["Saldo do empenho"]),
+            "projetado": _numero(linha[COL_PROJETADO]), "sugestao": sugestao, "faixa": faixa,
+            "observacoes": linha["Observações"],
+        })
+    return pd.DataFrame(registros, columns=COLUNAS_SUGESTAO)
 
 
 def resumo_da_sobra(tabela: pd.DataFrame) -> pd.DataFrame:

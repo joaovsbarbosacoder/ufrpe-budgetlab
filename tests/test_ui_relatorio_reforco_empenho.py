@@ -130,7 +130,25 @@ def _bolsas_sintetico() -> pd.DataFrame:
     )
 
 
-def _app_fn(tipo_id: str, processo_key: str) -> None:
+def _sobra_sintetica() -> pd.DataFrame:
+    """Tabela no formato de `sobra_empenho.sobra_por_ne` (toda a base; a tela filtra as NEs do processo escolhido)."""
+
+    from src.sobra_empenho import COL_PROJETADO, COL_SOBRA
+
+    return pd.DataFrame(
+        {
+            "NE": ["2026NE000020", "2026NE000056", "2026NE000777"],
+            "Faixa da sobra": ["2 · Execução medida (fator)", "—", "1 · Encerrado/suspenso ou nada projetado"],
+            "Fornecedor / programa": ["PADPG", "ESO", "OUTRO PROCESSO"],
+            "Saldo do empenho": [10000.0, 4000.0, 900.0],
+            COL_PROJETADO: [6000.0, 4000.0, 0.0],
+            COL_SOBRA: [4000.0, 0.0, 900.0],
+            "Observações": ["conferir faturas pendentes", "", ""],
+        }
+    )
+
+
+def _app_fn(tipo_id: str, processo_key: str, com_sugestao: bool = False) -> None:
     """Corpo do app simulado (ver `_renderiza_conteudo`) — `AppTest.from_function` exige uma
     função "executável isoladamente" (sem depender de closures sobre variáveis externas), daí
     receber `tipo_id` (string) em vez do próprio `TipoRelatorio` e os imports todos aqui
@@ -138,21 +156,111 @@ def _app_fn(tipo_id: str, processo_key: str) -> None:
 
     from src.relatorio_reforco_empenho import BOLSAS_AUXILIOS, TIPO_ANULACAO, TIPO_REFORCO
     from src.ui_relatorio_reforco_empenho import _render_conteudo_relatorio
-    from tests.test_ui_relatorio_reforco_empenho import _bolsas_sintetico
+    from tests.test_ui_relatorio_reforco_empenho import _bolsas_sintetico, _sobra_sintetica
 
     tipo = TIPO_REFORCO if tipo_id == "reforco" else TIPO_ANULACAO
-    _render_conteudo_relatorio(_bolsas_sintetico(), BOLSAS_AUXILIOS, tipo, processo_key, 2026)
+    _render_conteudo_relatorio(
+        _bolsas_sintetico(), BOLSAS_AUXILIOS, tipo, processo_key, 2026,
+        sugestao_anulacao=_sobra_sintetica() if com_sugestao else None,
+    )
 
 
-def _renderiza_conteudo(tipo_id: str, processo_key: str = "teste") -> AppTest:
+def _renderiza_conteudo(tipo_id: str, processo_key: str = "teste", com_sugestao: bool = False) -> AppTest:
     """Chama `_render_conteudo_relatorio` diretamente, sem passar pelo dialog/picker (mesma
     técnica de `tests/test_relatorio_reforco_empenho.py` para funções internas) — com dado
     sintético, não depende do cadastro real. `AppTest.from_function` monta um app de uma
     função Python só para este teste, sem precisar de um arquivo `.py` à parte."""
 
-    app = AppTest.from_function(_app_fn, args=(tipo_id, processo_key), default_timeout=TEMPO_LIMITE_APPTEST)
+    app = AppTest.from_function(_app_fn, args=(tipo_id, processo_key, com_sugestao), default_timeout=TEMPO_LIMITE_APPTEST)
     app.run()
     return app
+
+
+def _html(app: AppTest) -> str:
+    return " ".join(m.value for m in app.markdown)
+
+
+class TestResolverSugestao(unittest.TestCase):
+    """A sugestão pode vir pronta ou como função, calculada só quando o relatório é aberto (não a cada interação da página)."""
+
+    def test_none_e_tabela_passam_direto(self) -> None:
+        from src.ui_relatorio_reforco_empenho import _resolver_sugestao
+
+        tabela = _sobra_sintetica()
+        self.assertIsNone(_resolver_sugestao(None))
+        self.assertIs(_resolver_sugestao(tabela), tabela)
+
+    def test_funcao_e_chamada_uma_vez_e_o_resultado_usado(self) -> None:
+        from src.ui_relatorio_reforco_empenho import _resolver_sugestao
+
+        chamadas = []
+
+        def calcular():
+            chamadas.append(1)
+            return _sobra_sintetica()
+
+        resultado = _resolver_sugestao(calcular)
+        self.assertEqual(len(chamadas), 1)
+        self.assertEqual(len(resultado), 3)
+
+    def test_funcao_que_devolve_none_vira_indisponivel(self) -> None:
+        from src.ui_relatorio_reforco_empenho import _resolver_sugestao
+
+        self.assertIsNone(_resolver_sugestao(lambda: None))
+
+
+class TestSugestaoDeAnulacaoNaTela(unittest.TestCase):
+    """15/10/2026: na Anulação, bloco com o valor TOTAL sugerido (sobra prevista) de cada NE do processo, sem rateio; a
+    tabela editável por item continua zerada."""
+
+    def test_bloco_traz_so_as_nes_do_processo_com_o_valor_total_e_o_total(self) -> None:
+        app = _renderiza_conteudo("anulacao", com_sugestao=True)
+
+        self.assertEqual(len(app.exception), 0)
+        html = _html(app)
+        self.assertIn("Sugestão de anulação por NE", html)
+        self.assertIn("2026NE000020", html)
+        self.assertIn("2026NE000056", html)
+        self.assertNotIn("2026NE000777", html)  # NE de outro processo não entra
+        self.assertIn("4.000,00", html)  # sobra total da NE 20, sem dividir entre itens
+        self.assertIn("TOTAL", html)
+
+    def test_tabela_editavel_continua_zerada_e_sem_rateio(self) -> None:
+        app = _renderiza_conteudo("anulacao", com_sugestao=True)
+
+        valores = [ti for ti in app.text_input if ti.label == "ANULAR (R$)"]
+        self.assertTrue(all(v.value == "0,00" for v in valores))
+        self.assertEqual(app.metric[0].value, "R$ 0,00")
+
+    def test_sem_projecao_avisa_que_a_sugestao_esta_indisponivel(self) -> None:
+        app = _renderiza_conteudo("anulacao", com_sugestao=False)
+
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(any("Sugestão de anulação indisponível" in c.value for c in app.caption))
+        self.assertNotIn("Sugestão de anulação por NE", _html(app))
+
+    def test_reforco_nao_mostra_a_sugestao(self) -> None:
+        app = _renderiza_conteudo("reforco", com_sugestao=True)
+
+        self.assertEqual(len(app.exception), 0)
+        self.assertNotIn("Sugestão de anulação por NE", _html(app))
+        self.assertFalse(any("Sugestão de anulação indisponível" in c.value for c in app.caption))
+
+    def test_html_escapa_texto_e_marca_nulo_diferente_de_zero(self) -> None:
+        from src.ui_relatorio_reforco_empenho import html_sugestao_anulacao
+
+        sugestao = pd.DataFrame(
+            {
+                "ne_curta": ["2026NE000001", "2026NE000002"], "fornecedor": ["A & B <Ltda>", None],
+                "saldo": [100.0, None], "projetado": [60.0, None], "sugestao": [0.0, None],
+                "faixa": ["—", "—"], "observacoes": ["x", "sem projeção calculável"],
+            }
+        )
+        html = html_sugestao_anulacao(sugestao)
+        self.assertIn("A &amp; B &lt;Ltda&gt;", html)
+        self.assertNotIn("<Ltda>", html)
+        self.assertIn("0,00", html)  # zero conhecido
+        self.assertIn(">—<", html)  # nulo
 
 
 class TestGradeFeitaAMao(unittest.TestCase):

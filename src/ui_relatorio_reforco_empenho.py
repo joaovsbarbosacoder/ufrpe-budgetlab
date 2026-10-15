@@ -67,11 +67,19 @@ milhar sozinho (evita multiplicar por 1000 sem querer); "94.500" digitado à mã
 não 94500 — mas ela nunca sobrevive a um primeiro `on_change` (a formatação de volta sempre
 inclui vírgula), então só existe no instante entre digitar e sair do campo.
 
+Sugestão de anulação (15/10/2026): no relatório de Anulação, antes da tabela editável, um bloco "Sugestão de anulação por
+NE" traz, para cada NE do processo, o VALOR TOTAL da sobra prevista (`src/sobra_empenho.py`), sem rateio por item ou programa,
+com a faixa e a observação. É só sugestão: a tabela editável continua começando zerada e o mesmo bloco vai nos dois PDFs.
+
 Contrato público:
-    render_botao_relatorio(df, spec, chave, ano_referencia) -> None
+    render_botao_relatorio(df, spec, chave, ano_referencia, sugestao_anulacao=None) -> None
+    html_sugestao_anulacao(sugestao) -> str
 """
 
 from __future__ import annotations
+
+from collections.abc import Callable
+from html import escape
 
 import pandas as pd
 import streamlit as st
@@ -87,6 +95,7 @@ from src.relatorio_reforco_empenho import (
     linhas_para_processo,
     processos_disponiveis,
 )
+from src.sobra_empenho import sugestao_anulacao_por_ne
 from src.ui_theme import format_brl_full
 
 _TIPOS = (TIPO_REFORCO, TIPO_ANULACAO)
@@ -150,9 +159,57 @@ def _reformatar_valor(valor_key: str) -> None:
     st.session_state[valor_key] = _formatar_valor_brl(_parse_valor_brl(st.session_state[valor_key]))
 
 
+def _resolver_sugestao(
+    sugestao_anulacao: pd.DataFrame | Callable[[], pd.DataFrame | None] | None,
+) -> pd.DataFrame | None:
+    """A sugestão chega pronta (tabela `sobra_por_ne`) ou como função, chamada UMA vez ao abrir o relatório — a projeção
+    inteira não é recalculada a cada interação da página. `None` (ou função que devolve `None`): indisponível."""
+
+    return sugestao_anulacao() if callable(sugestao_anulacao) else sugestao_anulacao
+
+
+def _celula_valor(valor: object) -> str:
+    """Valor em R$ pt-BR; nulo é "—" (nunca 0,00: zero é "nada a anular", conhecido)."""
+
+    if valor is None or pd.isna(valor):
+        return "—"
+    return f"{float(valor):,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def html_sugestao_anulacao(sugestao: pd.DataFrame) -> str:
+    """Tabela HTML do bloco "Sugestão de anulação por NE" (HTML próprio: `st.dataframe` aparece em branco dentro de janelas).
+    Textos escapados; sugestão nula "—"; linha TOTAL soma só o que foi calculado."""
+
+    cabecalho = (
+        "NE", "Fornecedor / programa", "Saldo do empenho", "Projetado até dez.", "Sugestão de anulação", "Faixa", "Observações",
+    )
+    estilo_num = 'style="text-align:right;font-variant-numeric:tabular-nums"'
+    linhas = []
+    for linha in sugestao.itertuples():
+        linhas.append(
+            "<tr>"
+            f"<td><b>{escape(str(linha.ne_curta))}</b></td><td>{escape('' if pd.isna(linha.fornecedor) else str(linha.fornecedor))}</td>"
+            f"<td {estilo_num}>{_celula_valor(linha.saldo)}</td><td {estilo_num}>{_celula_valor(linha.projetado)}</td>"
+            f'<td {estilo_num}><b>{_celula_valor(linha.sugestao)}</b></td>'
+            f"<td>{escape('' if pd.isna(linha.faixa) else str(linha.faixa))}</td>"
+            f"<td>{escape('' if pd.isna(linha.observacoes) else str(linha.observacoes))}</td></tr>"
+        )
+    total = pd.to_numeric(sugestao["sugestao"], errors="coerce").sum(min_count=1)
+    linhas.append(
+        f'<tr style="border-top:2px solid #D3DFEC"><td><b>TOTAL</b></td><td></td><td></td><td></td>'
+        f"<td {estilo_num}><b>{_celula_valor(total)}</b></td><td></td><td></td></tr>"
+    )
+    cab = "".join(f'<th style="text-align:left;font-size:11px">{escape(c)}</th>' for c in cabecalho)
+    return (
+        '<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:12px;width:100%">'
+        f"<thead><tr>{cab}</tr></thead><tbody>{''.join(linhas)}</tbody></table></div>"
+    )
+
+
 @st.dialog("Relatórios", width="large")
 def _abrir_relatorios(
-    df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str, ano_referencia: int
+    df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str, ano_referencia: int,
+    sugestao_anulacao: pd.DataFrame | None = None,
 ) -> None:
     tipo_key = f"reforco_tipo_{chave}"
     tipo_id = st.session_state.get(tipo_key)
@@ -191,11 +248,12 @@ def _abrir_relatorios(
 
     tipo = TIPO_REFORCO if tipo_id == "reforco" else TIPO_ANULACAO
     st.divider()
-    _render_conteudo_relatorio(df, spec, tipo, chave, ano_referencia)
+    _render_conteudo_relatorio(df, spec, tipo, chave, ano_referencia, sugestao_anulacao)
 
 
 def _render_conteudo_relatorio(
-    df: pd.DataFrame, spec: EspecificacaoRelatorio, tipo: TipoRelatorio, chave: str, ano_referencia: int
+    df: pd.DataFrame, spec: EspecificacaoRelatorio, tipo: TipoRelatorio, chave: str, ano_referencia: int,
+    sugestao_anulacao: pd.DataFrame | None = None,
 ) -> None:
     """Seletor de processo + tabela editável + os dois PDFs — conteúdo compartilhado entre
     Reforço e Anulação (`_abrir_relatorios`, acima), parametrizado por `tipo`. Toda key de
@@ -213,6 +271,24 @@ def _render_conteudo_relatorio(
     if linhas.empty:
         st.warning("Nenhuma linha de empenho para este processo.")
         return
+
+    # Anulação: sugestão por NE do processo (sobra prevista, valor total, sem rateio) — antes da grade editável (15/10/2026)
+    sugestao = pd.DataFrame()
+    if tipo.id == TIPO_ANULACAO.id:
+        if sugestao_anulacao is None:
+            st.caption(
+                "Sugestão de anulação indisponível: a projeção pela execução não foi calculada (Liquidação por Competência "
+                "ausente ou sem leitura)."
+            )
+        else:
+            sugestao = sugestao_anulacao_por_ne(sugestao_anulacao, linhas["ne_curta"].dropna().unique())
+            if not sugestao.empty:
+                st.markdown("**Sugestão de anulação por NE** — sobra prevista (saldo − projetado até dezembro)")
+                st.markdown(html_sugestao_anulacao(sugestao), unsafe_allow_html=True)
+                st.caption(
+                    "Valor total da NE, sem rateio por item; só uma sugestão: a tabela abaixo continua zerada e editável. "
+                    "Vazio (—) = sem projeção calculável. Conferir faturas pendentes de meses já prestados antes de anular."
+                )
 
     # `\$` escapado: dois "R$" no mesmo texto viravam um par de delimitadores de fórmula
     # (o Markdown do Streamlit trata "$...$" como LaTeX) — bug real observado (texto saía
@@ -313,7 +389,7 @@ def _render_conteudo_relatorio(
     with col_detalhado:
         st.download_button(
             "Baixar PDF — Modelo Detalhado",
-            data=gerar_pdf_detalhado(spec, tipo, processo, linhas_para_pdf),
+            data=gerar_pdf_detalhado(spec, tipo, processo, linhas_para_pdf, sugestao),
             file_name=f"{tipo.prefixo_arquivo}_detalhado_{nome_arquivo}.pdf",
             mime="application/pdf",
             type="primary",
@@ -323,7 +399,7 @@ def _render_conteudo_relatorio(
     with col_resumido:
         st.download_button(
             "Baixar PDF — Modelo Resumido",
-            data=gerar_pdf_resumido(spec, tipo, processo, linhas_para_pdf),
+            data=gerar_pdf_resumido(spec, tipo, processo, linhas_para_pdf, sugestao),
             file_name=f"{tipo.prefixo_arquivo}_resumido_{nome_arquivo}.pdf",
             mime="application/pdf",
             width="stretch",
@@ -348,7 +424,8 @@ def _limpar_estado_relatorio(chave: str) -> None:
 
 
 def render_botao_relatorio(
-    df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str, ano_referencia: int
+    df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str, ano_referencia: int,
+    sugestao_anulacao: pd.DataFrame | Callable[[], pd.DataFrame | None] | None = None,
 ) -> None:
     """Botão que abre o pop-up de emissão de relatório — chamar de dentro da página, com o
     DataFrame já lido por ela (não relê a planilha) e uma `chave` distinta por página
@@ -359,8 +436,12 @@ def render_botao_relatorio(
     `ano_referencia` é o exercício do cadastro em tela (`ano_selecionado` na página chamadora)
     — nunca inferido daqui, repassado até `necessidade_ate_mes_vigente` para a sugestão "por
     calendário" não misturar o mês real de hoje com um exercício diferente do que está sendo
-    exibido (ex.: cadastro do ano anterior ainda não duplicado para o novo exercício)."""
+    exibido (ex.: cadastro do ano anterior ainda não duplicado para o novo exercício).
+
+    `sugestao_anulacao` (15/10/2026): tabela `sobra_empenho.sobra_por_ne` da base em tela; a Anulação mostra o valor total da
+    sobra prevista de cada NE do processo — pronta ou como função (calculada só ao abrir o relatório). `None` (projeção não
+    calculada): a Anulação avisa que a sugestão está indisponível."""
 
     if st.button("📄 Relatórios", key=f"reforco_abrir_{chave}"):
         _limpar_estado_relatorio(chave)
-        _abrir_relatorios(df, spec, chave, ano_referencia)
+        _abrir_relatorios(df, spec, chave, ano_referencia, _resolver_sugestao(sugestao_anulacao))
