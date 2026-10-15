@@ -747,86 +747,36 @@ def _estilo_tabela(indice_inicio_alinhamento_direita: int) -> TableStyle:
     )
 
 
-_CABECALHO_SUGESTAO = [
-    "NE", "FORNECEDOR / PROGRAMA", "SALDO DO EMPENHO (R$)", "DESPESA PROJETADA ATÉ DEZ. (R$)",
-    "SUGESTÃO DE ANULAÇÃO (R$)", "FAIXA DA SOBRA", "OBSERVAÇÕES",
-]
-#: soma 757 pt, o útil da página paisagem com margem de 15 mm
-_LARGURAS_COLUNA_SUGESTAO = [78, 140, 72, 82, 82, 95, 208]
+def aceitar_sugestao_nas_linhas(linhas: pd.DataFrame, sugestao: pd.DataFrame | None) -> dict[int, tuple[float, float]]:
+    """"Aceitar sugestão" da Anulação (15/10/2026): leva o VALOR TOTAL da sobra prevista de cada NE para a tabela por item,
+    sem ratear — o total vai na PRIMEIRA linha da NE (na ordem de `linhas`) e as demais ficam como estão. Devolve
+    `{posição da linha em `linhas`: (meses, valor)}`.
 
-NOTA_SUGESTAO = (
-    "Sugestão de anulação = sobra prevista da NE (saldo do empenho − despesa projetada até dezembro pela execução, "
-    "incluindo os ajustes manuais da projeção): o empenho que, pela projeção, não será liquidado no exercício. É o valor TOTAL "
-    "da NE, sem rateio por item ou programa, e é apenas uma sugestão — não altera a tabela editável acima nem o cadastro. "
-    "Valor vazio (—): saldo ou projeção não calculáveis, nunca zero. Conferir faturas pendentes de meses já prestados antes "
-    "de anular."
-)
+    Só entra NE com sugestão maior que zero: zero é "nada a anular" e nulo é "sem projeção calculável" (não há o que aceitar).
+    `meses = valor ÷ valor mensal da linha` (2 casas, no mínimo 0,01; sem valor mensal, 1,00) só para manter coerente a coluna
+    "Meses a Anular" — o valor aceito é o exato — e porque `excluir_linhas_zeradas` tira do PDF a linha com meses ou valor zero."""
 
-
-def _dados_sugestao(sugestao: pd.DataFrame | None) -> list[list[str]]:
-    """Linhas da tabela "Sugestão de anulação por NE" (cabeçalho, uma linha por NE e TOTAL), ou lista vazia sem NE. A sugestão
-    nula aparece como "—" (nunca 0,00: zero é "nada a anular", conhecido) e fica fora do TOTAL."""
-
-    if sugestao is None or sugestao.empty:
-        return []
-    dados = [list(_CABECALHO_SUGESTAO)]
-    for linha in sugestao.itertuples():
-        dados.append(
-            [
-                str(linha.ne_curta), _texto_ou_vazio(linha.fornecedor), _formatar_valor(linha.saldo),
-                _formatar_valor(linha.projetado), _formatar_valor(linha.sugestao), _texto_ou_vazio(linha.faixa),
-                _texto_ou_vazio(linha.observacoes),
-            ]
-        )
-    total = pd.to_numeric(sugestao["sugestao"], errors="coerce").sum(min_count=1)
-    dados.append(["TOTAL", "", "", "", _formatar_valor(total), "", ""])
-    return dados
+    if sugestao is None or sugestao.empty or linhas.empty:
+        return {}
+    totais = {
+        str(linha.ne_curta): float(linha.sugestao)
+        for linha in sugestao.itertuples()
+        if pd.notna(linha.sugestao) and float(linha.sugestao) > 0
+    }
+    aceitos: dict[int, tuple[float, float]] = {}
+    ja_usadas: set[str] = set()
+    for posicao, linha in enumerate(linhas.reset_index(drop=True).itertuples()):
+        ne = str(linha.ne_curta)
+        if ne not in totais or ne in ja_usadas:
+            continue
+        ja_usadas.add(ne)
+        valor_mensal = linha.valor_mensal
+        meses = 1.0 if pd.isna(valor_mensal) or float(valor_mensal) <= 0 else max(0.01, round(totais[ne] / float(valor_mensal), 2))
+        aceitos[posicao] = (meses, totais[ne])
+    return aceitos
 
 
-def _elementos_sugestao(tipo: TipoRelatorio, sugestao: pd.DataFrame | None, estilo_celula) -> list:
-    """Bloco "Sugestão de anulação por NE" do PDF — só no relatório de Anulação e só com NE (15/10/2026)."""
-
-    if tipo.id != TIPO_ANULACAO.id:
-        return []
-    dados = _dados_sugestao(sugestao)
-    if not dados:
-        return []
-    estilos = getSampleStyleSheet()
-    estilo_cabecalho = estilo_celula.clone("cabecalho_sugestao")
-    estilo_cabecalho.fontName = "Helvetica-Bold"
-    estilo_cabecalho.alignment = 1
-    corpo = [[_celula_texto(rotulo, estilo_cabecalho) for rotulo in dados[0]]]
-    for linha in dados[1:-1]:
-        corpo.append([_celula_texto(linha[0], estilo_celula), _celula_texto(linha[1], estilo_celula), *linha[2:5],
-                      _celula_texto(linha[5], estilo_celula), _celula_texto(linha[6], estilo_celula)])
-    corpo.append(dados[-1])
-    tabela = Table(corpo, colWidths=_LARGURAS_COLUNA_SUGESTAO, repeatRows=1)
-    tabela.setStyle(
-        TableStyle(
-            [
-                ("FONTSIZE", (0, 0), (-1, -1), 7),
-                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-                ("ALIGN", (2, 1), (4, -1), "RIGHT"),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ]
-        )
-    )
-    nota = estilo_celula.clone("nota_sugestao")
-    nota.fontName = "Helvetica-Oblique"
-    return [
-        Spacer(1, 12),
-        Paragraph("SUGESTÃO DE ANULAÇÃO POR NE — SOBRA PREVISTA", estilos["Heading4"]),
-        tabela,
-        Spacer(1, 4),
-        Paragraph(NOTA_SUGESTAO, nota),
-    ]
-
-
-def gerar_pdf_detalhado(
-    spec: EspecificacaoRelatorio, tipo: TipoRelatorio, processo: str, linhas: pd.DataFrame,
-    sugestao_anulacao: pd.DataFrame | None = None,
-) -> bytes:
+def gerar_pdf_detalhado(spec: EspecificacaoRelatorio, tipo: TipoRelatorio, processo: str, linhas: pd.DataFrame) -> bytes:
     """PDF "modelo detalhado" da PROPLAD — uma linha por item, com Processo/Unidade/Empenho
     repetidos em cada linha, em ordem alfabética por "Item de Despesa" (pedido explícito) —
     case-insensitive (`str.casefold`, mesmo critério de
@@ -839,8 +789,7 @@ def gerar_pdf_detalhado(
     sufixo). `linhas` já traz a coluna `empenhar` final (após edição por linha na página) —
     esta função só formata e desenha, não recalcula nada. `tipo` só troca o rótulo da última
     coluna e a linha de título (Reforço/Anulação, ver `_novo_documento`) — a estrutura em si é
-    idêntica para os dois. `sugestao_anulacao` (só no tipo Anulação, 15/10/2026): bloco "Sugestão de anulação por NE" abaixo
-    da tabela, com o valor total da sobra prevista de cada NE do processo (`sobra_empenho.sugestao_anulacao_por_ne`)."""
+    idêntica para os dois."""
 
     buffer, documento, elementos, estilo_celula = _novo_documento(spec, tipo, processo)
 
@@ -886,15 +835,11 @@ def gerar_pdf_detalhado(
         )
     )
     elementos.append(tabela)
-    elementos.extend(_elementos_sugestao(tipo, sugestao_anulacao, estilo_celula))
     documento.build(elementos)
     return buffer.getvalue()
 
 
-def gerar_pdf_resumido(
-    spec: EspecificacaoRelatorio, tipo: TipoRelatorio, processo: str, linhas: pd.DataFrame,
-    sugestao_anulacao: pd.DataFrame | None = None,
-) -> bytes:
+def gerar_pdf_resumido(spec: EspecificacaoRelatorio, tipo: TipoRelatorio, processo: str, linhas: pd.DataFrame) -> bytes:
     """PDF "modelo resumido" da PROPLAD — layout de Tabela Dinâmica do Excel impresso (pedido
     explícito de correção): uma linha por combinação única de Ação/PTRES/Fonte/ND/PI/UGR, com
     o valor da última coluna somado entre todos os itens/fornecedores daquele grupo — visão
@@ -903,7 +848,7 @@ def gerar_pdf_resumido(
     `linhas` já traz a coluna `empenhar` final (após edição por linha na página) — esta função
     só agrupa/soma e desenha, não recalcula o valor de cada linha original (ver
     `_agrupado_por_classificacao`). `tipo` só troca o rótulo da última coluna e a linha de
-    título (Reforço/Anulação, ver `_novo_documento`). `sugestao_anulacao`: igual ao modelo detalhado (só Anulação)."""
+    título (Reforço/Anulação, ver `_novo_documento`)."""
 
     buffer, documento, elementos, estilo_celula = _novo_documento(spec, tipo, processo)
 
@@ -927,6 +872,5 @@ def gerar_pdf_resumido(
     tabela = Table(dados, colWidths=_LARGURAS_COLUNA_RESUMIDO, repeatRows=1)
     tabela.setStyle(_estilo_tabela(indice_inicio_alinhamento_direita=0))
     elementos.append(tabela)
-    elementos.extend(_elementos_sugestao(tipo, sugestao_anulacao, estilo_celula))
     documento.build(elementos)
     return buffer.getvalue()

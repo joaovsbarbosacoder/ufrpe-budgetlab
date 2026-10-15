@@ -67,9 +67,11 @@ milhar sozinho (evita multiplicar por 1000 sem querer); "94.500" digitado à mã
 não 94500 — mas ela nunca sobrevive a um primeiro `on_change` (a formatação de volta sempre
 inclui vírgula), então só existe no instante entre digitar e sair do campo.
 
-Sugestão de anulação (15/10/2026): no relatório de Anulação, antes da tabela editável, um bloco "Sugestão de anulação por
+Sugestão de anulação (15/10/2026): no relatório de Anulação, antes da tabela editável, um quadro "Sugestão de anulação por
 NE" traz, para cada NE do processo, o VALOR TOTAL da sobra prevista (`src/sobra_empenho.py`), sem rateio por item ou programa,
-com a faixa e a observação. É só sugestão: a tabela editável continua começando zerada e o mesmo bloco vai nos dois PDFs.
+com a faixa e a observação. A tabela editável continua começando zerada; "Aceitar sugestão de anulação" leva o total de cada NE
+para a primeira linha dela (`aceitar_sugestao_nas_linhas`) e "Zerar anulação" desfaz. Os PDFs são o modelo de sempre (CNPJ,
+ação, PTRES…), já com os valores aceitos ou editados: o quadro é só da tela.
 
 Contrato público:
     render_botao_relatorio(df, spec, chave, ano_referencia, sugestao_anulacao=None) -> None
@@ -86,6 +88,7 @@ import streamlit as st
 
 from src.relatorio_reforco_empenho import (
     TIPO_ANULACAO,
+    aceitar_sugestao_nas_linhas,
     TIPO_REFORCO,
     EspecificacaoRelatorio,
     TipoRelatorio,
@@ -135,6 +138,23 @@ def _parse_valor_brl(texto: str) -> float:
     except ValueError:
         return 0.0
     return valor if valor > 0.0 else 0.0
+
+
+def _aceitar_sugestao(prefixo_linha: str, aceitos: dict[int, tuple[float, float]]) -> None:
+    """`on_click` de "Aceitar sugestão de anulação": preenche "Meses a Anular" e "ANULAR (R$)" das linhas aceitas
+    (`aceitar_sugestao_nas_linhas`) ANTES da grade ser desenhada neste rerun; o restante da tabela fica como está."""
+
+    for posicao, (meses, valor) in aceitos.items():
+        st.session_state[f"{prefixo_linha}_meses_{posicao}"] = _formatar_valor_brl(meses)
+        st.session_state[f"{prefixo_linha}_valor_{posicao}"] = _formatar_valor_brl(valor)
+
+
+def _zerar_anulacao(prefixo_linha: str, quantidade_linhas: int) -> None:
+    """`on_click` de "Zerar anulação": volta meses e valor de TODAS as linhas do processo a zero (como na abertura)."""
+
+    for posicao in range(quantidade_linhas):
+        st.session_state[f"{prefixo_linha}_meses_{posicao}"] = _formatar_valor_brl(0.0)
+        st.session_state[f"{prefixo_linha}_valor_{posicao}"] = _formatar_valor_brl(0.0)
 
 
 def _recalcular_valor_por_meses(meses_key: str, valor_key: str, valor_mensal: float) -> None:
@@ -272,6 +292,9 @@ def _render_conteudo_relatorio(
         st.warning("Nenhuma linha de empenho para este processo.")
         return
 
+    prefixo_linha = f"reforco_linha_{chave}_{tipo.id}_{processo}"
+    linhas_indexadas = linhas.reset_index(drop=True)
+
     # Anulação: sugestão por NE do processo (sobra prevista, valor total, sem rateio) — antes da grade editável (15/10/2026)
     sugestao = pd.DataFrame()
     if tipo.id == TIPO_ANULACAO.id:
@@ -286,8 +309,21 @@ def _render_conteudo_relatorio(
                 st.markdown("**Sugestão de anulação por NE** — sobra prevista (saldo − projetado até dezembro)")
                 st.markdown(html_sugestao_anulacao(sugestao), unsafe_allow_html=True)
                 st.caption(
-                    "Valor total da NE, sem rateio por item; só uma sugestão: a tabela abaixo continua zerada e editável. "
-                    "Vazio (—) = sem projeção calculável. Conferir faturas pendentes de meses já prestados antes de anular."
+                    "Valor total da NE, sem rateio por item. Vazio (—) = sem projeção calculável. Conferir faturas pendentes de "
+                    "meses já prestados antes de anular."
+                )
+                aceitos = aceitar_sugestao_nas_linhas(linhas_indexadas, sugestao)
+                col_aceitar, col_zerar = st.columns(2)
+                col_aceitar.button(
+                    "Aceitar sugestão de anulação", key=f"reforco_aceitar_{chave}_{tipo.id}_{processo}", width="stretch",
+                    type="primary", disabled=not aceitos, on_click=_aceitar_sugestao, args=(prefixo_linha, aceitos),
+                    help="Preenche a tabela abaixo (modelo com CNPJ, ação, PTRES…): o total de cada NE vai na primeira linha "
+                         "dela, sem ratear. Depois você ainda pode editar qualquer valor.",
+                )
+                col_zerar.button(
+                    "Zerar anulação", key=f"reforco_zerar_{chave}_{tipo.id}_{processo}", width="stretch",
+                    on_click=_zerar_anulacao, args=(prefixo_linha, len(linhas_indexadas)),
+                    help="Volta meses e valores de todas as linhas deste processo a zero.",
                 )
 
     # `\$` escapado: dois "R$" no mesmo texto viravam um par de delimitadores de fórmula
@@ -321,9 +357,6 @@ def _render_conteudo_relatorio(
     # enquanto a key não mudasse). "Meses" usa `on_change` (`_recalcular_valor_por_meses`) pra
     # recalcular e já deixar "Valor" com o número certo ANTES dele ser desenhado nesta mesma
     # execução — sem isso, o valor recalculado só apareceria visível um rerun depois.
-    prefixo_linha = f"reforco_linha_{chave}_{tipo.id}_{processo}"
-    linhas_indexadas = linhas.reset_index(drop=True)
-
     cabecalho = st.columns(_PROPORCOES_LINHA)
     cabecalho[0].caption("Item de Despesa")
     cabecalho[1].caption("Empenho")
@@ -389,7 +422,7 @@ def _render_conteudo_relatorio(
     with col_detalhado:
         st.download_button(
             "Baixar PDF — Modelo Detalhado",
-            data=gerar_pdf_detalhado(spec, tipo, processo, linhas_para_pdf, sugestao),
+            data=gerar_pdf_detalhado(spec, tipo, processo, linhas_para_pdf),
             file_name=f"{tipo.prefixo_arquivo}_detalhado_{nome_arquivo}.pdf",
             mime="application/pdf",
             type="primary",
@@ -399,7 +432,7 @@ def _render_conteudo_relatorio(
     with col_resumido:
         st.download_button(
             "Baixar PDF — Modelo Resumido",
-            data=gerar_pdf_resumido(spec, tipo, processo, linhas_para_pdf, sugestao),
+            data=gerar_pdf_resumido(spec, tipo, processo, linhas_para_pdf),
             file_name=f"{tipo.prefixo_arquivo}_resumido_{nome_arquivo}.pdf",
             mime="application/pdf",
             width="stretch",

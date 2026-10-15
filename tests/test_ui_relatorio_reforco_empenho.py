@@ -232,6 +232,53 @@ class TestSugestaoDeAnulacaoNaTela(unittest.TestCase):
         self.assertTrue(all(v.value == "0,00" for v in valores))
         self.assertEqual(app.metric[0].value, "R$ 0,00")
 
+    def test_aceitar_sugestao_preenche_a_primeira_linha_da_ne_com_o_total(self) -> None:
+        app = _renderiza_conteudo("anulacao", com_sugestao=True)
+        next(b for b in app.button if b.label == "Aceitar sugestão de anulação").click().run()
+
+        self.assertEqual(len(app.exception), 0)
+        valores = [ti for ti in app.text_input if ti.label == "ANULAR (R$)"]
+        meses = [ti for ti in app.text_input if ti.label == "Meses a Anular"]
+        self.assertEqual(valores[0].value, "4.000,00")  # sobra total da NE 20, direto, sem ratear
+        self.assertEqual(meses[0].value, "0,25")  # 4.000 ÷ valor mensal da linha (15.750)
+        self.assertEqual(valores[1].value, "0,00")  # NE 56: sugestão 0,00, nada a aceitar
+        self.assertEqual(meses[1].value, "0,00")
+        self.assertEqual(app.metric[0].value, "R$ 4.000,00")
+
+    def test_depois_de_aceitar_ainda_edita(self) -> None:
+        app = _renderiza_conteudo("anulacao", com_sugestao=True)
+        next(b for b in app.button if b.label == "Aceitar sugestão de anulação").click().run()
+        [ti for ti in app.text_input if ti.label == "ANULAR (R$)"][0].set_value("1000").run()
+
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual([ti for ti in app.text_input if ti.label == "ANULAR (R$)"][0].value, "1.000,00")
+        self.assertEqual(app.metric[0].value, "R$ 1.000,00")
+
+    def test_zerar_volta_a_tabela_inteira_a_zero(self) -> None:
+        app = _renderiza_conteudo("anulacao", com_sugestao=True)
+        next(b for b in app.button if b.label == "Aceitar sugestão de anulação").click().run()
+        next(b for b in app.button if b.label == "Zerar anulação").click().run()
+
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(all(ti.value == "0,00" for ti in app.text_input if ti.label in ("ANULAR (R$)", "Meses a Anular")))
+        self.assertEqual(app.metric[0].value, "R$ 0,00")
+
+    def test_botoes_so_na_anulacao_e_so_com_sugestao(self) -> None:
+        rotulos = ("Aceitar sugestão de anulação", "Zerar anulação")
+        sem = _renderiza_conteudo("anulacao", com_sugestao=False)
+        reforco = _renderiza_conteudo("reforco", com_sugestao=True)
+        for app in (sem, reforco):
+            self.assertFalse(any(b.label in rotulos for b in app.button))
+
+    def test_pdf_de_anulacao_sai_no_modelo_com_o_valor_aceito(self) -> None:
+        # o PDF é o modelo de sempre (CNPJ, ação, PTRES…): sem bloco avulso de sugestão; o valor aceito é a linha ANULAR
+        import inspect
+
+        from src.relatorio_reforco_empenho import gerar_pdf_detalhado, gerar_pdf_resumido
+
+        for gerar in (gerar_pdf_detalhado, gerar_pdf_resumido):
+            self.assertNotIn("sugestao_anulacao", inspect.signature(gerar).parameters)
+
     def test_sem_projecao_avisa_que_a_sugestao_esta_indisponivel(self) -> None:
         app = _renderiza_conteudo("anulacao", com_sugestao=False)
 
