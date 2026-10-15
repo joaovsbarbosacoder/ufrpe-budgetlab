@@ -747,6 +747,35 @@ def _estilo_tabela(indice_inicio_alinhamento_direita: int) -> TableStyle:
     )
 
 
+def aceitar_sugestao_nas_linhas(linhas: pd.DataFrame, sugestao: pd.DataFrame | None) -> dict[int, tuple[float, float]]:
+    """"Aceitar sugestão" da Anulação (15/10/2026): leva o VALOR TOTAL da sobra prevista de cada NE para a tabela por item,
+    sem ratear — o total vai na PRIMEIRA linha da NE (na ordem de `linhas`) e as demais ficam como estão. Devolve
+    `{posição da linha em `linhas`: (meses, valor)}`.
+
+    Só entra NE com sugestão maior que zero: zero é "nada a anular" e nulo é "sem projeção calculável" (não há o que aceitar).
+    `meses = valor ÷ valor mensal da linha` (2 casas, no mínimo 0,01; sem valor mensal, 1,00) só para manter coerente a coluna
+    "Meses a Anular" — o valor aceito é o exato — e porque `excluir_linhas_zeradas` tira do PDF a linha com meses ou valor zero."""
+
+    if sugestao is None or sugestao.empty or linhas.empty:
+        return {}
+    totais = {
+        str(linha.ne_curta): float(linha.sugestao)
+        for linha in sugestao.itertuples()
+        if pd.notna(linha.sugestao) and float(linha.sugestao) > 0
+    }
+    aceitos: dict[int, tuple[float, float]] = {}
+    ja_usadas: set[str] = set()
+    for posicao, linha in enumerate(linhas.reset_index(drop=True).itertuples()):
+        ne = str(linha.ne_curta)
+        if ne not in totais or ne in ja_usadas:
+            continue
+        ja_usadas.add(ne)
+        valor_mensal = linha.valor_mensal
+        meses = 1.0 if pd.isna(valor_mensal) or float(valor_mensal) <= 0 else max(0.01, round(totais[ne] / float(valor_mensal), 2))
+        aceitos[posicao] = (meses, totais[ne])
+    return aceitos
+
+
 def gerar_pdf_detalhado(spec: EspecificacaoRelatorio, tipo: TipoRelatorio, processo: str, linhas: pd.DataFrame) -> bytes:
     """PDF "modelo detalhado" da PROPLAD — uma linha por item, com Processo/Unidade/Empenho
     repetidos em cada linha, em ordem alfabética por "Item de Despesa" (pedido explícito) —

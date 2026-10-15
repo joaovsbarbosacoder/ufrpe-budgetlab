@@ -343,8 +343,20 @@ duas colunas e o relatório avisa a diferença.
 Anulação de Saldo de Empenho (PDF nos modelos detalhado e resumido, `src/relatorio_reforco_empenho.py`).
 A sugestão inicial de cada linha respeita status, vigência e início da execução (data, com mês
 inicial proporcional): contrato suspenso sem data, vencido ou com vigência encerrada começa com sugestão
-zero, e a vigência (ou a véspera da suspensão) limita os meses sugeridos. A edição por linha continua livre; a Anulação
-nunca tem sugestão automática.
+zero, e a vigência (ou a véspera da suspensão) limita os meses sugeridos. A edição por linha continua livre; a tabela por
+item da Anulação continua começando zerada.
+
+**Sugestão de anulação no relatório de Anulação (15/10/2026; `src/sobra_empenho.py`, `src/relatorio_reforco_empenho.py`).** Antes
+da tabela editável, a tela do relatório de Anulação traz o quadro "Sugestão de anulação por NE": uma linha por NE do processo
+escolhido, com o **valor total** da sobra prevista (saldo do empenho − despesa projetada até dezembro pela execução, já com os
+ajustes manuais da projeção), o saldo, o projetado, a faixa de confiança e a observação — **sem rateio** entre itens ou
+programas. **"Aceitar sugestão de anulação"** leva o total de cada NE para a **primeira linha** dela na tabela por item (o
+modelo com CNPJ, ação, PTRES etc.), com "Meses a Anular" coerente (valor ÷ valor mensal da linha, mínimo 0,01; sem valor mensal,
+1,00); as demais linhas da NE ficam como estão e tudo continua editável. "Zerar anulação" volta o processo a zero. Os PDFs
+(detalhado e resumido) são o modelo de sempre, já com os valores aceitos ou editados — o quadro é só da tela. Sobra zero é "nada a
+anular" (0,00) e não é aceita; saldo ou projeção não calculáveis, ou NE fora da projeção, ficam vazios ("—"), nunca zero. Só a
+Anulação ganha o quadro e os botões; o Reforço não muda. Sem a Liquidação por Competência a tela avisa que a sugestão está
+indisponível. A sugestão é calculada ao abrir o relatório, para Contratos Contínuos e Bolsas e Auxílios.
 
 **Layout dos cadastros.** Contratos Contínuos e Bolsas e Auxílios compartilham o mesmo desenho
 (`src/ui_cadastro.py`): um cartão-resumo no topo (faixa "Necessidade de empenho até dezembro" e grade

@@ -231,6 +231,7 @@ from src.liquidacao_competencia import (
 )
 from src.liquidacao_consumo import competencia_pelo_consumo
 from src.projecao_ajustes import ErroAjuste, ajustes_vigentes
+from src.sobra_empenho import sobra_por_ne
 from src.ui_projecao_execucao import render_edicao_projecao
 from src.necessidade_empenho import calcular_necessidade_empenho
 from src.relatorio_necessidade_empenho import ContextoRelatorioNecessidade
@@ -1371,6 +1372,28 @@ def _lembrar_base_necessidade(chave: str) -> None:
         st.session_state[_CHAVE_ERRO_BASE] = str(erro)
 
 
+def _sugestao_anulacao_contratos(
+    tabela: pd.DataFrame, competencia: pd.DataFrame | None, ano_exercicio: int, manifesto: ManifestoExecucaoMensal,
+    ajustes: dict[str, dict[int, float]], nes_pelo_lancamento: list[str] | None,
+) -> pd.DataFrame | None:
+    """Sobra prevista por NE (`sobra_empenho.sobra_por_ne`) de Contratos Contínuos, para o relatório de Anulação (15/10/2026):
+    a projeção pela execução COM os ajustes manuais vigentes, sobre a tabela inteira (o relatório não respeita a busca).
+    Devolve `None` — sugestão indisponível, nunca zero — sem a Liquidação por Competência ou se a projeção falhar. Chamada só
+    quando o relatório é aberto (`render_botao_relatorio` aceita uma função)."""
+
+    if competencia is None:
+        return None
+    try:
+        referencia = datetime.fromisoformat(manifesto.data_extracao).date()
+        relatorio, _ = projecao_contratos(
+            tabela, competencia, ano_exercicio, mes_referencia_do_exercicio(referencia, ano_exercicio),
+            nes_pelo_lancamento=nes_pelo_lancamento, ajustes=ajustes,
+        )
+        return sobra_por_ne({"Contratos Contínuos": relatorio}, referencia)
+    except Exception:  # noqa: BLE001 — a Anulação continua; só a sugestão fica indisponível
+        return None
+
+
 def _necessidade_pela_execucao(
     por_ne: pd.DataFrame, filtrado: pd.DataFrame, liquidacao_competencia_por_mes: pd.DataFrame,
     ano_exercicio: int, manifesto: ManifestoExecucaoMensal, source_key: str,
@@ -2117,7 +2140,13 @@ if _gov is not None:
 
 with col_relatorio:
     st.write("")
-    render_botao_relatorio(dataframe, RELATORIO_CONTRATOS_CONTINUOS, f"continuos_{ano_selecionado}", ano_selecionado)
+    render_botao_relatorio(
+        dataframe, RELATORIO_CONTRATOS_CONTINUOS, f"continuos_{ano_selecionado}", ano_selecionado,
+        sugestao_anulacao=lambda: _sugestao_anulacao_contratos(
+            dataframe, liquidacao_consumo_por_mes, ano_selecionado, manifesto_execucao_mensal, ajustes_projecao,
+            None if competencia_consumo is None else competencia_consumo.nes_trocadas,
+        ),
+    )
 
 busca = st.text_input(
     "Buscar",

@@ -18,6 +18,7 @@ from src.relatorio_reforco_empenho import (
     TIPO_ANULACAO,
     TIPO_REFORCO,
     _agrupado_por_classificacao,
+    aceitar_sugestao_nas_linhas,
     excluir_linhas_zeradas,
     gerar_pdf_detalhado,
     gerar_pdf_resumido,
@@ -339,6 +340,71 @@ class TestGerarPdfDetalhado(unittest.TestCase):
 
         pdf_bytes = gerar_pdf_detalhado(BOLSAS_AUXILIOS, TIPO_ANULACAO, "001167/2026-78", linhas)
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
+
+
+def _sugestao_sintetica() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "ne_curta": ["2026NE000020", "2026NE000056", "2026NE000099"],
+            "fornecedor": ["PADPG", "ESO", None],
+            "saldo": [10000.0, 4000.0, None],
+            "projetado": [6000.0, 4000.0, None],
+            "sugestao": [4000.0, 0.0, None],
+            "faixa": ["2 · Execução medida (fator)", "—", "—"],
+            "observacoes": ["conferir antes de anular", "", "sem projeção calculável"],
+        }
+    )
+
+
+class TestAceitarSugestao(unittest.TestCase):
+    """15/10/2026: "Aceitar sugestão" leva o VALOR TOTAL da sobra prevista de cada NE para a tabela por item (o modelo com
+    CNPJ, ação, PTRES etc.), sem ratear: o total vai na PRIMEIRA linha da NE e as demais ficam como estão."""
+
+    def _linhas(self) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "ne_curta": ["2026NE000020", "2026NE000020", "2026NE000056", "2026NE000099"],
+                "valor_mensal": [1000.0, 500.0, 0.0, float("nan")],
+            }
+        )
+
+    def test_total_da_ne_vai_inteiro_na_primeira_linha_sem_ratear(self):
+        aceitos = aceitar_sugestao_nas_linhas(self._linhas(), _sugestao_sintetica())
+        self.assertEqual(aceitos[0][1], 4000.0)  # valor = sobra total da NE 20
+        self.assertNotIn(1, aceitos)  # a segunda linha da mesma NE não recebe nada
+
+    def test_meses_acompanha_o_valor_pelo_valor_mensal_da_linha(self):
+        aceitos = aceitar_sugestao_nas_linhas(self._linhas(), _sugestao_sintetica())
+        self.assertEqual(aceitos[0][0], 4.0)  # 4.000 ÷ 1.000
+
+    def test_meses_nunca_zera_para_a_linha_nao_cair_do_pdf(self):
+        # excluir_linhas_zeradas tira meses OU valor igual a zero: valor 4.000 com valor mensal enorme não pode virar 0 meses
+        sugestao = _sugestao_sintetica()
+        linhas = pd.DataFrame({"ne_curta": ["2026NE000020"], "valor_mensal": [1e9]})
+        meses, valor = aceitar_sugestao_nas_linhas(linhas, sugestao)[0]
+        self.assertEqual(valor, 4000.0)
+        self.assertEqual(meses, 0.01)
+
+    def test_sem_valor_mensal_usa_um_mes(self):
+        sugestao = _sugestao_sintetica().assign(ne_curta=["2026NE000099", "x", "y"])
+        meses, valor = aceitar_sugestao_nas_linhas(self._linhas(), sugestao)[3]
+        self.assertEqual((meses, valor), (1.0, 4000.0))
+
+    def test_zero_e_nulo_nao_sao_aceitos(self):
+        # NE 56: sugestão 0,00 (nada a anular); NE 99: sem projeção calculável (nulo)
+        aceitos = aceitar_sugestao_nas_linhas(self._linhas(), _sugestao_sintetica())
+        self.assertEqual(sorted(aceitos), [0])
+
+    def test_ne_fora_das_linhas_e_ignorada_e_entradas_vazias(self):
+        sugestao = _sugestao_sintetica().assign(ne_curta=["outra", "outra2", "outra3"])
+        self.assertEqual(aceitar_sugestao_nas_linhas(self._linhas(), sugestao), {})
+        self.assertEqual(aceitar_sugestao_nas_linhas(self._linhas(), None), {})
+        self.assertEqual(aceitar_sugestao_nas_linhas(self._linhas(), _sugestao_sintetica().iloc[0:0]), {})
+
+    def test_primeira_linha_e_a_primeira_na_ordem_da_tabela_nao_a_de_menor_valor(self):
+        linhas = pd.DataFrame({"ne_curta": ["2026NE000020", "2026NE000020"], "valor_mensal": [10.0, 1000.0]}, index=[7, 3])
+        aceitos = aceitar_sugestao_nas_linhas(linhas, _sugestao_sintetica())
+        self.assertEqual(list(aceitos), [0])  # posição 0 da tabela, mesmo com o índice do DataFrame fora de ordem
 
 
 class TestAgrupadoPorClassificacao(unittest.TestCase):

@@ -30,6 +30,7 @@ from src.sobra_empenho import (
     resumo_da_sobra,
     sobra_elegivel_por_ne,
     sobra_por_ne,
+    sugestao_anulacao_por_ne,
 )
 
 REF = date(2026, 10, 15)
@@ -153,6 +154,66 @@ class TestSobraElegivel(unittest.TestCase):
         outra = _relatorio([_linha("2026NE000001", saldo=200.0, projetado=50.0, cheio=50.0)], BOLSAS_AUXILIOS)
         tabela = sobra_por_ne({"Contratos Contínuos": _contratos(), "Bolsas e Auxílios": outra}, REF)
         self.assertEqual(sobra_elegivel_por_ne(tabela)["2026NE000001"], 600.0 + 150.0)
+
+
+class TestSugestaoDeAnulacaoPorNe(unittest.TestCase):
+    """15/10/2026: o relatório de Anulação traz, por NE do processo, o valor TOTAL sugerido (a sobra prevista), sem rateio."""
+
+    def setUp(self):
+        self.tabela = sobra_por_ne({"Contratos Contínuos": _contratos()}, REF)
+
+    def test_valor_total_da_sobra_por_ne_sem_rateio(self):
+        sugestao = sugestao_anulacao_por_ne(self.tabela, ["2026NE000001", "2026NE000002"]).set_index("ne_curta")
+        self.assertEqual(sugestao.loc["2026NE000001", "sugestao"], 600.0)  # saldo 1.000 − projetado 400
+        self.assertEqual(sugestao.loc["2026NE000002", "sugestao"], 500.0)
+        self.assertEqual(sugestao["sugestao"].sum(), 1100.0)
+
+    def test_traz_saldo_projetado_faixa_e_observacoes(self):
+        linha = sugestao_anulacao_por_ne(self.tabela, ["2026NE000001"]).iloc[0]
+        self.assertEqual(linha["saldo"], 1000.0)
+        self.assertEqual(linha["projetado"], 400.0)
+        self.assertEqual(linha["faixa"], FAIXA_2)
+        self.assertEqual(linha["fornecedor"], "FORNECEDOR")
+        self.assertIsInstance(linha["observacoes"], str)
+
+    def test_sem_sobra_e_zero_conhecido_nao_nulo(self):
+        # saldo 200 < projetado 250: nada a anular — zero (conhecido), nunca vazio
+        linha = sugestao_anulacao_por_ne(self.tabela, ["2026NE000004"]).iloc[0]
+        self.assertEqual(linha["sugestao"], 0.0)
+
+    def test_sem_projecao_calculavel_fica_nulo_e_nao_zero(self):
+        for ne in ("2026NE000005", "2026NE000006"):  # saldo nulo / sem projeção
+            with self.subTest(ne=ne):
+                self.assertTrue(pd.isna(sugestao_anulacao_por_ne(self.tabela, [ne]).iloc[0]["sugestao"]))
+
+    def test_saldo_com_residuo_de_ponto_flutuante_e_zero_conhecido_e_nao_vazio(self):
+        # saldo 5,8e-11 (resíduo de empenho totalmente liquidado) e nada projetado: nada a anular → 0,00, não "—"
+        tabela = sobra_por_ne(
+            {"Contratos Contínuos": _relatorio([_linha("2026NE000551", saldo=5.8e-11, projetado=0.0, cheio=0.0)])}, REF
+        )
+        linha = sugestao_anulacao_por_ne(tabela, ["2026NE000551"]).iloc[0]
+        self.assertEqual(linha["sugestao"], 0.0)
+
+    def test_ne_que_nao_esta_na_projecao_aparece_vazia_e_avisada(self):
+        linha = sugestao_anulacao_por_ne(self.tabela, ["2026NE999999"]).iloc[0]
+        self.assertEqual(linha["ne_curta"], "2026NE999999")
+        self.assertTrue(pd.isna(linha["sugestao"]))
+        self.assertIn("projeção", linha["observacoes"])
+
+    def test_so_as_nes_pedidas_e_sem_repetir(self):
+        sugestao = sugestao_anulacao_por_ne(self.tabela, ["2026NE000001", "2026NE000001", "2026NE000002"])
+        self.assertEqual(sorted(sugestao["ne_curta"]), ["2026NE000001", "2026NE000002"])
+
+    def test_tabela_nula_ou_vazia(self):
+        self.assertTrue(sugestao_anulacao_por_ne(None, ["2026NE000001"]).empty)
+        self.assertTrue(sugestao_anulacao_por_ne(self.tabela, []).empty)
+
+    def test_faixa_fora_da_anulacao_nao_sugere_valor(self):
+        from unittest import mock
+        with mock.patch("src.sobra_empenho.FAIXAS_NA_ANULACAO", (FAIXA_1,)):
+            linha = sugestao_anulacao_por_ne(self.tabela, ["2026NE000001"]).iloc[0]  # faixa 2
+        self.assertTrue(pd.isna(linha["sugestao"]))
+        self.assertEqual(linha["faixa"], FAIXA_2)
 
 
 class TestFaixa(unittest.TestCase):

@@ -67,17 +67,28 @@ milhar sozinho (evita multiplicar por 1000 sem querer); "94.500" digitado à mã
 não 94500 — mas ela nunca sobrevive a um primeiro `on_change` (a formatação de volta sempre
 inclui vírgula), então só existe no instante entre digitar e sair do campo.
 
+Sugestão de anulação (15/10/2026): no relatório de Anulação, antes da tabela editável, um quadro "Sugestão de anulação por
+NE" traz, para cada NE do processo, o VALOR TOTAL da sobra prevista (`src/sobra_empenho.py`), sem rateio por item ou programa,
+com a faixa e a observação. A tabela editável continua começando zerada; "Aceitar sugestão de anulação" leva o total de cada NE
+para a primeira linha dela (`aceitar_sugestao_nas_linhas`) e "Zerar anulação" desfaz. Os PDFs são o modelo de sempre (CNPJ,
+ação, PTRES…), já com os valores aceitos ou editados: o quadro é só da tela.
+
 Contrato público:
-    render_botao_relatorio(df, spec, chave, ano_referencia) -> None
+    render_botao_relatorio(df, spec, chave, ano_referencia, sugestao_anulacao=None) -> None
+    html_sugestao_anulacao(sugestao) -> str
 """
 
 from __future__ import annotations
+
+from collections.abc import Callable
+from html import escape
 
 import pandas as pd
 import streamlit as st
 
 from src.relatorio_reforco_empenho import (
     TIPO_ANULACAO,
+    aceitar_sugestao_nas_linhas,
     TIPO_REFORCO,
     EspecificacaoRelatorio,
     TipoRelatorio,
@@ -87,6 +98,7 @@ from src.relatorio_reforco_empenho import (
     linhas_para_processo,
     processos_disponiveis,
 )
+from src.sobra_empenho import sugestao_anulacao_por_ne
 from src.ui_theme import format_brl_full
 
 _TIPOS = (TIPO_REFORCO, TIPO_ANULACAO)
@@ -128,6 +140,23 @@ def _parse_valor_brl(texto: str) -> float:
     return valor if valor > 0.0 else 0.0
 
 
+def _aceitar_sugestao(prefixo_linha: str, aceitos: dict[int, tuple[float, float]]) -> None:
+    """`on_click` de "Aceitar sugestão de anulação": preenche "Meses a Anular" e "ANULAR (R$)" das linhas aceitas
+    (`aceitar_sugestao_nas_linhas`) ANTES da grade ser desenhada neste rerun; o restante da tabela fica como está."""
+
+    for posicao, (meses, valor) in aceitos.items():
+        st.session_state[f"{prefixo_linha}_meses_{posicao}"] = _formatar_valor_brl(meses)
+        st.session_state[f"{prefixo_linha}_valor_{posicao}"] = _formatar_valor_brl(valor)
+
+
+def _zerar_anulacao(prefixo_linha: str, quantidade_linhas: int) -> None:
+    """`on_click` de "Zerar anulação": volta meses e valor de TODAS as linhas do processo a zero (como na abertura)."""
+
+    for posicao in range(quantidade_linhas):
+        st.session_state[f"{prefixo_linha}_meses_{posicao}"] = _formatar_valor_brl(0.0)
+        st.session_state[f"{prefixo_linha}_valor_{posicao}"] = _formatar_valor_brl(0.0)
+
+
 def _recalcular_valor_por_meses(meses_key: str, valor_key: str, valor_mensal: float) -> None:
     """`on_change` do campo de meses — recalcula e grava o valor em R$ ANTES do campo "Valor"
     ser desenhado nesta mesma execução (callbacks de `on_change` rodam antes do script
@@ -150,9 +179,57 @@ def _reformatar_valor(valor_key: str) -> None:
     st.session_state[valor_key] = _formatar_valor_brl(_parse_valor_brl(st.session_state[valor_key]))
 
 
+def _resolver_sugestao(
+    sugestao_anulacao: pd.DataFrame | Callable[[], pd.DataFrame | None] | None,
+) -> pd.DataFrame | None:
+    """A sugestão chega pronta (tabela `sobra_por_ne`) ou como função, chamada UMA vez ao abrir o relatório — a projeção
+    inteira não é recalculada a cada interação da página. `None` (ou função que devolve `None`): indisponível."""
+
+    return sugestao_anulacao() if callable(sugestao_anulacao) else sugestao_anulacao
+
+
+def _celula_valor(valor: object) -> str:
+    """Valor em R$ pt-BR; nulo é "—" (nunca 0,00: zero é "nada a anular", conhecido)."""
+
+    if valor is None or pd.isna(valor):
+        return "—"
+    return f"{float(valor):,.2f}".replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def html_sugestao_anulacao(sugestao: pd.DataFrame) -> str:
+    """Tabela HTML do bloco "Sugestão de anulação por NE" (HTML próprio: `st.dataframe` aparece em branco dentro de janelas).
+    Textos escapados; sugestão nula "—"; linha TOTAL soma só o que foi calculado."""
+
+    cabecalho = (
+        "NE", "Fornecedor / programa", "Saldo do empenho", "Projetado até dez.", "Sugestão de anulação", "Faixa", "Observações",
+    )
+    estilo_num = 'style="text-align:right;font-variant-numeric:tabular-nums"'
+    linhas = []
+    for linha in sugestao.itertuples():
+        linhas.append(
+            "<tr>"
+            f"<td><b>{escape(str(linha.ne_curta))}</b></td><td>{escape('' if pd.isna(linha.fornecedor) else str(linha.fornecedor))}</td>"
+            f"<td {estilo_num}>{_celula_valor(linha.saldo)}</td><td {estilo_num}>{_celula_valor(linha.projetado)}</td>"
+            f'<td {estilo_num}><b>{_celula_valor(linha.sugestao)}</b></td>'
+            f"<td>{escape('' if pd.isna(linha.faixa) else str(linha.faixa))}</td>"
+            f"<td>{escape('' if pd.isna(linha.observacoes) else str(linha.observacoes))}</td></tr>"
+        )
+    total = pd.to_numeric(sugestao["sugestao"], errors="coerce").sum(min_count=1)
+    linhas.append(
+        f'<tr style="border-top:2px solid #D3DFEC"><td><b>TOTAL</b></td><td></td><td></td><td></td>'
+        f"<td {estilo_num}><b>{_celula_valor(total)}</b></td><td></td><td></td></tr>"
+    )
+    cab = "".join(f'<th style="text-align:left;font-size:11px">{escape(c)}</th>' for c in cabecalho)
+    return (
+        '<div style="overflow-x:auto"><table style="border-collapse:collapse;font-size:12px;width:100%">'
+        f"<thead><tr>{cab}</tr></thead><tbody>{''.join(linhas)}</tbody></table></div>"
+    )
+
+
 @st.dialog("Relatórios", width="large")
 def _abrir_relatorios(
-    df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str, ano_referencia: int
+    df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str, ano_referencia: int,
+    sugestao_anulacao: pd.DataFrame | None = None,
 ) -> None:
     tipo_key = f"reforco_tipo_{chave}"
     tipo_id = st.session_state.get(tipo_key)
@@ -191,11 +268,12 @@ def _abrir_relatorios(
 
     tipo = TIPO_REFORCO if tipo_id == "reforco" else TIPO_ANULACAO
     st.divider()
-    _render_conteudo_relatorio(df, spec, tipo, chave, ano_referencia)
+    _render_conteudo_relatorio(df, spec, tipo, chave, ano_referencia, sugestao_anulacao)
 
 
 def _render_conteudo_relatorio(
-    df: pd.DataFrame, spec: EspecificacaoRelatorio, tipo: TipoRelatorio, chave: str, ano_referencia: int
+    df: pd.DataFrame, spec: EspecificacaoRelatorio, tipo: TipoRelatorio, chave: str, ano_referencia: int,
+    sugestao_anulacao: pd.DataFrame | None = None,
 ) -> None:
     """Seletor de processo + tabela editável + os dois PDFs — conteúdo compartilhado entre
     Reforço e Anulação (`_abrir_relatorios`, acima), parametrizado por `tipo`. Toda key de
@@ -213,6 +291,40 @@ def _render_conteudo_relatorio(
     if linhas.empty:
         st.warning("Nenhuma linha de empenho para este processo.")
         return
+
+    prefixo_linha = f"reforco_linha_{chave}_{tipo.id}_{processo}"
+    linhas_indexadas = linhas.reset_index(drop=True)
+
+    # Anulação: sugestão por NE do processo (sobra prevista, valor total, sem rateio) — antes da grade editável (15/10/2026)
+    sugestao = pd.DataFrame()
+    if tipo.id == TIPO_ANULACAO.id:
+        if sugestao_anulacao is None:
+            st.caption(
+                "Sugestão de anulação indisponível: a projeção pela execução não foi calculada (Liquidação por Competência "
+                "ausente ou sem leitura)."
+            )
+        else:
+            sugestao = sugestao_anulacao_por_ne(sugestao_anulacao, linhas["ne_curta"].dropna().unique())
+            if not sugestao.empty:
+                st.markdown("**Sugestão de anulação por NE** — sobra prevista (saldo − projetado até dezembro)")
+                st.markdown(html_sugestao_anulacao(sugestao), unsafe_allow_html=True)
+                st.caption(
+                    "Valor total da NE, sem rateio por item. Vazio (—) = sem projeção calculável. Conferir faturas pendentes de "
+                    "meses já prestados antes de anular."
+                )
+                aceitos = aceitar_sugestao_nas_linhas(linhas_indexadas, sugestao)
+                col_aceitar, col_zerar = st.columns(2)
+                col_aceitar.button(
+                    "Aceitar sugestão de anulação", key=f"reforco_aceitar_{chave}_{tipo.id}_{processo}", width="stretch",
+                    type="primary", disabled=not aceitos, on_click=_aceitar_sugestao, args=(prefixo_linha, aceitos),
+                    help="Preenche a tabela abaixo (modelo com CNPJ, ação, PTRES…): o total de cada NE vai na primeira linha "
+                         "dela, sem ratear. Depois você ainda pode editar qualquer valor.",
+                )
+                col_zerar.button(
+                    "Zerar anulação", key=f"reforco_zerar_{chave}_{tipo.id}_{processo}", width="stretch",
+                    on_click=_zerar_anulacao, args=(prefixo_linha, len(linhas_indexadas)),
+                    help="Volta meses e valores de todas as linhas deste processo a zero.",
+                )
 
     # `\$` escapado: dois "R$" no mesmo texto viravam um par de delimitadores de fórmula
     # (o Markdown do Streamlit trata "$...$" como LaTeX) — bug real observado (texto saía
@@ -245,9 +357,6 @@ def _render_conteudo_relatorio(
     # enquanto a key não mudasse). "Meses" usa `on_change` (`_recalcular_valor_por_meses`) pra
     # recalcular e já deixar "Valor" com o número certo ANTES dele ser desenhado nesta mesma
     # execução — sem isso, o valor recalculado só apareceria visível um rerun depois.
-    prefixo_linha = f"reforco_linha_{chave}_{tipo.id}_{processo}"
-    linhas_indexadas = linhas.reset_index(drop=True)
-
     cabecalho = st.columns(_PROPORCOES_LINHA)
     cabecalho[0].caption("Item de Despesa")
     cabecalho[1].caption("Empenho")
@@ -348,7 +457,8 @@ def _limpar_estado_relatorio(chave: str) -> None:
 
 
 def render_botao_relatorio(
-    df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str, ano_referencia: int
+    df: pd.DataFrame, spec: EspecificacaoRelatorio, chave: str, ano_referencia: int,
+    sugestao_anulacao: pd.DataFrame | Callable[[], pd.DataFrame | None] | None = None,
 ) -> None:
     """Botão que abre o pop-up de emissão de relatório — chamar de dentro da página, com o
     DataFrame já lido por ela (não relê a planilha) e uma `chave` distinta por página
@@ -359,8 +469,12 @@ def render_botao_relatorio(
     `ano_referencia` é o exercício do cadastro em tela (`ano_selecionado` na página chamadora)
     — nunca inferido daqui, repassado até `necessidade_ate_mes_vigente` para a sugestão "por
     calendário" não misturar o mês real de hoje com um exercício diferente do que está sendo
-    exibido (ex.: cadastro do ano anterior ainda não duplicado para o novo exercício)."""
+    exibido (ex.: cadastro do ano anterior ainda não duplicado para o novo exercício).
+
+    `sugestao_anulacao` (15/10/2026): tabela `sobra_empenho.sobra_por_ne` da base em tela; a Anulação mostra o valor total da
+    sobra prevista de cada NE do processo — pronta ou como função (calculada só ao abrir o relatório). `None` (projeção não
+    calculada): a Anulação avisa que a sugestão está indisponível."""
 
     if st.button("📄 Relatórios", key=f"reforco_abrir_{chave}"):
         _limpar_estado_relatorio(chave)
-        _abrir_relatorios(df, spec, chave, ano_referencia)
+        _abrir_relatorios(df, spec, chave, ano_referencia, _resolver_sugestao(sugestao_anulacao))
