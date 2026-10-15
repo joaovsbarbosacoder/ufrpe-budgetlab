@@ -304,13 +304,12 @@ def test_historico_com_detalhe_mostra_celula_marcada_que_moveu_a_dotacao(diretor
     assert len(hoje["dotacao_por_celula"]) == 1  # a célula marcada, com a chave dos 7 códigos
 
 
-# ------------------------------------------------------------ interruptor das outras despesas (15/10/2026)
-CHAVE_INTERRUPTOR = "ro_considerar_outras"
+# ------------------------------------------------------------ outras despesas, uma a uma (15/10/2026)
 OUTRAS = "Outras despesas previstas"
 
 
-def _incluir_despesa(app: AppTest, valor: float = 100.0) -> None:
-    app.text_input(key="ro_despesa_descricao").input("Reagentes")
+def _incluir_despesa(app: AppTest, valor: float = 100.0, descricao: str = "Reagentes") -> None:
+    app.text_input(key="ro_despesa_descricao").input(descricao)
     app.number_input(key="ro_despesa_valor").set_value(valor)
     app.button(key="FormSubmitter:ro_nova_despesa-Incluir").click().run()
     assert not app.exception, [e.value for e in app.exception]
@@ -330,45 +329,66 @@ def _foto_do_dia(diretorio: Path, exercicio: int) -> dict:
     return json.loads(arquivos[0].read_text(encoding="utf-8"))
 
 
-def test_interruptor_das_outras_despesas_existe_e_vem_ligado(diretorio: Path) -> None:
-    app = _abrir()
-    assert app.toggle(key=CHAVE_INTERRUPTOR).value is True
-    assert "SEM as outras despesas previstas" not in _textos(app)
+def _caixas_considerar(app: AppTest) -> list:
+    return [c for c in app.checkbox if c.key and c.key.startswith("ro_considerar_")]
 
 
-def test_desligar_tira_as_despesas_da_conta_avisa_e_mantem_a_lista(diretorio: Path) -> None:
+def test_cada_despesa_tem_a_sua_caixa_considerar_marcada_e_nao_ha_interruptor_do_grupo(diretorio: Path) -> None:
     app = _abrir()
-    _incluir_despesa(app, 100.0)
+    assert not [t for t in app.toggle if t.key == "ro_considerar_outras"]
+    _incluir_despesa(app, 100.0, "Reagentes")
+    _incluir_despesa(app, 50.0, "Bancadas")
+    caixas = _caixas_considerar(app)
+    assert len(caixas) == 2 and all(c.value is True for c in caixas)
+
+
+def test_desmarcar_uma_despesa_tira_so_ela_da_conta_avisa_e_fica_gravado(diretorio: Path) -> None:
+    app = _abrir()
+    _incluir_despesa(app, 100.0, "Reagentes")
+    _incluir_despesa(app, 50.0, "Bancadas")
     exercicio = _com_selecao_salva(app)
     ligado = _foto_do_dia(diretorio, exercicio)
-    assert ligado["necessidade"][OUTRAS] == 100.0 and ligado["outras_despesas_consideradas"] is True
+    assert ligado["necessidade"][OUTRAS] == 150.0 and ligado["outras_despesas_consideradas"] is True
 
-    app.toggle(key=CHAVE_INTERRUPTOR).set_value(False).run()
+    despesas = cadastro.carregar_despesas(exercicio, diretorio)
+    reagentes = next(d for d in despesas if d.descricao == "Reagentes")
+    app.checkbox(key=f"ro_considerar_{reagentes.id}").uncheck().run()
     assert not app.exception, [e.value for e in app.exception]
-    assert "SEM as outras despesas previstas" in _textos(app)
-    assert any(bloco.value == "Reagentes" for bloco in app.markdown)  # a despesa continua listada e editável
-    desligado = _foto_do_dia(diretorio, exercicio)
-    assert desligado["necessidade"][OUTRAS] == 0.0
-    assert desligado["outras_despesas_consideradas"] is False
-    if ligado["resultado"] is not None and desligado["resultado"] is not None:
-        assert desligado["resultado"] - ligado["resultado"] == pytest.approx(100.0)  # a despesa deixou de pesar
+
+    depois = {d.descricao: d for d in cadastro.carregar_despesas(exercicio, diretorio)}
+    assert depois["Reagentes"].considerada is False and depois["Bancadas"].considerada is True  # gravado, só ela
+    assert depois["Reagentes"].atualizado_em == reagentes.atualizado_em  # não é edição do cadastro
+    assert "SEM 1 de 2 outras despesas previstas" in _textos(app)
+    assert any(bloco.value == "Reagentes" for bloco in app.markdown)  # continua listada e editável
+    foto = _foto_do_dia(diretorio, exercicio)
+    assert foto["necessidade"][OUTRAS] == 50.0
+    assert foto["outras_despesas_consideradas"] is False
+    assert foto["outras_despesas_ignoradas_qtd"] == 1 and foto["outras_despesas_ignoradas_valor"] == 100.0
+    if ligado["resultado"] is not None and foto["resultado"] is not None:
+        assert foto["resultado"] - ligado["resultado"] == pytest.approx(100.0)  # só a despesa desmarcada deixou de pesar
 
 
-def test_historico_grava_com_o_interruptor_desligado_e_volta_ao_religar(diretorio: Path) -> None:
+def test_a_escolha_sobrevive_a_uma_nova_sessao_e_remarcar_volta_a_conta(diretorio: Path) -> None:
     app = _abrir()
     _incluir_despesa(app, 100.0)
     exercicio = _com_selecao_salva(app)
-    app.toggle(key=CHAVE_INTERRUPTOR).set_value(False).run()
-    assert _foto_do_dia(diretorio, exercicio)["outras_despesas_consideradas"] is False  # grava (não pausa)
-    app.toggle(key=CHAVE_INTERRUPTOR).set_value(True).run()
+    despesa = cadastro.carregar_despesas(exercicio, diretorio)[0]
+    app.checkbox(key=f"ro_considerar_{despesa.id}").uncheck().run()
+
+    nova_sessao = _abrir()  # F5: sessão nova, a escolha vem do arquivo
+    assert nova_sessao.checkbox(key=f"ro_considerar_{despesa.id}").value is False
+    nova_sessao.checkbox(key=f"ro_considerar_{despesa.id}").check().run()
+    assert not nova_sessao.exception, [e.value for e in nova_sessao.exception]
     religado = _foto_do_dia(diretorio, exercicio)
     assert religado["outras_despesas_consideradas"] is True and religado["necessidade"][OUTRAS] == 100.0
+    assert religado["outras_despesas_ignoradas_qtd"] == 0
 
 
 def test_tabela_do_historico_mostra_a_coluna_e_a_comparacao_avisa_a_virada(diretorio: Path) -> None:
     from src import resultado_orcamentario_historico as historico_ro
 
     app = _abrir()
+    _incluir_despesa(app, 100.0)
     exercicio = _exercicio(app)
     historico_ro.registrar(
         historico_ro.Fotografia(
@@ -380,16 +400,16 @@ def test_tabela_do_historico_mostra_a_coluna_e_a_comparacao_avisa_a_virada(diret
         diretorio,
     )
     app.checkbox(key=f"ro_cel_{exercicio}_0").check().run()
-    app.toggle(key=CHAVE_INTERRUPTOR).set_value(False).run()
+    despesa = cadastro.carregar_despesas(exercicio, diretorio)[0]
+    app.checkbox(key=f"ro_considerar_{despesa.id}").uncheck().run()
     app.button(key="ro_salvar_selecao").click().run()
     assert not app.exception, [e.value for e in app.exception]
     colunas = [c for df in app.dataframe for c in df.value.columns]
     assert "Outras despesas" in colunas
-    assert "consideradas → desconsideradas" in _textos(app)
+    assert "consideradas → 1 desconsiderada(s)" in _textos(app)
 
 
-def test_ligado_nao_altera_a_conta_de_antes(diretorio: Path) -> None:
-    # com o interruptor ligado (padrão) o resultado é o mesmo de sempre: a despesa pesa na necessidade
+def test_com_todas_marcadas_a_conta_e_a_de_antes(diretorio: Path) -> None:
     app = _abrir()
     _incluir_despesa(app, 100.0)
     exercicio = _com_selecao_salva(app)

@@ -73,6 +73,10 @@ class Fotografia:
     outras_despesas_consideradas: bool | None = None
     #: critério da fórmula (ver `CRITERIO_EXECUTADO_PROJETADO`); `None` = fotografia anterior a 15/10/2026
     criterio: str | None = None
+    #: outras despesas previstas desmarcadas (escolha item a item, 15/10/2026): quantidade e valor que ficaram fora da
+    #: conta. `None` = fotografia anterior ao registro (só valia `outras_despesas_consideradas`, o interruptor do grupo).
+    outras_despesas_ignoradas_qtd: int | None = None
+    outras_despesas_ignoradas_valor: float | None = None
     registrado_em: str = field(default="", compare=False)
 
 
@@ -126,6 +130,17 @@ def _consideradas(foto: Fotografia) -> bool:
     return foto.outras_despesas_consideradas is not False
 
 
+def _rotulo_escolha(foto: Fotografia) -> str:
+    """Como as outras despesas previstas entraram na conta da fotografia (escolha item a item desde 15/10/2026)."""
+
+    qtd = foto.outras_despesas_ignoradas_qtd
+    if qtd is None:  # fotografia do interruptor do grupo (ou anterior a ele)
+        return "consideradas" if _consideradas(foto) else "desconsideradas"
+    if qtd == 0:
+        return "consideradas"
+    return f"{qtd} desconsiderada(s) (R$ {foto.outras_despesas_ignoradas_valor:,.2f})".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 def _agora() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -170,6 +185,8 @@ def _para_json(foto: Fotografia) -> dict:
         "anulacao": foto.anulacao,
         "outras_despesas_consideradas": foto.outras_despesas_consideradas,
         "criterio": foto.criterio,
+        "outras_despesas_ignoradas_qtd": foto.outras_despesas_ignoradas_qtd,
+        "outras_despesas_ignoradas_valor": foto.outras_despesas_ignoradas_valor,
     }
 
 
@@ -204,6 +221,10 @@ def _de_json(dado: dict, caminho: Path) -> Fotografia:
                 None if dado.get("outras_despesas_consideradas") is None else bool(dado["outras_despesas_consideradas"])
             ),
             criterio=None if dado.get("criterio") is None else str(dado["criterio"]),
+            outras_despesas_ignoradas_qtd=(
+                None if dado.get("outras_despesas_ignoradas_qtd") is None else int(dado["outras_despesas_ignoradas_qtd"])
+            ),
+            outras_despesas_ignoradas_valor=_numero(dado.get("outras_despesas_ignoradas_valor")),
             registrado_em=str(dado.get("registrado_em", "")),
         )
     except (KeyError, TypeError, ValueError, AttributeError) as erro:
@@ -261,6 +282,8 @@ def _mesmo_conteudo(a: Fotografia, b: Fotografia) -> bool:
         and _dicts_iguais(_anulacao_ou_zero(a), _anulacao_ou_zero(b))
         and _consideradas(a) == _consideradas(b)
         and a.criterio == b.criterio
+        and a.outras_despesas_ignoradas_qtd == b.outras_despesas_ignoradas_qtd
+        and _igual(a.outras_despesas_ignoradas_valor, b.outras_despesas_ignoradas_valor)
         and (a.dotacao_sha, a.execucao_sha) == (b.dotacao_sha, b.execucao_sha)
         and (
             (a.dotacao_por_celula is None and b.dotacao_por_celula is None)
@@ -308,6 +331,9 @@ def fotografar(
     else:
         empenhado, empenhado_total = dict(resultado.empenhado), resultado.empenhado_total
         necessidade, anulacao, criterio = dict(resultado.necessidade), dict(getattr(resultado, "anulacao", None) or {}), None
+    ignoradas_qtd = getattr(resultado, "outras_desconsideradas_qtd", None)
+    if ignoradas_qtd is not None:  # escolha item a item: "consideradas" = nenhuma desmarcada
+        outras_despesas_consideradas = ignoradas_qtd == 0
     return Fotografia(
         data=(hoje or date.today()).isoformat(),
         exercicio=int(exercicio),
@@ -326,6 +352,10 @@ def fotografar(
         anulacao=anulacao,
         outras_despesas_consideradas=bool(outras_despesas_consideradas),
         criterio=criterio,
+        outras_despesas_ignoradas_qtd=ignoradas_qtd,
+        outras_despesas_ignoradas_valor=(
+            None if ignoradas_qtd is None else float(getattr(resultado, "outras_desconsideradas_valor", 0.0))
+        ),
     )
 
 
@@ -372,8 +402,12 @@ def comparar(anterior: Fotografia, atual: Fotografia) -> Mudanca:
     delta = None if anterior.resultado is None or atual.resultado is None else atual.resultado - anterior.resultado
     escolha = None
     if _consideradas(anterior) != _consideradas(atual):
-        nome = {True: "consideradas", False: "desconsideradas"}
-        escolha = f"{nome[_consideradas(anterior)]} → {nome[_consideradas(atual)]}"
+        escolha = f"{_rotulo_escolha(anterior)} → {_rotulo_escolha(atual)}"
+    elif (
+        anterior.outras_despesas_ignoradas_valor is not None and atual.outras_despesas_ignoradas_valor is not None
+        and not _igual(anterior.outras_despesas_ignoradas_valor, atual.outras_despesas_ignoradas_valor)
+    ):
+        escolha = f"{_rotulo_escolha(anterior)} → {_rotulo_escolha(atual)}"
     criterio = None
     if anterior.criterio != atual.criterio:
         criterio = "empenhado + necessidade → executado + projetado" if novo else "executado + projetado → empenhado + necessidade"
@@ -464,7 +498,7 @@ def tabela_historico(historico: list[Fotografia]) -> pd.DataFrame:
             "Situação": situacao,
             "Mudança de situação": virada_de_situacao(anterior, foto),
             "Células marcadas": foto.celulas_marcadas,
-            "Outras despesas": "Consideradas" if _consideradas(foto) else "Desconsideradas",
+            "Outras despesas": _rotulo_escolha(foto)[0].upper() + _rotulo_escolha(foto)[1:],
             "Critério": "Executado + projetado" if foto.criterio == CRITERIO_EXECUTADO_PROJETADO else "Empenhado + necessidade",
             "Dotação (extração)": foto.dotacao_extracao,
             "Execução Mensal (extração)": foto.execucao_extracao,

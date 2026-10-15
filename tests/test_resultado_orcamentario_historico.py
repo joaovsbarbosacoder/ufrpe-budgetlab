@@ -491,5 +491,40 @@ class TestCriterioExecutadoProjetado(unittest.TestCase):
         self.assertEqual(list(tabela["Critério"]), ["Executado + projetado", "Empenhado + necessidade"])
 
 
+class TestEscolhaItemAItem(unittest.TestCase):
+    def _foto_qtd(self, dia, qtd, valor):
+        res = _res_novo()
+        res.outras_desconsideradas_qtd, res.outras_desconsideradas_valor = qtd, valor
+        return fotografar(res, 2026, 5, hoje=date.fromisoformat(dia), dotacao_sha="d1", execucao_sha="e1")
+
+    def test_fotografia_guarda_quantas_e_quanto_ficaram_de_fora(self):
+        foto = self._foto_qtd("2026-10-15", 2, 70.0)
+        self.assertEqual((foto.outras_despesas_ignoradas_qtd, foto.outras_despesas_ignoradas_valor), (2, 70.0))
+        self.assertFalse(foto.outras_despesas_consideradas)  # "consideradas" = nenhuma desmarcada
+        self.assertTrue(self._foto_qtd("2026-10-16", 0, 0.0).outras_despesas_consideradas)
+
+    def test_ida_e_volta_pelo_arquivo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registrar(self._foto_qtd("2026-10-15", 1, 40.0), Path(tmp))
+            lida = carregar_historico(2026, Path(tmp))[0]
+            self.assertEqual((lida.outras_despesas_ignoradas_qtd, lida.outras_despesas_ignoradas_valor), (1, 40.0))
+
+    def test_mudar_so_a_quantidade_regrava_o_dia(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertTrue(registrar(self._foto_qtd("2026-10-15", 1, 40.0), Path(tmp)))
+            self.assertFalse(registrar(self._foto_qtd("2026-10-15", 1, 40.0), Path(tmp)))
+            self.assertTrue(registrar(self._foto_qtd("2026-10-15", 2, 90.0), Path(tmp)))
+
+    def test_comparar_avisa_mudanca_parcial_e_a_tabela_mostra_a_situacao(self):
+        todas, uma, duas = self._foto_qtd("2026-10-14", 0, 0.0), self._foto_qtd("2026-10-15", 1, 40.0), self._foto_qtd("2026-10-16", 2, 90.0)
+        self.assertEqual(comparar(todas, uma).escolha_outras_despesas, "consideradas → 1 desconsiderada(s) (R$ 40,00)")
+        self.assertEqual(
+            comparar(uma, duas).escolha_outras_despesas, "1 desconsiderada(s) (R$ 40,00) → 2 desconsiderada(s) (R$ 90,00)"
+        )
+        self.assertIsNone(comparar(uma, self._foto_qtd("2026-10-17", 1, 40.0)).escolha_outras_despesas)
+        tabela = tabela_historico([todas, uma])
+        self.assertEqual(list(tabela["Outras despesas"]), ["1 desconsiderada(s) (R$ 40,00)", "Consideradas"])
+
+
 if __name__ == "__main__":
     unittest.main()
