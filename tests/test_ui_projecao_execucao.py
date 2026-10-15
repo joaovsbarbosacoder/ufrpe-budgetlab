@@ -10,6 +10,7 @@ from src.relatorio_necessidade_empenho import necessidade_por_ne
 from src.relatorio_projecao_execucao import montar_relatorio
 from src.relatorio_projecao_execucao import BOLSAS_AUXILIOS, CONTRATOS
 from src.ui_projecao_execucao import (
+    CSS,
     formatar_quantidade,
     html_legenda,
     html_matriz,
@@ -113,6 +114,13 @@ class TestBolsasQuantidadeEValor(unittest.TestCase):
         for qtd in (1.0, 7.0, 130.0):
             self.assertEqual(quantidade_de_valor(valor_de_quantidade(qtd, 1400.0), 1400.0), qtd)
 
+    def test_formatar_quantidade_com_menos_casas(self):
+        self.assertEqual(formatar_quantidade(3.3333, casas=2), "3,33")
+        self.assertEqual(formatar_quantidade(0.7305, casas=2), "0,73")
+        self.assertEqual(formatar_quantidade(213.5, casas=2), "213,5")
+        self.assertEqual(formatar_quantidade(12.0, casas=2), "12")
+        self.assertEqual(formatar_quantidade(0.001, casas=2), "0")  # arredonda para zero sem sobrar "0,00"
+
     def test_formatar_quantidade(self):
         self.assertEqual(formatar_quantidade(12.0), "12")
         self.assertEqual(formatar_quantidade(12.5), "12,5")
@@ -133,7 +141,40 @@ class TestBolsasQuantidadeEValor(unittest.TestCase):
     def test_matriz_mostra_bolsas_quando_ha_valor_de_bolsa(self):
         html = html_matriz(_relatorio({NE: {12: 5000.0}}), unidades={NE: 100.0})
         self.assertIn("bolsas", html)  # title da célula com a quantidade
-        self.assertIn("50 b", html)  # 5.000 ÷ 100 no mês ajustado (texto compacto da célula)
+        self.assertIn('<span class="q">50 bolsas</span>', html)  # 5.000 ÷ 100 no mês ajustado
+
+    def test_celula_de_bolsas_tem_duas_linhas_fixas_valor_e_quantidade(self):
+        html = html_matriz(_relatorio({NE: {12: 5000.0}}), unidades={NE: 100.0})
+        self.assertRegex(html, r'<span class="v">5,0 mil[^<]*</span><span class="q">50 bolsas</span>')
+        self.assertNotIn(" · 50 b<", html)  # sem o formato corrido em uma linha só, que quebrava no meio
+
+    def test_quantidade_na_matriz_tem_no_maximo_duas_casas_e_a_dica_a_precisao_total(self):
+        # 1.000 ÷ 300 = 3,3333 bolsas: a matriz mostra 3,33 e a dica (title) guarda as 4 casas
+        html = html_matriz(_relatorio({NE: {12: 1000.0}}), unidades={NE: 300.0})
+        self.assertIn('<span class="q">3,33 bolsas</span>', html)
+        self.assertIn("3,3333 bolsas", html)
+
+    def test_total_da_linha_mostra_a_quantidade_de_bolsas(self):
+        html = html_matriz(_relatorio({NE: {12: 5000.0}}), unidades={NE: 100.0})
+        total = html.split("</td></tr>")[0].rsplit('<td class="tt">', 1)[1]  # total da linha da NE
+        self.assertIn('<span class="q">', total)
+        self.assertIn("bolsas", total)
+
+    def test_celulas_nao_quebram_no_meio(self):
+        self.assertIn("white-space:nowrap", CSS)
+
+    def test_nome_longo_fica_em_duas_linhas_e_a_dica_traz_o_texto_completo(self):
+        self.assertIn("-webkit-line-clamp:2", CSS)
+        html = html_matriz(_relatorio())
+        # a dica (title) da primeira coluna traz o título completo, já escapado
+        self.assertIn('<td class="t" title="10/2025 — Estável &amp; Cia &lt;Ltda&gt; — 2026NE000001">', html)
+
+    def test_tabela_fica_num_conteiner_com_rolagem_horizontal(self):
+        # com 12 meses + total a tabela pode passar da largura da página: rola em vez de ser cortada
+        html = html_matriz(_relatorio(), unidades={NE: 100.0})
+        self.assertTrue(html.startswith('<div class="pe-rolagem"><table class="pe-m">'))
+        self.assertTrue(html.endswith("</table></div>"))
+        self.assertIn("overflow-x:auto", CSS)
 
     def test_matriz_sem_unidade_nao_mostra_bolsas(self):
         self.assertNotIn("bolsas", html_matriz(_relatorio({NE: {12: 5000.0}})))

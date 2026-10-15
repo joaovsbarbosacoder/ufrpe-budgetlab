@@ -111,7 +111,7 @@ def test_gravar_grava_o_valor_em_reais_na_pasta_de_bolsas(ambiente, tmp_path):
     import json
     evento = json.loads(arquivos[0].read_text(encoding="utf-8"))
     assert evento["valores"]["12"] == pytest.approx(esperado)
-    assert " ✎</td>" in _html(app)
+    assert " ✎</span>" in _html(app)  # a marca fica na linha do valor; a quantidade vem logo abaixo
 
 
 def test_valor_nao_multiplo_avisa_mas_vale(ambiente):
