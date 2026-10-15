@@ -30,10 +30,10 @@ esses artefatos.
    Para executar os testes, dê sempre preferência às ferramentas de
    `requirements-dev.txt` que agilizam a suíte, em vez de
    `python -m unittest`:
-   - rodadas intermediárias: `python -m pytest tests --testmon -n auto`
+   - rodadas intermediárias: `python -m pytest tests --testmon -n 8 --dist loadfile`
      (só os testes afetados pelo código alterado, em paralelo);
    - suíte completa (ao concluir a tarefa, ou se mudou fixture, planilha ou
-     base, que o testmon não acompanha): `python -m pytest tests -n auto`.
+     base, que o testmon não acompanha): `python -m pytest tests -n 8 --dist loadfile`.
    Se essas ferramentas não estiverem instaladas, instale-as com
    `python -m pip install -r requirements-dev.txt` antes de recorrer ao
    `unittest`.

@@ -980,14 +980,19 @@ Forma preferencial — com as ferramentas de desenvolvimento
 como alternativa quando elas não estiverem disponíveis:
 
 ```powershell
-python -m pytest tests -n auto        # suíte completa em paralelo (pytest-xdist, um processo por núcleo)
+python -m pytest tests -n 8 --dist loadfile   # suíte completa em paralelo (pytest-xdist; 8 processos, cada arquivo inteiro num só)
 python -m pytest tests --testmon      # só os testes afetados pelo código alterado desde a última rodada
 ```
 
-O `--testmon` (pytest-testmon) serve para as rodadas intermediárias e pode ser combinado com `-n auto`.
+O `--testmon` (pytest-testmon) serve para as rodadas intermediárias e pode ser combinado com `-n 8 --dist loadfile`.
 Ele acompanha o código Python, não as planilhas: mudou uma fixture ou base, rode a suíte completa. A
 primeira rodada com `--testmon` executa tudo (monta o mapa em `.testmondata`, fora do Git). Antes de
-concluir uma tarefa, rode a suíte completa com `-n auto`.
+concluir uma tarefa, rode a suíte completa com `-n 8 --dist loadfile`.
+
+Por que 8 processos e `--dist loadfile` (15/10/2026): com `-n auto` a máquina de desenvolvimento (16 processadores lógicos, ~16 GB
+de memória) abre 16 processos, e cada um recarrega as planilhas reais nas páginas; sob essa pressão de memória um teste de
+página estourou o tempo limite sem haver defeito. `--dist loadfile` mantém cada arquivo de teste inteiro num só processo (as
+páginas aquecem uma vez por arquivo). Medido: 4 min 10 s contra 4 min 26 s do `-n auto`, sem falhas. Com mais memória, ajuste o `-n`.
 
 ## Evolução prevista
 
