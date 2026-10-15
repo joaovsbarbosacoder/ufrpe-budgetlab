@@ -585,6 +585,16 @@ seleção de células salva** (a seleção em edição não vira história), arq
 menos uma célula marcada; a última do dia substitui a anterior e abrir sem mudança não reescreve. O histórico começa
 no primeiro registro: o passado não é reconstruível. Componente nulo (indisponível) em qualquer ponta gera variação
 nula, nunca zero; arquivo ilegível mostra erro e nunca é sobrescrito.
+**Considerar ou desconsiderar as outras despesas (15/10/2026).** Um interruptor no topo da seção 4, "Considerar as outras despesas
+previstas no resultado", vem **ligado**. Desligado, as despesas cadastradas continuam listadas e editáveis, mas saem da conta: a
+necessidade de "Outras despesas previstas" vira 0,00 e resultado, cartões e composição recalculam na hora; um aviso nos cartões
+("Resultado SEM as outras despesas previstas") e a linha "— desconsideradas" na composição deixam isso à vista. A escolha vale só
+na sessão (nada é gravado para lembrá-la; ao reabrir a página volta ligado). **O histórico diário continua gravando** com o
+interruptor desligado: a fotografia guarda se as outras despesas estavam consideradas (`outras_despesas_consideradas`; ausente nas
+fotografias antigas = consideradas), mudar a escolha no mesmo dia regrava a fotografia, a tabela dos dias ganhou a coluna "Outras
+despesas" e, quando a escolha muda entre duas fotografias, a comparação avisa que a variação de "Outras despesas previstas" vem da
+escolha e não de mudança nas despesas. Arquivo de despesas ilegível continua tornando o resultado incompleto (o erro segue visível).
+
 **Mudança de situação (13/10/2026).** A tabela dos dias ganhou a coluna "Mudança de situação", preenchida quando a
 situação do dia (Superávit, Déficit, Equilíbrio ou Incompleto) difere da fotografia anterior, por exemplo
 "Superávit → Déficit". Qualquer mudança conta, inclusive de e para Equilíbrio e Incompleto (resultado indisponível), pois
