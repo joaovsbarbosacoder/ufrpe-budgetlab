@@ -85,8 +85,8 @@ def _sem_ne_vazio() -> pd.DataFrame:
     return pd.DataFrame({"contrato_numero": [], "fornecedor": [], "necessidade": []})
 
 
-def _manual(valor=40.0) -> DespesaManual:
-    return DespesaManual("1", "Desp", valor, None, None, "2026-01-01", "2026-01-01")
+def _manual(valor=40.0, considerada=True, id_="1") -> DespesaManual:
+    return DespesaManual(id_, "Desp", valor, None, None, "2026-01-01", "2026-01-01", considerada)
 
 
 def _calc(**kw):
@@ -432,3 +432,23 @@ def test_empenhado_nulo_em_celula_marcada_continua_incompleto():
     empenhos = _empenhado([("N1", A, None), ("N2", B, 200.0)])
     r = _calc(empenhado=empenhos)
     assert r.resultado is None and r.incompleto is True
+
+
+# ---- outras despesas previstas, uma a uma (15/10/2026) --------------------------------------------------------
+def test_so_as_despesas_consideradas_entram_no_projetado():
+    r = _calc(despesas_manuais=[_manual(40.0, True, "1"), _manual(60.0, False, "2"), _manual(10.0, True, "3")])
+    assert r.projetado[OUTRAS] == 50.0
+    assert r.resultado == 1500 - 550 - (120 + 40 + 50)
+    assert r.outras_desconsideradas_qtd == 1 and r.outras_desconsideradas_valor == 60.0
+    assert any("1 de 3 outras despesas previstas desconsideradas" in a and "R$ 60,00" in a for a in r.avisos)
+
+
+def test_todas_desmarcadas_projetado_zero_e_nao_nulo():
+    r = _calc(despesas_manuais=[_manual(40.0, False)])
+    assert r.projetado[OUTRAS] == 0.0 and r.incompleto is False
+
+
+def test_todas_consideradas_nao_avisa():
+    r = _calc()
+    assert r.outras_desconsideradas_qtd == 0 and r.outras_desconsideradas_valor == 0.0
+    assert not any("desconsideradas" in a for a in r.avisos)

@@ -49,6 +49,8 @@ class DespesaManual:
     celula: CelulaChave | None
     criado_em: str
     atualizado_em: str
+    #: a despesa entra na conta do resultado? (15/10/2026: escolha item a item, gravada). Arquivo sem o campo = considerada.
+    considerada: bool = True
 
 
 def _agora() -> str:
@@ -136,6 +138,7 @@ def carregar_despesas(exercicio: int, diretorio: Path = DIRETORIO_PADRAO) -> lis
                 celula=None if d.get("celula") is None else _para_chave(d["celula"]),
                 criado_em=d["criado_em"],
                 atualizado_em=d["atualizado_em"],
+                considerada=bool(d.get("considerada", True)),
             )
             for d in dado["despesas"]
         ]
@@ -218,6 +221,20 @@ def atualizar_despesa(
             despesas[i] = nova
             _salvar_despesas(exercicio, despesas, diretorio)
             return nova
+    raise KeyError(f"Despesa inexistente: {id_despesa}")
+
+
+def definir_consideracao(
+    exercicio: int, id_despesa: str, considerada: bool, diretorio: Path = DIRETORIO_PADRAO,
+) -> DespesaManual:
+    """Liga/desliga uma despesa na conta do resultado. Não é edição do cadastro: `atualizado_em` não muda."""
+
+    despesas = carregar_despesas(exercicio, diretorio)
+    for i, atual in enumerate(despesas):
+        if atual.id == id_despesa:
+            despesas[i] = replace(atual, considerada=bool(considerada))
+            _salvar_despesas(exercicio, despesas, diretorio)
+            return despesas[i]
     raise KeyError(f"Despesa inexistente: {id_despesa}")
 
 

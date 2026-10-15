@@ -322,6 +322,19 @@ def _dialogo_editar(exercicio: int, despesa: DespesaManual, chaves: list[CelulaC
                     st.rerun()
 
 
+def _alternar_consideracao(exercicio: int, id_despesa: str) -> None:
+    """`on_change` da caixa "Considerar" de uma despesa: grava a escolha (não é edição: `atualizado_em` não muda)."""
+
+    try:
+        cadastro.definir_consideracao(
+            exercicio, id_despesa, bool(st.session_state[f"ro_considerar_{id_despesa}"]), diretorio=cadastro.DIRETORIO_PADRAO,
+        )
+    except KeyError:
+        _mensagem("Esta despesa não existe mais (pode ter sido excluída em outra aba). Nada foi gravado.")
+    except ArquivoCorrompido as erro:
+        _mensagem(f"{erro} — nada foi gravado.")
+
+
 @st.dialog("Excluir despesa")
 def _dialogo_excluir(exercicio: int, despesa: DespesaManual) -> None:
     st.write(f'Excluir "{despesa.descricao}" ({formatar_brl(despesa.valor)})? A exclusão não pode ser desfeita.')
@@ -417,7 +430,6 @@ def _render_composicao(
     linhas_bolsas: pd.DataFrame | None,
     despesas: list[DespesaManual],
     ativos_sem_ne: pd.DataFrame | None = None,
-    considerar_outras: bool = True,
 ) -> None:
     """Composição no desenho do protótipo (08/10/2026): linhas compactas com % e valor à direita, barra
     de proporção e o detalhe por NE (ou por despesa) ao abrir a linha. Os avisos da projeção ficam na
@@ -466,21 +478,21 @@ def _render_composicao(
                 detalhe = _tabela_projetado(res, linhas, origem, ativos_sem_ne)
                 vazio = "Nenhuma NE com projeção nas células selecionadas."
             linhas_bloco.append(LinhaComposicao(origem, res.projetado[origem], detalhe, ("Projetado",), vazio))
-        manual = pd.DataFrame({"Descrição": [d.descricao for d in despesas], "Valor": [d.valor for d in despesas]})
-        if considerar_outras:
-            linhas_bloco.append(
-                LinhaComposicao(
-                    OUTRAS_DESPESAS, res.projetado[OUTRAS_DESPESAS], manual, ("Valor",),
-                    "Nenhuma despesa cadastrada — ver a seção Outras despesas previstas.",
-                )
+        # a lista inteira fica à vista; só as marcadas "Considerada" entram no valor da linha (e do total)
+        manual = pd.DataFrame({
+            "Descrição": [d.descricao for d in despesas],
+            "Situação": ["Considerada" if d.considerada else "Desconsiderada" for d in despesas],
+            "Valor": [d.valor for d in despesas],
+        })
+        rotulo = OUTRAS_DESPESAS + (
+            f" — {res.outras_desconsideradas_qtd} desconsiderada(s)" if res.outras_desconsideradas_qtd else ""
+        )
+        linhas_bloco.append(
+            LinhaComposicao(
+                rotulo, res.projetado[OUTRAS_DESPESAS], manual, ("Valor",),
+                "Nenhuma despesa cadastrada — ver a seção Outras despesas previstas.",
             )
-        else:  # a lista fica à vista, mas o valor da linha (e do total) não a inclui
-            linhas_bloco.append(
-                LinhaComposicao(
-                    f"{OUTRAS_DESPESAS} — desconsideradas", res.projetado[OUTRAS_DESPESAS], manual, ("Valor",),
-                    "Nenhuma despesa cadastrada. Desconsideradas pelo interruptor da seção 4: não entram na conta.",
-                )
-            )
+        )
         st.html(
             html_bloco(
                 "Projetado a realizar até dezembro", linhas_bloco, res.projetado_total, "Total projetado",
@@ -802,23 +814,29 @@ st.caption(
     "Despesas que não estão em Contratos nem em Bolsas e ainda vão ser empenhadas no exercício. "
     "A célula é só informativa: não muda a conta."
 )
-considerar_outras = st.toggle(
-    "Considerar as outras despesas previstas no resultado", value=True, key="ro_considerar_outras",
-    help="Desligado, as despesas cadastradas continuam listadas e editáveis, mas saem da conta (projetado, resultado, "
-         "cartões e composição). O histórico diário continua gravando, com a marca de que estavam desconsideradas. A "
-         "escolha vale só nesta sessão: ao reabrir a página, volta ligado.",
+st.caption(
+    'Marque "Considerar" em cada despesa que deve pesar no resultado. A desmarcada continua listada e editável, mas sai '
+    "da conta (projetado, resultado, cartões e composição). A escolha de cada uma fica gravada, e o histórico diário "
+    "registra quantas e quanto ficaram de fora."
 )
 if _CHAVE_FLASH in st.session_state:
     st.success(st.session_state.pop(_CHAVE_FLASH))
 
 if despesas:
     # Editar/Excluir em cada linha, como no protótipo (08/10/2026); antes era um seletor separado.
-    larguras = [3, 2.2, 2.4, 1.4, 0.8, 0.8]
-    for coluna, titulo in zip(st.columns(larguras), ("Descrição", "Observação", "Célula (informativa)", "Valor a empenhar")):
+    larguras = [1.1, 3, 2.2, 2.4, 1.4, 0.8, 0.8]
+    for coluna, titulo in zip(
+        st.columns(larguras), ("Considerar", "Descrição", "Observação", "Célula (informativa)", "Valor a empenhar")
+    ):
         coluna.caption(f"**{titulo}**")
     for despesa in despesas:
-        col_desc, col_obs, col_cel, col_valor, col_editar, col_excluir = st.columns(
+        col_considerar, col_desc, col_obs, col_cel, col_valor, col_editar, col_excluir = st.columns(
             larguras, vertical_alignment="center"
+        )
+        col_considerar.checkbox(
+            "Considerar", value=despesa.considerada, key=f"ro_considerar_{despesa.id}", label_visibility="collapsed",
+            disabled=not despesas_legiveis, on_change=_alternar_consideracao, args=(exercicio, despesa.id),
+            help="Desmarcada, a despesa fica listada mas não entra na conta do resultado.",
         )
         col_desc.markdown(_sem_latex(despesa.descricao))
         col_obs.markdown(_sem_latex(despesa.observacao or "—"))
@@ -830,7 +848,10 @@ if despesas:
         with col_excluir:
             if st.button("Excluir", key=f"ro_excluir_{despesa.id}", disabled=not despesas_legiveis, type="tertiary"):
                 _dialogo_excluir(exercicio, despesa)
-    st.caption(_sem_latex(f"Total: {formatar_brl(sum(d.valor for d in despesas))}"))
+    st.caption(_sem_latex(
+        f"Total cadastrado: {formatar_brl(sum(d.valor for d in despesas))} · "
+        f"considerado no resultado: {formatar_brl(sum(d.valor for d in despesas if d.considerada))}"
+    ))
 elif despesas_legiveis:
     st.caption("Nenhuma despesa prevista cadastrada para este exercício.")
 
@@ -876,10 +897,9 @@ _relatorios_sobra = {
 }
 _tabela_sobra = sobra_por_ne(_relatorios_sobra, data_execucao.date()) if _relatorios_sobra else None
 # Interruptor da seção 4 (15/10/2026): desligado, as despesas continuam cadastradas e listadas, mas não entram na conta.
-despesas_na_conta = despesas if considerar_outras else []
 resultado = calcular_resultado(
     celulas, empenhado, selecao_atual, tabela_contratos_df, tabela_bolsas_df,
-    linhas_contratos, linhas_bolsas, sem_ne_contratos, sem_ne_bolsas, despesas_na_conta,
+    linhas_contratos, linhas_bolsas, sem_ne_contratos, sem_ne_bolsas, despesas,
 )
 if not despesas_legiveis:
     resultado = replace(
@@ -907,7 +927,6 @@ try:
                     for chave, valor in zip(celulas["chave"], celulas["dotacao_atualizada"])
                     if chave in set(marcadas)
                 },
-                outras_despesas_consideradas=considerar_outras,
             ),
             diretorio=cadastro.DIRETORIO_PADRAO,
         ):
@@ -916,11 +935,12 @@ except ArquivoCorrompido as erro:
     historico_erro = f"{erro}. O histórico não pôde ser lido; corrija ou restaure o arquivo — a página não grava por cima."
 
 with area_cartoes:
-    if not considerar_outras:
+    if resultado.outras_desconsideradas_qtd:
         st.warning(
             _sem_latex(
-                f"Resultado SEM as outras despesas previstas ({formatar_brl(sum(d.valor for d in despesas))} cadastrados): "
-                "elas estão desconsideradas. Religue em 'Outras despesas previstas' (seção 4) para voltar à conta completa."
+                f"Resultado SEM {resultado.outras_desconsideradas_qtd} de {len(despesas)} outras despesas previstas "
+                f"({formatar_brl(resultado.outras_desconsideradas_valor)}): estão desconsideradas. Marque 'Considerar' em "
+                "'Outras despesas previstas' (seção 4) para voltar a contá-las."
             )
         )
     _render_cartoes(resultado, len(marcadas), len(celulas))
@@ -929,7 +949,7 @@ with area_composicao:
     # para a tabela fechar com o total da linha
     ativos_sem_ne, _ = separar_ativos_sem_ne(sem_ne_contratos)
     _render_composicao(
-        resultado, linhas_contratos, linhas_bolsas, despesas, ativos_sem_ne, considerar_outras=considerar_outras,
+        resultado, linhas_contratos, linhas_bolsas, despesas, ativos_sem_ne,
     )
 
 # --------------------------------------------------------------- Avisos
@@ -1003,7 +1023,7 @@ else:
             )
         if mudanca.escolha_outras_despesas:
             st.warning(
-                f"As outras despesas previstas passaram de {mudanca.escolha_outras_despesas} entre estas fotografias: "
+                f"A escolha das outras despesas previstas mudou entre estas fotografias ({mudanca.escolha_outras_despesas}): "
                 "a variação de 'Outras despesas previstas' abaixo vem dessa escolha, não de mudança nas despesas."
             )
         tabela_mud = historico_ro.tabela_mudanca(mudanca)

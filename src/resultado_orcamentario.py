@@ -92,6 +92,9 @@ class ResultadoOrcamentario:
     avisos: list[str] = field(default_factory=list)
     #: uma linha por NE de Contratos/Bolsas contada na conta: `ne_curta`, `origem`, `executado`, `projetado`
     consumo_por_ne: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=COLUNAS_CONSUMO_POR_NE))
+    #: outras despesas previstas desmarcadas (fora da conta): quantidade e valor somado (15/10/2026)
+    outras_desconsideradas_qtd: int = 0
+    outras_desconsideradas_valor: float = 0.0
 
     @property
     def projetado_total(self) -> float | None:
@@ -455,7 +458,14 @@ def calcular_resultado(
             f"necessidade contratual ({'valor não calculado' if ativos_valor is None else _brl(ativos_valor)})"
             + (f": {rotulos}." if rotulos else ".")
         )
-    projetado[OUTRAS_DESPESAS] = float(sum(d.valor for d in despesas_manuais))
+    # cada despesa tem a sua marca "considerada" (escolha item a item, 15/10/2026); as desmarcadas ficam fora, em aviso
+    projetado[OUTRAS_DESPESAS] = float(sum(d.valor for d in despesas_manuais if d.considerada))
+    desconsideradas = [d for d in despesas_manuais if not d.considerada]
+    if desconsideradas:
+        avisos.append(
+            f"{len(desconsideradas)} de {len(despesas_manuais)} outras despesas previstas desconsideradas "
+            f"({_brl(float(sum(d.valor for d in desconsideradas)))}): fora da conta do resultado."
+        )
     consumo_por_ne = pd.concat(detalhes, ignore_index=True) if detalhes else pd.DataFrame(columns=COLUNAS_CONSUMO_POR_NE)
 
     # o que abate a dotação já consumido: executado de Contratos e Bolsas + empenhado das demais origens
@@ -492,4 +502,6 @@ def calcular_resultado(
         empenhado_por_ne=por_ne,
         avisos=avisos,
         consumo_por_ne=consumo_por_ne,
+        outras_desconsideradas_qtd=len(desconsideradas),
+        outras_desconsideradas_valor=float(sum(d.valor for d in desconsideradas)),
     )
