@@ -1,27 +1,27 @@
 {
   "base": "execucao_mensal",
-  "arquivo": "BI CPOC - EXEC. DESPESAS - Por Ano (21).xlsx",
-  "sha256": "73c6c23779505ce94d1103fa8171d8eebec2c5a4ccf3813e0b6d35b87880f46f",
-  "data_extracao": "2026-10-14T10:29:37",
-  "importado_em": "2026-10-14T10:29:37-03:00",
+  "arquivo": "BI CPOC - EXEC. DESPESAS - Por Ano (23).xlsx",
+  "sha256": "630278173485ba58aa4a2eb1ecab8415628b8de697e5a164afeeaec9626dc93c",
+  "data_extracao": "2026-10-15T11:20:11",
+  "importado_em": "2026-10-15T11:20:11-03:00",
   "anos": [
     2026
   ],
   "totais": {
-    "empenhada": 790490990.0,
-    "liquidada": 652275740.52,
-    "paga": 641757993.16
+    "empenhada": 791985883.49,
+    "liquidada": 654110655.89,
+    "paga": 642505632.73
   },
   "totais_por_ano": {
     "2026": {
-      "empenhada": 790490990.0,
-      "liquidada": 652275740.52,
-      "paga": 641757993.16
+      "empenhada": 791985883.49,
+      "liquidada": 654110655.89,
+      "paga": 642505632.73
     }
   },
   "contagens": {
-    "linhas": 44710,
-    "linhas_originais": 4471,
+    "linhas": 44770,
+    "linhas_originais": 4477,
     "meses": [
       202601,
       202602,
@@ -34,6 +34,6 @@
       202609,
       202610
     ],
-    "notas_empenho_distintas": 586
+    "notas_empenho_distintas": 590
   }
 }
