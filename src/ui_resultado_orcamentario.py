@@ -103,14 +103,18 @@ def situacao_resultado(resultado: float | None) -> tuple[str, str]:
 def html_cartoes(
     dotacao: float | None, rodape_dotacao: str,
     empenhado: float | None, necessidade: float | None,
-    resultado: float | None, rodape_resultado: str,
+    resultado: float | None, rodape_resultado: str, anulacao: float | None = None,
 ) -> str:
+    """`anulacao` (15/10/2026): sobra prevista de empenho que soma ao resultado como receita; `None` = sem cartão."""
+
     classe, selo = situacao_resultado(resultado)
     cartoes = [
         ("Dotação Atualizada", dotacao, rodape_dotacao, ""),
         ("(−) Empenhado nas células", empenhado, "Execução Mensal, todo empenho das células", ""),
         ("(−) Necessidade até dezembro", necessidade, "Contratos + Bolsas + outras previstas", ""),
     ]
+    if anulacao is not None:
+        cartoes.append(("(+) Anulação sugerida", anulacao, "Sobra prevista de empenho (receita ainda não efetivada)", ""))
     partes = [
         f'<div class="ro-card"><div class="lbl">{_txt(r)}</div><div class="val">{brl(v)}</div>'
         f'<div class="foot">{_txt(f)}</div></div>'

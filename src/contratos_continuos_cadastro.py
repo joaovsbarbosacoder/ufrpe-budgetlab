@@ -91,7 +91,7 @@ from src.contratos_aditivos import (
     valor_vigente_em,
     vigencia_efetiva,
 )
-from src.contratos_continuos import ler_contratos_continuos
+from src.contratos_continuos import COLUNAS_CONTRATOSGOV, ler_contratos_continuos
 from src.necessidade_empenho import calcular_necessidade_empenho
 
 DIRETORIO_PADRAO = Path("data/contratos_continuos")
@@ -178,6 +178,29 @@ def novo_contrato_do_formulario(**campos: object) -> dict:
             valor = valor.strip() or None
         limpos[chave] = valor
     return novo_contrato(**limpos)
+
+
+#: Colunas que a página acrescenta ao cadastro EM MEMÓRIA (saldo/execução, autoritativos, vigência efetiva, Pagamentos,
+#: Contratos.gov…): nunca fazem parte do registro gravado. A edição parte da linha da tela, então precisa removê-las antes
+#: de salvar (`para_gravar`) — uma delas, `vigencia_fim_contratosgov`, é `date` e quebrava o JSON (15/10/2026).
+COLUNAS_DERIVADAS = (
+    "despesa_anual", "meses_a_empenhar", "valor_a_empenhar", "saldo_execucao",
+    "diverge_saldo", "valor_empenhado_execucao", "diverge_valor_empenhado",
+    "valor_liquidado_execucao", "liquidado_via_competencia", "valor_empenhado_planilha_total_ne",
+    "despesa_mensal_total_ne", "meses_empenhados_execucao", "meses_liquidados_execucao",
+    "necessidade_via", "meses_pagos", "ultimo_mes_pago", "contrato_normalizado",
+    "tem_varios_itens", "inicio_execucao_efetivo", "valor_empenhado_autoritativo",
+    "despesa_anual_contratual", "despesa_anual_base",
+    "vigencia_fim_efetiva", "valor_mensal_vigente", "tem_aditivo_previsto",
+    "necessidade_ate_dezembro", "sem_liquidacao_confirmada",
+    *COLUNAS_CONTRATOSGOV,
+)
+
+
+def para_gravar(registro: dict) -> dict:
+    """Cópia de `registro` sem as `COLUNAS_DERIVADAS` — o que a edição pode gravar no cadastro."""
+
+    return {chave: valor for chave, valor in registro.items() if chave not in COLUNAS_DERIVADAS}
 
 
 def salvar_contrato(ano: int, contrato: dict) -> Path:

@@ -214,6 +214,13 @@ def quantidade_nao_inteira(realizado: dict[int, float], meses: tuple[int, ...], 
     return False
 
 
+def mes_sem_execucao(liquidado: float | None) -> bool:
+    """Mês sem liquidação no exercício: sem registro, ou registro zerado (16/10/2026). Mês fechado nessa situação aceita
+    ajuste manual do esperado (fatura ainda não liquidada); com liquidação, vale o realizado."""
+
+    return liquidado is None or abs(liquidado) < 0.005
+
+
 def projetar_meses(
     realizado: dict[int, float], custo: list[float], fator: float, mes_referencia: int,
     teto_mensal: float | None = None, ajustes: dict[int, float] | None = None, unidade: float | None = None,
@@ -222,8 +229,9 @@ def projetar_meses(
     mesma regra do relatório de Necessidade): nada é projetado. `teto_mensal` (opcional): o esperado do mês
     (custo × fator) não passa dele. `ajustes` (opcional): mês (1-12) → ESPERADO TOTAL do mês gravado pelo usuário
     (14/10/2026); substitui custo × fator e o teto, em qualquer mês a partir do primeiro em aberto — inclusive nos que
-    a metodologia deixa vazios. O liquidado do mês continua descontado. Ajuste de mês já fechado, ou de exercício
-    encerrado, não vale: vai para `superados`. `unidade` (opcional, Bolsas e Auxílios): valor de uma bolsa — o
+    a metodologia deixa vazios. O liquidado do mês continua descontado. Mês já FECHADO sem execução (`mes_sem_execucao`,
+    16/10/2026) também aceita ajuste: entra como restante a liquidar (tipo `TIPO_RESTANTE_ABERTO`, fatura pendente).
+    Ajuste de mês fechado COM liquidação, ou de exercício encerrado, não vale: vai para `superados`. `unidade` (opcional, Bolsas e Auxílios): valor de uma bolsa — o
     esperado do mês (custo × fator) é arredondado para um número inteiro de bolsas antes do teto e do abatimento do
     liquidado; a projeção pelo valor cheio não é arredondada."""
 
@@ -244,7 +252,18 @@ def projetar_meses(
     limitado = False
     if mes_referencia >= 12:
         return ProjecaoMensal(realizado_lista, projetado, cheio, tipos, superados=sorted(ajustes))
-    superados = sorted(mes for mes in ajustes if mes <= fechado or not 1 <= mes <= 12)
+    superados = sorted(
+        mes for mes in ajustes
+        if not 1 <= mes <= 12 or (mes <= fechado and not mes_sem_execucao(realizado_lista[mes - 1]))
+    )
+    # Mês fechado sem execução com esperado informado (16/10/2026): fatura pendente, projetada por inteiro.
+    for mes in sorted(m for m in ajustes if 1 <= m <= min(fechado, 12) and m not in superados):
+        esperado = ajustes[mes]
+        ja = realizado_lista[mes - 1] or 0.0
+        ajustados[mes - 1] = True
+        projetado[mes - 1] = max(0.0, esperado - ja)
+        esperados[mes - 1] = esperado
+        tipos[mes - 1] = TIPO_RESTANTE_ABERTO
 
     for mes in range(max(fechado + 1, 1), 13):
         custo_mes = _numero(custo[mes - 1])
@@ -315,7 +334,8 @@ LEGENDA_GRADE = [
     "Sem cor: realizado (liquidado por competência, ou por lançamento nas NEs de competência futura).",
     "Azul (projetado): do mês da extração a dezembro — custo contratado do mês × fator de execução, MENOS o que "
     "já foi liquidado nesse mês. Sem liquidação no mês, é o esperado inteiro.",
-    "Laranja (restante de mês em aberto): os dois meses anteriores ao da extração — o mesmo cálculo do azul "
+    "Laranja (restante de mês em aberto): os dois meses anteriores ao da extração, e mês já fechado sem liquidação "
+    "com esperado informado por você (fatura pendente) — o mesmo cálculo do azul "
     "(esperado − já liquidado no mês); mês com 50% ou mais do esperado já liquidado conta como completo e fica sem cor.",
     "Valor com asterisco (*): o liquidado desse mês JÁ foi abatido (esperado − liquidado); a aba Detalhe mensal traz "
     "o esperado, o liquidado e o projetado de cada mês.",

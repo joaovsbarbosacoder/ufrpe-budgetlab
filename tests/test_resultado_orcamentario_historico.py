@@ -38,17 +38,19 @@ class _Res:
     necessidade: dict
     resultado: float | None
     incompleto: bool = False
+    anulacao: dict | None = None
 
 
-def _res(dotacao=1000.0, contratos=300.0, bolsas=100.0, nec_contratos=200.0, nec_bolsas=50.0, outras=0.0):
+def _res(dotacao=1000.0, contratos=300.0, bolsas=100.0, nec_contratos=200.0, nec_bolsas=50.0, outras=0.0, anulacao=None):
     empenhado = {"Contratos Contínuos": contratos, "Bolsas e Auxílios": bolsas}
     necessidade = {
         "Contratos Contínuos": nec_contratos, "Bolsas e Auxílios": nec_bolsas, "Outras despesas previstas": outras,
     }
     total = None if None in empenhado.values() else sum(empenhado.values())
     nec = None if None in necessidade.values() else sum(necessidade.values())
-    resultado = None if dotacao is None or total is None or nec is None else dotacao - total - nec
-    return _Res(dotacao, empenhado, total, necessidade, resultado, incompleto=resultado is None)
+    receita = sum((anulacao or {}).values())
+    resultado = None if dotacao is None or total is None or nec is None else dotacao - total - nec + receita
+    return _Res(dotacao, empenhado, total, necessidade, resultado, incompleto=resultado is None, anulacao=anulacao)
 
 
 def _foto(dia: str, **kwargs) -> Fotografia:
@@ -304,6 +306,53 @@ class TestDotacaoPorCelula(unittest.TestCase):
             # primeira fotografia com o detalhe passa a valer no mesmo dia (antes não tinha)
             self.assertTrue(registrar(_foto("2026-10-14"), Path(tmp)))
             self.assertTrue(registrar(_foto_celulas("2026-10-14", {C1: 1.0}), Path(tmp)))
+
+
+class TestAnulacaoSugerida(unittest.TestCase):
+    """15/10/2026: a anulação sugerida (receita) entra na fórmula e no que levou à alteração."""
+
+    def test_grava_le_e_compara_a_anulacao(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            foto = fotografar(
+                _res(anulacao={"Contratos Contínuos": 80.0, "Bolsas e Auxílios": 0.0}), 2026, 5,
+                hoje=date(2026, 10, 15), dotacao_sha="d1", execucao_sha="e1",
+            )
+            self.assertTrue(registrar(foto, Path(tmp)))
+            lida = carregar_historico(2026, Path(tmp))[0]
+            self.assertEqual(lida.anulacao, {"Contratos Contínuos": 80.0, "Bolsas e Auxílios": 0.0})
+            self.assertFalse(registrar(foto, Path(tmp)))  # mesmo conteúdo: não regrava
+
+    def test_variacao_da_anulacao_move_o_resultado_com_sinal_positivo(self):
+        antes = fotografar(_res(anulacao={"Contratos Contínuos": 80.0, "Bolsas e Auxílios": 0.0}), 2026, 5,
+                           hoje=date(2026, 10, 14), dotacao_sha="d1", execucao_sha="e1")
+        depois = fotografar(_res(anulacao={"Contratos Contínuos": 130.0, "Bolsas e Auxílios": 10.0}), 2026, 5,
+                            hoje=date(2026, 10, 15), dotacao_sha="d1", execucao_sha="e1")
+        mudanca = comparar(antes, depois)
+        itens = {(v.grupo, v.componente): v for v in mudanca.variacoes}
+        contratos = itens[("Anulação sugerida", "Contratos Contínuos")]
+        self.assertEqual((contratos.anterior, contratos.atual, contratos.variacao, contratos.efeito), (80.0, 130.0, 50.0, 50.0))
+        self.assertEqual(itens[("Anulação sugerida", "Bolsas e Auxílios")].efeito, 10.0)
+        self.assertEqual(mudanca.variacao_resultado, 60.0)  # 50 + 10: os demais componentes não mudaram
+
+    def test_fotografia_antiga_sem_anulacao_vale_zero_na_comparacao(self):
+        antiga = fotografar(_res(), 2026, 5, hoje=date(2026, 10, 14), dotacao_sha="d1", execucao_sha="e1")
+        antiga = Fotografia(**{**antiga.__dict__, "anulacao": None})
+        nova = fotografar(_res(anulacao={"Contratos Contínuos": 70.0, "Bolsas e Auxílios": 0.0}), 2026, 5,
+                          hoje=date(2026, 10, 15), dotacao_sha="d1", execucao_sha="e1")
+        mudanca = comparar(antiga, nova)
+        item = next(v for v in mudanca.variacoes if v.grupo == "Anulação sugerida" and v.componente == "Contratos Contínuos")
+        self.assertEqual((item.anterior, item.atual, item.efeito), (0.0, 70.0, 70.0))
+        self.assertEqual(mudanca.variacao_resultado, 70.0)
+
+    def test_arquivo_antigo_sem_a_chave_continua_legivel(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            foto = fotografar(_res(), 2026, 5, hoje=date(2026, 10, 13), dotacao_sha="d1", execucao_sha="e1")
+            registrar(foto, Path(tmp))
+            caminho = next(Path(tmp).rglob("2026-10-13.json"))
+            dado = json.loads(caminho.read_text(encoding="utf-8"))
+            dado.pop("anulacao")
+            caminho.write_text(json.dumps(dado), encoding="utf-8")
+            self.assertIsNone(carregar_historico(2026, Path(tmp))[0].anulacao)
 
 
 if __name__ == "__main__":

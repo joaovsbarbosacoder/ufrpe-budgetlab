@@ -29,6 +29,7 @@ import pandas as pd
 
 from src.contratos_cadastro import montar_contratos, montar_empenhos, montar_termos
 from src.contratos_continuos import (
+    COLUNAS_CONTRATOSGOV,
     DESPESA_CONTRATUAL,
     DESPESA_EMPENHADO_SUSPENSO,
     ErroLayoutBase,
@@ -48,7 +49,7 @@ from src.contratos_continuos import (
     tipo_aditivo_por_qualificacao,
 )
 from src.contratos_aditivos import Aditivo, aditivos_do_registro
-from src.contratos_continuos_cadastro import como_dataframe, novo_contrato
+from src.contratos_continuos_cadastro import como_dataframe, novo_contrato, para_gravar
 from src.execucao_ne_utils import saldo_por_ne
 from src.necessidade_empenho import calcular_necessidade_empenho
 from src.tesouro_execucao_mensal import agregar_por_ne, ler_execucao_mensal
@@ -645,6 +646,43 @@ class TestComContratosGov(unittest.TestCase):
                        "vigencia_fim_contratosgov", "diverge_vigencia", "qtd_termos", "qtd_aditivos_gov",
                        "valor_parcela_contratosgov"):
             self.assertIn(coluna, resultado.columns)
+
+
+@unittest.skipUnless(FIXTURE_CONTRATOSGOV.exists(), f"Fixture ausente em {FIXTURE_CONTRATOSGOV}")
+class TestParaGravarDaEdicao(unittest.TestCase):
+    """15/10/2026: a janela de edição parte da linha da tela. `vigencia_fim_contratosgov` (`date`, coluna só de tela do
+    Contratos.gov) chegava ao `json.dumps` do cadastro: "Object of type date is not JSON serializable"."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.contratos, cls.termos, cls.empenhos = _gov()
+
+    def _linha_ligada(self) -> dict:
+        df = com_contratosgov(
+            _cadastro({"contrato_numero": "13/2026", "ne_curta": "2026NE000522", "vigencia_fim": pd.Timestamp("2027-09-10")}),
+            self.contratos, self.termos, self.empenhos,
+        )
+        return df.iloc[0].to_dict()
+
+    def test_linha_ligada_ao_gov_nao_grava_colunas_do_gov(self):
+        linha = self._linha_ligada()
+        self.assertIsInstance(linha["vigencia_fim_contratosgov"], date)  # o que quebrava o JSON
+        # a janela sobrescreve estes campos com os valores digitados; aqui, como texto
+        linha.update(vigencia_fim="2027-09-10", inicio_execucao_data=None, data_suspensao=None, aditivos=[])
+        limpo = para_gravar(linha)
+        json.dumps(limpo, ensure_ascii=False)  # não levanta
+        for coluna in COLUNAS_CONTRATOSGOV:
+            self.assertNotIn(coluna, limpo)
+
+    def test_todas_as_colunas_do_gov_sao_derivadas(self):
+        # se `com_contratosgov` ganhar coluna nova, ela precisa entrar em `COLUNAS_CONTRATOSGOV` (e sair do cadastro)
+        original = _cadastro({"contrato_numero": "13/2026", "ne_curta": "2026NE000522"})
+        novas = set(com_contratosgov(original, self.contratos, self.termos, self.empenhos).columns) - set(original.columns)
+        self.assertEqual(novas, set(COLUNAS_CONTRATOSGOV))
+
+    def test_campos_do_cadastro_ficam(self):
+        linha = {"id": "x", "contrato_numero": "13/2026", "ne_curta": "2026NE000522", "saldo_execucao": 5.0, "qtd_termos": 1}
+        self.assertEqual(para_gravar(linha), {"id": "x", "contrato_numero": "13/2026", "ne_curta": "2026NE000522"})
 
 
 class TestTipoDoAditivoPorQualificacao(unittest.TestCase):

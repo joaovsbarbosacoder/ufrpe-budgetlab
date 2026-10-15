@@ -34,6 +34,8 @@ TOLERANCIA = 0.005
 #: sinal do efeito de cada grupo de componentes no resultado (Resultado = Dotação − Empenhado − Necessidade).
 SINAL_DOTACAO = 1
 SINAL_DESPESA = -1
+#: anulação sugerida de empenho (15/10/2026): receita que soma ao resultado
+SINAL_RECEITA = 1
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,9 @@ class Fotografia:
     #: Dotação Atualizada de cada célula MARCADA (chave = `chave_celula`). `None` = fotografia sem o detalhe
     #: (anterior a 13/10/2026 ou gravada sem ele); valor `None` dentro do dicionário = célula com dotação nula.
     dotacao_por_celula: dict[str, float | None] | None = None
+    #: anulação sugerida por origem (15/10/2026). `None` = fotografia anterior ao registro: o resultado dela não incluía
+    #: anulação (equivale a zero a somar). Vale também para origem ausente do dicionário.
+    anulacao: dict[str, float | None] | None = None
     registrado_em: str = field(default="", compare=False)
 
 
@@ -62,7 +67,7 @@ class Variacao:
     """Um componente entre duas fotografias. `efeito` é o quanto a variação moveu o resultado (já com o sinal da
     fórmula); `None` quando alguma ponta é nula."""
 
-    grupo: str  # "Dotação" | "Empenhado" | "Necessidade"
+    grupo: str  # "Dotação" | "Empenhado" | "Necessidade" | "Anulação sugerida"
     componente: str
     anterior: float | None
     atual: float | None
@@ -136,6 +141,7 @@ def _para_json(foto: Fotografia) -> dict:
         "execucao_extracao": foto.execucao_extracao,
         "execucao_sha": foto.execucao_sha,
         "dotacao_por_celula": foto.dotacao_por_celula,
+        "anulacao": foto.anulacao,
     }
 
 
@@ -162,6 +168,9 @@ def _de_json(dado: dict, caminho: Path) -> Fotografia:
             dotacao_por_celula=(
                 None if dado.get("dotacao_por_celula") is None
                 else {str(k): _numero(v) for k, v in dado["dotacao_por_celula"].items()}
+            ),
+            anulacao=(
+                None if dado.get("anulacao") is None else {str(k): _numero(v) for k, v in dado["anulacao"].items()}
             ),
             registrado_em=str(dado.get("registrado_em", "")),
         )
@@ -199,6 +208,14 @@ def _dicts_iguais(x: dict, y: dict) -> bool:
     return set(x) == set(y) and all(_igual(x[k], y[k]) for k in x)
 
 
+def _anulacao_ou_zero(foto: Fotografia) -> dict[str, float | None]:
+    """Anulação da fotografia para comparar; ausente (fotografia antiga) vale zero em Contratos e em Bolsas."""
+
+    base = {"Contratos Contínuos": 0.0, "Bolsas e Auxílios": 0.0}
+    base.update(foto.anulacao or {})
+    return base
+
+
 def _mesmo_conteudo(a: Fotografia, b: Fotografia) -> bool:
     return (
         a.exercicio == b.exercicio
@@ -209,6 +226,7 @@ def _mesmo_conteudo(a: Fotografia, b: Fotografia) -> bool:
         and _igual(a.empenhado_total, b.empenhado_total)
         and _dicts_iguais(a.empenhado, b.empenhado)
         and _dicts_iguais(a.necessidade, b.necessidade)
+        and _dicts_iguais(_anulacao_ou_zero(a), _anulacao_ou_zero(b))
         and (a.dotacao_sha, a.execucao_sha) == (b.dotacao_sha, b.execucao_sha)
         and (
             (a.dotacao_por_celula is None and b.dotacao_por_celula is None)
@@ -262,6 +280,7 @@ def fotografar(
         execucao_extracao=execucao_extracao,
         execucao_sha=execucao_sha,
         dotacao_por_celula=None if dotacao_por_celula is None else dict(dotacao_por_celula),
+        anulacao=dict(getattr(resultado, "anulacao", None) or {}),
     )
 
 
@@ -297,6 +316,11 @@ def comparar(anterior: Fotografia, atual: Fotografia) -> Mudanca:
     for origem in dict.fromkeys([*atual.necessidade, *anterior.necessidade]):
         variacoes.append(_variacao(
             "Necessidade", origem, SINAL_DESPESA, anterior.necessidade.get(origem), atual.necessidade.get(origem)
+        ))
+    anul_antes, anul_depois = _anulacao_ou_zero(anterior), _anulacao_ou_zero(atual)
+    for origem in dict.fromkeys([*anul_depois, *anul_antes]):
+        variacoes.append(_variacao(
+            "Anulação sugerida", origem, SINAL_RECEITA, anul_antes.get(origem, 0.0), anul_depois.get(origem, 0.0)
         ))
     delta = None if anterior.resultado is None or atual.resultado is None else atual.resultado - anterior.resultado
     return Mudanca(anterior, atual, variacoes, delta, _variacao_celulas(anterior, atual))
