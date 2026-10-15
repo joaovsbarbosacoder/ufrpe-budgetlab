@@ -49,10 +49,15 @@ _TOLERANCIA = 0.005
 
 CSS = f"""
 <style>
+.pe-rolagem {{ overflow-x:auto; width:100%; }}
 .pe-m {{ border-collapse:collapse; font-size:12px; width:100%; }}
 .pe-m th {{ font-size:11px; color:{TEXT_FAINT} !important; text-transform:uppercase; padding:4px 3px; text-align:right; }}
 .pe-m th:first-child, .pe-m td:first-child {{ text-align:left; }}
-.pe-m td {{ padding:4px 3px; text-align:right; font-variant-numeric:tabular-nums; border-top:1px solid {BORDER}; }}
+.pe-m td {{ padding:4px 4px; text-align:right; font-variant-numeric:tabular-nums; border-top:1px solid {BORDER}; vertical-align:middle; }}
+.pe-m td.c, .pe-m td.tt {{ white-space:nowrap; min-width:62px; }}
+.pe-m td .v {{ display:block; white-space:nowrap; }}
+.pe-m td .q {{ display:block; white-space:nowrap; font-size:10px; color:{TEXT_MUTED} !important; }}
+.pe-m td:first-child {{ min-width:200px; max-width:260px; white-space:normal; }}
 .pe-m td.c {{ border-radius:4px; }}
 .pe-m .k-real {{ background:{SURFACE_ALT} !important; }}
 .pe-m .k-proj {{ background:rgba(9,105,218,.16) !important; }}
@@ -60,7 +65,7 @@ CSS = f"""
 .pe-m .k-edit {{ box-shadow:inset 0 0 0 2px #1d4ed8; }}
 .pe-m .k-vazio {{ color:{TEXT_FAINT} !important; }}
 .pe-m .t b {{ display:block; font-size:13px; }}
-.pe-m .t small {{ color:{TEXT_MUTED} !important; font-size:11px; }}
+.pe-m .t small {{ color:{TEXT_MUTED} !important; font-size:11px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }}
 .pe-m .t i {{ font-style:normal; color:{TEXT_FAINT} !important; font-size:11px; }}
 .pe-m tr.tot td {{ font-weight:700; border-top:2px solid {BORDER}; }}
 .pe-leg {{ font-size:12px; margin:4px 0 8px; }}
@@ -126,10 +131,10 @@ def valor_de_quantidade(quantidade: float | None, unidade: float | None) -> floa
     return round(float(quantidade) * float(unidade), 2)
 
 
-def formatar_quantidade(quantidade: float) -> str:
-    """`12` ou `12,5` (até 4 casas, vírgula decimal, sem zeros sobrando)."""
+def formatar_quantidade(quantidade: float, casas: int = 4) -> str:
+    """`12` ou `12,5` (até `casas` casas, vírgula decimal, sem zeros sobrando)."""
 
-    texto = f"{float(quantidade):.4f}".rstrip("0").rstrip(".")
+    texto = f"{float(quantidade):.{casas}f}".rstrip("0").rstrip(".")
     return (texto or "0").replace(".", ",")
 
 
@@ -171,11 +176,18 @@ def _mil(valor: float) -> str:
     return f"{valor / 1000:,.1f} mil".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def _bolsas(valor: float, unidade: float | None) -> str:
+def _bolsas(valor: float, unidade: float | None, casas: int = 4) -> str:
     """Quantidade de bolsas do valor, ou vazio sem valor de bolsa."""
 
     quantidade = quantidade_de_valor(valor, unidade)
-    return "" if quantidade is None else formatar_quantidade(quantidade)
+    return "" if quantidade is None else formatar_quantidade(quantidade, casas)
+
+
+def _duas_linhas(valor: str, bolsas: str) -> str:
+    """Célula da matriz: o valor em cima e, em Bolsas e Auxílios, a quantidade de bolsas embaixo (nunca corrida na mesma
+    linha, onde quebrava em lugares diferentes). Sem quantidade, só o valor."""
+
+    return f'<span class="v">{valor}</span>' + (f'<span class="q">{bolsas} bolsas</span>' if bolsas else "")
 
 
 def _celula(relatorio: RelatorioProjecaoExecucao, indice: int, mes: int, unidade: float | None = None) -> str:
@@ -192,18 +204,18 @@ def _celula(relatorio: RelatorioProjecaoExecucao, indice: int, mes: int, unidade
             f"{nome}: esperado {formatar_brl(float(esperado))} − liquidado {formatar_brl(liquidado)} = projetado "
             f"{formatar_brl(float(projetado))}" + (" (esperado ajustado por você)" if ajustado else "")
         )
-        bolsas = _bolsas(float(projetado), unidade)
-        if bolsas:
-            titulo += f" · {bolsas} bolsas"
-        texto = (
-            _mil(float(projetado)) + (f" · {bolsas} b" if bolsas else "")
-            + ("*" if liquidado_abatido(relatorio, indice, mes) else "") + (" ✎" if ajustado else "")
+        bolsas_titulo = _bolsas(float(projetado), unidade)
+        if bolsas_titulo:
+            titulo += f" · {bolsas_titulo} bolsas"
+        texto = _duas_linhas(
+            _mil(float(projetado)) + ("*" if liquidado_abatido(relatorio, indice, mes) else "") + (" ✎" if ajustado else ""),
+            _bolsas(float(projetado), unidade, 2),
         )
         return f'<td class="c {classe}{" k-edit" if ajustado else ""}" title="{escape(titulo)}">{texto}</td>'
     if tipo == TIPO_REALIZADO and not pd.isna(realizado):
-        bolsas = _bolsas(float(realizado), unidade)
-        titulo = f"{nome}: realizado {formatar_brl(float(realizado))}" + (f" · {bolsas} bolsas" if bolsas else "")
-        texto = _mil(float(realizado)) + (f" · {bolsas} b" if bolsas else "")
+        bolsas_titulo = _bolsas(float(realizado), unidade)
+        titulo = f"{nome}: realizado {formatar_brl(float(realizado))}" + (f" · {bolsas_titulo} bolsas" if bolsas_titulo else "")
+        texto = _duas_linhas(_mil(float(realizado)), _bolsas(float(realizado), unidade, 2))
         return f'<td class="c k-real" title="{escape(titulo)}">{texto}</td>'
     return '<td class="k-vazio">—</td>'
 
@@ -225,9 +237,12 @@ def html_matriz(relatorio: RelatorioProjecaoExecucao, unidades: dict[str, float]
                 totais[mes - 1] += float(projetado)
         numero = escape("—" if pd.isna(linha["contrato_numero"]) or not str(linha["contrato_numero"]).strip() else str(linha["contrato_numero"]))
         fornecedor = escape("" if pd.isna(linha["fornecedor"]) else str(linha["fornecedor"]))
+        numero_txt = "—" if pd.isna(linha["contrato_numero"]) or not str(linha["contrato_numero"]).strip() else str(linha["contrato_numero"])
+        nome_txt = "" if pd.isna(linha["fornecedor"]) else str(linha["fornecedor"])
         corpo.append(
-            f'<tr><td class="t"><b>{numero}</b><small>{fornecedor}</small> <i>{escape(str(linha["ne_curta"]))}</i></td>'
-            f'{"".join(celulas)}<td><b>{_mil(soma)}</b></td></tr>'
+            f'<tr><td class="t" title="{escape(f"{numero_txt} — {nome_txt} — {linha["ne_curta"]}")}"><b>{numero}</b>'
+            f'<small>{fornecedor}</small> <i>{escape(str(linha["ne_curta"]))}</i></td>'
+            f'{"".join(celulas)}<td class="tt">{_duas_linhas(f"<b>{_mil(soma)}</b>", _bolsas(soma, unidades.get(linha["ne_curta"]), 2))}</td></tr>'
         )
     total_geral = sum(totais)
     corpo.append(
@@ -235,8 +250,8 @@ def html_matriz(relatorio: RelatorioProjecaoExecucao, unidades: dict[str, float]
         + "".join(f"<td>{_mil(v) if v else '—'}</td>" for v in totais) + f"<td>{_mil(total_geral)}</td></tr>"
     )
     return (
-        f'<table class="pe-m"><thead><tr><th>{escape(relatorio.rotulos.documento)}</th>{cabecalho}<th>Projetado até dez.</th></tr></thead>'
-        f'<tbody>{"".join(corpo)}</tbody></table>'
+        f'<div class="pe-rolagem"><table class="pe-m"><thead><tr><th>{escape(relatorio.rotulos.documento)}</th>{cabecalho}'
+        f'<th>Projetado até dez.</th></tr></thead><tbody>{"".join(corpo)}</tbody></table></div>'
     )
 
 

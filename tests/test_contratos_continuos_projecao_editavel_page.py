@@ -71,7 +71,7 @@ def _html(app) -> str:
 def _celulas_ajustadas(app) -> int:
     """Células da matriz com ✎ (a legenda também cita o símbolo, por isso conta só as de tabela)."""
 
-    return _html(app).count(" ✎</td>")
+    return _html(app).count(" ✎</span></td>")
 
 
 def _eventos(pasta) -> list:
