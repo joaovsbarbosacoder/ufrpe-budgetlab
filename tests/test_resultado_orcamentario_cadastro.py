@@ -7,6 +7,7 @@ from src.resultado_orcamentario_cadastro import (
     atualizar_despesa,
     carregar_despesas,
     carregar_selecao,
+    definir_consideracao,
     excluir_despesa,
     incluir_despesa,
     salvar_selecao,
@@ -91,3 +92,38 @@ def test_preferencia_ilegivel_volta_desmarcada(tmp_path):
 
     (tmp_path / "preferencias.json").write_text("{", encoding="utf-8")
     assert carregar_so_selecionadas(tmp_path) is False
+
+
+def test_despesa_nova_vem_considerada_e_a_escolha_fica_gravada(tmp_path):
+    a = incluir_despesa(2026, "Obra A", 100.0, None, None, tmp_path)
+    b = incluir_despesa(2026, "Obra B", 200.0, None, None, tmp_path)
+    assert a.considerada is True
+    definir_consideracao(2026, a.id, False, tmp_path)
+    por_id = {d.id: d for d in carregar_despesas(2026, tmp_path)}
+    assert por_id[a.id].considerada is False and por_id[b.id].considerada is True
+    definir_consideracao(2026, a.id, True, tmp_path)
+    assert carregar_despesas(2026, tmp_path)[0].considerada is True
+
+
+def test_definir_consideracao_nao_mexe_na_data_de_atualizacao_e_editar_preserva_a_escolha(tmp_path):
+    a = incluir_despesa(2026, "Obra A", 100.0, None, None, tmp_path)
+    definir_consideracao(2026, a.id, False, tmp_path)
+    assert carregar_despesas(2026, tmp_path)[0].atualizado_em == a.atualizado_em
+    atualizar_despesa(2026, a.id, "Obra A", 150.0, None, None, tmp_path)
+    editada = carregar_despesas(2026, tmp_path)[0]
+    assert editada.valor == 150.0 and editada.considerada is False
+
+
+def test_arquivo_antigo_sem_o_campo_vale_como_considerada(tmp_path):
+    pasta = tmp_path / "2026"
+    pasta.mkdir()
+    (pasta / "despesas_manuais.json").write_text(
+        '{"despesas": [{"id": "x", "descricao": "Antiga", "valor": 10.0, "observacao": null, "celula": null, '
+        '"criado_em": "2026-10-08T00:00:00+00:00", "atualizado_em": "2026-10-08T00:00:00+00:00"}]}', encoding="utf-8",
+    )
+    assert carregar_despesas(2026, tmp_path)[0].considerada is True
+
+
+def test_definir_consideracao_de_despesa_inexistente_levanta(tmp_path):
+    with pytest.raises(KeyError):
+        definir_consideracao(2026, "nao-existe", False, tmp_path)

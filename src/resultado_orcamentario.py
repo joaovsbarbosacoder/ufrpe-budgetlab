@@ -1,19 +1,20 @@
-"""Regra do Resultado Orçamentário: dotação das células marcadas menos o empenhado e a necessidade.
+"""Regra do Resultado Orçamentário: dotação das células marcadas menos o executado, o empenhado e o projetado.
 
 Decisão (08/10/2026): o usuário marca um "bolsão" de células orçamentárias (IDUSO, resultado
 primário, ação, PTRES, plano orçamentário, grupo de despesa e fonte detalhada) e a página mostra
-`Resultado = Dotação das células − Empenhado das células − Necessidade de empenho`.
-Motivo: no bolsão, a necessidade de Contratos e Bolsas precisa ser coberta pelos recursos
-escolhidos, mesmo quando a NE está em célula não marcada; já o empenhado só conta o que foi de
-fato empenhado nas células marcadas. Este módulo é regra pura: não importa Streamlit e não lê
+`Resultado = Dotação das células − Empenhado das células − Necessidade de empenho` (fórmula original; a de
+Contratos e Bolsas mudou em 15/10/2026, ver abaixo). Este módulo é regra pura: não importa Streamlit e não lê
 arquivo. Especificação: docs/superpowers/specs/2026-10-08-resultado-orcamentario-design.md.
 
-ANULAÇÃO SUGERIDA (15/10/2026, pedido do usuário): a sobra prevista de empenho (saldo do empenho acima da despesa projetada
-até dezembro, `src/sobra_empenho.py`) entra como RECEITA — `Resultado = Dotação − Empenhado − Necessidade + Anulação
-sugerida` — para mostrar o valor real quando o empenho antecipado passa do que a NE vai gastar. Só conta a sobra de NE que
-está no empenhado das células marcadas e no máximo o empenhado dela nessas células (a sobra de NE em célula não marcada não
-foi cobrada do bolsão); quais faixas contam está em `sobra_empenho.FAIXAS_NA_ANULACAO`. Sem projeção, não há anulação (zero
-a somar, não nulo): o resultado volta a ser o de antes.
+EXECUTADO + PROJETADO (15/10/2026, pedido do usuário): para Contratos e Bolsas o resultado deixa de usar o empenhado e a
+necessidade de empenho e passa a medir o CONSUMO do orçamento: `Resultado = Dotação − Executado − Projetado a realizar`,
+onde executado = o que a NE já liquidou (valor empenhado − saldo) e projetado = o que falta da projeção pela execução até
+dezembro (`projetado_execucao`). Como só se soma o que de fato será consumido, a sobra de empenho (saldo que a projeção não
+vai liquidar) não pesa na conta e a antiga "anulação sugerida" como receita deixou de existir aqui (o relatório de Anulação
+de Saldo de Empenho segue à parte). As demais origens (DEA, material de consumo, outros) continuam pelo empenhado.
+Só entram as NEs com empenho nas células MARCADAS (decisão do usuário, 15/10/2026): o consumo de NE em célula não marcada
+fica fora da conta e é listado em aviso, com o valor — nada some em silêncio. NE com empenho dentro e fora da seleção entra
+inteira (a projeção é por NE, não por célula) e é sinalizada. A necessidade de empenho segue nas páginas de Contratos e Bolsas.
 
 Códigos são sempre texto (zeros à esquerda preservados). Nulo, zero e negativo são estados
 distintos: dotação nula não vira zero (o resultado fica incompleto); estorno líquido (empenhado
@@ -67,29 +68,37 @@ _COLUNAS_EMPENHADO_POR_NE = [
 ]
 
 
-COLUNAS_ANULACAO_POR_NE = ["ne_curta", "origem", "sobra_prevista", "empenhado_marcado", "anulacao"]
+#: Contratos e Bolsas: uma linha por NE da projeção que está nas células marcadas
+COLUNAS_CONSUMO_POR_NE = ["ne_curta", "origem", "executado", "projetado"]
+ORIGENS_CONSUMO = (ORIGEM_CONTRATOS, ORIGEM_BOLSAS)
 
 
 @dataclass
 class ResultadoOrcamentario:
     dotacao: float | None
+    #: empenhado nas células marcadas por origem (todas as 5) — base da conferência com a Execução Mensal
     empenhado: dict[str, float | None]
     empenhado_total: float | None
     diferenca_conferencia: float
-    necessidade: dict[str, float | None]
+    #: executado (liquidado) das NEs de Contratos e Bolsas nas células marcadas; `None` = projeção indisponível
+    executado: dict[str, float | None]
+    #: projetado a realizar até dezembro: Contratos, Bolsas e "Outras despesas previstas"
+    projetado: dict[str, float | None]
+    #: o que abate a dotação já consumido: executado de Contratos e Bolsas + empenhado das demais origens
+    executado_total: float | None
     resultado: float | None
     incompleto: bool
     empenhado_por_ne: pd.DataFrame
     avisos: list[str] = field(default_factory=list)
-    #: anulação sugerida (receita) por origem — Contratos e Bolsas; vazio quando a projeção não foi informada
-    anulacao: dict[str, float | None] = field(default_factory=dict)
-    #: uma linha por NE com sobra elegível e empenhado nas células marcadas: `ne_curta`, `origem`, `sobra_prevista`,
-    #: `empenhado_marcado`, `anulacao` (= menor dos dois)
-    anulacao_por_ne: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=COLUNAS_ANULACAO_POR_NE))
+    #: uma linha por NE de Contratos/Bolsas contada na conta: `ne_curta`, `origem`, `executado`, `projetado`
+    consumo_por_ne: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=COLUNAS_CONSUMO_POR_NE))
+    #: outras despesas previstas desmarcadas (fora da conta): quantidade e valor somado (15/10/2026)
+    outras_desconsideradas_qtd: int = 0
+    outras_desconsideradas_valor: float = 0.0
 
     @property
-    def anulacao_total(self) -> float:
-        return float(sum(v for v in self.anulacao.values() if v is not None))
+    def projetado_total(self) -> float | None:
+        return None if any(v is None for v in self.projetado.values()) else float(sum(self.projetado.values()))
 
 
 def _texto_ou_none(valor) -> str | None:
@@ -185,16 +194,50 @@ def empenhado_por_ne_e_celula(execucao_mensal: pd.DataFrame, exercicio: int) -> 
     return agrupado[colunas].reset_index(drop=True)
 
 
-def _soma_necessidade(relatorio: pd.DataFrame | None) -> float | None:
-    """`None` = relatório indisponível (não é zero). DataFrame vazio = zero."""
+def _consumo_da_origem(
+    linhas: pd.DataFrame | None, origem: str, nes_marcadas: set[str], excluir: set[str],
+    avisos: list[str],
+) -> tuple[float | None, float | None, pd.DataFrame]:
+    """`(executado, projetado, detalhe por NE)` das NEs de `origem` com empenho nas células marcadas, a partir do relatório de
+    projeção (`valor_empenhado`, `saldo`, `projetado_execucao`). `linhas=None` = relatório indisponível: tudo `None` (nunca
+    zero). Valor nulo em NE contada deixa o total da origem `None`, com aviso. NEs de células não marcadas ficam fora e são
+    listadas em aviso com o valor. `excluir`: NEs que pertencem a outra origem (NE nos dois cadastros vai para Contratos)."""
 
-    if relatorio is None:
-        return None
-    if relatorio.empty:
-        return 0.0
-    # NE sem valor mensal traz necessidade nula do relatório de projeção (08/10/2026): a soma da
-    # origem fica indisponível, nunca parcial.
-    return soma_ou_nulo(pd.to_numeric(relatorio["necessidade_execucao"], errors="coerce"))
+    vazio = pd.DataFrame(columns=COLUNAS_CONSUMO_POR_NE)
+    if linhas is None:
+        return None, None, vazio
+    if linhas.empty:
+        return 0.0, 0.0, vazio
+    base = linhas.copy()
+    base = base.loc[base["ne_curta"].notna()]
+    base["ne_curta"] = base["ne_curta"].astype(str)
+    base = base.loc[~base["ne_curta"].isin(excluir)].drop_duplicates("ne_curta")
+    for coluna in ("valor_empenhado", "saldo", "projetado_execucao"):
+        base[coluna] = pd.to_numeric(base[coluna], errors="coerce") if coluna in base else float("nan")
+    base["executado"] = base["valor_empenhado"] - base["saldo"]
+    base["projetado"] = base["projetado_execucao"]
+    dentro = base["ne_curta"].isin(nes_marcadas)
+    contadas, fora = base.loc[dentro], base.loc[~dentro]
+    detalhe = contadas.assign(origem=origem)[COLUNAS_CONSUMO_POR_NE].reset_index(drop=True)
+
+    sem_executado = list(contadas.loc[contadas["executado"].isna(), "ne_curta"])
+    if sem_executado:
+        avisos.append(
+            f"Executado de {origem} não calculado (empenho ou saldo ausente) para a(s) NE: " + ", ".join(sem_executado) + "."
+        )
+    sem_projecao = list(contadas.loc[contadas["projetado"].isna(), "ne_curta"])
+    if sem_projecao:
+        avisos.append(
+            f"Projetado de {origem} não calculado para NE sem valor mensal cadastrado: " + ", ".join(sem_projecao) + "."
+        )
+    if len(fora):
+        executado_fora, projetado_fora = fora["executado"].sum(), fora["projetado"].sum()
+        avisos.append(
+            f"{len(fora)} NE(s) de {origem} sem empenho nas células marcadas ficam fora da conta (executado "
+            f"{_brl(float(executado_fora))} + projetado {_brl(float(projetado_fora))} = {_brl(float(executado_fora + projetado_fora))}): "
+            + ", ".join(fora["ne_curta"]) + "."
+        )
+    return soma_ou_nulo(contadas["executado"]), soma_ou_nulo(contadas["projetado"]), detalhe
 
 
 def _por_ne(cadastro: pd.DataFrame, colunas: list[str]) -> dict[str, dict]:
@@ -254,19 +297,17 @@ def calcular_resultado(
     sem_ne_contratos: pd.DataFrame,
     sem_ne_bolsas: pd.DataFrame,
     despesas_manuais: list[DespesaManual],
-    sobra_por_ne: dict[str, float] | None = None,
 ) -> ResultadoOrcamentario:
-    """Resultado = Dotação − Empenhado total − Σ necessidade + anulação sugerida (ver §3 a §5 da especificação e a
-    docstring do módulo). `sobra_por_ne`: NE → sobra prevista elegível (`sobra_empenho.sobra_elegivel_por_ne`); `None` =
-    sem projeção, nenhuma anulação.
+    """Resultado = Dotação − Executado (Contratos e Bolsas) − Empenhado (demais origens) − Projetado a realizar (Contratos,
+    Bolsas e outras despesas previstas); ver a docstring do módulo. `necessidade_contratos`/`necessidade_bolsas` são os
+    `linhas` do relatório de Projeção pela Execução (nome mantido; trazem `valor_empenhado`, `saldo` e `projetado_execucao`).
 
     Decisões (08/10/2026):
     - `resultado` é `None` com seleção vazia, dotação indeterminada ou alguma necessidade
       indisponível. Com seleção vazia há aviso próprio e `incompleto=False`; nos demais casos
       `incompleto=True`. Motivo: nulo não pode virar zero na soma.
     - Dotação é `None` se alguma célula marcada presente na base não tem Dotação Atualizada.
-    - A necessidade de Contratos e Bolsas soma TODAS as NEs do relatório, inclusive as de células
-      não marcadas; o empenhado só conta as células marcadas.
+    - (15/10/2026) Contratos e Bolsas só contam as NEs com empenho nas células marcadas; as demais ficam fora, em aviso.
     - NE nos dois cadastros vai para Contratos (com aviso); NE ligada a mais de um contrato é
       contada uma vez (com aviso de NE compartilhada).
     """
@@ -377,43 +418,60 @@ def calcular_resultado(
     if abs(diferenca) >= TOLERANCIA_CONFERENCIA:
         avisos.append(f"Conferência do empenhado não fecha: diferença de {_brl(diferenca)}.")
 
-    # --- Necessidade ------------------------------------------------------------------------
-    # Contrato sem NE e ATIVO entra na necessidade (pedido de 08/10/2026): sem execução para medir, vale a
-    # necessidade contratual (Resumo Consolidado). Os demais sem NE (suspenso, vencido, previsto…) ficam
-    # fora e só no aviso. Status ausente não é tratado como ATIVO.
+    # --- Executado e projetado (Contratos e Bolsas) --------------------------------------------------
+    # Contrato sem NE e ATIVO entra no projetado (pedido de 08/10/2026): sem execução para medir, vale a necessidade
+    # contratual (Resumo Consolidado). Os demais sem NE (suspenso, vencido, previsto…) ficam fora e só no aviso.
+    # Status ausente não é tratado como ATIVO.
     ativos_sem_ne, sem_ne_fora = separar_ativos_sem_ne(sem_ne_contratos)
-    necessidade_contratos_total = _soma_necessidade(necessidade_contratos)
-    if necessidade_contratos_total is not None and len(ativos_sem_ne):
+    nes_marcadas = set(selecionados["ne_curta"].astype(str))
+    # NE parcialmente fora da seleção: a projeção é por NE, então ela entra inteira (sinalizado)
+    parciais = sorted(
+        set(por_ne.loc[por_ne["celula_selecionada"], "ne_curta"]) & set(por_ne.loc[~por_ne["celula_selecionada"], "ne_curta"])
+    )
+    if parciais:
+        avisos.append(
+            "NE com empenho dentro e fora das células marcadas entra inteira no executado e no projetado (a projeção é "
+            "por NE): " + ", ".join(parciais) + "."
+        )
+    executado: dict[str, float | None] = {}
+    projetado: dict[str, float | None] = {}
+    detalhes = []
+    for origem, linhas, excluir in (
+        (ORIGEM_CONTRATOS, necessidade_contratos, set()),
+        (ORIGEM_BOLSAS, necessidade_bolsas, set(info_contratos)),
+    ):
+        executado[origem], projetado[origem], detalhe = _consumo_da_origem(linhas, origem, nes_marcadas, excluir, avisos)
+        detalhes.append(detalhe)
+        if linhas is None:
+            avisos.append(f"Projeção de {origem} indisponível: resultado incompleto.")
+    if projetado[ORIGEM_CONTRATOS] is not None and len(ativos_sem_ne):
         ativos_valor = (
             soma_ou_nulo(pd.to_numeric(ativos_sem_ne["necessidade"], errors="coerce"))
             if "necessidade" in ativos_sem_ne else None
         )
-        necessidade_contratos_total = None if ativos_valor is None else necessidade_contratos_total + ativos_valor
+        projetado[ORIGEM_CONTRATOS] = None if ativos_valor is None else projetado[ORIGEM_CONTRATOS] + ativos_valor
         rotulos = ", ".join(
             str(c) for c in (ativos_sem_ne["contrato_numero"] if "contrato_numero" in ativos_sem_ne else [])
         )
         avisos.append(
-            f"{len(ativos_sem_ne)} contrato(s) ATIVO(s) sem NE incluído(s) na necessidade de Contratos pela "
+            f"{len(ativos_sem_ne)} contrato(s) ATIVO(s) sem NE incluído(s) no projetado de Contratos pela "
             f"necessidade contratual ({'valor não calculado' if ativos_valor is None else _brl(ativos_valor)})"
             + (f": {rotulos}." if rotulos else ".")
         )
-    necessidade: dict[str, float | None] = {
-        ORIGEM_CONTRATOS: necessidade_contratos_total,
-        ORIGEM_BOLSAS: _soma_necessidade(necessidade_bolsas),
-        OUTRAS_DESPESAS: float(sum(d.valor for d in despesas_manuais)),
-    }
-    for origem, relatorio in ((ORIGEM_CONTRATOS, necessidade_contratos), (ORIGEM_BOLSAS, necessidade_bolsas)):
-        if necessidade[origem] is None:
-            avisos.append(f"Necessidade de {origem} indisponível: resultado incompleto.")
-            if relatorio is not None:
-                sem_valor = relatorio.loc[
-                    pd.to_numeric(relatorio["necessidade_execucao"], errors="coerce").isna(), "ne_curta"
-                ]
-                if len(sem_valor):
-                    avisos.append(
-                        f"Necessidade de {origem} não calculada para NE sem valor mensal cadastrado: "
-                        + ", ".join(str(ne) for ne in sem_valor) + "."
-                    )
+    # cada despesa tem a sua marca "considerada" (escolha item a item, 15/10/2026); as desmarcadas ficam fora, em aviso
+    projetado[OUTRAS_DESPESAS] = float(sum(d.valor for d in despesas_manuais if d.considerada))
+    desconsideradas = [d for d in despesas_manuais if not d.considerada]
+    if desconsideradas:
+        avisos.append(
+            f"{len(desconsideradas)} de {len(despesas_manuais)} outras despesas previstas desconsideradas "
+            f"({_brl(float(sum(d.valor for d in desconsideradas)))}): fora da conta do resultado."
+        )
+    consumo_por_ne = pd.concat(detalhes, ignore_index=True) if detalhes else pd.DataFrame(columns=COLUNAS_CONSUMO_POR_NE)
+
+    # o que abate a dotação já consumido: executado de Contratos e Bolsas + empenhado das demais origens
+    demais = [o for o in ORIGENS_EMPENHADO if o not in ORIGENS_CONSUMO]
+    partes_executado = [executado[o] for o in ORIGENS_CONSUMO] + [empenhado_por_origem[o] for o in demais]
+    executado_total = None if any(v is None for v in partes_executado) else float(sum(partes_executado))
 
     for aviso in (
         _aviso_sem_ne(sem_ne_fora, "contrato", "contratos"),
@@ -422,43 +480,13 @@ def calcular_resultado(
         if aviso:
             avisos.append(aviso)
 
-    # --- Anulação sugerida (receita) -----------------------------------------------------------
-    anulacao: dict[str, float | None] = {}
-    linhas_anulacao: list[dict] = []
-    if sobra_por_ne is not None:
-        marcado = (
-            selecionados.groupby("ne_curta")
-            .agg(origem=("origem", "first"), empenhado_marcado=("empenhada", lambda s: s.sum(min_count=1)))
-            .reset_index()
-        )
-        for ne, origem, empenhado_marcado in zip(marcado["ne_curta"], marcado["origem"], marcado["empenhado_marcado"]):
-            sobra = sobra_por_ne.get(str(ne))
-            if sobra is None or sobra <= TOLERANCIA_CONFERENCIA / 2 or pd.isna(empenhado_marcado):
-                continue  # empenhado nulo já deixa o resultado incompleto (aviso acima)
-            linhas_anulacao.append(
-                {
-                    "ne_curta": ne, "origem": origem, "sobra_prevista": float(sobra),
-                    "empenhado_marcado": float(empenhado_marcado),
-                    "anulacao": min(float(sobra), max(float(empenhado_marcado), 0.0)),
-                }
-            )
-        for origem in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS):
-            anulacao[origem] = float(sum(l["anulacao"] for l in linhas_anulacao if l["origem"] == origem))
-    anulacao_por_ne = pd.DataFrame(linhas_anulacao, columns=COLUNAS_ANULACAO_POR_NE)
-    anulacao_total = float(sum(anulacao.values()))
-    if anulacao_total > 0:
-        avisos.append(
-            f"O resultado inclui {_brl(anulacao_total)} de anulação sugerida de empenho (sobra prevista das NEs encerradas "
-            "ou com execução medida, limitada ao empenhado nas células marcadas): receita ainda não efetivada."
-        )
-
     # --- Resultado --------------------------------------------------------------------------
     resultado: float | None = None
     if (
-        dotacao is not None and empenhado_total is not None and not nes_empenho_nulo
-        and all(v is not None for v in necessidade.values())
+        dotacao is not None and executado_total is not None and not nes_empenho_nulo
+        and all(v is not None for v in projetado.values())
     ):
-        resultado = dotacao - empenhado_total - float(sum(necessidade.values())) + anulacao_total
+        resultado = dotacao - executado_total - float(sum(projetado.values()))
     incompleto = bool(selecionadas) and resultado is None
 
     return ResultadoOrcamentario(
@@ -466,11 +494,14 @@ def calcular_resultado(
         empenhado=empenhado_por_origem,
         empenhado_total=empenhado_total,
         diferenca_conferencia=diferenca,
-        necessidade=necessidade,
+        executado=executado,
+        projetado=projetado,
+        executado_total=executado_total,
         resultado=resultado,
         incompleto=incompleto,
         empenhado_por_ne=por_ne,
         avisos=avisos,
-        anulacao=anulacao,
-        anulacao_por_ne=anulacao_por_ne,
+        consumo_por_ne=consumo_por_ne,
+        outras_desconsideradas_qtd=len(desconsideradas),
+        outras_desconsideradas_valor=float(sum(d.valor for d in desconsideradas)),
     )

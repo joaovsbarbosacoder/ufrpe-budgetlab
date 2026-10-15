@@ -71,16 +71,22 @@ def _cad_bolsas(nes=("N2",)) -> pd.DataFrame:
     return pd.DataFrame({"ne_curta": list(nes), "programa_bolsa": [f"P{i}" for i, _ in enumerate(nes)]})
 
 
-def _nec(valores: dict[str, float]) -> pd.DataFrame:
-    return pd.DataFrame({"ne_curta": list(valores), "necessidade_execucao": list(valores.values())})
+def _nec(valores: dict[str, tuple[float, float, float]]) -> pd.DataFrame:
+    """Relatório de projeção sintético: NE → (valor empenhado, saldo, projetado a realizar). Executado = empenhado − saldo."""
+    return pd.DataFrame({
+        "ne_curta": list(valores),
+        "valor_empenhado": [v[0] for v in valores.values()],
+        "saldo": [v[1] for v in valores.values()],
+        "projetado_execucao": [v[2] for v in valores.values()],
+    })
 
 
 def _sem_ne_vazio() -> pd.DataFrame:
     return pd.DataFrame({"contrato_numero": [], "fornecedor": [], "necessidade": []})
 
 
-def _manual(valor=40.0) -> DespesaManual:
-    return DespesaManual("1", "Desp", valor, None, None, "2026-01-01", "2026-01-01")
+def _manual(valor=40.0, considerada=True, id_="1") -> DespesaManual:
+    return DespesaManual(id_, "Desp", valor, None, None, "2026-01-01", "2026-01-01", considerada)
 
 
 def _calc(**kw):
@@ -90,8 +96,9 @@ def _calc(**kw):
         selecao=[A, B],
         cadastro_contratos=_cad_contratos(),
         cadastro_bolsas=_cad_bolsas(),
-        necessidade_contratos=_nec({"N1": 150.0, "N9": 80.0}),
-        necessidade_bolsas=_nec({"N2": 60.0}),
+        # N1: executado 300, projetado 120; N9 (célula C, fora da seleção): 30 + 10; N2 (bolsa): executado 150, projetado 40
+        necessidade_contratos=_nec({"N1": (400.0, 100.0, 120.0), "N9": (50.0, 20.0, 10.0)}),
+        necessidade_bolsas=_nec({"N2": (200.0, 50.0, 40.0)}),
         sem_ne_contratos=_sem_ne_vazio(),
         sem_ne_bolsas=pd.DataFrame({"programa_bolsa": [], "necessidade": []}),
         despesas_manuais=[_manual()],
@@ -105,22 +112,47 @@ def _calc(**kw):
 def test_resultado_conta_a_mao():
     r = _calc()
     assert r.dotacao == 1500
-    assert r.empenhado == {
+    assert r.empenhado == {  # o empenhado verdadeiro segue disponível (conferência com a Execução Mensal)
         ORIGEM_CONTRATOS: 400, ORIGEM_BOLSAS: 200, ORIGEM_DEA: 0.0, ORIGEM_MATERIAL_CONSUMO: 0.0,
         ORIGEM_OUTROS: 100,
     }
     assert r.empenhado_total == 700
-    assert r.necessidade == {ORIGEM_CONTRATOS: 230, ORIGEM_BOLSAS: 60, OUTRAS: 40}
-    assert sum(r.necessidade.values()) == 330  # N9 (celula nao selecionada) entra
-    assert r.resultado == 1500 - 700 - 330 == 470
+    assert r.executado == {ORIGEM_CONTRATOS: 300, ORIGEM_BOLSAS: 150}
+    assert r.projetado == {ORIGEM_CONTRATOS: 120, ORIGEM_BOLSAS: 40, OUTRAS: 40}
+    assert r.executado_total == 300 + 150 + 100  # contratos + bolsas executados + "outros" pelo empenhado
+    assert r.projetado_total == 200
+    assert r.resultado == 1500 - 550 - 200 == 750
     assert r.incompleto is False
 
 
-def test_ne_em_celula_nao_selecionada_fora_do_empenhado_dentro_da_necessidade():
+def test_ne_em_celula_nao_selecionada_fica_fora_da_conta_com_aviso():
     r = _calc()
     por_ne = r.empenhado_por_ne
     assert "N9" not in set(por_ne.loc[por_ne["celula_selecionada"], "ne_curta"])
-    assert r.necessidade[ORIGEM_CONTRATOS] == 150 + 80
+    assert list(r.consumo_por_ne.query("origem == @ORIGEM_CONTRATOS")["ne_curta"]) == ["N1"]
+    assert r.projetado[ORIGEM_CONTRATOS] == 120  # a necessidade de N9 (10) não entra
+    assert any("N9" in a and "fora da conta" in a and "R$ 30,00" in a and "R$ 10,00" in a and "R$ 40,00" in a
+               for a in r.avisos)
+
+
+def test_selecionar_a_celula_da_ne_traz_o_consumo_dela_para_a_conta():
+    r = _calc(selecao=[A, B, C])
+    assert r.executado[ORIGEM_CONTRATOS] == 330 and r.projetado[ORIGEM_CONTRATOS] == 130
+    assert not any("sem empenho nas células marcadas" in a for a in r.avisos)
+
+
+def test_ne_com_empenho_dentro_e_fora_da_selecao_entra_inteira_com_aviso():
+    emp = _empenhado([("N1", A, 300.0), ("N1", C, 100.0), ("N2", B, 200.0)])
+    r = _calc(empenhado=emp)
+    assert r.executado[ORIGEM_CONTRATOS] == 300  # NE inteira (empenhado 400 − saldo 100)
+    assert any("dentro e fora" in a and "N1" in a for a in r.avisos)
+
+
+def test_sobra_de_empenho_nao_pesa_na_conta():
+    # N1: saldo 100 > projetado 20 → sobra 80; só executado (300) + projetado (20) consomem a dotação
+    r = _calc(necessidade_contratos=_nec({"N1": (400.0, 100.0, 20.0)}))
+    assert r.executado[ORIGEM_CONTRATOS] + r.projetado[ORIGEM_CONTRATOS] == 320
+    assert not hasattr(r, "anulacao")
 
 
 def test_ne_nos_dois_cadastros_vai_para_contratos():
@@ -129,6 +161,7 @@ def test_ne_nos_dois_cadastros_vai_para_contratos():
     assert linha["origem"] == ORIGEM_CONTRATOS
     assert r.empenhado[ORIGEM_CONTRATOS] == 400
     assert any("N1" in a and "conferir" in a for a in r.avisos)
+    assert "N1" not in set(r.consumo_por_ne.query("origem == @ORIGEM_BOLSAS")["ne_curta"])  # conta uma vez só
 
 
 def test_ne_compartilhada_contada_uma_vez():
@@ -152,7 +185,7 @@ def test_conferencia_fecha():
 def test_sem_ne_fora_da_conta_com_aviso():
     sem = pd.DataFrame({"contrato_numero": ["C77"], "fornecedor": ["F77"], "necessidade": [999.0]})
     r = _calc(sem_ne_contratos=sem)
-    assert r.resultado == 470
+    assert r.resultado == 750
     assert any("1 contrato" in a and "999" in a for a in r.avisos)
 
 
@@ -163,26 +196,34 @@ def test_celula_com_dotacao_nula_incompleto():
     assert any("sem Dotação Atualizada" in a for a in r.avisos)
 
 
-def test_necessidade_indisponivel_deixa_resultado_incompleto():
+def test_projecao_indisponivel_deixa_resultado_incompleto():
     r = _calc(necessidade_contratos=None)
-    assert r.necessidade[ORIGEM_CONTRATOS] is None
+    assert r.executado[ORIGEM_CONTRATOS] is None and r.projetado[ORIGEM_CONTRATOS] is None
+    assert r.executado_total is None
     assert r.resultado is None
     assert r.incompleto is True
+    assert any("Projeção de Contratos Contínuos indisponível" in a for a in r.avisos)
 
 
-def test_necessidade_nula_de_uma_ne_deixa_resultado_incompleto():
-    # NE sem valor mensal: o relatório de projeção traz necessidade nula — não pode virar zero aqui.
-    nec = pd.DataFrame({"ne_curta": ["N1", "N9"], "necessidade_execucao": [150.0, float("nan")]})
+def test_projetado_nulo_de_uma_ne_deixa_resultado_incompleto():
+    # NE sem valor mensal: a projeção traz projetado nulo — não pode virar zero aqui.
+    nec = _nec({"N1": (400.0, 100.0, float("nan")), "N9": (50.0, 20.0, 10.0)})
     r = _calc(necessidade_contratos=nec)
-    assert r.necessidade[ORIGEM_CONTRATOS] is None
+    assert r.projetado[ORIGEM_CONTRATOS] is None
     assert r.resultado is None
     assert r.incompleto is True
-    assert any("N9" in a and "não calculada" in a for a in r.avisos)
+    assert any("N1" in a and "não calculado" in a for a in r.avisos)
 
 
-def test_cadastro_vazio_necessidade_zero():
-    r = _calc(necessidade_bolsas=pd.DataFrame({"ne_curta": [], "necessidade_execucao": []}))
-    assert r.necessidade[ORIGEM_BOLSAS] == 0.0
+def test_nulo_em_ne_fora_das_celulas_nao_atrapalha():
+    nec = _nec({"N1": (400.0, 100.0, 120.0), "N9": (50.0, 20.0, float("nan"))})
+    assert _calc(necessidade_contratos=nec).resultado == 750
+
+
+def test_cadastro_vazio_projetado_zero():
+    vazio = pd.DataFrame({"ne_curta": [], "valor_empenhado": [], "saldo": [], "projetado_execucao": []})
+    r = _calc(necessidade_bolsas=vazio)
+    assert r.executado[ORIGEM_BOLSAS] == 0.0 and r.projetado[ORIGEM_BOLSAS] == 0.0
     assert r.incompleto is False
 
 
@@ -197,7 +238,7 @@ def test_celula_selecionada_ausente():
     fantasma = ("9",) * 7
     r = _calc(selecao=[A, B, fantasma])
     assert any("ausente da base" in a for a in r.avisos)
-    assert r.resultado == 470
+    assert r.resultado == 750
 
 
 def test_empenho_sem_fonte_detalhada_vira_aviso():
@@ -359,15 +400,15 @@ def test_sem_elemento_fica_em_outros():
     assert r.empenhado[ORIGEM_OUTROS] == 15.0
 
 
-def test_contrato_ativo_sem_ne_entra_na_necessidade():
+def test_contrato_ativo_sem_ne_entra_no_projetado():
     # pedido de 08/10/2026: contrato sem NE e ATIVO conta (necessidade contratual); os demais ficam fora
     sem = pd.DataFrame({
         "contrato_numero": ["C77", "C78"], "fornecedor": ["F77", "F78"],
         "status_contrato": [" ativo ", "SUSPENSO"], "necessidade": [999.0, 500.0],
     })
     r = _calc(sem_ne_contratos=sem)
-    assert r.necessidade[ORIGEM_CONTRATOS] == 230.0 + 999.0
-    assert r.resultado == 470 - 999
+    assert r.projetado[ORIGEM_CONTRATOS] == 120.0 + 999.0
+    assert r.resultado == 750 - 999
     assert any("C77" in a and "ATIVO" in a and "999" in a for a in r.avisos)
     assert any("1 contrato sem NE" in a and "500" in a and "fora da conta" in a for a in r.avisos)
 
@@ -376,7 +417,7 @@ def test_contrato_ativo_sem_ne_com_necessidade_nula_deixa_incompleto():
     sem = pd.DataFrame({"contrato_numero": ["C77"], "fornecedor": ["F77"], "status_contrato": ["ATIVO"],
                         "necessidade": [None]})
     r = _calc(sem_ne_contratos=sem)
-    assert r.necessidade[ORIGEM_CONTRATOS] is None
+    assert r.projetado[ORIGEM_CONTRATOS] is None
     assert r.resultado is None and r.incompleto is True
 
 
@@ -384,52 +425,30 @@ def test_contrato_ativo_sem_ne_nao_muda_projecao_indisponivel():
     sem = pd.DataFrame({"contrato_numero": ["C77"], "fornecedor": ["F77"], "status_contrato": ["ATIVO"],
                         "necessidade": [999.0]})
     r = _calc(necessidade_contratos=None, sem_ne_contratos=sem)
-    assert r.necessidade[ORIGEM_CONTRATOS] is None
+    assert r.projetado[ORIGEM_CONTRATOS] is None
 
 
-# ---- anulação sugerida (receita), 15/10/2026 ------------------------------------------------------------------
-def test_sem_sobra_o_resultado_e_o_de_antes():
-    r = _calc()
-    assert r.resultado == 470
-    assert r.anulacao == {} and r.anulacao_total == 0.0
-    assert r.anulacao_por_ne.empty
-    assert not any("anulação sugerida" in a for a in r.avisos)
-
-
-def test_anulacao_soma_ao_resultado_limitada_ao_empenhado_das_celulas_marcadas():
-    # N1 (contrato, célula A marcada, empenhado 400): sobra 100 → anula 100.
-    # N2 (bolsa, célula B marcada, empenhado 200): sobra 500 > empenhado → anula só 200.
-    # N9 (contrato em célula C NÃO marcada): a sobra de 30 não foi cobrada do bolsão → 0.
-    # N3 ("outros", sem projeção): fora. Resultado = 1500 − 700 − 330 + 300 = 770.
-    r = _calc(sobra_por_ne={"N1": 100.0, "N2": 500.0, "N9": 30.0})
-    assert r.anulacao == {ORIGEM_CONTRATOS: 100.0, ORIGEM_BOLSAS: 200.0}
-    assert r.anulacao_total == 300.0
-    assert r.resultado == 470 + 300 == 770
-    por_ne = r.anulacao_por_ne.set_index("ne_curta")
-    assert list(por_ne.index) == ["N1", "N2"]  # N9 (fora das células marcadas) não aparece
-    assert por_ne.loc["N2", "sobra_prevista"] == 500.0 and por_ne.loc["N2", "empenhado_marcado"] == 200.0
-    assert por_ne.loc["N2", "anulacao"] == 200.0
-    assert any("anulação sugerida" in a and "R$ 300,00" in a for a in r.avisos)
-
-
-def test_sobra_zero_ou_de_ne_sem_empenho_marcado_nao_conta():
-    r = _calc(sobra_por_ne={"N1": 0.0, "N404": 80.0})
-    assert r.anulacao == {ORIGEM_CONTRATOS: 0.0, ORIGEM_BOLSAS: 0.0}
-    assert r.resultado == 470
-
-
-def test_anulacao_nao_esconde_resultado_incompleto():
-    r = _calc(sobra_por_ne={"N1": 100.0}, celulas=_celulas(dot_a=None))
+def test_empenhado_nulo_em_celula_marcada_continua_incompleto():
+    empenhos = _empenhado([("N1", A, None), ("N2", B, 200.0)])
+    r = _calc(empenhado=empenhos)
     assert r.resultado is None and r.incompleto is True
 
 
-def test_necessidade_indisponivel_continua_sem_resultado_mesmo_com_sobra():
-    r = _calc(sobra_por_ne={"N1": 100.0}, necessidade_contratos=None)
-    assert r.resultado is None
+# ---- outras despesas previstas, uma a uma (15/10/2026) --------------------------------------------------------
+def test_so_as_despesas_consideradas_entram_no_projetado():
+    r = _calc(despesas_manuais=[_manual(40.0, True, "1"), _manual(60.0, False, "2"), _manual(10.0, True, "3")])
+    assert r.projetado[OUTRAS] == 50.0
+    assert r.resultado == 1500 - 550 - (120 + 40 + 50)
+    assert r.outras_desconsideradas_qtd == 1 and r.outras_desconsideradas_valor == 60.0
+    assert any("1 de 3 outras despesas previstas desconsideradas" in a and "R$ 60,00" in a for a in r.avisos)
 
 
-def test_empenhado_nulo_nao_vira_anulacao():
-    empenhos = _empenhado([("N1", A, None), ("N2", B, 200.0)])
-    r = _calc(empenhado=empenhos, sobra_por_ne={"N1": 100.0, "N2": 50.0})
-    assert r.resultado is None  # empenhado nulo em célula marcada: incompleto
-    assert list(r.anulacao_por_ne["ne_curta"]) == ["N2"]
+def test_todas_desmarcadas_projetado_zero_e_nao_nulo():
+    r = _calc(despesas_manuais=[_manual(40.0, False)])
+    assert r.projetado[OUTRAS] == 0.0 and r.incompleto is False
+
+
+def test_todas_consideradas_nao_avisa():
+    r = _calc()
+    assert r.outras_desconsideradas_qtd == 0 and r.outras_desconsideradas_valor == 0.0
+    assert not any("desconsideradas" in a for a in r.avisos)
