@@ -188,6 +188,7 @@ from src.contratos_continuos_cadastro import (
     excluir_contrato,
     excluir_exercicio,
     novo_contrato_do_formulario,
+    para_gravar,
     salvar_contrato,
 )
 from src.contratos_pagamentos import MESES_ORDEM, meses_pagos_por_contrato, ler_pagamentos
@@ -993,18 +994,7 @@ def _dialogo_editar_contrato(
                 "data_suspensao": pd.Timestamp(data_suspensao) if data_suspensao else None,
                 "aditivos": [aditivo_para_registro(a) for a in aditivos_editados],
             }
-            for chave_extra in (
-                "despesa_anual", "meses_a_empenhar", "valor_a_empenhar", "saldo_execucao",
-                "diverge_saldo", "valor_empenhado_execucao", "diverge_valor_empenhado",
-                "valor_liquidado_execucao", "liquidado_via_competencia", "valor_empenhado_planilha_total_ne",
-                "despesa_mensal_total_ne", "meses_empenhados_execucao", "meses_liquidados_execucao",
-                "necessidade_via", "meses_pagos", "ultimo_mes_pago", "contrato_normalizado",
-                "tem_varios_itens", "inicio_execucao_efetivo", "valor_empenhado_autoritativo",
-                "despesa_anual_contratual", "despesa_anual_base",
-                "vigencia_fim_efetiva", "valor_mensal_vigente", "tem_aditivo_previsto",
-                "necessidade_ate_dezembro", "sem_liquidacao_confirmada",
-            ):
-                atualizado.pop(chave_extra, None)
+            atualizado = para_gravar(atualizado)  # tira as colunas só de tela (inclusive as do Contratos.gov)
             atualizar_contrato(ano_exercicio, atualizado)
             st.session_state.pop(itens_key, None)
             st.session_state.pop(f"{k}_aditivos", None)

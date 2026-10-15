@@ -41,6 +41,7 @@ from src.relatorio_projecao_execucao import (
     TIPO_RESTANTE_ABERTO,
     RelatorioProjecaoExecucao,
     liquidado_abatido,
+    mes_sem_execucao,
 )
 from src.ui_cadastro import formatar_brl
 
@@ -142,12 +143,22 @@ def quantidade_inteira(quantidade: float) -> bool:
     return abs(float(quantidade) - round(float(quantidade))) <= TOLERANCIA_BOLSA_INTEIRA
 
 
-def meses_editaveis(relatorio: RelatorioProjecaoExecucao) -> list[int]:
-    """Do primeiro mês em aberto a dezembro; vazio quando o exercício já foi encerrado."""
+def meses_editaveis(relatorio: RelatorioProjecaoExecucao, indice: object | None = None) -> list[int]:
+    """Do primeiro mês em aberto a dezembro; vazio quando o exercício já foi encerrado. Com `indice` (linha da NE em
+    `relatorio.linhas`), entram antes também os meses já FECHADOS sem execução dessa NE (16/10/2026: fatura ainda não
+    liquidada pode ser informada; ver `relatorio_projecao_execucao.mes_sem_execucao`)."""
 
     if relatorio.mes_referencia >= 12:
         return []
-    return list(range(max(relatorio.ultimo_fechado + 1, 1), 13))
+    abertos = list(range(max(relatorio.ultimo_fechado + 1, 1), 13))
+    if indice is None:
+        return abertos
+    fechados = []
+    for mes in range(1, min(relatorio.ultimo_fechado, 12) + 1):
+        realizado = relatorio.mensal.at[indice, f"r{mes}"]
+        if mes_sem_execucao(None if realizado is None or pd.isna(realizado) else float(realizado)):
+            fechados.append(mes)
+    return fechados + abertos
 
 
 def valores_para_gravar(
@@ -370,12 +381,13 @@ def render_edicao_projecao(
         except ErroAjuste as erro:
             st.error(f"Não foi possível ler os ajustes gravados: {erro}")
             return
-        meses = meses_editaveis(relatorio)
+        meses = meses_editaveis(relatorio)  # sem NE escolhida: só para saber se o exercício está encerrado
         st.markdown(CSS, unsafe_allow_html=True)
         st.caption(
             "O número que você grava é o ESPERADO TOTAL do mês: o sistema continua descontando o liquidado do mês. Vale "
             "no relatório, na Necessidade (modo projeção pela execução) e no Resultado Orçamentário. Quando o mês fechar, "
-            "vale o realizado."
+            "vale o realizado. Mês já fechado SEM liquidação também aparece: informe o valor da fatura ainda não "
+            "liquidada; quando ela for liquidada, passa a valer o realizado."
         )
         unidades = relatorio.unidades if bolsas else None
         st.markdown(html_legenda() + html_matriz(relatorio, unidades), unsafe_allow_html=True)
@@ -390,6 +402,7 @@ def render_edicao_projecao(
         ne = st.selectbox("NE", list(rotulos), format_func=rotulos.get, key=f"{chave}_pe_ne")
         indice = relatorio.linhas.index[relatorio.linhas["ne_curta"] == ne][0]
         linha = relatorio.linhas.loc[indice]
+        meses = meses_editaveis(relatorio, indice)
         st.markdown(f"**{titulo_documento(relatorio.rotulos, linha['contrato_numero'], linha['fornecedor'])}** · NE {ne}")
         unidade = relatorio.unidades.get(ne) if bolsas else None
         vigente = vigentes.get(ne, {})

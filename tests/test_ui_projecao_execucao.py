@@ -214,6 +214,16 @@ class TestMesesEditaveis(unittest.TestCase):
     def test_do_primeiro_mes_aberto_a_dezembro(self):
         self.assertEqual(meses_editaveis(_relatorio()), [8, 9, 10, 11, 12])
 
+    def test_com_ne_inclui_meses_fechados_sem_execucao(self):
+        # 16/10/2026: jun sem registro e jul zerado (meses fechados sem execução) passam a ser editáveis; os demais
+        # meses fechados têm liquidação e continuam fora
+        relatorio = _relatorio()
+        indice = relatorio.linhas.index[0]
+        relatorio.mensal.at[indice, "r6"] = float("nan")
+        relatorio.mensal.at[indice, "r7"] = 0.0
+        self.assertEqual(meses_editaveis(relatorio, indice), [6, 7, 8, 9, 10, 11, 12])
+        self.assertEqual(meses_editaveis(relatorio), [8, 9, 10, 11, 12])  # sem NE: só os abertos
+
     def test_exercicio_encerrado_nao_edita(self):
         por_ne, sem_ne = necessidade_por_ne(pd.DataFrame([_linha()]), None, 2026)
         encerrado = montar_relatorio(por_ne, sem_ne, None, 2026, 12)

@@ -408,6 +408,9 @@ _COLUNAS_CONTRATOSGOV = (
     "vigencia_fim_contratosgov", "diverge_vigencia", "qtd_termos", "qtd_aditivos_gov",
     "qtd_aditivos_pendentes", "valor_parcela_contratosgov",
 )
+#: Colunas DERIVADAS de `com_contratosgov` (só em memória): nunca devem ser gravadas no cadastro (a página as remove
+#: do registro antes de salvar — `vigencia_fim_contratosgov` é `date` e quebra o JSON).
+COLUNAS_CONTRATOSGOV = _COLUNAS_CONTRATOSGOV
 
 
 def _so_digitos(valor: object) -> str | None:

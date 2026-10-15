@@ -486,11 +486,35 @@ class TestAjustesDoMes(unittest.TestCase):
         self.assertIsNone(projecao.metodologia[10])
         self.assertIsNone(projecao.projetado_valor_cheio[10])  # a comparação "valor cheio" não leva ajuste
 
-    def test_mes_fechado_e_superado(self):
-        projecao = projetar_meses({}, CUSTO_1000, 0.9, 10, ajustes={5: 123.0})
+    def test_mes_fechado_com_liquidacao_e_superado(self):
+        projecao = projetar_meses({5: 900.0}, CUSTO_1000, 0.9, 10, ajustes={5: 123.0})
         self.assertEqual(projecao.superados, [5])
         self.assertIsNone(projecao.projetado[4])
         self.assertFalse(projecao.ajustado[4])
+        self.assertEqual(projecao.tipos[4], "Realizado")
+
+    def test_mes_fechado_sem_execucao_aceita_ajuste(self):
+        # 16/10/2026: fatura de mês já fechado ainda não liquidada (ex.: jun e jul sem registro) entra inteira como
+        # restante a liquidar, tipo laranja; metodologia continua sem projetar o mês
+        projecao = projetar_meses({}, CUSTO_1000, 0.9, 10, ajustes={6: 1500.0, 7: 0.0})
+        self.assertEqual(projecao.superados, [])
+        self.assertEqual(projecao.projetado[5], 1500.0)
+        self.assertEqual(projecao.esperado[5], 1500.0)
+        self.assertEqual(projecao.tipos[5], TIPO_RESTANTE_ABERTO)
+        self.assertTrue(projecao.ajustado[5])
+        self.assertIsNone(projecao.metodologia[5])
+        self.assertEqual(projecao.projetado[6], 0.0)  # zero é ajuste válido
+        sem = projetar_meses({}, CUSTO_1000, 0.9, 10)
+        self.assertAlmostEqual(projecao.total_projetado, sem.total_projetado + 1500.0)
+        self.assertIn((6, 1500.0), projecao.restante_em_aberto())
+
+    def test_mes_fechado_com_registro_zerado_conta_como_sem_execucao(self):
+        projecao = projetar_meses({6: 0.0}, CUSTO_1000, 0.9, 10, ajustes={6: 700.0})
+        self.assertEqual(projecao.superados, [])
+        self.assertEqual(projecao.projetado[5], 700.0)
+
+    def test_mes_fora_do_exercicio_e_superado(self):
+        self.assertEqual(projetar_meses({}, CUSTO_1000, 0.9, 10, ajustes={13: 1.0}).superados, [13])
 
     def test_exercicio_encerrado_ignora_ajustes(self):
         projecao = projetar_meses({}, CUSTO_1000, 0.9, 12, ajustes={12: 500.0})

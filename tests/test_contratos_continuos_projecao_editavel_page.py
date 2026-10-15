@@ -158,12 +158,33 @@ def test_log_corrompido_avisa_usa_a_metodologia_e_nao_sobrescreve(ambiente):
     assert len(_eventos(ambiente)) == 1
 
 
+NE_COM_MARCO_LIQUIDADO = "2026NE000082"  # contrato 14/2020 — PRIME CONSULTORIA: jan–mai liquidados nas bases reais
+
+
 def test_ajuste_superado_aparece_na_tela_sem_abrir_o_expansor(ambiente):
-    # ajuste gravado para março: com a extração atual o mês já está fechado → "superado" (vale o realizado)
+    # ajuste gravado para março, mês já fechado e COM liquidação → "superado" (vale o realizado). Os contratos da
+    # fixture não têm liquidação: entra um com NE liquidada nas bases reais.
+    import src.contratos_continuos_cadastro as cadastro
+
+    cadastro.salvar_contrato(2026, cadastro.novo_contrato(
+        contrato_numero="14/2020", ne_curta=NE_COM_MARCO_LIQUIDADO, fornecedor="PRIME CONSULTORIA",
+        vigencia_fim="2026-12-31", despesa_mensal=100000.0,
+    ))
+    projecao_ajustes.registrar_ajustes(
+        exercicio=2026, ne_curta=NE_COM_MARCO_LIQUIDADO, valores={3: 1000.0}, extracao="abcd1234",
+    )
+    app = _em_modo_projecao()
+    assert any("Ajuste superado" in w.value and NE_COM_MARCO_LIQUIDADO in w.value for w in app.warning)
+    assert len(_eventos(ambiente)) == 1  # nada foi apagado nem gravado por cima
+
+
+def test_mes_fechado_sem_execucao_e_editavel_e_nao_e_superado(ambiente):
+    # 16/10/2026: março já fechado e SEM liquidação na NE 522 (contrato novo) — o campo aparece e o ajuste vale
     projecao_ajustes.registrar_ajustes(exercicio=2026, ne_curta=NE, valores={3: 1000.0}, extracao="abcd1234")
     app = _em_modo_projecao()
-    assert any("Ajuste superado" in w.value and NE in w.value for w in app.warning)
-    assert len(_eventos(ambiente)) == 1  # nada foi apagado nem gravado por cima
+    assert not any("Ajuste superado" in w.value and NE in w.value for w in app.warning)
+    _selecionar_ne(app)
+    assert _campo(app, "Mar").value == "1.000,00"
 
 
 def test_contrato_antecessor_comeca_recolhido_mesmo_com_ne_limitada(ambiente):
