@@ -203,6 +203,20 @@ class GerarXlsxTests(unittest.TestCase):
         pd.testing.assert_frame_equal(self.lista, self.original)
 
 
+class IdadeNoRelatorioTests(unittest.TestCase):
+    def test_xlsx_traz_idade_como_numero_e_vazio_quando_nula(self) -> None:
+        lista = _lista().assign(idade_meses=pd.array([6, 0, pd.NA], dtype="Int64"))
+        planilha = load_workbook(BytesIO(gerar_xlsx(lista, _contexto())))["Empenhos"]
+        cabecalho = [c.value for c in planilha[1]]
+        coluna = cabecalho.index("Idade do saldo (meses)")
+        self.assertEqual([linha[coluna].value for linha in planilha.iter_rows(min_row=2)], [6, 0, None])
+
+    def test_pdf_com_idade_e_sem_a_coluna(self) -> None:
+        com = _lista().assign(idade_meses=pd.array([6, 0, pd.NA], dtype="Int64"))
+        self.assertTrue(gerar_pdf(com, _contexto()).startswith(b"%PDF"))
+        self.assertTrue(gerar_pdf(_lista(), _contexto()).startswith(b"%PDF"))  # lista antiga, sem idade
+
+
 class RelatorioAgrupadoTests(unittest.TestCase):
     def test_xlsx_traz_coluna_grupo_e_parametros_de_ordenacao_e_agrupamento(self) -> None:
         lista = ordenar_lista(_lista(), "saldo", agrupar_por="acao_desc")

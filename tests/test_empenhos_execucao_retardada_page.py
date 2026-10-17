@@ -162,6 +162,15 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
         self.assertIn(" e ", dados["resultado_corte"])
         self.assertLessEqual(dados["lista"]["total"], com_ou)  # E restringe
 
+    def test_corte_por_idade_desligado_por_padrao_e_ligavel(self) -> None:
+        app = self._open_page()
+        self.assertFalse(self.dados["cortes"]["usar_idade"])
+        self.assertEqual(self.dados["cortes"]["corte_idade"], 3)
+        self.assertTrue(all("idade" in l for l in self.dados["lista"]["linhas"]))
+
+        dados = self._agir(app, {"tipo": "usar_rs", "valor": False}, {"tipo": "usar_idade", "valor": True})
+        self.assertIn("empenho há 3 meses ou mais com saldo", dados["resultado_corte"])
+
     # --- busca -------------------------------------------------------------------------------
     def test_busca_livre_sem_resultado_avisa(self) -> None:
         app = self._open_page()

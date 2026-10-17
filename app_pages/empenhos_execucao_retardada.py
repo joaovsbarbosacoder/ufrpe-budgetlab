@@ -204,6 +204,7 @@ dados, estado, lista = montar_tela(
     campos_rapidos=CAMPOS_RAPIDOS_EXECUCAO,
     campos_avancados=CAMPOS_AVANCADOS_PAGINA,
     ano_extracao=ano_extracao,
+    mes_extracao=datetime.fromisoformat(manifesto.data_extracao).month,
 )
 st.session_state[chave_estado(source_key)] = estado
 

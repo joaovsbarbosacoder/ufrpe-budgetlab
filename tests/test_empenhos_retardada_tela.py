@@ -23,10 +23,13 @@ from src.empenhos_retardada_tela import (
     TAMANHO_PAGINA,
     aplicar_acao,
     calcular_destaque,
+    com_idade,
     com_percentual,
     estado_inicial,
     formatar_brl,
+    formatar_idade,
     formatar_pct,
+    idade_por_ne,
     montar_tela,
     resolver_filtros,
 )
@@ -42,6 +45,7 @@ CAMPOS_AVANCADOS = CAMPOS_AVANCADOS_EXECUCAO + (
 )
 NOMES = [c[0] for c in CAMPOS_RAPIDOS_EXECUCAO + CAMPOS_AVANCADOS]
 ANO = 2026
+MES = 9  # a fixture vai até 09/2026
 
 
 class FormatacaoTests(unittest.TestCase):
@@ -149,6 +153,83 @@ class CortesTests(unittest.TestCase):
         self.assertIsNone(descricao)
 
 
+class IdadeDoSaldoTests(unittest.TestCase):
+    """Regra definida pelo usuário (17/10/2026): idade = meses entre o primeiro mês com valor
+    empenhado e o mês da extração; só para o exercício da extração. Referência: 09/2026."""
+
+    def setUp(self) -> None:
+        self.linhas = pd.DataFrame(
+            [
+                # NE A: empenhada em mar/2026, reforçada em jul -> conta o primeiro mês: 9 - 3 = 6
+                ("A", 2026, 202603, 1_000.0), ("A", 2026, 202607, 500.0),
+                # NE B: valor zero em jan não conta; primeiro empenho em mai -> 4
+                ("B", 2026, 202601, 0.0), ("B", 2026, 202605, 800.0),
+                # NE C: exercício anterior -> sem idade
+                ("C", 2025, 202503, 900.0),
+                # NE D: nenhum valor empenhado (só nulo) -> sem idade
+                ("D", 2026, 202602, None),
+                # NE E: empenhada no próprio mês da extração -> 0
+                ("E", 2026, 202609, 300.0),
+                # NE F: primeiro movimento é um estorno (negativo) em ago -> conta: 1
+                ("F", 2026, 202608, -50.0), ("F", 2026, 202609, 400.0),
+            ],
+            columns=["ne_ccor", "ano", "ano_mes", "empenhada"],
+        )
+
+    def test_idade_em_meses_calculada_a_mao(self) -> None:
+        idades = idade_por_ne(self.linhas, 2026, 9)
+        self.assertEqual(idades.to_dict(), {"A": 6, "B": 4, "E": 0, "F": 1})
+        self.assertNotIn("C", idades.index)  # exercício anterior
+        self.assertNotIn("D", idades.index)  # sem valor empenhado
+
+    def test_formatacao(self) -> None:
+        self.assertEqual(formatar_idade(None), "—")
+        self.assertEqual(formatar_idade(pd.NA), "—")
+        self.assertEqual(formatar_idade(0), "0 meses")
+        self.assertEqual(formatar_idade(1), "1 mês")
+        self.assertEqual(formatar_idade(6), "6 meses")
+
+    def test_corte_por_idade_exige_saldo_positivo_e_idade_conhecida(self) -> None:
+        visivel = pd.DataFrame({
+            "ne_ccor": ["A", "B", "C", "D", "E", "F"],
+            "saldo": [500.0, 0.0, 900.0, 100.0, 300.0, -10.0],
+            "empenhada": [1_500.0, 800.0, 900.0, 100.0, 300.0, 350.0],
+        })
+        visivel = com_idade(com_percentual(visivel), self.linhas, 2026, 9)
+        estado = {**estado_inicial(2026), "usar_rs": False, "usar_idade": True, "corte_idade": 3}
+        mascara, descricao = calcular_destaque(visivel, estado)
+        # A: 6 meses, saldo 500 -> passa; B: 4 meses mas saldo zero -> não; C: sem idade -> não;
+        # D: sem idade -> não; E: 0 meses -> não; F: idade 1 e saldo negativo -> não
+        self.assertEqual(mascara.tolist(), [True, False, False, False, False, False])
+        self.assertEqual(descricao, "empenho há 3 meses ou mais com saldo")
+
+    def test_idade_combina_com_os_outros_cortes(self) -> None:
+        visivel = pd.DataFrame({"ne_ccor": ["A", "E"], "saldo": [500.0, 20_000.0], "empenhada": [1_500.0, 30_000.0]})
+        visivel = com_idade(com_percentual(visivel), self.linhas, 2026, 9)
+        estado = {**estado_inicial(2026), "usar_idade": True, "corte_idade": 3}  # R$ 10 mil ligado
+        self.assertEqual(calcular_destaque(visivel, estado)[0].tolist(), [True, True])  # OU
+        self.assertEqual(calcular_destaque(visivel, {**estado, "modo": "E"})[0].tolist(), [False, False])
+
+    def test_acao_de_corte_por_idade(self) -> None:
+        estado = estado_inicial(2026)
+        self.assertFalse(estado["usar_idade"])
+        self.assertEqual(estado["corte_idade"], 3)
+        self.assertTrue(aplicar_acao(estado, {"tipo": "usar_idade", "valor": True}, NOMES)["usar_idade"])
+        self.assertEqual(aplicar_acao(estado, {"tipo": "corte_idade", "valor": 6}, NOMES)["corte_idade"], 6)
+        for invalido in (2.5, -1, 121, "x"):
+            self.assertEqual(aplicar_acao(estado, {"tipo": "corte_idade", "valor": invalido}, NOMES)["corte_idade"], 3)
+
+    def test_estado_antigo_sem_campos_de_idade_continua_funcionando(self) -> None:
+        base = ler_execucao_mensal(CAMINHO_FIXTURE)
+        antigo = {k: v for k, v in estado_inicial(ANO).items() if k not in ("usar_idade", "corte_idade")}
+        dados, estado, _lista = montar_tela(
+            base, antigo, campos_rapidos=CAMPOS_RAPIDOS_EXECUCAO, campos_avancados=CAMPOS_AVANCADOS,
+            ano_extracao=ANO, mes_extracao=MES,
+        )
+        self.assertFalse(estado["usar_idade"])
+        self.assertIsNotNone(dados["lista"])
+
+
 class CascataFiltrosTests(unittest.TestCase):
     CAMPOS = (("cor", "Cor", "cor", None), ("tam", "Tamanho", "tam", "tam_desc"))
 
@@ -189,7 +270,10 @@ class MontarTelaFixtureTests(unittest.TestCase):
 
     def _tela(self, **mudancas):
         estado = {**estado_inicial(ANO), **mudancas}
-        return montar_tela(self.base, estado, campos_rapidos=CAMPOS_RAPIDOS_EXECUCAO, campos_avancados=CAMPOS_AVANCADOS, ano_extracao=ANO)
+        return montar_tela(
+            self.base, estado, campos_rapidos=CAMPOS_RAPIDOS_EXECUCAO, campos_avancados=CAMPOS_AVANCADOS,
+            ano_extracao=ANO, mes_extracao=MES,
+        )
 
     def test_resumo_reconcilia_com_a_base(self) -> None:
         dados, _estado, _lista = self._tela()
@@ -260,6 +344,20 @@ class MontarTelaFixtureTests(unittest.TestCase):
         dados, estado, _lista = self._tela(ne_aberta="NE-QUE-NAO-EXISTE")
         self.assertIsNone(dados["detalhe"])
         self.assertIsNone(estado["ne_aberta"])
+
+    def test_idade_so_no_exercicio_da_extracao(self) -> None:
+        dados, _estado, lista = self._tela(visao="Todos no escopo", filtros={})
+        do_ano = lista[lista["ano"] == ANO]
+        de_outros = lista[lista["ano"] != ANO]
+        self.assertGreater(len(de_outros), 0)
+        self.assertTrue(de_outros["idade_meses"].isna().all())
+        self.assertTrue(do_ano["idade_meses"].dropna().between(0, MES - 1).all())
+
+    def test_ligar_corte_por_idade_na_tela(self) -> None:
+        dados, _estado, lista = self._tela(usar_rs=False, usar_idade=True, corte_idade=6)
+        self.assertIn("empenho há 6 meses ou mais com saldo", dados["resultado_corte"])
+        self.assertTrue((lista["idade_meses"] >= 6).all())
+        self.assertTrue((lista["saldo"] > 0).all())
 
     def test_linhas_trazem_nulo_como_traco(self) -> None:
         dados, _estado, _lista = self._tela(visao="Todos no escopo", usar_rs=False)

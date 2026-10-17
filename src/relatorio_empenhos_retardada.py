@@ -103,8 +103,10 @@ _COLUNAS_XLSX: list[tuple[str, str]] = [
     ("liquidada", "Liquidado"),
     ("saldo", "Saldo"),
     ("percentual_saldo", "% Saldo"),
+    ("idade_meses", "Idade do saldo (meses)"),  # só exercício da extração; vazio nos demais
     ("_passa_corte_texto", "Passa do corte"),
 ]
+_COLUNAS_INTEIRAS = {"ano", "idade_meses"}
 
 _COLUNAS_NUMERICAS = {"empenhada", "liquidada", "saldo", "percentual_saldo"}
 
@@ -209,6 +211,14 @@ def _formatar_pct(valor: object) -> str:
     return f"{float(valor):.1f}%".replace(".", ",")
 
 
+def _formatar_idade(valor: object) -> str:
+    """Idade do saldo em meses; nula (exercício anterior ou coluna ausente) vira "—"."""
+
+    if valor is None or pd.isna(valor):
+        return "—"
+    return str(int(valor))
+
+
 def _soma(serie: pd.Series) -> float | None:
     """`min_count=1`: coluna só com nulos soma nulo, não zero."""
 
@@ -246,8 +256,8 @@ def gerar_xlsx(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
         serie = base[coluna]
         if coluna in _COLUNAS_NUMERICAS:
             dados[cabecalho] = pd.to_numeric(serie, errors="coerce").astype("float64")
-        elif coluna == "ano":
-            dados[cabecalho] = serie.astype("Int64")
+        elif coluna in _COLUNAS_INTEIRAS:
+            dados[cabecalho] = pd.to_numeric(serie, errors="coerce").astype("Int64")
         else:
             # identificadores/textos como string — preserva zeros à esquerda; nulo continua nulo.
             dados[cabecalho] = serie.map(lambda v: None if v is None or pd.isna(v) else str(v)).astype(object)
@@ -273,7 +283,7 @@ def gerar_xlsx(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
             elif cabecalho == "% Saldo":
                 formato = "0.0"
             else:
-                formato = "@" if cabecalho != "Exercício" else None
+                formato = None if cabecalho in ("Exercício", "Idade do saldo (meses)") else "@"
             if formato:
                 for celula in planilha[letra][1:]:
                     celula.number_format = formato
@@ -286,8 +296,8 @@ def gerar_xlsx(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
 
 # -------------------------------------------------------------------------------- PDF
 #: landscape(A4) com 12mm de margem (~774pt úteis).
-_CABECALHO_PDF = ["NE", "EXERCÍCIO", "FAVORECIDO", "PROCESSO", "EMPENHADO (R$)", "LIQUIDADO (R$)", "SALDO (R$)", "% SALDO", "CORTE"]
-_LARGURAS_PDF = [70, 45, 220, 95, 80, 80, 80, 48, 42]
+_CABECALHO_PDF = ["NE", "EXERCÍCIO", "FAVORECIDO", "PROCESSO", "EMPENHADO (R$)", "LIQUIDADO (R$)", "SALDO (R$)", "% SALDO", "IDADE (MESES)", "CORTE"]
+_LARGURAS_PDF = [70, 45, 180, 95, 80, 80, 80, 48, 40, 42]
 
 
 def gerar_pdf(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
@@ -325,7 +335,7 @@ def gerar_pdf(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
                         f"<b>{escape(str(grupo_atual))}</b> — {len(do_grupo)} empenhos · saldo R$ {escape(_formatar_brl(_soma(do_grupo['saldo'])))}",
                         estilo_celula,
                     ),
-                    "", "", "", "", "", "", "", "",
+                    "", "", "", "", "", "", "", "", "",
                 ]
             )
         tabela_dados.append(
@@ -338,6 +348,7 @@ def gerar_pdf(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
                 _formatar_brl(linha["liquidada"]),
                 _formatar_brl(linha["saldo"]),
                 _formatar_pct(linha["percentual_saldo"]),
+                _formatar_idade(linha.get("idade_meses")),
                 linha["_passa_corte_texto"] or "—",
             ]
         )
@@ -347,7 +358,7 @@ def gerar_pdf(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
             _formatar_brl(_soma(base["empenhada"])),
             _formatar_brl(_soma(base["liquidada"])),
             _formatar_brl(_soma(base["saldo"])),
-            "", "",
+            "", "", "",
         ]
     )
 
@@ -367,8 +378,8 @@ def gerar_pdf(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
                 ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#DDDDDD")),
                 ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                ("ALIGN", (4, 0), (7, -1), "RIGHT"),
-                ("ALIGN", (8, 0), (8, -1), "CENTER"),
+                ("ALIGN", (4, 0), (8, -1), "RIGHT"),
+                ("ALIGN", (9, 0), (9, -1), "CENTER"),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F5F5F5")]),
                 *estilo_grupos,

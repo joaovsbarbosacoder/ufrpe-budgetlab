@@ -22,7 +22,9 @@ presa ao HTML/JS do componente, tudo que decide O QUE aparece mora aqui e é tes
     empenhado é nulo ou zero (a NE continua na lista);
   * cortes em R$ e em %, independentes, combinados por OU (padrão) ou E; NE com saldo/percentual
     nulo nunca passa do corte; nenhum corte ligado é estado válido (aviso, sem lista em destaque);
-  * lista da tela = lista do relatório (`montar_lista_relatorio`), paginada em `TAMANHO_PAGINA`.
+  * lista da tela = lista do relatório (`montar_lista_relatorio`), paginada em `TAMANHO_PAGINA`;
+  * (17/10/2026, regra definida pelo usuário) idade do saldo em meses e um terceiro corte,
+    "empenho há N meses ou mais com saldo", desligado por padrão — ver `idade_por_ne`.
 
 Valores nulos aparecem como "—", nunca como zero; negativos mantêm o sinal.
 """
@@ -40,6 +42,8 @@ from src.ui_filtros_execucao import CampoFiltro, apply_filters, option_mapping
 
 CORTE_RS_PADRAO = 10_000.0
 CORTE_PCT_PADRAO = 20.0  # %
+CORTE_IDADE_PADRAO = 3  # meses
+COLUNA_IDADE = "idade_meses"
 TAMANHO_PAGINA = 100
 
 VISAO_DESTAQUE = "Em destaque"
@@ -55,6 +59,7 @@ COLUNAS_ORDENAVEIS: dict[str, str] = {
     "Liquidado": "liquidada",
     "Saldo": "saldo",
     "% Saldo": "percentual_saldo",
+    "Idade": COLUNA_IDADE,
 }
 ORDENACAO_PADRAO = "Saldo"
 #: colunas de texto começam de A a Z; números começam do maior
@@ -103,6 +108,18 @@ def formatar_pct(valor: object) -> str:
     return f"{float(valor):.1f}%".replace(".", ",")
 
 
+_MESES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
+
+
+def formatar_idade(valor: object) -> str:
+    """Idade do saldo em meses; nula (exercício anterior ou sem mês de empenho) vira "—"."""
+
+    if valor is None or pd.isna(valor):
+        return "—"
+    n = int(valor)
+    return f"{n} {'mês' if n == 1 else 'meses'}"
+
+
 def _texto(valor: object) -> str:
     return "—" if valor is None or pd.isna(valor) else str(valor)
 
@@ -123,6 +140,8 @@ def estado_inicial(ano_extracao: int) -> dict[str, Any]:
         "corte_rs": CORTE_RS_PADRAO,
         "usar_pct": False,
         "corte_pct": CORTE_PCT_PADRAO,
+        "usar_idade": False,
+        "corte_idade": CORTE_IDADE_PADRAO,
         "modo": "OU",
         "visao": VISAO_DESTAQUE,
         "ordem": ORDENACAO_PADRAO,
@@ -171,8 +190,13 @@ def aplicar_acao(estado: dict[str, Any], acao: object, nomes_filtro: Sequence[st
     elif tipo == "limpar":
         novo["busca"] = ""
         novo["filtros"] = {}
-    elif tipo == "usar_rs" or tipo == "usar_pct":
+    elif tipo in ("usar_rs", "usar_pct", "usar_idade"):
         novo[tipo] = bool(acao.get("valor"))
+    elif tipo == "corte_idade":
+        numero = _numero_valido(acao.get("valor"), 0.0, 120.0)
+        if numero is None or numero != int(numero):
+            return novo
+        novo["corte_idade"] = int(numero)
     elif tipo == "corte_rs":
         numero = _numero_valido(acao.get("valor"), 0.0)
         if numero is None:
@@ -308,6 +332,38 @@ def com_percentual(visivel: pd.DataFrame) -> pd.DataFrame:
     return visivel.assign(percentual_saldo=(visivel["saldo"] / empenhado_valido) * 100)
 
 
+def idade_por_ne(filtrado: pd.DataFrame, ano_extracao: int, mes_extracao: int) -> pd.Series:
+    """Idade do saldo, em meses, por `ne_ccor` (regra definida pelo usuário em 17/10/2026).
+
+    Idade = mês da extração − primeiro mês (`ano_mes`) em que a NE tem valor empenhado não nulo e
+    diferente de zero, entre as linhas já filtradas. A base só tem o MÊS do movimento (sem dia),
+    então a idade é em meses inteiros: empenho no próprio mês da extração tem idade 0.
+
+    Só para NE do exercício da extração (decisão do usuário: a base de exercícios anteriores
+    registra a execução só até dezembro daquele ano — o que foi liquidado depois como resto a
+    pagar não aparece, e contar a idade até hoje marcaria como atrasado o que pode já ter sido
+    pago). NE de outro exercício, ou sem mês de empenho identificável, fica com idade nula."""
+
+    if filtrado.empty or "ano_mes" not in filtrado.columns:
+        return pd.Series(dtype="Int64", name=COLUNA_IDADE)
+    linhas = filtrado[
+        (filtrado["ano"].astype("Int64") == ano_extracao)
+        & filtrado["empenhada"].notna()
+        & (filtrado["empenhada"] != 0)
+    ]
+    if linhas.empty:
+        return pd.Series(dtype="Int64", name=COLUNA_IDADE)
+    primeiro = pd.to_numeric(linhas["ano_mes"].astype(str), errors="coerce").groupby(linhas["ne_ccor"]).min().dropna()
+    ano, mes = primeiro // 100, primeiro % 100
+    idade = (ano_extracao * 12 + mes_extracao) - (ano * 12 + mes)
+    return idade.astype("Int64").rename(COLUNA_IDADE)
+
+
+def com_idade(visivel: pd.DataFrame, filtrado: pd.DataFrame, ano_extracao: int, mes_extracao: int) -> pd.DataFrame:
+    idades = idade_por_ne(filtrado, ano_extracao, mes_extracao)
+    return visivel.assign(**{COLUNA_IDADE: visivel["ne_ccor"].map(idades).astype("Int64")})
+
+
 def calcular_destaque(visivel: pd.DataFrame, estado: dict[str, Any]) -> tuple[pd.Series, str | None]:
     """(máscara de quem passa do corte, descrição do corte) — `None` quando nenhum corte está
     ligado. Nulo nunca passa (não dá para afirmar que passa sem saber o valor)."""
@@ -322,11 +378,18 @@ def calcular_destaque(visivel: pd.DataFrame, estado: dict[str, Any]) -> tuple[pd
     if estado["usar_pct"]:
         partes.append(passa_pct)
         descricoes.append(f"saldo ≥ {estado['corte_pct']:.0f}% do valor empenhado")
+    if estado.get("usar_idade"):
+        # idade só conta com saldo a liquidar (> 0); idade nula nunca passa
+        idade = visivel[COLUNA_IDADE] if COLUNA_IDADE in visivel.columns else pd.Series(pd.NA, index=visivel.index, dtype="Int64")
+        passa_idade = ((idade >= int(estado["corte_idade"])) & (visivel["saldo"] > 0)).fillna(False).astype(bool)
+        partes.append(passa_idade)
+        n = int(estado["corte_idade"])
+        descricoes.append(f"empenho há {n} {'mês' if n == 1 else 'meses'} ou mais com saldo")
 
     if not partes:
         return pd.Series(False, index=visivel.index), None
     mascara = partes[0]
-    usar_e = len(partes) == 2 and estado.get("modo") == "E"
+    usar_e = len(partes) >= 2 and estado.get("modo") == "E"
     for parte in partes[1:]:
         mascara = (mascara & parte) if usar_e else (mascara | parte)
     return mascara.astype(bool), (" e " if usar_e else " ou ").join(descricoes)
@@ -365,6 +428,7 @@ def montar_detalhe(filtrado: pd.DataFrame, linha: pd.Series) -> dict[str, Any]:
             ["Liquidado", formatar_brl(linha["liquidada"])],
             ["Saldo", formatar_brl(linha["saldo"])],
             ["% do empenhado", formatar_pct(linha["percentual_saldo"])],
+            ["Idade do saldo", formatar_idade(linha.get(COLUNA_IDADE))],
         ],
         "saldo_negativo": bool(_numero(linha["saldo"]) is not None and linha["saldo"] < 0),
         "secoes": [
@@ -404,6 +468,7 @@ def montar_tela(
     campos_rapidos: Sequence[CampoFiltro],
     campos_avancados: Sequence[CampoFiltro],
     ano_extracao: int,
+    mes_extracao: int,
 ) -> tuple[dict[str, Any], dict[str, Any], pd.DataFrame | None]:
     """Calcula tudo que a tela mostra.
 
@@ -412,7 +477,7 @@ def montar_tela(
     intervalo, detalhe de NE que saiu da lista) — a página grava de volta."""
 
     campos = tuple(campos_rapidos) + tuple(campos_avancados)
-    estado = {**estado, "filtros": dict(estado.get("filtros", {}))}
+    estado = {**estado_inicial(ano_extracao), **estado, "filtros": dict(estado.get("filtros", {}))}  # estado salvo antes de um campo novo
     busca = estado.get("busca", "")
 
     def campo_dados(campo: CampoFiltro, opcoes: dict[str, list[str]]) -> dict[str, Any]:
@@ -421,7 +486,8 @@ def montar_tela(
 
     dados: dict[str, Any] = {
         "busca": busca,
-        "cortes": {k: estado[k] for k in ("usar_rs", "corte_rs", "usar_pct", "corte_pct", "modo")},
+        "cortes": {k: estado[k] for k in ("usar_rs", "corte_rs", "usar_pct", "corte_pct", "usar_idade", "corte_idade", "modo")},
+        "mes_referencia": f"{_MESES[mes_extracao - 1]}/{ano_extracao}",
         "visao": estado["visao"],
         "visoes": [VISAO_DESTAQUE, VISAO_TODOS],
         "grupo": estado["grupo"],
@@ -462,7 +528,7 @@ def montar_tela(
         dados["aviso"] = AVISO_BUSCA_VAZIA
         estado["ne_aberta"] = None
         return dados, estado, None
-    visivel = com_percentual(visivel)
+    visivel = com_idade(com_percentual(visivel), filtrado, ano_extracao, mes_extracao)
 
     anos = visivel["ano"].dropna().astype(int).unique()
     if ano_extracao in anos:
@@ -545,6 +611,7 @@ def montar_tela(
             "saldo_negativo": bool(_numero(linha["saldo"]) is not None and linha["saldo"] < 0),
             "pct": formatar_pct(linha["percentual_saldo"]),
             "pct_valor": _numero(linha["percentual_saldo"]),
+            "idade": formatar_idade(linha.get(COLUNA_IDADE)),
             "corte": None if pd.isna(passa) else bool(passa),
             "grupo": str(linha[COLUNA_GRUPO]) if coluna_grupo else None,
         })

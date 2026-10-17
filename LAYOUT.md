@@ -141,12 +141,14 @@ Ordem vertical de renderização. "N cols" indica quantas colunas a linha usa. B
 - Nota do exercício em andamento (faixa laranja clara)
 - Cartão de resumo: contagem de empenhos + barra empenhado = liquidado (verde) + saldo
   (laranja), com os três valores e percentuais
-- Cartão de cortes numa linha: "Destacar empenhos com" [chave] saldo ≥ R$ … [E/OU só com os
-  dois ligados] [chave] saldo ≥ …% do empenhado · resultado à direita
+- Cartão de cortes (quebra linha se faltar espaço): "Destacar empenhos com" [chave] saldo ≥ R$ …
+  [E/OU só com dois ou mais ligados] [chave] saldo ≥ …% do empenhado [chave] empenho há pelo
+  menos N meses, com saldo (desde 17/10/2026; desligado por padrão) · resultado à direita
 - Barra da lista: "Empenhos" · Exibir (Em destaque / Todos no escopo) · Agrupar por (sem,
   unidade orçamentária, credor, ação de governo) · paginação à direita (100 por página)
 - Tabela (`<table>` com cabeçalho fixo e rolagem própria, máx. 680px): NE (+ ação abaixo),
-  Favorecido, Empenhado, Liquidado, Saldo (+ barra do % do empenhado), % Saldo, [Corte:
+  Favorecido, Empenhado, Liquidado, Saldo (+ barra do % do empenhado), % Saldo, Idade (meses
+  desde o primeiro empenho; "—" fora do exercício da extração), [Corte:
   selo Destaque/Abaixo, só em "Todos no escopo"], botão "Ver". Cabeçalho clicável ordena
   (▲/▼); linhas de grupo com contagem e saldo do grupo. Rodapé: "Exibindo a–b de N",
   "+ N abaixo do corte" e paginação

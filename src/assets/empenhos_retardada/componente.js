@@ -111,8 +111,9 @@ function htmlResumo(r) {
 function htmlCortes(d) {
   const c = d.cortes;
   const fmt = (v) => (Number.isInteger(v) ? String(v) : String(v));
-  const modo = c.usar_rs && c.usar_pct
-    ? `<div class="seg" role="group" aria-label="Combinação dos cortes" title="OU: passa quem atende qualquer corte. E: só quem atende os dois.">
+  const ligados = [c.usar_rs, c.usar_pct, c.usar_idade].filter(Boolean).length;
+  const modo = ligados >= 2
+    ? `<div class="seg" role="group" aria-label="Combinação dos cortes" title="OU: passa quem atende qualquer corte ligado. E: só quem atende todos.">
         ${["E", "OU"].map((m) => `<button type="button" data-acao="modo" data-valor="${m}" aria-pressed="${c.modo === m}">${m}</button>`).join("")}
       </div>`
     : "";
@@ -121,6 +122,7 @@ function htmlCortes(d) {
     <label class="corte${c.usar_rs ? "" : " desligado"}"><span class="chave"><input type="checkbox" data-acao="usar_rs"${c.usar_rs ? " checked" : ""} aria-label="Usar corte em reais"><span></span></span>saldo de pelo menos R$ <input type="number" data-corte="corte_rs" value="${fmt(c.corte_rs)}" min="0" step="1000" aria-label="Saldo mínimo em reais"></label>
     ${modo}
     <label class="corte${c.usar_pct ? "" : " desligado"}"><span class="chave"><input type="checkbox" data-acao="usar_pct"${c.usar_pct ? " checked" : ""} aria-label="Usar corte em porcentagem"><span></span></span>saldo de pelo menos <input type="number" data-corte="corte_pct" value="${fmt(c.corte_pct)}" min="0" max="1000" step="5" aria-label="Saldo mínimo em porcentagem do empenhado"> % do empenhado</label>
+    <label class="corte${c.usar_idade ? "" : " desligado"}" title="Meses entre o primeiro empenho da NE e ${esc(d.mes_referencia)} (mês da extração). Só para o exercício da extração; anos anteriores aparecem como —."><span class="chave"><input type="checkbox" data-acao="usar_idade"${c.usar_idade ? " checked" : ""} aria-label="Usar corte por idade do saldo"><span></span></span>empenho há pelo menos <input type="number" data-corte="corte_idade" value="${c.corte_idade}" min="0" max="120" step="1" aria-label="Idade mínima do saldo em meses"> meses, com saldo</label>
     <span class="resultado">${esc(d.resultado_corte || "")}</span>
   </section>`;
 }
@@ -140,7 +142,7 @@ function htmlTabela(d) {
     const msgs = d.avisos_lista.length ? d.avisos_lista : ["Nenhum empenho para exibir."];
     return `<div class="card tabela"><div class="vazio">${msgs.map(esc).join("<br>")}</div></div>`;
   }
-  const numericas = new Set(["Empenhado", "Liquidado", "Saldo", "% Saldo"]);
+  const numericas = new Set(["Empenhado", "Liquidado", "Saldo", "% Saldo", "Idade"]);
   const cab = d.colunas
     .map((col) => {
       const ativa = d.ordem === col;
@@ -170,6 +172,7 @@ function htmlTabela(d) {
         <td class="dir num">${esc(r.liquidado)}</td>
         <td class="dir num"><div class="saldo"><span class="${r.saldo_negativo ? "neg" : ""}">${esc(r.saldo)}</span>${barra}</div></td>
         <td class="dir num">${esc(r.pct)}</td>
+        <td class="dir num">${esc(r.idade)}</td>
         ${corte}
         <td class="dir"><button type="button" class="btn peq" data-acao="detalhe" data-ne="${esc(r.ne_ccor)}">Ver</button></td>
       </tr>`;
@@ -319,7 +322,7 @@ function ligarEventos(raiz, ui) {
       else ui.rascunho.delete(opcao);
       return;
     }
-    if (alvo.matches("input[data-acao=usar_rs], input[data-acao=usar_pct]")) {
+    if (alvo.matches("input[data-acao=usar_rs], input[data-acao=usar_pct], input[data-acao=usar_idade]")) {
       return ui.enviar({ tipo: alvo.dataset.acao, valor: alvo.checked });
     }
     if (alvo.matches("input[data-corte]")) {
