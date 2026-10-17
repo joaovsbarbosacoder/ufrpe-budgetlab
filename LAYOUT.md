@@ -127,27 +127,33 @@ Ordem vertical de renderização. "N cols" indica quantas colunas a linha usa. B
 - Fonte de dados: Execução Mensal (`src/tesouro_execucao_mensal.py`, BI CPOC), desde 22/09/2026
   — antes lia da Execução Anual; migrada para replicar os mesmos filtros de Consulta de
   Empenhos (só cobre 2024 em diante)
-- Header
-- Linha de ação (`st.columns([1,4])`): botão "Limpar filtros"
-- Linha de busca (`st.columns([2,1,1,1,1])`): mesmo padrão de Consulta de Empenhos (campo
-  compartilhado `src/ui_filtros_execucao.py`)
-- `st.expander` — "Filtros por atributo" (15 campos: 13 compartilhados com Consulta de
-  Empenhos + 2 exclusivos da Execução Mensal — NE - Informação Complementar, Unidade
-  Orçamentária)
-- Dois cortes de sensibilidade (`st.columns(2)`), cada um `st.columns([3,1], vertical_alignment="bottom")`:
-  valor mínimo (R$) + toggle de percentual mínimo
-- Faixa de KPIs (`st.columns(4)`, `st.metric`)
-- `st.segmented_control` "Exibir": "Em destaque" (padrão) / "Todos no escopo" (desde
-  28/09/2026)
-- Cabeçalho de tabela (`st.columns([1.3,2,1.2,1.2,1.2,0.9,0.8])`, 7 colunas; em "Todos no
-  escopo", 8 colunas — coluna "Corte" antes do botão)
-- Lista de linhas (mesma grade), cada uma clicável — paginada em 100 linhas
-  (`st.number_input` "Página" só aparece com mais de uma página)
-- "Relatório": `st.columns(2)` com `st.download_button` PDF | Excel
-  (`src/relatorio_empenhos_retardada.py`, geração só no clique)
-- `@st.dialog("Detalhe do empenho", width="large")`:
-  - `st.columns(4)` de métricas
-  - `st.expander` — "Linhas de origem (rastreabilidade)" (`st.dataframe`)
+- Desde 17/10/2026: abaixo do header, a página é UM componente `st.components.v2`
+  (`src/ui_empenhos_retardada_componente.py`; HTML/CSS/JS em `src/assets/empenhos_retardada/`,
+  estilos isolados em shadow DOM, cores de `src/design_tokens.py`). Regras de tela em
+  `src/empenhos_retardada_tela.py` (sem Streamlit). Não usa mais widgets nativos nem o CSS global
+  de `.st-key-*` para esta área.
+- Header (`render_page_header`, nativo)
+- Cartão de filtros: busca livre + 4 filtros rápidos (Exercício, Ação de Governo, UGR - Gestão,
+  Grupo de Despesa) numa grade de 5 colunas; cada filtro é um botão que abre uma lista com
+  caixa de busca e seleção múltipla ("Aplicar"/clique fora aplica). Botão "Mostrar filtros por
+  atributo (15)" abre a grade de 3 colunas com os 15 avançados (13 compartilhados com Consulta
+  de Empenhos + NE - Informação Complementar, Unidade Orçamentária); "Limpar filtros" à direita
+- Nota do exercício em andamento (faixa laranja clara)
+- Cartão de resumo: contagem de empenhos + barra empenhado = liquidado (verde) + saldo
+  (laranja), com os três valores e percentuais
+- Cartão de cortes numa linha: "Destacar empenhos com" [chave] saldo ≥ R$ … [E/OU só com os
+  dois ligados] [chave] saldo ≥ …% do empenhado · resultado à direita
+- Barra da lista: "Empenhos" · Exibir (Em destaque / Todos no escopo) · Agrupar por (sem,
+  unidade orçamentária, credor, ação de governo) · paginação à direita (100 por página)
+- Tabela (`<table>` com cabeçalho fixo e rolagem própria, máx. 680px): NE (+ ação abaixo),
+  Favorecido, Empenhado, Liquidado, Saldo (+ barra do % do empenhado), % Saldo, [Corte:
+  selo Destaque/Abaixo, só em "Todos no escopo"], botão "Ver". Cabeçalho clicável ordena
+  (▲/▼); linhas de grupo com contagem e saldo do grupo. Rodapé: "Exibindo a–b de N",
+  "+ N abaixo do corte" e paginação
+- Painel lateral de detalhe (fixo à direita, 560px, fundo escurecido): métricas 2×2,
+  classificação, programação, unidades e linhas de origem (rastreabilidade)
+- Abaixo do componente, nativos: linha "Relatório: N empenhos…" + `st.download_button` PDF |
+  Excel (`src/relatorio_empenhos_retardada.py`, geração só no clique) e caption de procedência
 
 ### 2.7 Bolsas e Auxílios (`bolsas_auxilios.py`)
 - Header em `st.columns([4, 1.4, 1])`: título | botão relatório | botão "+ Novo programa"
@@ -441,7 +447,8 @@ Funções auxiliares no mesmo arquivo (`src/ui_theme.py`), usadas por quase toda
 | Contratos Contínuos | `.cc-*` | `_inject_css()` em `contratos_continuos.py` (mesma estrutura de `.bls-*`) |
 | Consulta de Empenhos | `.ce-*` | `_inject_css()` em `consulta_empenhos.py` |
 | Contratos — Pagamentos | `.pg-*` | `_inject_css()` em `contratos_pagamentos.py` |
-| Dotação, Execução, Empenhos Retardada, Início, Atualizar Planilhas | — | sem CSS próprio, só `_THEME_CSS` + widgets nativos |
+| Empenhos Retardada | (shadow DOM) | `src/assets/empenhos_retardada/componente.css`, isolado no componente `components.v2` |
+| Dotação, Execução, Início, Atualizar Planilhas | — | sem CSS próprio, só `_THEME_CSS` + widgets nativos |
 
 **Painel por Ação (`.po-*`)** — cartão de Ação de Governo + grade de subdivisões:
 
@@ -625,7 +632,7 @@ página reimplementa)
   - Neutro/Indeterminado/Duplicado: `TEXT_MUTED` (#93A1B8)
 
 ### 4.3 "Ver mais" / "Ver menos" (paginação incremental)
-- **Onde**: Consulta de Empenhos (lista + consolidação), Empenhos Retardada, Contratos —
+- **Onde**: Consulta de Empenhos (lista + consolidação), Contratos —
   Vigência, Resumo Consolidado (Bolsas/Contratos Contínuos), lista de programas/contratos
   (Bolsas/Contratos Contínuos).
 - **Padrão**: `st.session_state` guarda a quantidade visível (`QTD_INICIAL_*`); "Ver mais"
@@ -636,16 +643,15 @@ página reimplementa)
 
 ### 4.4 Cabeçalho de grupo expansível (`st.expander`)
 - **Onde**: cartão por contrato/bolsa (Bolsas, Contratos Contínuos), "Pasta de entrada"
-  (Atualizar Planilhas), "Filtros por atributo" (Consulta de Empenhos, Empenhos Retardada),
-  "Linhas de origem" (Empenhos Retardada).
+  (Atualizar Planilhas), "Filtros por atributo" (Consulta de Empenhos).
 - **Estilo**: `[data-testid="stExpander"]` global — fundo `SURFACE`, borda `BORDER`, raio
   `RADIUS` (14px). Rótulo do expander (cartão de contrato/bolsa) é gerado dinamicamente com
   emoji de status: 🟢 ativo sem reforço, 🟡 necessita reforço, 🔴 vencido/sem empenho.
 
 ### 4.5 Diálogo modal (`@st.dialog`)
-- **Onde**: Empenhos Retardada
-  (detalhe do empenho, `width="large"`), Relatório de Reforço de Empenho (Bolsas/Contratos
-  Contínuos, `width="large"`).
+- **Onde**: Relatório de Reforço de Empenho (Bolsas/Contratos Contínuos, `width="large"`).
+  (Empenhos Retardada usava para o detalhe do empenho até 17/10/2026; hoje é painel lateral
+  do componente da página.)
 - **Padrão**: título + badges de status no topo → `st.columns` de métricas → conteúdo
   principal (abas `st.tabs` no caso de Vigência; tabela editável no caso do relatório).
 

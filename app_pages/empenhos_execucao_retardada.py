@@ -56,21 +56,32 @@ Esquema aprovado antes da implementação original (ver histórico da conversa):
     tomada na proposta aprovada, pelo trade-off de simplicidade): abaixo do corte vira só uma
     linha agregada informativa ("+ N empenhos abaixo do corte, somando R$X"), não uma segunda
     tabela.
-  * Detalhe do empenho abre num pop-up (`@st.dialog`, mesmo padrão de
-    `@st.dialog` do Streamlit), acionado por um botão "Ver" por linha — pedido
-    explícito de ajuste: a primeira versão usava seleção de linha em `st.dataframe` com o
-    detalhe renderizado abaixo, que não ficou claro como resposta ao clique; o pop-up deixa
-    inequívoco que o clique funcionou, sem navegar para aba/página separada.
+  * Detalhe do empenho abre por um botão "Ver" por linha — pedido explícito de ajuste: a
+    primeira versão usava seleção de linha em `st.dataframe` com o detalhe renderizado abaixo,
+    que não ficou claro como resposta ao clique. Era um pop-up (`@st.dialog`); desde 17/10/2026
+    é um painel lateral do componente da página (ver LAYOUT abaixo), com o mesmo conteúdo.
   * Visualização "Em destaque" (padrão) / "Todos no escopo" (pedido explícito, 28/09/2026: a
     página não mostrava todas as NEs do escopo, só as acima do corte): "Todos" lista todas as
     NEs de `visivel`, com coluna "Corte" (✓ passa / vazio não passa / "—" nenhum corte ligado).
     Lista paginada em `TAMANHO_PAGINA` linhas (o escopo chega a milhares de NEs). Relatório em
     PDF e Excel (`src/relatorio_empenhos_retardada.py`) com a lista exibida — a visualização
     escolhida, todas as páginas — mais procedência, cortes e filtros aplicados.
-  * Indicadores gerenciais no topo via `render_metric_grid` (`src/ui_theme.py`), mesmo padrão
-    das demais páginas — não HTML customizado.
+  * Indicadores gerenciais no topo — eram `render_metric_grid` (`src/ui_theme.py`); desde
+    17/10/2026 são o cartão de resumo do componente da página (ver LAYOUT abaixo).
   * Fora de escopo, por pedido explícito: nenhum cálculo de ritmo/atraso temporal (% liquidado
     vs. % do exercício decorrido).
+
+LAYOUT (17/10/2026, pedido explícito: "o layout continua totalmente diferente" do mockup aprovado,
+opção "a página inteira, filtros incluídos"): abaixo do cabeçalho, a página é um único componente
+Streamlit `components.v2` (`src/ui_empenhos_retardada_componente.py`, HTML/CSS/JS em
+`src/assets/empenhos_retardada/`) com filtros, resumo, cortes, tabela ordenável pelo cabeçalho,
+agrupamento e painel lateral de detalhe. Toda decisão sobre O QUE aparece (cascata dos filtros,
+cortes, lista, paginação, detalhe) mora em `src/empenhos_retardada_tela.py`, sem Streamlit e
+testada em `tests/test_empenhos_retardada_tela.py`; esta página só guarda o estado da tela em
+`st.session_state`, aplica as ações que o componente devolve e oferece os downloads (botões
+nativos — o componente não gera arquivo). Os filtros desta página deixaram de usar os widgets de
+`src/ui_filtros_execucao.py` (Consulta de Empenhos continua usando), mas a regra é a mesma
+(`option_mapping`/`apply_filters` reaproveitados).
 
 Não altera `src/execucao_anual.py`, `src/tesouro_execucao_mensal.py`, os leitores de
 Contratos/Bolsas, nem a lógica de saldo já validada — só lê e reaproveita.
@@ -80,50 +91,32 @@ from __future__ import annotations
 
 from datetime import datetime
 import gc
-import html
 
-import pandas as pd
 import streamlit as st
 
-from src import design_tokens
-from src.execucao_ne_utils import detalhar_nota_empenho, saldo_por_ne
-from src.execucao_ne_utils import ne_curta as _ne_curta_execucao
+from src.empenhos_retardada_tela import (
+    OPCOES_AGRUPAMENTO,
+    ORDENACAO_PADRAO,
+    SENTIDO_ASC,
+    VISAO_TODOS,
+    aplicar_acao,
+    estado_inicial,
+    montar_tela,
+)
 from src.importacao_execucao_mensal import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
-from src.relatorio_empenhos_retardada import (
-    COLUNA_GRUPO,
-    COLUNA_PASSA_CORTE,
-    ContextoRelatorio,
-    gerar_pdf,
-    gerar_xlsx,
-    montar_lista_relatorio,
-)
-from src.tesouro_execucao_mensal import agregar_por_ne
-from src.ui_filtros_execucao import (
-    CAMPOS_AVANCADOS_EXECUCAO,
-    CAMPOS_RAPIDOS_EXECUCAO,
-    CampoFiltro,
-    apply_filters,
-    limpar_filtros,
-    render_filtros_avancados,
-    render_filtros_rapidos,
-)
-from src.ui_theme import render_metric_grid, render_page_header
+from src.relatorio_empenhos_retardada import ContextoRelatorio, gerar_pdf, gerar_xlsx
+from src.ui_empenhos_retardada_componente import renderizar
+from src.ui_filtros_execucao import CAMPOS_AVANCADOS_EXECUCAO, CAMPOS_RAPIDOS_EXECUCAO, CampoFiltro
+from src.ui_theme import render_page_header
 
-#: namespace de `st.session_state` desta página no filtro compartilhado — distinto do de
-#: Consulta de Empenhos, para as duas páginas conviverem sem colidir chaves.
+#: namespace de `st.session_state` desta página — distinto do de Consulta de Empenhos.
 _PREFIXO_FILTRO = "empenhos_retardada"
 
 # Pedido explícito (22/09/2026): paridade de filtros com `app_pages/consulta_empenhos.py`,
-# que desde 21/09/2026 lê da Execução MENSAL (ver import acima e docstring do módulo) e
-# acrescenta 2 dimensões avançadas que só existem naquela base (`ne_informacao_complementar`,
-# `unidade_orcamentaria_cod`/`_desc` — ausentes na Execução Anual, ver
-# `src/execucao_anual.py::_DIMENSOES_CONSTANTES_POR_NE`). Para replicar os mesmos filtros aqui,
-# esta página também passou a ler da Execução Mensal (mesma troca de fonte, mesmo contrato de
-# saída de `agregar_por_ne`/`saldo_por_ne`/`detalhar_nota_empenho`, que continuam genéricos o
-# bastante para reaproveitar de `src/execucao_anual.py` sem alteração — confirmado que a base
-# mensal também tem `linha_origem`/`tipo_linha`, ver `src/tesouro_execucao_mensal.py`).
-# Consequência aceita (mesma da Consulta de Empenhos): a Execução Mensal só cobre 2024 em
-# diante — 2023 deixa de aparecer nesta página.
+# que desde 21/09/2026 lê da Execução MENSAL (ver docstring do módulo) e acrescenta 2 dimensões
+# avançadas que só existem naquela base (`ne_informacao_complementar`,
+# `unidade_orcamentaria_cod`/`_desc`). Consequência aceita (mesma da Consulta de Empenhos): a
+# Execução Mensal só cobre 2024 em diante — 2023 deixa de aparecer nesta página.
 _CAMPO_NE_INFORMACAO_COMPLEMENTAR: CampoFiltro = (
     "ne_informacao_complementar", "NE - Informação Complementar", "ne_informacao_complementar", None,
 )
@@ -133,258 +126,40 @@ _CAMPO_UNIDADE_ORCAMENTARIA: CampoFiltro = (
 CAMPOS_AVANCADOS_PAGINA = CAMPOS_AVANCADOS_EXECUCAO + (_CAMPO_NE_INFORMACAO_COMPLEMENTAR, _CAMPO_UNIDADE_ORCAMENTARIA)
 CAMPOS_PAGINA = CAMPOS_RAPIDOS_EXECUCAO + CAMPOS_AVANCADOS_PAGINA
 
-CORTE_RS_PADRAO = 10_000.0
-CORTE_PCT_PADRAO = 20.0  # %
-
-VISAO_DESTAQUE = "Em destaque"
-VISAO_TODOS = "Todos no escopo"
-TAMANHO_PAGINA = 100
-
-# Ordenação e agrupamento da lista (17/10/2026). Rótulo na tela -> coluna da lista por NE.
-# Agrupar por "Credor" usa o favorecido da NE (`ne_favorecido`, mesma coluna da lista).
-ORDENACAO_PADRAO = "Saldo"
-OPCOES_ORDENACAO = {
-    "NE": "ne_ccor",
-    "Favorecido": "ne_favorecido",
-    "Empenhado": "empenhada",
-    "Liquidado": "liquidada",
-    "Saldo": "saldo",
-    "% Saldo": "percentual_saldo",
-}
-SENTIDO_DESC = "Maior primeiro"
-SENTIDO_ASC = "Menor primeiro"
-OPCOES_AGRUPAMENTO = {
-    "Sem agrupamento": None,
-    "Unidade orçamentária": "unidade_orcamentaria_desc",
-    "Credor": "ne_favorecido",
-    "Ação de governo": "acao_desc",
-}
-
-COLUNAS_BUSCA = [
-    "ne_ccor", "ne_descricao", "ne_favorecido", "natureza_detalhada_label",
-    "pi_cod", "ptres", "acao_desc", "fonte_desc", "processo_ne",
-]
-
 
 @st.cache_data(show_spinner="Lendo a base de Execução Mensal...")
-def _cached_leitura(caminho_ponteiro: str, sha_manifesto: str) -> pd.DataFrame:
+def _cached_leitura(caminho_ponteiro: str, sha_manifesto: str):
     """`caminho_ponteiro`/`sha_manifesto` só participam da chave de cache — força reler
-    quando a extração atual mudar (mesmo padrão de
-    `consulta_empenhos.py::_cached_leitura`). O DataFrame devolvido já é a base composta por
-    ano (ver `importacao_execucao_mensal.carregar_atual`), não só o arquivo do manifesto
-    atual."""
+    quando a extração atual mudar (mesmo padrão de `consulta_empenhos.py::_cached_leitura`). O
+    DataFrame devolvido já é a base composta por ano (ver
+    `importacao_execucao_mensal.carregar_atual`), não só o arquivo do manifesto atual."""
 
     return carregar_atual()
 
 
-def _ne_exibicao(ne_ccor: object, ano: object) -> str:
-    """Omite o prefixo do órgão/UG antes do ano — mesmo padrão de exibição de
-    `consulta_empenhos.py::_ne_exibicao` ("2023NE000974", não o `ne_ccor` completo)."""
-
-    if pd.isna(ne_ccor) or pd.isna(ano):
-        return "—" if pd.isna(ne_ccor) else str(ne_ccor)
-    return _ne_curta_execucao(str(ne_ccor))
+def chave_estado(source_key: str) -> str:
+    return f"{_PREFIXO_FILTRO}_estado_{source_key}"
 
 
-def _aplicar_busca(por_ne: pd.DataFrame, busca: str) -> pd.DataFrame:
-    if not busca:
-        return por_ne
-    alvo = busca.strip().lower()
-    mascara = pd.Series(False, index=por_ne.index)
-    for coluna in COLUNAS_BUSCA:
-        if coluna in por_ne.columns:
-            mascara = mascara | por_ne[coluna].astype("string").str.lower().str.contains(alvo, na=False, regex=False)
-    return por_ne[mascara]
+def chave_componente(source_key: str) -> str:
+    return f"{_PREFIXO_FILTRO}_tela_{source_key}"
 
 
-def _dataframe_restrito_a_busca(dataframe: pd.DataFrame, busca: str) -> pd.DataFrame:
-    """Linhas (nível de execução, não por NE) das NEs cujo agregado bate com a busca livre —
-    usado ANTES de calcular as opções dos filtros rápidos/avançados, para elas ficarem
-    restritas ao que a busca já reduziu, em vez de sempre oferecerem opções do dataset
-    inteiro (mesmo bug relatado e corrigido em `consulta_empenhos.py::_dataframe_restrito_a_busca`).
+def _ao_agir(source_key: str) -> None:
+    """Roda antes da reexecução, a cada ação no componente: aplica a ação ao estado da tela."""
 
-    Filtra por `ne_ccor` (todas as linhas da NE, inclusive itens de execução), não linha a
-    linha — ver docstring de `consulta_empenhos.py::_dataframe_restrito_a_busca` para o motivo
-    (linha a linha quebraria `agregar_por_ne` por falta de linha, não por ausência real do
-    dado).
-    """
-    if not busca:
-        return dataframe
-    alvo = busca.strip().lower()
-    mascara = pd.Series(False, index=dataframe.index)
-    for coluna in COLUNAS_BUSCA:
-        if coluna in dataframe.columns:
-            mascara = mascara | dataframe[coluna].astype("string").str.lower().str.contains(alvo, na=False, regex=False)
-    nes_que_batem = set(dataframe.loc[mascara, "ne_ccor"])
-    return dataframe[dataframe["ne_ccor"].isin(nes_que_batem)]
+    resultado = st.session_state.get(chave_componente(source_key)) or {}
+    acao = resultado.get("acao") if hasattr(resultado, "get") else None
+    estado = st.session_state.get(chave_estado(source_key))
+    if estado is None or acao is None:
+        return
+    st.session_state[chave_estado(source_key)] = aplicar_acao(estado, acao, [c[0] for c in CAMPOS_PAGINA])
 
 
-def _filtros_selecionados(source_key: str) -> list[tuple[str, list[str]]]:
-    """(rótulo do filtro, rótulos "código — descrição" selecionados) de cada campo com alguma
-    seleção — só para o cabeçalho do relatório, lido das mesmas chaves de `st.session_state`
-    que `src/ui_filtros_execucao.py` usa nos `st.multiselect`."""
+def _filtros_selecionados(estado: dict) -> list[tuple[str, list[str]]]:
+    """(rótulo do filtro, rótulos selecionados) de cada campo com seleção — cabeçalho do relatório."""
 
-    filtros = []
-    for filter_name, label, _code, _desc in CAMPOS_PAGINA:
-        rotulos = st.session_state.get(f"{_PREFIXO_FILTRO}_{filter_name}_{source_key}") or []
-        if rotulos:
-            filtros.append((label, [str(r) for r in rotulos]))
-    return filtros
-
-
-def _brl(valor: object) -> str:
-    """Mesmo padrão de formatação compacta em reais inteiros (sem centavos, ponto como
-    separador de milhar) já usado em `contratos_pagamentos.py`/`contratos_continuos.py`."""
-
-    if valor is None or pd.isna(valor):
-        return "—"
-    negativo = valor < 0
-    texto = "R$ " + f"{abs(round(valor)):,.0f}".replace(",", ".")
-    return ("−" if negativo else "") + texto
-
-
-def _pct(valor: object) -> str:
-    if valor is None or pd.isna(valor):
-        return "—"
-    return f"{valor:.1f}%"
-
-
-def _dash(valor: object) -> str:
-    return "—" if pd.isna(valor) else str(valor)
-
-
-def _alternar_ordem(rotulo: str, ordem_key: str, sentido_key: str) -> None:
-    """Clique no cabeçalho: mesma coluna inverte o sentido; outra coluna começa em "maior primeiro"
-    (números) ou "menor primeiro" (NE e favorecido, em ordem alfabética). Só muda o estado."""
-
-    if st.session_state.get(ordem_key) == rotulo:
-        atual = st.session_state.get(sentido_key, SENTIDO_DESC)
-        st.session_state[sentido_key] = SENTIDO_ASC if atual == SENTIDO_DESC else SENTIDO_DESC
-    else:
-        st.session_state[ordem_key] = rotulo
-        st.session_state[sentido_key] = SENTIDO_ASC if rotulo in ("NE", "Favorecido") else SENTIDO_DESC
-    # a lista muda de ordem: volta para a primeira página
-    for chave in [k for k in st.session_state if str(k).startswith(f"{_PREFIXO_FILTRO}_pagina_")]:
-        st.session_state[chave] = 1
-
-
-def _html_saldo(saldo: object, percentual: object) -> str:
-    """Saldo em R$ com uma barra fina do percentual sobre o empenhado. Saldo negativo em vermelho;
-    sem percentual (empenhado nulo/zero) não há barra — nulo não vira zero."""
-
-    classe = " er-neg" if (saldo is not None and not pd.isna(saldo) and saldo < 0) else ""
-    barra = ""
-    if percentual is not None and not pd.isna(percentual):
-        largura = max(0.0, min(100.0, float(percentual)))
-        barra = f'<div class="er-barra"><i style="width:{largura:.1f}%"></i></div>'
-    return f'<div class="er-saldo"><span class="er-num{classe}">{_brl(saldo)}</span>{barra}</div>'
-
-
-def _html_corte(passa: object) -> str:
-    if passa is None or pd.isna(passa):
-        return '<span class="er-pill er-pill-nulo">—</span>'
-    return '<span class="er-pill er-pill-ok">Destaque</span>' if passa else '<span class="er-pill er-pill-nulo">Abaixo</span>'
-
-
-_CSS_LISTA = f"""
-<style>
-.st-key-er_barra [data-testid="stButtonGroup"] {{ background: transparent !important; border: 0 !important; padding: 0 !important; }}
-.st-key-er_barra [data-testid="stWidgetLabel"] p {{
-    font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: {design_tokens.TEXT_MUTED};
-}}
-.st-key-er_tabela {{
-    background: {design_tokens.SURFACE}; border: 1px solid {design_tokens.BORDER}; border-radius: {design_tokens.RADIUS};
-    box-shadow: 0 1px 2px rgba(11,53,87,.06), 0 6px 18px rgba(11,53,87,.06); gap: 0 !important; overflow: hidden;
-}}
-.st-key-er_cab {{ background: {design_tokens.SURFACE_ALT}; border-bottom: 1px solid {design_tokens.BORDER}; padding: 2px 14px; }}
-.st-key-er_cab [data-testid="stButton"] button {{
-    background: transparent !important; border: 0 !important; box-shadow: none !important;
-    padding: 0.35rem 0 !important; min-height: 2rem; justify-content: flex-start;
-}}
-.st-key-er_cab [data-testid="stButton"] button p,
-.st-key-er_cab .er-cab-fixo {{
-    font-size: 0.7rem; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; color: {design_tokens.TEXT_MUTED} !important;
-}}
-.st-key-er_cab [data-testid="stButton"] button:hover p {{ color: {design_tokens.ACCENT} !important; }}
-.st-key-er_cab [data-testid="stColumn"]:nth-child(n+3):nth-child(-n+6) button {{ justify-content: flex-end; width: 100%; }}
-[class*="st-key-er_lin_"] {{ border-bottom: 1px solid {design_tokens.BORDER}; padding: 2px 14px; gap: 0 !important; }}
-[class*="st-key-er_lin_"]:hover {{ background: {design_tokens.ACCENT_SOFT}; }}
-[class*="st-key-er_lin_"] [data-testid="stButton"] button {{ min-height: 1.8rem; padding: 0 0.7rem; font-size: 0.8rem; }}
-[class*="st-key-er_lin_"] p {{ margin: 0; font-size: 0.86rem; }}
-.er-num {{ text-align: right; font-variant-numeric: tabular-nums; font-size: 0.86rem; }}
-.er-neg {{ color: {design_tokens.NEGATIVE}; }}
-.er-saldo {{ display: flex; flex-direction: column; align-items: flex-end; gap: 4px; width: 100%; }}
-.er-saldo .er-num {{ width: 100%; }}
-.er-barra {{ width: 100px; height: 5px; border-radius: 3px; overflow: hidden; background: {design_tokens.SURFACE_ALT}; border: 1px solid {design_tokens.BORDER}; }}
-.er-barra i {{ display: block; height: 100%; background: {design_tokens.WARNING}; }}
-.er-pill {{ display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 0.72rem; font-weight: 650; }}
-.er-pill-ok {{ background: {design_tokens.POSITIVE_SOFT}; color: {design_tokens.POSITIVE}; }}
-.er-pill-nulo {{ background: {design_tokens.SURFACE_ALT}; color: {design_tokens.TEXT_FAINT}; }}
-.er-grupo {{
-    background: {design_tokens.SURFACE_ALT}; border-bottom: 1px solid {design_tokens.BORDER}; padding: 8px 14px;
-    display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline;
-}}
-.er-grupo span {{ color: {design_tokens.TEXT_MUTED}; font-size: 0.82rem; }}
-</style>
-"""
-
-
-@st.dialog("Detalhe do empenho", width="large")
-def _abrir_detalhe(dataframe: pd.DataFrame, linha: pd.Series) -> None:
-    """Todas as informações da NE clicada na tabela "Em destaque", num pop-up dentro da própria
-    aba (pedido explícito — nem inline role-abaixo, nem aba/página separada). Mesmo conjunto de
-    campos do painel de detalhe de `consulta_empenhos.py::_render_detalhe` (dimensões
-    constantes por NE, ver `tesouro_execucao_mensal.py::_DIMENSOES_CONSTANTES_POR_NE`), mesmo
-    padrão de `@st.dialog` do Streamlit — sem
-    reaproveitar as classes CSS `.ce-*` daquela página (específicas dela), só com os widgets
-    nativos do Streamlit."""
-
-    st.markdown(f"##### {_ne_exibicao(linha['ne_ccor'], linha['ano'])}")
-    st.caption(_dash(linha["ne_favorecido"]))
-    if pd.notna(linha.get("ne_descricao")):
-        st.write(linha["ne_descricao"])
-
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Empenhado", _brl(linha["empenhada"]))
-    m2.metric("Liquidado", _brl(linha["liquidada"]))
-    m3.metric("Saldo", _brl(linha["saldo"]))
-    m4.metric("% Saldo", _pct(linha["percentual_saldo"]))
-
-    st.markdown("**Classificação da despesa**")
-    st.caption(
-        f"Categoria Econômica: {_dash(linha['categoria_economica_cod'])} — {_dash(linha['categoria_economica_desc'])}  \n"
-        f"Grupo de Despesa: {_dash(linha['gnd_cod'])} — {_dash(linha['gnd_desc'])}  \n"
-        f"Natureza de Despesa: {_dash(linha['natureza_despesa_cod'])} — {_dash(linha['natureza_despesa_desc'])}  \n"
-        f"Natureza Detalhada: {_dash(linha['natureza_detalhada_label'])}  \n"
-        f"Subitem: {_dash(linha['subitem_resumo'])}  \n"
-        f"Elemento de Despesa: {_dash(linha['elemento_cod'])} — {_dash(linha['elemento_desc'])}"
-    )
-
-    st.markdown("**Programação orçamentária**")
-    st.caption(
-        f"Nº do Processo: {_dash(linha['processo_ne'])}  \n"
-        f"Ação de Governo: {_dash(linha['acao_cod'])} — {_dash(linha['acao_desc'])}  \n"
-        f"Fonte de Recursos: {_dash(linha['fonte_cod'])} — {_dash(linha['fonte_desc'])}  \n"
-        f"Resultado Primário Lei: {_dash(linha['resultado_primario_cod'])} — {_dash(linha['resultado_primario_desc'])}  \n"
-        f"Iduso: {_dash(linha['iduso_cod'])} — {_dash(linha['iduso_desc'])}  \n"
-        f"PI: {_dash(linha['pi_cod'])} — {_dash(linha['pi_desc'])}  \n"
-        f"PTRES: {_dash(linha['ptres'])}"
-    )
-
-    st.markdown("**Unidades**")
-    st.caption(
-        f"UG Executora: {_dash(linha['ug_executora_cod'])} — {_dash(linha['ug_executora_desc'])}  \n"
-        f"UG Responsável: {_dash(linha['ug_responsavel_cod'])} — {_dash(linha['ug_responsavel_desc'])}  \n"
-        f"UGR - Gestão: {_dash(linha['ugr_cod'])} — {_dash(linha['ugr_desc'])}"
-    )
-
-    with st.expander("Linhas de origem (rastreabilidade)"):
-        origem = detalhar_nota_empenho(dataframe, linha["ne_ccor"])
-        st.dataframe(
-            origem[["linha_origem", "tipo_linha", "ano", "empenhada", "liquidada", "paga"]],
-            hide_index=True,
-            width="stretch",
-        )
+    return [(rotulo, list(estado["filtros"][nome])) for nome, rotulo, _c, _d in CAMPOS_PAGINA if estado["filtros"].get(nome)]
 
 
 # ---------------------------------------------------------------------- página
@@ -418,382 +193,54 @@ except Exception as error:
 
 source_key = manifesto.sha256[:12]
 ano_extracao = datetime.fromisoformat(manifesto.data_extracao).year
-
-# pré-seleciona o exercício vigente no filtro "Exercício" — só na primeira renderização
-# (uma flag própria, não a ausência da chave do filtro): depois disso o usuário troca
-# livremente e a escolha persiste entre reruns, como qualquer outro filtro — inclusive depois
-# de um "Limpar filtros", que devolve Exercício para "Todos" como os demais campos, não para
-# o ano vigente de novo (a flag sobrevive a `limpar_filtros`, que só apaga as chaves dos
-# próprios campos de filtro, não marcadores auxiliares como este).
-_ano_key = f"{_PREFIXO_FILTRO}_ano_{source_key}"
-_ano_padrao_aplicado_key = f"{_PREFIXO_FILTRO}_ano_padrao_aplicado_{source_key}"
-if not st.session_state.get(_ano_padrao_aplicado_key):
-    st.session_state[_ano_key] = [str(ano_extracao)]  # multiselect: valor é sempre uma lista
-    st.session_state[_ano_padrao_aplicado_key] = True
-
-with st.container(border=True, key="er_filter_panel"):
-    filter_columns = st.columns([1.7, 1, 1.35, 1.2, 1.2], vertical_alignment="bottom")
-    with filter_columns[0]:
-        busca = st.text_input(
-            "Busca livre",
-            key=f"{_PREFIXO_FILTRO}_busca_{source_key}",
-            placeholder="NE, favorecido, ação, PI, processo…",
-        )
-    # a busca livre restringe as OPÇÕES dos filtros rápidos/avançados também, não só o resultado
-    # final — sem isso, os filtros ofereciam atributos de NEs fora da busca (bug relatado em
-    # consulta_empenhos.py, mesmo mecanismo de filtro aqui). Por `ne_ccor`, não linha a linha (ver
-    # docstring de `_dataframe_restrito_a_busca`).
-    dataframe_buscado = _dataframe_restrito_a_busca(dataframe, busca)
-    if busca and dataframe_buscado.empty:
-        # sai aqui, antes do "Nenhum registro corresponde à combinação de filtros selecionada"
-        # mais abaixo (que fala de FILTROS DE ATRIBUTO) — a causa da lista vazia é a busca, não
-        # uma seleção de filtro, a mensagem precisa dizer a coisa certa.
-        st.warning("Nenhum empenho encontrado com os filtros informados.")
-        st.stop()
-
-    selections = render_filtros_rapidos(
-        dataframe_buscado,
-        CAMPOS_RAPIDOS_EXECUCAO,
-        CAMPOS_PAGINA,
-        _PREFIXO_FILTRO,
-        source_key,
-        list(filter_columns[1:]),
-    )
-    advanced_column, clear_column = st.columns([5, 1], vertical_alignment="top")
-    with advanced_column:
-        with st.expander("Filtros avançados"):
-            st.caption(f"{len(CAMPOS_AVANCADOS_PAGINA)} atributos cruzados; combinações sem registro não aparecem nas listas.")
-            render_filtros_avancados(
-                dataframe_buscado,
-                CAMPOS_AVANCADOS_PAGINA,
-                CAMPOS_PAGINA,
-                _PREFIXO_FILTRO,
-                source_key,
-                selections,
-            )
-    with clear_column:
-        if st.button(
-            "Limpar filtros",
-            key=f"{_PREFIXO_FILTRO}_limpar_{source_key}",
-            use_container_width=True,
-        ):
-            limpar_filtros(CAMPOS_PAGINA, _PREFIXO_FILTRO, source_key)
-            st.rerun()
-
-filtrado = apply_filters(dataframe_buscado, CAMPOS_PAGINA, selections)
-if filtrado.empty:
-    st.warning("Nenhum registro corresponde à combinação de filtros selecionada.")
-    st.stop()
-
-por_ne = saldo_por_ne(agregar_por_ne(filtrado))
-# `filtrado` já vem restrito à busca (via `dataframe_buscado`) — chamada mantida como rede de
-# segurança (idempotente), não como o filtro principal.
-visivel = _aplicar_busca(por_ne, busca)
-if visivel.empty:
-    st.warning("Nenhum empenho encontrado com os filtros informados.")
-    st.stop()
-
-# percentual de saldo — só aqui, não existe em execucao_anual.py. `empenhada` nula/zero vira
-# denominador nulo (não ZeroDivisionError/inf); a linha continua em `visivel`, só o percentual
-# fica "—" (ver `_pct`).
-empenhado_valido = visivel["empenhada"].where(visivel["empenhada"].fillna(0) != 0)
-visivel = visivel.assign(percentual_saldo=(visivel["saldo"] / empenhado_valido) * 100)
-
-anos_no_recorte = visivel["ano"].dropna().astype(int).unique()
-if ano_extracao in anos_no_recorte:
-    st.caption(
-        f"⚠ O recorte inclui {ano_extracao}, exercício em andamento na data da extração — "
-        "saldo desse exercício ainda pode estar em movimento normal, não é necessariamente atraso."
-    )
-
-tem_empenhada = bool(visivel["empenhada"].notna().any())
-tem_liquidada = bool(visivel["liquidada"].notna().any())
-render_metric_grid(
-    [
-        {"label": "Empenhos no escopo", "value": str(len(visivel))},
-        {
-            "label": "Empenhado",
-            "value": _brl(visivel["empenhada"].sum(min_count=1)) if tem_empenhada else "Sem registros",
-        },
-        {
-            "label": "Liquidado",
-            "value": _brl(visivel["liquidada"].sum(min_count=1)) if tem_liquidada else "Sem registros",
-        },
-        {"label": "Saldo total (empenhado − liquidado)", "value": _brl(visivel["saldo"].sum())},
-    ],
-    columns=4,
-)
-
-# Barra de proporção liquidado × saldo sobre o empenhado (17/10/2026) — só leitura visual dos mesmos
-# totais dos indicadores acima; omitida quando o empenhado é nulo/zero (não há proporção a mostrar) e
-# quando saldo ou liquidado seriam negativos no agregado (a barra não representa valor negativo).
-_empenhado_total = visivel["empenhada"].sum(min_count=1) if tem_empenhada else None
-_liquidado_total = visivel["liquidada"].fillna(0.0).sum()
-if _empenhado_total is not None and not pd.isna(_empenhado_total) and _empenhado_total > 0 and 0 <= _liquidado_total <= _empenhado_total:
-    _pct_liq = _liquidado_total / _empenhado_total * 100
-    st.markdown(
-        f'<div style="display:flex;height:10px;border-radius:6px;overflow:hidden;background:{design_tokens.SURFACE_ALT};'
-        f'border:1px solid {design_tokens.BORDER}" role="img" aria-label="{_pct_liq:.1f}% liquidado, {100 - _pct_liq:.1f}% de saldo">'
-        f'<div style="width:{_pct_liq:.2f}%;background:{design_tokens.POSITIVE}"></div>'
-        f'<div style="width:{100 - _pct_liq:.2f}%;background:{design_tokens.WARNING}"></div></div>',
-        unsafe_allow_html=True,
-    )
-    st.caption(f"{_pct_liq:.1f}% do empenhado já liquidado · {100 - _pct_liq:.1f}% em saldo a liquidar.")
-
-# Layout (17/10/2026, pedido explícito: "o layout também precisa de uma melhorada"): os dois cortes
-# ficam num único painel, numa linha só (Usar + valor de cada corte, e o seletor E/OU ao lado quando
-# os dois estão ligados), em vez de dois blocos empilhados abaixo dos indicadores. Mesmas chaves,
-# rótulos e regras de antes; só mudou a disposição.
-with st.container(border=True, key="er_cortes_panel"):
-    st.markdown("**Cortes de destaque** — ligue um, o outro, ou os dois ao mesmo tempo.")
-    c_usar_rs, c_rs, c_usar_pct, c_pct, c_modo = st.columns([0.7, 1.6, 0.7, 1.6, 1.4], vertical_alignment="bottom")
-    with c_usar_rs:
-        usar_rs = st.toggle(
-            "Usar",
-            value=True,
-            key=f"{_PREFIXO_FILTRO}_usar_rs_{source_key}",
-        )
-    with c_rs:
-        corte_rs = st.number_input(
-            "Saldo mínimo em R$",
-            min_value=0.0,
-            value=CORTE_RS_PADRAO,
-            step=1000.0,
-            key=f"{_PREFIXO_FILTRO}_corte_rs_{source_key}",
-        )
-    with c_usar_pct:
-        usar_pct = st.toggle(
-            "Usar",
-            value=False,
-            key=f"{_PREFIXO_FILTRO}_usar_pct_{source_key}",
-        )
-    with c_pct:
-        corte_pct = st.number_input(
-            "Saldo mínimo em % do empenhado",
-            min_value=0.0,
-            max_value=1000.0,
-            value=CORTE_PCT_PADRAO,
-            step=5.0,
-            key=f"{_PREFIXO_FILTRO}_corte_pct_{source_key}",
-        )
-    # Só faz sentido perguntar "E ou OU" com os dois cortes ligados — com um só, as duas opções dão
-    # o mesmo resultado (pedido explícito, 22/09/2026: antes o combinador era fixo em OU; agora dá
-    # pra escolher). Padrão "OU" preserva o comportamento já validado quando o usuário liga os dois
-    # pela primeira vez.
-    modo_combinacao = "OU"
-    if usar_rs and usar_pct:
-        with c_modo:
-            modo_combinacao = st.segmented_control(
-                "Com os dois cortes ligados, destacar quem passa de",
-                options=["E", "OU"],
-                default="OU",
-                key=f"{_PREFIXO_FILTRO}_modo_combinacao_{source_key}",
-                help='"OU": entra em destaque quem passa de QUALQUER um dos dois cortes (amplia — era '
-                'o único comportamento antes desta opção). "E": só entra quem passa dos DOIS cortes ao '
-                "mesmo tempo (restringe).",
-            ) or "OU"
-
-# NE com saldo ou percentual nulo (empenhada nula/zero) nunca entra em destaque — não dá para
-# confirmar que o saldo passa do corte sem saber o valor; `.fillna(False)` trata esse "não sei"
-# como "não passa", não como erro.
-passa_rs = (visivel["saldo"] >= corte_rs).fillna(False)
-passa_pct = (visivel["percentual_saldo"] >= corte_pct).fillna(False)
-partes_ativas = []
-descricoes_ativas = []
-if usar_rs:
-    partes_ativas.append(passa_rs)
-    descricoes_ativas.append(f"saldo ≥ {_brl(corte_rs)}")
-if usar_pct:
-    partes_ativas.append(passa_pct)
-    descricoes_ativas.append(f"saldo ≥ {corte_pct:.0f}% do valor empenhado")
-
-if not partes_ativas:
-    em_destaque_mascara = pd.Series(False, index=visivel.index)
-    descricao_corte = None
-elif len(partes_ativas) == 1 or modo_combinacao == "OU":
-    em_destaque_mascara = partes_ativas[0]
-    for parte in partes_ativas[1:]:
-        em_destaque_mascara = em_destaque_mascara | parte
-    descricao_corte = " ou ".join(descricoes_ativas)
-else:  # "E", só possível com os dois cortes ativos (ver modo_combinacao acima)
-    em_destaque_mascara = partes_ativas[0]
-    for parte in partes_ativas[1:]:
-        em_destaque_mascara = em_destaque_mascara & parte
-    descricao_corte = " e ".join(descricoes_ativas)
-
-em_destaque = visivel[em_destaque_mascara]
-abaixo_do_corte = visivel[~em_destaque_mascara]
-
-# Visualização (pedido explícito, 28/09/2026: "a página não mostra todos os empenhos que estão
-# dentro daquele escopo"): "Em destaque" (padrão — comportamento já validado) ou "Todos no
-# escopo" (todas as NEs de `visivel`, com a coluna "Corte" indicando quem passa do(s) corte(s)
-# ligado(s); funciona mesmo com os dois cortes desligados). O relatório (PDF/Excel) segue a
-# visualização escolhida — "o que está na tela" (pedido explícito).
-st.markdown("#### Empenhos")
-# Barra única da lista (17/10/2026, pedido explícito): visão, ordenação e agrupamento na mesma linha.
-# Ordenação/agrupamento só reordenam e rotulam a lista — nenhuma NE some nem muda de valor, e o
-# relatório (PDF/Excel) sai na mesma ordem da tela (`montar_lista_relatorio`).
-# A ordenação é feita clicando no cabeçalho da tabela (estado em `st.session_state`, alterado por
-# callback antes da reexecução); o padrão é saldo, maior primeiro.
-st.markdown(_CSS_LISTA, unsafe_allow_html=True)
-_ordem_key = f"{_PREFIXO_FILTRO}_ordem_{source_key}"
-_sentido_key = f"{_PREFIXO_FILTRO}_sentido_{source_key}"
-st.session_state.setdefault(_ordem_key, ORDENACAO_PADRAO)
-st.session_state.setdefault(_sentido_key, SENTIDO_DESC)
-rotulo_ordem = st.session_state[_ordem_key]
-sentido = st.session_state[_sentido_key]
-
-with st.container(key="er_barra"):
-    barra_visao, barra_grupo, barra_pagina = st.columns([1.5, 1.4, 1.2], vertical_alignment="bottom")
-    with barra_visao:
-        visualizacao = st.segmented_control(
-            "Exibir",
-            options=[VISAO_DESTAQUE, VISAO_TODOS],
-            default=VISAO_DESTAQUE,
-            key=f"{_PREFIXO_FILTRO}_visualizacao_{source_key}",
-        ) or VISAO_DESTAQUE
-    with barra_grupo:
-        rotulo_grupo = st.selectbox(
-            "Agrupar por",
-            options=list(OPCOES_AGRUPAMENTO),
-            key=f"{_PREFIXO_FILTRO}_agrupar_por_{source_key}",
-        )
-mostrar_todos = visualizacao == VISAO_TODOS
-coluna_ordem = OPCOES_ORDENACAO[rotulo_ordem]
-coluna_grupo = OPCOES_AGRUPAMENTO[rotulo_grupo]
-
-if descricao_corte is None:
-    if not mostrar_todos:
-        st.warning(
-            "Ligue pelo menos um dos dois cortes acima para ver os empenhos em destaque "
-            f'(ou escolha "{VISAO_TODOS}").'
-        )
-else:
-    st.caption(f"{len(em_destaque)} de {len(visivel)} empenhos com {descricao_corte}.")
-
-# UMA lista só, já ordenada, para a tela e para o relatório (PDF/Excel) — ver
-# `montar_lista_relatorio`: o relatório não pode divergir do que está na tela.
-ordenado = montar_lista_relatorio(
-    visivel,
-    em_destaque_mascara,
-    cortes_ligados=descricao_corte is not None,
-    todos=mostrar_todos,
-    ordenar_por=coluna_ordem,
-    ascendente=sentido == SENTIDO_ASC,
-    agrupar_por=coluna_grupo,
-)
-
-if ordenado.empty:
-    if descricao_corte is not None and not mostrar_todos:
-        st.info("Nenhum empenho passa do(s) corte(s) ligado(s) acima.")
-else:
-
-    # Paginação: "Todos no escopo" chega a milhares de NEs (uma linha de widgets por NE, com
-    # botão "Ver") — desenhar tudo de uma vez travaria a página. O relatório sempre leva a lista
-    # inteira, não só a página visível.
-    total_paginas = max(1, -(-len(ordenado) // TAMANHO_PAGINA))
-    pagina = 1
-    if total_paginas > 1:
-        pagina_key = f"{_PREFIXO_FILTRO}_pagina_{visualizacao}_{source_key}"
-        # filtro/corte mudou e a lista encolheu: página guardada fora do novo intervalo volta
-        # para a última válida (number_input levanta erro com valor acima de max_value).
-        if st.session_state.get(pagina_key, 1) > total_paginas:
-            st.session_state[pagina_key] = total_paginas
-        with barra_pagina:  # na barra da lista, ao lado de "Exibir" e "Agrupar por"
-            pagina = st.number_input(
-                f"Página (de {total_paginas}, {TAMANHO_PAGINA} empenhos por página)",
-                min_value=1,
-                max_value=total_paginas,
-                value=1,
-                step=1,
-                key=pagina_key,
-            )
-    inicio = (int(pagina) - 1) * TAMANHO_PAGINA
-    trecho = ordenado.iloc[inicio : inicio + TAMANHO_PAGINA]
-    if total_paginas > 1:
-        st.caption(f"Exibindo {inicio + 1}–{inicio + len(trecho)} de {len(ordenado)} empenhos.")
-
-    proporcoes = [1.3, 2.2, 1.25, 1.25, 1.6, 0.85, 0.95, 0.6] if mostrar_todos else [1.3, 2.2, 1.25, 1.25, 1.6, 0.85, 0.6]
-    with st.container(key="er_tabela"):
-        with st.container(key="er_cab"):
-            cabecalho = st.columns(proporcoes)
-            for coluna, rotulo in zip(cabecalho, ["NE", "Favorecido", "Empenhado", "Liquidado", "Saldo", "% Saldo"]):
-                ativo = rotulo == rotulo_ordem
-                seta = (" ▲" if sentido == SENTIDO_ASC else " ▼") if ativo else ""
-                coluna.button(
-                    f"{rotulo}{seta}",
-                    key=f"{_PREFIXO_FILTRO}_ord_{rotulo}_{source_key}",
-                    type="tertiary",
-                    on_click=_alternar_ordem,
-                    args=(rotulo, _ordem_key, _sentido_key),
-                    help=f"Ordenar por {rotulo}; clique de novo para inverter.",
-                )
-            if mostrar_todos:
-                cabecalho[6].markdown('<span class="er-cab-fixo">Corte</span>', unsafe_allow_html=True)
-        grupo_exibido = None
-        for posicao, linha in trecho.iterrows():
-            if coluna_grupo and linha[COLUNA_GRUPO] != grupo_exibido:
-                grupo_exibido = linha[COLUNA_GRUPO]
-                # subtotal do grupo inteiro (não só do trecho da página) — mesma lista do relatório
-                do_grupo = ordenado[ordenado[COLUNA_GRUPO] == grupo_exibido]
-                st.markdown(
-                    f'<div class="er-grupo"><strong>{html.escape(str(grupo_exibido))}</strong>'
-                    f"<span>{len(do_grupo)} empenhos · saldo {_brl(do_grupo['saldo'].sum(min_count=1))}</span></div>",
-                    unsafe_allow_html=True,
-                )
-            with st.container(key=f"er_lin_{source_key}_{visualizacao}_{posicao}"):
-                c = st.columns(proporcoes, vertical_alignment="center")
-                c[0].write(_ne_exibicao(linha["ne_ccor"], linha["ano"]))
-                c[1].write(_dash(linha["ne_favorecido"]))
-                c[2].markdown(f'<div class="er-num">{_brl(linha["empenhada"])}</div>', unsafe_allow_html=True)
-                c[3].markdown(f'<div class="er-num">{_brl(linha["liquidada"])}</div>', unsafe_allow_html=True)
-                c[4].markdown(_html_saldo(linha["saldo"], linha["percentual_saldo"]), unsafe_allow_html=True)
-                c[5].markdown(f'<div class="er-num">{_pct(linha["percentual_saldo"])}</div>', unsafe_allow_html=True)
-                if mostrar_todos:
-                    c[6].markdown(_html_corte(linha[COLUNA_PASSA_CORTE]), unsafe_allow_html=True)
-                if c[-1].button("Ver", key=f"{_PREFIXO_FILTRO}_ver_{source_key}_{visualizacao}_{posicao}"):
-                    _abrir_detalhe(filtrado, linha)
-
-if not mostrar_todos and descricao_corte is not None and not abaixo_do_corte.empty:
-    soma_abaixo = abaixo_do_corte["saldo"].sum()
-    st.caption(f"+ {len(abaixo_do_corte)} empenhos abaixo do corte, somando {_brl(soma_abaixo)} de saldo.")
-
 data_extracao_texto = datetime.fromisoformat(manifesto.data_extracao).strftime("%d/%m/%Y")
 
-if not ordenado.empty:
+# Estado da tela: criado uma vez por extração, com o exercício vigente pré-selecionado (ver
+# docstring); depois disso só muda pelas ações do usuário (`_ao_agir`).
+st.session_state.setdefault(chave_estado(source_key), estado_inicial(ano_extracao))
+dados, estado, lista = montar_tela(
+    dataframe,
+    st.session_state[chave_estado(source_key)],
+    campos_rapidos=CAMPOS_RAPIDOS_EXECUCAO,
+    campos_avancados=CAMPOS_AVANCADOS_PAGINA,
+    ano_extracao=ano_extracao,
+)
+st.session_state[chave_estado(source_key)] = estado
+
+renderizar(dados, key=chave_componente(source_key), ao_agir=lambda: _ao_agir(source_key))
+
+# Relatório = a lista exibida (visão escolhida, todas as páginas, mesma ordem e agrupamento).
+if lista is not None:
+    todos = estado["visao"] == VISAO_TODOS
+    ordem_padrao = estado["ordem"] == ORDENACAO_PADRAO and estado["sentido"] != SENTIDO_ASC
     contexto_relatorio = ContextoRelatorio(
-        visualizacao=visualizacao,
-        descricao_corte=descricao_corte,
+        visualizacao=estado["visao"],
+        descricao_corte=dados.get("descricao_corte"),
         data_extracao=data_extracao_texto,
         hash_manifesto=manifesto.sha256[:8],
         data_emissao=datetime.now().strftime("%d/%m/%Y %H:%M"),
-        busca=(busca or "").strip(),
-        filtros=_filtros_selecionados(source_key),
-        ordenacao=f"{rotulo_ordem} ({sentido.lower()})" if (rotulo_ordem, sentido) != (ORDENACAO_PADRAO, SENTIDO_DESC) else "",
-        agrupamento=rotulo_grupo if coluna_grupo else "",
+        busca=(estado.get("busca") or "").strip(),
+        filtros=_filtros_selecionados(estado),
+        ordenacao="" if ordem_padrao else f"{estado['ordem']} ({'menor primeiro' if estado['sentido'] == SENTIDO_ASC else 'maior primeiro'})",
+        agrupamento=estado["grupo"] if OPCOES_AGRUPAMENTO.get(estado["grupo"]) else "",
     )
-    nome_arquivo = f"empenhos_execucao_retardada_{'todos' if mostrar_todos else 'destaque'}_{manifesto.data_extracao[:10]}"
-    st.markdown("#### Relatório")
-    st.caption(f"{len(ordenado)} empenhos — mesma lista exibida acima ({visualizacao.lower()}), todas as páginas.")
-    col_pdf, col_xlsx = st.columns(2)
-    with col_pdf:
+    nome_arquivo = f"empenhos_execucao_retardada_{'todos' if todos else 'destaque'}_{manifesto.data_extracao[:10]}"
+    with st.container(key="er_relatorio", horizontal=True, vertical_alignment="center"):
+        st.caption(f"Relatório: {len(lista)} empenhos — mesma lista exibida acima ({estado['visao'].lower()}), todas as páginas.")
         st.download_button(
             "Baixar PDF",
-            data=lambda: gerar_pdf(ordenado, contexto_relatorio),
+            data=lambda: gerar_pdf(lista, contexto_relatorio),
             file_name=f"{nome_arquivo}.pdf",
             mime="application/pdf",
             type="primary",
-            width="stretch",
             on_click="ignore",
             key=f"{_PREFIXO_FILTRO}_download_pdf_{source_key}",
         )
-    with col_xlsx:
         st.download_button(
             "Baixar Excel",
-            data=lambda: gerar_xlsx(ordenado, contexto_relatorio),
+            data=lambda: gerar_xlsx(lista, contexto_relatorio),
             file_name=f"{nome_arquivo}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            width="stretch",
             on_click="ignore",
             key=f"{_PREFIXO_FILTRO}_download_xlsx_{source_key}",
         )
