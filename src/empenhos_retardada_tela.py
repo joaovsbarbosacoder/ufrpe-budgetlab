@@ -332,6 +332,17 @@ def com_percentual(visivel: pd.DataFrame) -> pd.DataFrame:
     return visivel.assign(percentual_saldo=(visivel["saldo"] / empenhado_valido) * 100)
 
 
+def cortes_no_padrao(estado: dict[str, Any]) -> bool:
+    """Verdadeiro quando os cortes estão exatamente como no estado inicial (R$ ligado em 10 mil,
+    % desligado em 20, idade desligada em 3 meses, combinação OU). A tela usa isso só para exibir
+    uma dica sobre o corte por idade; não altera lista, destaque nem relatório."""
+
+    padrao = estado_inicial(0)
+    return all(estado.get(k, padrao[k]) == padrao[k] for k in (
+        "usar_rs", "corte_rs", "usar_pct", "corte_pct", "usar_idade", "corte_idade", "modo",
+    ))
+
+
 def idade_por_ne(filtrado: pd.DataFrame, ano_extracao: int, mes_extracao: int) -> pd.Series:
     """Idade do saldo, em meses, por `ne_ccor` (regra definida pelo usuário em 17/10/2026).
 
@@ -487,6 +498,7 @@ def montar_tela(
     dados: dict[str, Any] = {
         "busca": busca,
         "cortes": {k: estado[k] for k in ("usar_rs", "corte_rs", "usar_pct", "corte_pct", "usar_idade", "corte_idade", "modo")},
+        "cortes_padrao": cortes_no_padrao(estado),
         "mes_referencia": f"{_MESES[mes_extracao - 1]}/{ano_extracao}",
         "visao": estado["visao"],
         "visoes": [VISAO_DESTAQUE, VISAO_TODOS],

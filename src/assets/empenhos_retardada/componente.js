@@ -124,6 +124,9 @@ function htmlCortes(d) {
     <label class="corte${c.usar_pct ? "" : " desligado"}"><span class="chave"><input type="checkbox" data-acao="usar_pct"${c.usar_pct ? " checked" : ""} aria-label="Usar corte em porcentagem"><span></span></span>saldo de pelo menos <input type="number" data-corte="corte_pct" value="${fmt(c.corte_pct)}" min="0" max="1000" step="5" aria-label="Saldo mínimo em porcentagem do empenhado"> % do empenhado</label>
     <label class="corte${c.usar_idade ? "" : " desligado"}" title="Meses entre o primeiro empenho da NE e ${esc(d.mes_referencia)} (mês da extração). Só para o exercício da extração; anos anteriores aparecem como —."><span class="chave"><input type="checkbox" data-acao="usar_idade"${c.usar_idade ? " checked" : ""} aria-label="Usar corte por idade do saldo"><span></span></span>empenho há pelo menos <input type="number" data-corte="corte_idade" value="${c.corte_idade}" min="0" max="120" step="1" aria-label="Idade mínima do saldo em meses"> meses, com saldo</label>
     <span class="resultado">${esc(d.resultado_corte || "")}</span>
+    ${d.cortes_padrao
+      ? `<p class="dica">Os cortes estão nos valores padrão. Quer destacar também os empenhos parados há mais tempo? <button type="button" class="link" data-acao="ligar-idade">Ligar corte por idade do saldo</button></p>`
+      : ""}
   </section>`;
 }
 
@@ -303,6 +306,7 @@ function ligarEventos(raiz, ui) {
       return desenhar(raiz, d, ui);
     }
     if (acao === "limpar") return ui.enviar({ tipo: "limpar" });
+    if (acao === "ligar-idade") return ui.enviar({ tipo: "usar_idade", valor: true });
     if (acao === "busca-limpar") return ui.enviar({ tipo: "busca", valor: "" });
     if (acao === "modo" || acao === "visao") return ui.enviar({ tipo: acao, valor: alvo.dataset.valor });
     if (acao === "ordenar") return ui.enviar({ tipo: "ordenar", coluna: alvo.dataset.coluna });

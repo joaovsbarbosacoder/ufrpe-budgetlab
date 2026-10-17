@@ -171,6 +171,20 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
         dados = self._agir(app, {"tipo": "usar_rs", "valor": False}, {"tipo": "usar_idade", "valor": True})
         self.assertIn("empenho há 3 meses ou mais com saldo", dados["resultado_corte"])
 
+    def test_dica_do_corte_por_idade_some_ao_ligar_o_corte(self) -> None:
+        # a dica só altera a apresentação: a lista é a mesma com ou sem ela
+        app = self._open_page()
+        self.assertTrue(self.dados["cortes_padrao"])
+        total_padrao = self.dados["lista"]["total"]
+
+        dados = self._agir(app, {"tipo": "usar_idade", "valor": True})  # o atalho da dica envia esta ação
+        self.assertFalse(dados["cortes_padrao"])
+        self.assertGreaterEqual(dados["lista"]["total"], total_padrao)  # OU amplia, nunca reduz
+
+        dados = self._agir(app, {"tipo": "usar_idade", "valor": False})
+        self.assertTrue(dados["cortes_padrao"])  # voltou ao padrão: a dica reaparece
+        self.assertEqual(dados["lista"]["total"], total_padrao)
+
     # --- busca -------------------------------------------------------------------------------
     def test_busca_livre_sem_resultado_avisa(self) -> None:
         app = self._open_page()

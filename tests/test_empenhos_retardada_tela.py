@@ -25,6 +25,7 @@ from src.empenhos_retardada_tela import (
     calcular_destaque,
     com_idade,
     com_percentual,
+    cortes_no_padrao,
     estado_inicial,
     formatar_brl,
     formatar_idade,
@@ -218,6 +219,17 @@ class IdadeDoSaldoTests(unittest.TestCase):
         self.assertEqual(aplicar_acao(estado, {"tipo": "corte_idade", "valor": 6}, NOMES)["corte_idade"], 6)
         for invalido in (2.5, -1, 121, "x"):
             self.assertEqual(aplicar_acao(estado, {"tipo": "corte_idade", "valor": invalido}, NOMES)["corte_idade"], 3)
+
+    def test_dica_so_com_os_cortes_nos_valores_padrao(self) -> None:
+        padrao = estado_inicial(ANO)
+        self.assertTrue(cortes_no_padrao(padrao))
+        for mudanca in (
+            {"usar_rs": False}, {"corte_rs": 5_000.0}, {"usar_pct": True}, {"corte_pct": 30.0},
+            {"usar_idade": True}, {"corte_idade": 6}, {"modo": "E"},
+        ):
+            self.assertFalse(cortes_no_padrao({**padrao, **mudanca}), mudanca)
+        # filtros, busca, ordem e visão não contam como "ajustar os cortes"
+        self.assertTrue(cortes_no_padrao({**padrao, "busca": "x", "ordem": "NE", "visao": "Todos no escopo"}))
 
     def test_estado_antigo_sem_campos_de_idade_continua_funcionando(self) -> None:
         base = ler_execucao_mensal(CAMINHO_FIXTURE)
