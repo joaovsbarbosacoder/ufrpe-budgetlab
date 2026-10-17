@@ -283,6 +283,81 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
         self.assertEqual(linhas_xlsx, no_escopo)
         self.assertAlmostEqual(saldo_xlsx, float(lista["saldo"].sum()), places=2)
 
+    # --- ordenação e agrupamento (17/10/2026) -------------------------------------------------
+    @staticmethod
+    def _cabecalho(app: AppTest, rotulo: str):
+        return next(b for b in app.button if b.key and f"_ord_{rotulo}_" in b.key)
+
+    def test_cabecalho_ordenavel_padrao_saldo_decrescente_e_agrupar_por_sem_agrupamento(self) -> None:
+        app = self._open_page()
+
+        self.assertEqual(len(app.exception), 0)
+        agrupar = next(s for s in app.selectbox if s.label == "Agrupar por")
+        self.assertEqual(agrupar.value, "Sem agrupamento")
+        self.assertEqual(self._cabecalho(app, "Saldo").label, "Saldo ▼")  # ordenação ativa indicada na seta
+        self.assertEqual(self._cabecalho(app, "NE").label, "NE")
+        self.assertEqual(
+            [b.label for b in app.button if b.key and "_ord_" in b.key],
+            ["NE", "Favorecido", "Empenhado", "Liquidado", "Saldo ▼", "% Saldo"],
+        )
+
+    def test_clicar_no_cabecalho_ativo_inverte_o_sentido(self) -> None:
+        app, capturadas = self._abrir_capturando_lista("Todos no escopo")
+        padrao = capturadas[-1]
+
+        capturadas.clear()
+        self._cabecalho(app, "Saldo").click()
+        app.run()
+
+        self.assertEqual(self._cabecalho(app, "Saldo").label, "Saldo ▲")
+
+        self.assertEqual(len(app.exception), 0)
+        crescente = capturadas[-1]
+        self.assertEqual(sorted(crescente["ne_ccor"]), sorted(padrao["ne_ccor"]))  # nenhuma NE some
+        saldos = crescente["saldo"].dropna().tolist()
+        self.assertEqual(saldos, sorted(saldos))
+        self.assertAlmostEqual(float(crescente["saldo"].sum()), float(padrao["saldo"].sum()), places=2)
+
+    def test_agrupar_por_unidade_orcamentaria_rotula_grupos_sem_perder_empenhos(self) -> None:
+        app, capturadas = self._abrir_capturando_lista("Todos no escopo")
+        sem_grupo = capturadas[-1]
+
+        capturadas.clear()
+        next(s for s in app.selectbox if s.label == "Agrupar por").set_value("Unidade orçamentária")
+        app.run()
+
+        self.assertEqual(len(app.exception), 0)
+        agrupada = capturadas[-1]
+        self.assertEqual(len(agrupada), len(sem_grupo))
+        self.assertIn("grupo_lista", agrupada.columns)
+        self.assertAlmostEqual(float(agrupada["saldo"].sum()), float(sem_grupo["saldo"].sum()), places=2)
+        # cabeçalho de grupo na tela: "<grupo> · N empenhos · saldo R$ ..."
+        self.assertTrue(any(" empenhos · saldo " in m.value for m in app.markdown))
+
+    def test_clicar_em_favorecido_ordena_alfabeticamente_e_nao_quebra_com_favorecido_nulo(self) -> None:
+        app, capturadas = self._abrir_capturando_lista("Todos no escopo")
+        capturadas.clear()
+        self._cabecalho(app, "Favorecido").click()
+        app.run()
+
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(self._cabecalho(app, "Favorecido").label, "Favorecido ▲")  # texto começa de A a Z
+        nomes = capturadas[-1]["ne_favorecido"].dropna().astype(str).str.lower().tolist()
+        self.assertEqual(nomes, sorted(nomes))
+
+    def test_trocar_a_ordenacao_volta_para_a_primeira_pagina(self) -> None:
+        app = self._open_page()
+        next(s for s in app.segmented_control if s.key and "visualizacao" in s.key).set_value("Todos no escopo")
+        app.run()
+        next(n for n in app.number_input if n.key and "_pagina_" in n.key).set_value(2)
+        app.run()
+
+        self._cabecalho(app, "Empenhado").click()
+        app.run()
+
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(next(n for n in app.number_input if n.key and "_pagina_" in n.key).value, 1)
+
     def test_filtros_avancados_incluem_as_2_dimensoes_exclusivas_da_execucao_mensal(self) -> None:
         # Paridade com Consulta de Empenhos (pedido explícito, 22/09/2026): os 13 avançados
         # compartilhados (`src/ui_filtros_execucao.py`) mais estas 2, exclusivas desta base —

@@ -80,14 +80,17 @@ from __future__ import annotations
 
 from datetime import datetime
 import gc
+import html
 
 import pandas as pd
 import streamlit as st
 
+from src import design_tokens
 from src.execucao_ne_utils import detalhar_nota_empenho, saldo_por_ne
 from src.execucao_ne_utils import ne_curta as _ne_curta_execucao
 from src.importacao_execucao_mensal import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
 from src.relatorio_empenhos_retardada import (
+    COLUNA_GRUPO,
     COLUNA_PASSA_CORTE,
     ContextoRelatorio,
     gerar_pdf,
@@ -136,6 +139,26 @@ CORTE_PCT_PADRAO = 20.0  # %
 VISAO_DESTAQUE = "Em destaque"
 VISAO_TODOS = "Todos no escopo"
 TAMANHO_PAGINA = 100
+
+# Ordenação e agrupamento da lista (17/10/2026). Rótulo na tela -> coluna da lista por NE.
+# Agrupar por "Credor" usa o favorecido da NE (`ne_favorecido`, mesma coluna da lista).
+ORDENACAO_PADRAO = "Saldo"
+OPCOES_ORDENACAO = {
+    "NE": "ne_ccor",
+    "Favorecido": "ne_favorecido",
+    "Empenhado": "empenhada",
+    "Liquidado": "liquidada",
+    "Saldo": "saldo",
+    "% Saldo": "percentual_saldo",
+}
+SENTIDO_DESC = "Maior primeiro"
+SENTIDO_ASC = "Menor primeiro"
+OPCOES_AGRUPAMENTO = {
+    "Sem agrupamento": None,
+    "Unidade orçamentária": "unidade_orcamentaria_desc",
+    "Credor": "ne_favorecido",
+    "Ação de governo": "acao_desc",
+}
 
 COLUNAS_BUSCA = [
     "ne_ccor", "ne_descricao", "ne_favorecido", "natureza_detalhada_label",
@@ -228,6 +251,82 @@ def _pct(valor: object) -> str:
 
 def _dash(valor: object) -> str:
     return "—" if pd.isna(valor) else str(valor)
+
+
+def _alternar_ordem(rotulo: str, ordem_key: str, sentido_key: str) -> None:
+    """Clique no cabeçalho: mesma coluna inverte o sentido; outra coluna começa em "maior primeiro"
+    (números) ou "menor primeiro" (NE e favorecido, em ordem alfabética). Só muda o estado."""
+
+    if st.session_state.get(ordem_key) == rotulo:
+        atual = st.session_state.get(sentido_key, SENTIDO_DESC)
+        st.session_state[sentido_key] = SENTIDO_ASC if atual == SENTIDO_DESC else SENTIDO_DESC
+    else:
+        st.session_state[ordem_key] = rotulo
+        st.session_state[sentido_key] = SENTIDO_ASC if rotulo in ("NE", "Favorecido") else SENTIDO_DESC
+    # a lista muda de ordem: volta para a primeira página
+    for chave in [k for k in st.session_state if str(k).startswith(f"{_PREFIXO_FILTRO}_pagina_")]:
+        st.session_state[chave] = 1
+
+
+def _html_saldo(saldo: object, percentual: object) -> str:
+    """Saldo em R$ com uma barra fina do percentual sobre o empenhado. Saldo negativo em vermelho;
+    sem percentual (empenhado nulo/zero) não há barra — nulo não vira zero."""
+
+    classe = " er-neg" if (saldo is not None and not pd.isna(saldo) and saldo < 0) else ""
+    barra = ""
+    if percentual is not None and not pd.isna(percentual):
+        largura = max(0.0, min(100.0, float(percentual)))
+        barra = f'<div class="er-barra"><i style="width:{largura:.1f}%"></i></div>'
+    return f'<div class="er-saldo"><span class="er-num{classe}">{_brl(saldo)}</span>{barra}</div>'
+
+
+def _html_corte(passa: object) -> str:
+    if passa is None or pd.isna(passa):
+        return '<span class="er-pill er-pill-nulo">—</span>'
+    return '<span class="er-pill er-pill-ok">Destaque</span>' if passa else '<span class="er-pill er-pill-nulo">Abaixo</span>'
+
+
+_CSS_LISTA = f"""
+<style>
+.st-key-er_barra [data-testid="stButtonGroup"] {{ background: transparent !important; border: 0 !important; padding: 0 !important; }}
+.st-key-er_barra [data-testid="stWidgetLabel"] p {{
+    font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: {design_tokens.TEXT_MUTED};
+}}
+.st-key-er_tabela {{
+    background: {design_tokens.SURFACE}; border: 1px solid {design_tokens.BORDER}; border-radius: {design_tokens.RADIUS};
+    box-shadow: 0 1px 2px rgba(11,53,87,.06), 0 6px 18px rgba(11,53,87,.06); gap: 0 !important; overflow: hidden;
+}}
+.st-key-er_cab {{ background: {design_tokens.SURFACE_ALT}; border-bottom: 1px solid {design_tokens.BORDER}; padding: 2px 14px; }}
+.st-key-er_cab [data-testid="stButton"] button {{
+    background: transparent !important; border: 0 !important; box-shadow: none !important;
+    padding: 0.35rem 0 !important; min-height: 2rem; justify-content: flex-start;
+}}
+.st-key-er_cab [data-testid="stButton"] button p,
+.st-key-er_cab .er-cab-fixo {{
+    font-size: 0.7rem; font-weight: 650; letter-spacing: 0.08em; text-transform: uppercase; color: {design_tokens.TEXT_MUTED} !important;
+}}
+.st-key-er_cab [data-testid="stButton"] button:hover p {{ color: {design_tokens.ACCENT} !important; }}
+.st-key-er_cab [data-testid="stColumn"]:nth-child(n+3):nth-child(-n+6) button {{ justify-content: flex-end; width: 100%; }}
+[class*="st-key-er_lin_"] {{ border-bottom: 1px solid {design_tokens.BORDER}; padding: 2px 14px; gap: 0 !important; }}
+[class*="st-key-er_lin_"]:hover {{ background: {design_tokens.ACCENT_SOFT}; }}
+[class*="st-key-er_lin_"] [data-testid="stButton"] button {{ min-height: 1.8rem; padding: 0 0.7rem; font-size: 0.8rem; }}
+[class*="st-key-er_lin_"] p {{ margin: 0; font-size: 0.86rem; }}
+.er-num {{ text-align: right; font-variant-numeric: tabular-nums; font-size: 0.86rem; }}
+.er-neg {{ color: {design_tokens.NEGATIVE}; }}
+.er-saldo {{ display: flex; flex-direction: column; align-items: flex-end; gap: 4px; width: 100%; }}
+.er-saldo .er-num {{ width: 100%; }}
+.er-barra {{ width: 100px; height: 5px; border-radius: 3px; overflow: hidden; background: {design_tokens.SURFACE_ALT}; border: 1px solid {design_tokens.BORDER}; }}
+.er-barra i {{ display: block; height: 100%; background: {design_tokens.WARNING}; }}
+.er-pill {{ display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 0.72rem; font-weight: 650; }}
+.er-pill-ok {{ background: {design_tokens.POSITIVE_SOFT}; color: {design_tokens.POSITIVE}; }}
+.er-pill-nulo {{ background: {design_tokens.SURFACE_ALT}; color: {design_tokens.TEXT_FAINT}; }}
+.er-grupo {{
+    background: {design_tokens.SURFACE_ALT}; border-bottom: 1px solid {design_tokens.BORDER}; padding: 8px 14px;
+    display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline;
+}}
+.er-grupo span {{ color: {design_tokens.TEXT_MUTED}; font-size: 0.82rem; }}
+</style>
+"""
 
 
 @st.dialog("Detalhe do empenho", width="large")
@@ -425,13 +524,36 @@ render_metric_grid(
     columns=4,
 )
 
-st.markdown("#### Cortes de destaque")
-st.caption("Ligue um corte, o outro, ou os dois ao mesmo tempo.")
+# Barra de proporção liquidado × saldo sobre o empenhado (17/10/2026) — só leitura visual dos mesmos
+# totais dos indicadores acima; omitida quando o empenhado é nulo/zero (não há proporção a mostrar) e
+# quando saldo ou liquidado seriam negativos no agregado (a barra não representa valor negativo).
+_empenhado_total = visivel["empenhada"].sum(min_count=1) if tem_empenhada else None
+_liquidado_total = visivel["liquidada"].fillna(0.0).sum()
+if _empenhado_total is not None and not pd.isna(_empenhado_total) and _empenhado_total > 0 and 0 <= _liquidado_total <= _empenhado_total:
+    _pct_liq = _liquidado_total / _empenhado_total * 100
+    st.markdown(
+        f'<div style="display:flex;height:10px;border-radius:6px;overflow:hidden;background:{design_tokens.SURFACE_ALT};'
+        f'border:1px solid {design_tokens.BORDER}" role="img" aria-label="{_pct_liq:.1f}% liquidado, {100 - _pct_liq:.1f}% de saldo">'
+        f'<div style="width:{_pct_liq:.2f}%;background:{design_tokens.POSITIVE}"></div>'
+        f'<div style="width:{100 - _pct_liq:.2f}%;background:{design_tokens.WARNING}"></div></div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(f"{_pct_liq:.1f}% do empenhado já liquidado · {100 - _pct_liq:.1f}% em saldo a liquidar.")
 
-corte_col1, corte_col2 = st.columns(2)
-with corte_col1:
-    sub_valor, sub_toggle = st.columns([3, 1], vertical_alignment="bottom")
-    with sub_valor:
+# Layout (17/10/2026, pedido explícito: "o layout também precisa de uma melhorada"): os dois cortes
+# ficam num único painel, numa linha só (Usar + valor de cada corte, e o seletor E/OU ao lado quando
+# os dois estão ligados), em vez de dois blocos empilhados abaixo dos indicadores. Mesmas chaves,
+# rótulos e regras de antes; só mudou a disposição.
+with st.container(border=True, key="er_cortes_panel"):
+    st.markdown("**Cortes de destaque** — ligue um, o outro, ou os dois ao mesmo tempo.")
+    c_usar_rs, c_rs, c_usar_pct, c_pct, c_modo = st.columns([0.7, 1.6, 0.7, 1.6, 1.4], vertical_alignment="bottom")
+    with c_usar_rs:
+        usar_rs = st.toggle(
+            "Usar",
+            value=True,
+            key=f"{_PREFIXO_FILTRO}_usar_rs_{source_key}",
+        )
+    with c_rs:
         corte_rs = st.number_input(
             "Saldo mínimo em R$",
             min_value=0.0,
@@ -439,15 +561,13 @@ with corte_col1:
             step=1000.0,
             key=f"{_PREFIXO_FILTRO}_corte_rs_{source_key}",
         )
-    with sub_toggle:
-        usar_rs = st.toggle(
+    with c_usar_pct:
+        usar_pct = st.toggle(
             "Usar",
-            value=True,
-            key=f"{_PREFIXO_FILTRO}_usar_rs_{source_key}",
+            value=False,
+            key=f"{_PREFIXO_FILTRO}_usar_pct_{source_key}",
         )
-with corte_col2:
-    sub_valor, sub_toggle = st.columns([3, 1], vertical_alignment="bottom")
-    with sub_valor:
+    with c_pct:
         corte_pct = st.number_input(
             "Saldo mínimo em % do empenhado",
             min_value=0.0,
@@ -456,28 +576,22 @@ with corte_col2:
             step=5.0,
             key=f"{_PREFIXO_FILTRO}_corte_pct_{source_key}",
         )
-    with sub_toggle:
-        usar_pct = st.toggle(
-            "Usar",
-            value=False,
-            key=f"{_PREFIXO_FILTRO}_usar_pct_{source_key}",
-        )
-
-# Só faz sentido perguntar "E ou OU" com os dois cortes ligados — com um só, as duas opções dão
-# o mesmo resultado (pedido explícito, 22/09/2026: antes o combinador era fixo em OU; agora dá
-# pra escolher). Padrão "OU" preserva o comportamento já validado quando o usuário liga os dois
-# pela primeira vez.
-modo_combinacao = "OU"
-if usar_rs and usar_pct:
-    modo_combinacao = st.segmented_control(
-        "Com os dois cortes ligados, destacar quem passa de",
-        options=["E", "OU"],
-        default="OU",
-        key=f"{_PREFIXO_FILTRO}_modo_combinacao_{source_key}",
-        help='"OU": entra em destaque quem passa de QUALQUER um dos dois cortes (amplia — era '
-        'o único comportamento antes desta opção). "E": só entra quem passa dos DOIS cortes ao '
-        "mesmo tempo (restringe).",
-    ) or "OU"
+    # Só faz sentido perguntar "E ou OU" com os dois cortes ligados — com um só, as duas opções dão
+    # o mesmo resultado (pedido explícito, 22/09/2026: antes o combinador era fixo em OU; agora dá
+    # pra escolher). Padrão "OU" preserva o comportamento já validado quando o usuário liga os dois
+    # pela primeira vez.
+    modo_combinacao = "OU"
+    if usar_rs and usar_pct:
+        with c_modo:
+            modo_combinacao = st.segmented_control(
+                "Com os dois cortes ligados, destacar quem passa de",
+                options=["E", "OU"],
+                default="OU",
+                key=f"{_PREFIXO_FILTRO}_modo_combinacao_{source_key}",
+                help='"OU": entra em destaque quem passa de QUALQUER um dos dois cortes (amplia — era '
+                'o único comportamento antes desta opção). "E": só entra quem passa dos DOIS cortes ao '
+                "mesmo tempo (restringe).",
+            ) or "OU"
 
 # NE com saldo ou percentual nulo (empenhada nula/zero) nunca entra em destaque — não dá para
 # confirmar que o saldo passa do corte sem saber o valor; `.fillna(False)` trata esse "não sei"
@@ -516,13 +630,37 @@ abaixo_do_corte = visivel[~em_destaque_mascara]
 # ligado(s); funciona mesmo com os dois cortes desligados). O relatório (PDF/Excel) segue a
 # visualização escolhida — "o que está na tela" (pedido explícito).
 st.markdown("#### Empenhos")
-visualizacao = st.segmented_control(
-    "Exibir",
-    options=[VISAO_DESTAQUE, VISAO_TODOS],
-    default=VISAO_DESTAQUE,
-    key=f"{_PREFIXO_FILTRO}_visualizacao_{source_key}",
-) or VISAO_DESTAQUE
+# Barra única da lista (17/10/2026, pedido explícito): visão, ordenação e agrupamento na mesma linha.
+# Ordenação/agrupamento só reordenam e rotulam a lista — nenhuma NE some nem muda de valor, e o
+# relatório (PDF/Excel) sai na mesma ordem da tela (`montar_lista_relatorio`).
+# A ordenação é feita clicando no cabeçalho da tabela (estado em `st.session_state`, alterado por
+# callback antes da reexecução); o padrão é saldo, maior primeiro.
+st.markdown(_CSS_LISTA, unsafe_allow_html=True)
+_ordem_key = f"{_PREFIXO_FILTRO}_ordem_{source_key}"
+_sentido_key = f"{_PREFIXO_FILTRO}_sentido_{source_key}"
+st.session_state.setdefault(_ordem_key, ORDENACAO_PADRAO)
+st.session_state.setdefault(_sentido_key, SENTIDO_DESC)
+rotulo_ordem = st.session_state[_ordem_key]
+sentido = st.session_state[_sentido_key]
+
+with st.container(key="er_barra"):
+    barra_visao, barra_grupo, barra_pagina = st.columns([1.5, 1.4, 1.2], vertical_alignment="bottom")
+    with barra_visao:
+        visualizacao = st.segmented_control(
+            "Exibir",
+            options=[VISAO_DESTAQUE, VISAO_TODOS],
+            default=VISAO_DESTAQUE,
+            key=f"{_PREFIXO_FILTRO}_visualizacao_{source_key}",
+        ) or VISAO_DESTAQUE
+    with barra_grupo:
+        rotulo_grupo = st.selectbox(
+            "Agrupar por",
+            options=list(OPCOES_AGRUPAMENTO),
+            key=f"{_PREFIXO_FILTRO}_agrupar_por_{source_key}",
+        )
 mostrar_todos = visualizacao == VISAO_TODOS
+coluna_ordem = OPCOES_ORDENACAO[rotulo_ordem]
+coluna_grupo = OPCOES_AGRUPAMENTO[rotulo_grupo]
 
 if descricao_corte is None:
     if not mostrar_todos:
@@ -535,7 +673,15 @@ else:
 
 # UMA lista só, já ordenada, para a tela e para o relatório (PDF/Excel) — ver
 # `montar_lista_relatorio`: o relatório não pode divergir do que está na tela.
-ordenado = montar_lista_relatorio(visivel, em_destaque_mascara, cortes_ligados=descricao_corte is not None, todos=mostrar_todos)
+ordenado = montar_lista_relatorio(
+    visivel,
+    em_destaque_mascara,
+    cortes_ligados=descricao_corte is not None,
+    todos=mostrar_todos,
+    ordenar_por=coluna_ordem,
+    ascendente=sentido == SENTIDO_ASC,
+    agrupar_por=coluna_grupo,
+)
 
 if ordenado.empty:
     if descricao_corte is not None and not mostrar_todos:
@@ -553,36 +699,60 @@ else:
         # para a última válida (number_input levanta erro com valor acima de max_value).
         if st.session_state.get(pagina_key, 1) > total_paginas:
             st.session_state[pagina_key] = total_paginas
-        pagina = st.number_input(
-            f"Página (de {total_paginas}, {TAMANHO_PAGINA} empenhos por página)",
-            min_value=1,
-            max_value=total_paginas,
-            value=1,
-            step=1,
-            key=pagina_key,
-        )
+        with barra_pagina:  # na barra da lista, ao lado de "Exibir" e "Agrupar por"
+            pagina = st.number_input(
+                f"Página (de {total_paginas}, {TAMANHO_PAGINA} empenhos por página)",
+                min_value=1,
+                max_value=total_paginas,
+                value=1,
+                step=1,
+                key=pagina_key,
+            )
     inicio = (int(pagina) - 1) * TAMANHO_PAGINA
     trecho = ordenado.iloc[inicio : inicio + TAMANHO_PAGINA]
     if total_paginas > 1:
         st.caption(f"Exibindo {inicio + 1}–{inicio + len(trecho)} de {len(ordenado)} empenhos.")
 
-    proporcoes = [1.3, 2, 1.2, 1.2, 1.2, 0.9, 0.7, 0.8] if mostrar_todos else [1.3, 2, 1.2, 1.2, 1.2, 0.9, 0.8]
-    rotulos = ["NE", "Favorecido", "Empenhado", "Liquidado", "Saldo", "% Saldo"] + (["Corte"] if mostrar_todos else []) + [""]
-    cabecalho = st.columns(proporcoes)
-    for coluna, rotulo in zip(cabecalho, rotulos):
-        coluna.markdown(f"**{rotulo}**" if rotulo else "")
-    for posicao, linha in trecho.iterrows():
-        c = st.columns(proporcoes)
-        c[0].write(_ne_exibicao(linha["ne_ccor"], linha["ano"]))
-        c[1].write(_dash(linha["ne_favorecido"]))
-        c[2].write(_brl(linha["empenhada"]))
-        c[3].write(_brl(linha["liquidada"]))
-        c[4].write(_brl(linha["saldo"]))
-        c[5].write(_pct(linha["percentual_saldo"]))
-        if mostrar_todos:
-            c[6].write("—" if pd.isna(linha[COLUNA_PASSA_CORTE]) else ("✓" if linha[COLUNA_PASSA_CORTE] else ""))
-        if c[-1].button("Ver", key=f"{_PREFIXO_FILTRO}_ver_{source_key}_{visualizacao}_{posicao}"):
-            _abrir_detalhe(filtrado, linha)
+    proporcoes = [1.3, 2.2, 1.25, 1.25, 1.6, 0.85, 0.95, 0.6] if mostrar_todos else [1.3, 2.2, 1.25, 1.25, 1.6, 0.85, 0.6]
+    with st.container(key="er_tabela"):
+        with st.container(key="er_cab"):
+            cabecalho = st.columns(proporcoes)
+            for coluna, rotulo in zip(cabecalho, ["NE", "Favorecido", "Empenhado", "Liquidado", "Saldo", "% Saldo"]):
+                ativo = rotulo == rotulo_ordem
+                seta = (" ▲" if sentido == SENTIDO_ASC else " ▼") if ativo else ""
+                coluna.button(
+                    f"{rotulo}{seta}",
+                    key=f"{_PREFIXO_FILTRO}_ord_{rotulo}_{source_key}",
+                    type="tertiary",
+                    on_click=_alternar_ordem,
+                    args=(rotulo, _ordem_key, _sentido_key),
+                    help=f"Ordenar por {rotulo}; clique de novo para inverter.",
+                )
+            if mostrar_todos:
+                cabecalho[6].markdown('<span class="er-cab-fixo">Corte</span>', unsafe_allow_html=True)
+        grupo_exibido = None
+        for posicao, linha in trecho.iterrows():
+            if coluna_grupo and linha[COLUNA_GRUPO] != grupo_exibido:
+                grupo_exibido = linha[COLUNA_GRUPO]
+                # subtotal do grupo inteiro (não só do trecho da página) — mesma lista do relatório
+                do_grupo = ordenado[ordenado[COLUNA_GRUPO] == grupo_exibido]
+                st.markdown(
+                    f'<div class="er-grupo"><strong>{html.escape(str(grupo_exibido))}</strong>'
+                    f"<span>{len(do_grupo)} empenhos · saldo {_brl(do_grupo['saldo'].sum(min_count=1))}</span></div>",
+                    unsafe_allow_html=True,
+                )
+            with st.container(key=f"er_lin_{source_key}_{visualizacao}_{posicao}"):
+                c = st.columns(proporcoes, vertical_alignment="center")
+                c[0].write(_ne_exibicao(linha["ne_ccor"], linha["ano"]))
+                c[1].write(_dash(linha["ne_favorecido"]))
+                c[2].markdown(f'<div class="er-num">{_brl(linha["empenhada"])}</div>', unsafe_allow_html=True)
+                c[3].markdown(f'<div class="er-num">{_brl(linha["liquidada"])}</div>', unsafe_allow_html=True)
+                c[4].markdown(_html_saldo(linha["saldo"], linha["percentual_saldo"]), unsafe_allow_html=True)
+                c[5].markdown(f'<div class="er-num">{_pct(linha["percentual_saldo"])}</div>', unsafe_allow_html=True)
+                if mostrar_todos:
+                    c[6].markdown(_html_corte(linha[COLUNA_PASSA_CORTE]), unsafe_allow_html=True)
+                if c[-1].button("Ver", key=f"{_PREFIXO_FILTRO}_ver_{source_key}_{visualizacao}_{posicao}"):
+                    _abrir_detalhe(filtrado, linha)
 
 if not mostrar_todos and descricao_corte is not None and not abaixo_do_corte.empty:
     soma_abaixo = abaixo_do_corte["saldo"].sum()
@@ -599,6 +769,8 @@ if not ordenado.empty:
         data_emissao=datetime.now().strftime("%d/%m/%Y %H:%M"),
         busca=(busca or "").strip(),
         filtros=_filtros_selecionados(source_key),
+        ordenacao=f"{rotulo_ordem} ({sentido.lower()})" if (rotulo_ordem, sentido) != (ORDENACAO_PADRAO, SENTIDO_DESC) else "",
+        agrupamento=rotulo_grupo if coluna_grupo else "",
     )
     nome_arquivo = f"empenhos_execucao_retardada_{'todos' if mostrar_todos else 'destaque'}_{manifesto.data_extracao[:10]}"
     st.markdown("#### Relatório")

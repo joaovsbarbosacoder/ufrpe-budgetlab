@@ -24,7 +24,8 @@ procedência da extração — reconciliáveis com a base de Execução Mensal d
 
 Contrato público:
     ContextoRelatorio (dataclass)
-    montar_lista_relatorio(visivel, em_destaque, *, cortes_ligados, todos) -> pd.DataFrame
+    ordenar_lista(lista, ordenar_por, ascendente, agrupar_por) -> pd.DataFrame
+    montar_lista_relatorio(visivel, em_destaque, *, cortes_ligados, todos, ordenar_por, ascendente, agrupar_por) -> pd.DataFrame
     gerar_pdf(lista, contexto) -> bytes
     gerar_xlsx(lista, contexto) -> bytes
 """
@@ -50,6 +51,10 @@ TITULO = "EMPENHOS COM EXECUÇÃO RETARDADA"
 #: ligado(s). Nula quando nenhum corte está ligado — "sem corte", não "não passa".
 COLUNA_PASSA_CORTE = "passa_corte"
 
+#: coluna auxiliar acrescentada por `ordenar_lista` quando há agrupamento (rótulo do grupo da linha).
+COLUNA_GRUPO = "grupo_lista"
+ROTULO_SEM_GRUPO = "—"
+
 
 @dataclass(frozen=True)
 class ContextoRelatorio:
@@ -64,10 +69,14 @@ class ContextoRelatorio:
     busca: str = ""
     #: (rótulo do filtro, rótulos selecionados) — só filtros com alguma seleção.
     filtros: list[tuple[str, list[str]]] = field(default_factory=list)
+    #: texto da ordenação e do agrupamento escolhidos na tela (vazio = padrão / sem agrupamento).
+    ordenacao: str = ""
+    agrupamento: str = ""
 
 
 #: (coluna da lista, cabeçalho na planilha) — códigos como texto, valores como número.
 _COLUNAS_XLSX: list[tuple[str, str]] = [
+    (COLUNA_GRUPO, "Grupo"),  # só presente quando a lista foi agrupada
     ("_ne_curta", "NE"),
     ("ne_ccor", "NE (código completo)"),
     ("ano", "Exercício"),
@@ -100,8 +109,50 @@ _COLUNAS_XLSX: list[tuple[str, str]] = [
 _COLUNAS_NUMERICAS = {"empenhada", "liquidada", "saldo", "percentual_saldo"}
 
 
+def ordenar_lista(
+    lista: pd.DataFrame,
+    ordenar_por: str = "saldo",
+    ascendente: bool = False,
+    agrupar_por: str | None = None,
+) -> pd.DataFrame:
+    """Ordena a lista por `ordenar_por` (nulo SEMPRE por último, em qualquer direção — nulo não é
+    zero nem negativo) e, se `agrupar_por` vier, deixa as linhas de cada grupo contíguas.
+
+    Com agrupamento, acrescenta `COLUNA_GRUPO` (rótulo do grupo; valor nulo vira `ROTULO_SEM_GRUPO`)
+    e ordena os grupos pelo saldo somado, do maior para o menor (grupo sem nenhum saldo e o
+    grupo "sem valor" por último), desempatando pelo nome; dentro do grupo vale `ordenar_por`.
+    Só reordena e rotula: nenhuma linha é descartada nem tem valor alterado. Não altera `lista`."""
+
+    base = lista.copy()
+    chaves: list[str] = []
+    ascendentes: list[bool] = []
+    if agrupar_por:
+        grupo = base[agrupar_por].astype("string").fillna(ROTULO_SEM_GRUPO)
+        base[COLUNA_GRUPO] = grupo.astype(object)
+        base["_grupo_sem_valor"] = base[COLUNA_GRUPO] == ROTULO_SEM_GRUPO
+        base["_grupo_saldo"] = base.groupby(COLUNA_GRUPO)["saldo"].transform(lambda s: s.sum(min_count=1))
+        chaves += ["_grupo_sem_valor", "_grupo_saldo", COLUNA_GRUPO]
+        ascendentes += [True, False, True]
+    chaves.append(ordenar_por)
+    ascendentes.append(ascendente)
+
+    def _chave(serie: pd.Series) -> pd.Series:
+        # texto sem diferenciar maiúsculas; números e booleanos seguem o próprio valor
+        return serie.str.lower() if serie.dtype == object or str(serie.dtype) == "string" else serie
+
+    base = base.sort_values(chaves, ascending=ascendentes, na_position="last", kind="stable", key=_chave)
+    return base.drop(columns=["_grupo_sem_valor", "_grupo_saldo"], errors="ignore").reset_index(drop=True)
+
+
 def montar_lista_relatorio(
-    visivel: pd.DataFrame, em_destaque: pd.Series, *, cortes_ligados: bool, todos: bool
+    visivel: pd.DataFrame,
+    em_destaque: pd.Series,
+    *,
+    cortes_ligados: bool,
+    todos: bool,
+    ordenar_por: str = "saldo",
+    ascendente: bool = False,
+    agrupar_por: str | None = None,
 ) -> pd.DataFrame:
     """Lista exibida na tela E enviada ao relatório — uma função só para as duas não divergirem
     (pedido explícito: o relatório é "o que está na tela").
@@ -109,15 +160,16 @@ def montar_lista_relatorio(
     `todos=True` ("Todos no escopo") devolve todas as linhas de `visivel`; `todos=False` só as
     marcadas em `em_destaque` (máscara booleana, mesmo índice de `visivel`). Acrescenta
     `COLUNA_PASSA_CORTE`: o valor da máscara quando há corte ligado, nulo quando não há —
-    "sem corte", não "não passa". Ordena por saldo decrescente (nulo por último) e reinicia o
-    índice. Não altera `visivel`."""
+    "sem corte", não "não passa". Ordena conforme `ordenar_lista` (padrão: saldo decrescente,
+    nulo por último, sem agrupamento) e reinicia o índice. Não altera `visivel`."""
 
     passa = em_destaque.astype(object) if cortes_ligados else pd.Series(pd.NA, index=visivel.index, dtype=object)
     base = visivel if todos else visivel[em_destaque.fillna(False).astype(bool)]
-    return (
-        base.assign(**{COLUNA_PASSA_CORTE: passa.reindex(base.index)})
-        .sort_values("saldo", ascending=False, na_position="last")
-        .reset_index(drop=True)
+    return ordenar_lista(
+        base.assign(**{COLUNA_PASSA_CORTE: passa.reindex(base.index)}),
+        ordenar_por=ordenar_por,
+        ascendente=ascendente,
+        agrupar_por=agrupar_por,
     )
 
 
@@ -170,6 +222,10 @@ def _linhas_parametros(contexto: ContextoRelatorio) -> list[tuple[str, str]]:
         ("Cortes de destaque", contexto.descricao_corte or "nenhum corte ligado"),
         ("Busca livre", contexto.busca or "—"),
     ]
+    if contexto.ordenacao:
+        linhas.append(("Ordenação", contexto.ordenacao))
+    if contexto.agrupamento:
+        linhas.append(("Agrupamento", contexto.agrupamento))
     if contexto.filtros:
         for rotulo, valores in contexto.filtros:
             linhas.append((rotulo, "; ".join(valores)))
@@ -256,7 +312,22 @@ def gerar_pdf(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
     elementos.append(Spacer(1, 8))
 
     tabela_dados: list[list[object]] = [_CABECALHO_PDF]
+    linhas_grupo: list[int] = []
+    grupo_atual: object = None
     for _, linha in base.iterrows():
+        if COLUNA_GRUPO in base.columns and (not linhas_grupo or linha[COLUNA_GRUPO] != grupo_atual):
+            grupo_atual = linha[COLUNA_GRUPO]
+            do_grupo = base[base[COLUNA_GRUPO] == grupo_atual]
+            linhas_grupo.append(len(tabela_dados))
+            tabela_dados.append(
+                [
+                    Paragraph(
+                        f"<b>{escape(str(grupo_atual))}</b> — {len(do_grupo)} empenhos · saldo R$ {escape(_formatar_brl(_soma(do_grupo['saldo'])))}",
+                        estilo_celula,
+                    ),
+                    "", "", "", "", "", "", "", "",
+                ]
+            )
         tabela_dados.append(
             [
                 linha["_ne_curta"] or "—",
@@ -281,6 +352,13 @@ def gerar_pdf(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
     )
 
     tabela = Table(tabela_dados, colWidths=_LARGURAS_PDF, repeatRows=1)
+    estilo_grupos = []
+    for indice in linhas_grupo:
+        estilo_grupos += [
+            ("SPAN", (0, indice), (-1, indice)),
+            ("BACKGROUND", (0, indice), (-1, indice), colors.HexColor("#DCE8F5")),
+            ("ALIGN", (0, indice), (0, indice), "LEFT"),
+        ]
     tabela.setStyle(
         TableStyle(
             [
@@ -293,6 +371,7 @@ def gerar_pdf(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
                 ("ALIGN", (8, 0), (8, -1), "CENTER"),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F5F5F5")]),
+                *estilo_grupos,
             ]
         )
     )

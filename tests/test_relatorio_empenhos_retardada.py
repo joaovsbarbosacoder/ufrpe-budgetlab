@@ -11,7 +11,14 @@ from io import BytesIO
 import pandas as pd
 from openpyxl import load_workbook
 
-from src.relatorio_empenhos_retardada import ContextoRelatorio, gerar_pdf, gerar_xlsx, montar_lista_relatorio
+from src.relatorio_empenhos_retardada import (
+    COLUNA_GRUPO,
+    ContextoRelatorio,
+    gerar_pdf,
+    gerar_xlsx,
+    montar_lista_relatorio,
+    ordenar_lista,
+)
 
 
 def _lista() -> pd.DataFrame:
@@ -94,6 +101,56 @@ class MontarListaRelatorioTests(unittest.TestCase):
         pd.testing.assert_frame_equal(self.visivel, original)
 
 
+class OrdenarListaTests(unittest.TestCase):
+    """Ordenação e agrupamento (17/10/2026): só reordenam e rotulam — nenhuma linha some nem muda."""
+
+    def setUp(self) -> None:
+        self.lista = pd.DataFrame(
+            {
+                "ne_ccor": ["a", "b", "c", "d", "e", "f"],
+                "ne_favorecido": ["zeta", "Alfa", None, "beta", "Alfa", "zeta"],
+                "unidade": ["U1", "U2", "U1", None, "U2", "U1"],
+                "saldo": [10.0, 500.0, None, -30.0, 0.0, 200.0],
+            }
+        )
+
+    def test_padrao_saldo_decrescente_com_nulo_por_ultimo(self) -> None:
+        resultado = ordenar_lista(self.lista)
+        self.assertEqual(resultado["ne_ccor"].tolist(), ["b", "f", "a", "e", "d", "c"])
+        self.assertTrue(pd.isna(resultado["saldo"].iloc[-1]))  # nulo ao fim, não virou zero
+
+    def test_saldo_crescente_mantem_nulo_por_ultimo_e_distingue_zero_e_negativo(self) -> None:
+        resultado = ordenar_lista(self.lista, "saldo", ascendente=True)
+        self.assertEqual(resultado["ne_ccor"].tolist(), ["d", "e", "a", "f", "b", "c"])  # negativo < zero < positivo; nulo no fim
+
+    def test_texto_ordena_sem_diferenciar_maiusculas_e_nulo_por_ultimo(self) -> None:
+        resultado = ordenar_lista(self.lista, "ne_favorecido", ascendente=True)
+        self.assertEqual(resultado["ne_favorecido"].tolist()[:5], ["Alfa", "Alfa", "beta", "zeta", "zeta"])
+        self.assertTrue(pd.isna(resultado["ne_favorecido"].iloc[-1]))
+
+    def test_agrupamento_ordena_grupos_por_saldo_somado_e_nulo_vai_para_o_fim(self) -> None:
+        resultado = ordenar_lista(self.lista, "saldo", agrupar_por="unidade")
+        # U2 = 500 (b) + 0 (e) = 500; U1 = 10 + 200 (+ nulo) = 210; "—" (sem unidade) por último
+        self.assertEqual(resultado[COLUNA_GRUPO].tolist(), ["U2", "U2", "U1", "U1", "U1", "—"])
+        self.assertEqual(resultado["ne_ccor"].tolist(), ["b", "e", "f", "a", "c", "d"])
+
+    def test_nao_perde_nem_altera_linhas(self) -> None:
+        original = self.lista.copy()
+        resultado = ordenar_lista(self.lista, "ne_ccor", agrupar_por="unidade")
+        self.assertEqual(sorted(resultado["ne_ccor"]), sorted(original["ne_ccor"]))
+        self.assertEqual(resultado["saldo"].sum(min_count=1), original["saldo"].sum(min_count=1))
+        pd.testing.assert_frame_equal(self.lista, original)  # entrada intacta
+        self.assertNotIn("_grupo_saldo", resultado.columns)
+
+    def test_montar_lista_aceita_ordenacao_e_agrupamento(self) -> None:
+        destaque = pd.Series(True, index=self.lista.index)
+        resultado = montar_lista_relatorio(
+            self.lista, destaque, cortes_ligados=True, todos=True, ordenar_por="saldo", ascendente=True, agrupar_por="unidade"
+        )
+        self.assertIn(COLUNA_GRUPO, resultado.columns)
+        self.assertEqual(len(resultado), 6)
+
+
 class GerarXlsxTests(unittest.TestCase):
     def setUp(self) -> None:
         self.lista = _lista()
@@ -144,6 +201,32 @@ class GerarXlsxTests(unittest.TestCase):
 
     def test_nao_altera_a_lista_recebida(self) -> None:
         pd.testing.assert_frame_equal(self.lista, self.original)
+
+
+class RelatorioAgrupadoTests(unittest.TestCase):
+    def test_xlsx_traz_coluna_grupo_e_parametros_de_ordenacao_e_agrupamento(self) -> None:
+        lista = ordenar_lista(_lista(), "saldo", agrupar_por="acao_desc")
+        contexto = _contexto(ordenacao="Saldo (maior primeiro)", agrupamento="Ação de governo")
+        livro = load_workbook(BytesIO(gerar_xlsx(lista, contexto)))
+        planilha = livro["Empenhos"]
+        cabecalho = [c.value for c in planilha[1]]
+        self.assertEqual(cabecalho[0], "Grupo")
+        self.assertEqual(len(list(planilha.iter_rows(min_row=2))), 3)  # nenhuma linha extra de grupo
+        parametros = {linha[0].value: linha[1].value for linha in livro["Parâmetros"].iter_rows(min_row=2)}
+        self.assertEqual(parametros["Agrupamento"], "Ação de governo")
+        self.assertEqual(parametros["Ordenação"], "Saldo (maior primeiro)")
+
+    def test_xlsx_sem_agrupamento_nao_tem_coluna_grupo_nem_parametros_extras(self) -> None:
+        livro = load_workbook(BytesIO(gerar_xlsx(_lista(), _contexto())))
+        self.assertNotIn("Grupo", [c.value for c in livro["Empenhos"][1]])
+        parametros = [linha[0].value for linha in livro["Parâmetros"].iter_rows(min_row=2)]
+        self.assertNotIn("Agrupamento", parametros)
+        self.assertNotIn("Ordenação", parametros)
+
+    def test_pdf_agrupado_e_valido(self) -> None:
+        lista = ordenar_lista(_lista(), "saldo", agrupar_por="acao_desc")
+        conteudo = gerar_pdf(lista, _contexto(agrupamento="Ação de governo"))
+        self.assertTrue(conteudo.startswith(b"%PDF"))
 
 
 class GerarPdfTests(unittest.TestCase):
