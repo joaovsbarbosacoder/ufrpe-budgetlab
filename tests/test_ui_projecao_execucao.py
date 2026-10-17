@@ -160,6 +160,15 @@ class TestBolsasQuantidadeEValor(unittest.TestCase):
         self.assertIn('<span class="q">', total)
         self.assertIn("bolsas", total)
 
+    def test_coluna_executado_mais_projetado_soma_o_liquidado_ao_projetado(self):
+        # 7 meses liquidados de 900 = 6,3 mil; projetado até dez. = 4,5 mil -> 10,8 mil
+        html = html_matriz(_relatorio())
+        self.assertIn("<th>Executado + projetado</th>", html)
+        linha_total = html.split('<tr class="tot">')[1]
+        self.assertTrue(linha_total.endswith("<td>4,5 mil</td><td>10,8 mil</td></tr></tbody></table></div>"))
+        linha_ne = html.split("</td></tr>")[0].rsplit('<td class="tt">', 1)[1]
+        self.assertIn("10,8 mil", linha_ne)
+
     def test_celulas_nao_quebram_no_meio(self):
         self.assertIn("white-space:nowrap", CSS)
 

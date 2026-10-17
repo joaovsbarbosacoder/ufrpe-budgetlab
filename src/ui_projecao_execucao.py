@@ -232,20 +232,25 @@ def _celula(relatorio: RelatorioProjecaoExecucao, indice: int, mes: int, unidade
 
 
 def html_matriz(relatorio: RelatorioProjecaoExecucao, unidades: dict[str, float] | None = None) -> str:
-    """Matriz NE × 12 meses; a última coluna e a linha final somam só o projetado (o realizado não entra).
+    """Matriz NE × 12 meses; "Projetado até dez." e a linha final somam só o projetado; a coluna "Executado + projetado"
+    soma ao projetado o realizado/liquidado de todos os meses.
     `unidades` (Bolsas e Auxílios): NE → valor de uma bolsa; com ele cada célula mostra também a quantidade de bolsas."""
 
     unidades = unidades or {}
     cabecalho = "".join(f"<th>{m.lower()}</th>" for m in MESES)
-    corpo, totais = [], [0.0] * 12
+    corpo, totais, total_executado = [], [0.0] * 12, 0.0
     for indice, linha in relatorio.linhas.iterrows():
-        celulas, soma = [], 0.0
+        celulas, soma, executado = [], 0.0, 0.0
         for mes in range(1, 13):
             celulas.append(_celula(relatorio, indice, mes, unidades.get(linha["ne_curta"])))
+            realizado = relatorio.mensal.at[indice, f"r{mes}"]
+            if not pd.isna(realizado):
+                executado += float(realizado)
             projetado = relatorio.mensal.at[indice, f"p{mes}"]
             if relatorio.mensal.at[indice, f"t{mes}"] in (TIPO_PROJETADO, TIPO_RESTANTE_ABERTO) and not pd.isna(projetado):
                 soma += float(projetado)
                 totais[mes - 1] += float(projetado)
+        total_executado += executado
         numero = escape("—" if pd.isna(linha["contrato_numero"]) or not str(linha["contrato_numero"]).strip() else str(linha["contrato_numero"]))
         fornecedor = escape("" if pd.isna(linha["fornecedor"]) else str(linha["fornecedor"]))
         numero_txt = "—" if pd.isna(linha["contrato_numero"]) or not str(linha["contrato_numero"]).strip() else str(linha["contrato_numero"])
@@ -253,16 +258,17 @@ def html_matriz(relatorio: RelatorioProjecaoExecucao, unidades: dict[str, float]
         corpo.append(
             f'<tr><td class="t" title="{escape(f"{numero_txt} — {nome_txt} — {linha["ne_curta"]}")}"><b>{numero}</b>'
             f'<small>{fornecedor}</small> <i>{escape(str(linha["ne_curta"]))}</i></td>'
-            f'{"".join(celulas)}<td class="tt">{_duas_linhas(f"<b>{_mil(soma)}</b>", _bolsas(soma, unidades.get(linha["ne_curta"]), 2))}</td></tr>'
+            f'{"".join(celulas)}<td class="tt">{_duas_linhas(f"<b>{_mil(soma)}</b>", _bolsas(soma, unidades.get(linha["ne_curta"]), 2))}</td>'
+            f'<td class="tt">{_duas_linhas(f"<b>{_mil(executado + soma)}</b>", _bolsas(executado + soma, unidades.get(linha["ne_curta"]), 2))}</td></tr>'
         )
     total_geral = sum(totais)
     corpo.append(
         '<tr class="tot"><td>Total projetado</td>'
-        + "".join(f"<td>{_mil(v) if v else '—'}</td>" for v in totais) + f"<td>{_mil(total_geral)}</td></tr>"
+        + "".join(f"<td>{_mil(v) if v else '—'}</td>" for v in totais) + f"<td>{_mil(total_geral)}</td><td>{_mil(total_executado + total_geral)}</td></tr>"
     )
     return (
         f'<div class="pe-rolagem"><table class="pe-m"><thead><tr><th>{escape(relatorio.rotulos.documento)}</th>{cabecalho}'
-        f'<th>Projetado até dez.</th></tr></thead><tbody>{"".join(corpo)}</tbody></table></div>'
+        f'<th>Projetado até dez.</th><th>Executado + projetado</th></tr></thead><tbody>{"".join(corpo)}</tbody></table></div>'
     )
 
 
