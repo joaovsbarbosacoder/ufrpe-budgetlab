@@ -20,6 +20,7 @@ OutputDir={#Raiz}\dist
 OutputBaseFilename={#Saida}
 Compression=lzma2
 SolidCompression=yes
+LZMANumBlockThreads=8
 ArchitecturesAllowed=x64compatible
 UninstallDisplayName=UFRPE BudgetLab
 
@@ -28,10 +29,12 @@ Name: "ptbr"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
 [Dirs]
 Name: "{app}\dados"; Flags: uninsneveruninstall
+Name: "{app}\log"
 #include AddBackslash(Build) + "dirs.iss"
 
 [Files]
 Source: "{#Build}\python\*"; DestDir: "{app}\python"; Excludes: "__pycache__"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#Build}\electron\*"; DestDir: "{app}\electron"; Excludes: "__pycache__"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#Build}\app\*"; DestDir: "{app}\app"; Excludes: "__pycache__"; Flags: recursesubdirs createallsubdirs ignoreversion
 #ifdef ComDados
 ; Nunca sobrescreve dado que o usuário já tenha em dados\. uninsneveruninstall: o desinstalador
@@ -40,21 +43,25 @@ Source: "{#Raiz}\data\*"; DestDir: "{app}\dados"; Flags: recursesubdirs createal
 #endif
 
 [Icons]
-Name: "{userprograms}\UFRPE BudgetLab"; Filename: "{app}\python\python.exe"; Parameters: "scripts\instalador\iniciar.py"; WorkingDir: "{app}\app"
-Name: "{userdesktop}\UFRPE BudgetLab"; Filename: "{app}\python\python.exe"; Parameters: "scripts\instalador\iniciar.py"; WorkingDir: "{app}\app"
+Name: "{userprograms}\UFRPE BudgetLab"; Filename: "{app}\electron\UFRPE BudgetLab.exe"; WorkingDir: "{app}"
+Name: "{userdesktop}\UFRPE BudgetLab"; Filename: "{app}\electron\UFRPE BudgetLab.exe"; WorkingDir: "{app}"
 
 [Run]
 ; app\data -> dados (junção): os módulos continuam lendo "data/..." sem alteração.
 Filename: "cmd.exe"; Parameters: "/c if not exist ""{app}\app\data"" mklink /J ""{app}\app\data"" ""{app}\dados"""; Flags: runhidden
-Filename: "{app}\python\python.exe"; Parameters: "scripts\instalador\iniciar.py"; WorkingDir: "{app}\app"; Description: "Abrir o UFRPE BudgetLab agora"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\electron\UFRPE BudgetLab.exe"; WorkingDir: "{app}"; Description: "Abrir o UFRPE BudgetLab agora"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
+; Fecha o app (e o servidor filho) antes de remover arquivos.
+Filename: "taskkill.exe"; Parameters: "/IM ""UFRPE BudgetLab.exe"" /T /F"; RunOnceId: "FecharApp"; Flags: runhidden
 ; Remove a junção (rmdir não segue o link) ANTES de qualquer remoção recursiva de app\.
 Filename: "cmd.exe"; Parameters: "/c rmdir ""{app}\app\data"""; RunOnceId: "RemoverJuncaoData"; Flags: runhidden
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\python"
 Type: filesandordirs; Name: "{app}\app"
+Type: filesandordirs; Name: "{app}\electron"
+Type: filesandordirs; Name: "{app}\log"
 
 [Code]
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

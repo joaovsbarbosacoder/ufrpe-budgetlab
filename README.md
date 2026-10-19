@@ -907,6 +907,21 @@ Instalação por usuário, sem administrador, em `%LOCALAPPDATA%\UFRPE BudgetLab
 usuário). `app\data` é uma junção para `dados\`, então os módulos continuam lendo
 `data/...` sem alteração. Atalhos no menu Iniciar e na área de trabalho.
 
+**Janela própria (Electron).** Os atalhos abrem `electron\UFRPE BudgetLab.exe`: o sistema
+aparece numa janela própria, sem navegador e sem a janela preta. Por trás roda o Streamlit,
+**somente em `127.0.0.1`** (não fica acessível pela rede), numa porta livre escolhida a
+cada abertura. Fechar a janela encerra o sistema. Detalhes de design em
+`docs/superpowers/specs/2026-10-19-electron-janela-design.md`. Se o sistema não iniciar, a
+janela mostra o erro e o caminho do log (`log\inicio.txt`, na pasta de instalação).
+O build baixa o runtime oficial do Electron (versão fixada em `scripts/electron_runtime.ps1`,
+SHA-256 conferido) e o guarda em `build_instalador\cache\`; para atualizar o Electron,
+troque `$ElectronVersao` nesse script e gere os instaladores de novo. O código do sistema
+continua se atualizando sozinho; só mudanças na casca (`electron/`), no Python embutido ou
+no `budgetlab.iss` exigem um instalador novo. Testes das funções puras (rodam no próprio
+Electron em modo Node): `$env:ELECTRON_RUN_AS_NODE=1; & "build_instalador\electron-teste\UFRPE BudgetLab.exe" --test electron\lib.test.js`
+(o runtime de teste é obtido com `. .\scripts\electron_runtime.ps1; Obter-Electron -Destino build_instalador\electron-teste`).
+`Iniciar BudgetLab.bat` e `scripts/instalador/iniciar.py` continuam existindo (navegador).
+
 - **Leve:** cria `dados\` vazio; as bases são importadas pelo próprio sistema.
 - **Completo:** também leva a `data\` do momento do build (~270 MB de dados institucionais;
   distribua só internamente). Só copia o que ainda não existe em `dados\`: nunca

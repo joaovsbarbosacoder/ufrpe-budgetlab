@@ -15,9 +15,14 @@ if (-not (Test-Path ".git")) { throw "Execute dentro do repositório Git do proj
 $ramo = (git rev-parse --abbrev-ref HEAD).Trim()
 if ($ramo -ne "master") { Write-Host "Aviso: build a partir do ramo '$ramo'; na 1ª abertura o sistema se atualizará para o master." -ForegroundColor Yellow }
 
+. (Join-Path $PSScriptRoot "electron_runtime.ps1")
 $build = Join-Path $raiz "build_instalador"
-if (Test-Path $build) { Remove-Item $build -Recurse -Force }
-New-Item -ItemType Directory $build | Out-Null
+if (Test-Path $build) {
+    # preserva cache\ (o zip do Electron, ~150 MB, só é baixado uma vez)
+    Get-ChildItem $build -Force | Where-Object Name -ne "cache" | Remove-Item -Recurse -Force
+} else {
+    New-Item -ItemType Directory $build | Out-Null
+}
 
 # 1. Python embeddable (mesma versão do ambiente de desenvolvimento) + pip + dependências
 $versao = (python -c "import sys;print('%d.%d.%d' % sys.version_info[:3])").Trim()
@@ -39,18 +44,30 @@ if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar as dependências." }
 
 # 2. Código versionado (sem dados, testes e rascunhos) + versao.txt
 $appDir = Join-Path $build "app"
-$excluir = @("data/", "tests/", "docs/superpowers/", "design_handoff_streamlit/", "installer/")
+$excluir = @("data/", "tests/", "docs/superpowers/", "design_handoff_streamlit/", "installer/", "electron/")
 $arquivos = git ls-files | Where-Object { $f = $_; -not ($excluir | Where-Object { $f.StartsWith($_) }) }
 foreach ($f in $arquivos) {
     $destino = Join-Path $appDir $f
     New-Item -ItemType Directory (Split-Path $destino) -Force | Out-Null
     Copy-Item $f $destino
 }
-$hashReq = (Get-FileHash "requirements.txt" -Algorithm SHA256).Hash.ToLower()
+# Hash com fim de linha LF (como no GitHub): evita um `pip install` à toa na 1ª atualização.
+$reqLf = [System.Text.Encoding]::UTF8.GetBytes(([System.IO.File]::ReadAllText((Join-Path $raiz "requirements.txt")) -replace "`r`n", "`n"))
+$hashReq = ([System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($reqLf)) -replace "-", "").ToLower()
 @{ commit = (git rev-parse HEAD).Trim(); requirements_sha256 = $hashReq; arquivos = @($arquivos) } |
     ConvertTo-Json -Compress | Set-Content (Join-Path $appDir "versao.txt") -Encoding utf8
 
-# 3. Estrutura de dados\ (subpastas de data\) e compilação do instalador
+# 3. Electron (janela própria): runtime oficial com SHA-256 conferido + código do projeto
+$elDir = Join-Path $build "electron"
+Obter-Electron -Destino $elDir
+$elApp = Join-Path $elDir "resources\app"
+New-Item -ItemType Directory $elApp -Force | Out-Null
+foreach ($f in "package.json", "main.js", "lib.js", "carregando.html", "erro.html") {
+    Copy-Item (Join-Path $raiz "electron\$f") $elApp
+}
+Remove-Item (Join-Path $elDir "resources\default_app.asar") -ErrorAction SilentlyContinue
+
+# 4. Estrutura de dados\ (subpastas de data\) e compilação do instalador
 $dirs = Get-ChildItem "data" -Directory | ForEach-Object { 'Name: "{app}\dados\' + $_.Name + '"; Flags: uninsneveruninstall' }
 $dirs | Set-Content (Join-Path $build "dirs.iss") -Encoding utf8
 $argsIscc = @("/DRaiz=$raiz", "/DBuild=$build")

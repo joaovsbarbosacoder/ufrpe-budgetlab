@@ -75,6 +75,7 @@ function atualizar() {
     atualizacao = spawn(caminhos.python, [script, caminhos.app, caminhos.python], {
       cwd: caminhos.app,
       windowsHide: true,
+      env: { ...process.env, PYTHONUTF8: "1" },
     });
     const limite = setTimeout(() => matar(atualizacao), TEMPO_ATUALIZACAO_MS);
     atualizacao.stdout.on("data", (d) => registrar(`[atualização] ${d}`));
@@ -92,7 +93,11 @@ function atualizar() {
 function subir(portaTentativa) {
   const { cmd, args } = lib.comandoStreamlit(caminhos.python, portaTentativa);
   registrar(`\n[servidor] porta ${portaTentativa}\n`);
-  servidor = spawn(cmd, args, { cwd: caminhos.app, windowsHide: true });
+  servidor = spawn(cmd, args, {
+    cwd: caminhos.app,
+    windowsHide: true,
+    env: { ...process.env, PYTHONUTF8: "1" },
+  });
   let caiu = false;
   servidor.stdout.on("data", (d) => registrar(String(d)));
   servidor.stderr.on("data", (d) => registrar(String(d)));
