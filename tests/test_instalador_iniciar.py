@@ -99,3 +99,8 @@ def test_abrir_navegador_usa_startfile_se_webbrowser_falha(monkeypatch):
     monkeypatch.setattr(I.os, "startfile", lambda url: chamadas.append(url), raising=False)
     I.abrir_navegador("http://localhost:8501")
     assert chamadas == ["http://localhost:8501"]
+
+
+def test_comando_streamlit_escuta_so_em_127_0_0_1():
+    cmd = I.comando_streamlit(Path("py"), 8501)
+    assert cmd[cmd.index("--server.address") + 1] == "127.0.0.1"

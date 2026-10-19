@@ -42,6 +42,7 @@ def comando_streamlit(python: Path, porta: int) -> list[str]:
     return [
         str(python), "-m", "streamlit", "run", "app.py",
         "--server.headless", "true",
+        "--server.address", "127.0.0.1",
         "--server.port", str(porta),
         "--browser.gatherUsageStats", "false",
     ]
