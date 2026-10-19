@@ -70,7 +70,24 @@ async function esperarSaude(porta, { tentativas = 240, intervaloMs = 500, buscar
   return false;
 }
 
+// O Streamlit serve um esqueleto com título "Streamlit"; o app só assume o título depois de
+// renderizar a primeira vez (st.set_page_config).
+const appRenderizado = (titulo) => Boolean(titulo) && titulo !== "Streamlit";
+
+async function esperarRender(obterTitulo, { tentativas = 40, intervaloMs = 500 } = {}) {
+  for (let i = 0; i < tentativas; i++) {
+    try {
+      if (appRenderizado(await obterTitulo())) return true;
+    } catch {
+      // página ainda carregando
+    }
+    await dormir(intervaloMs);
+  }
+  return false;
+}
+
 module.exports = {
+  appRenderizado, esperarRender,
   comandoStreamlit, urlApp, urlSaude, urlPermitida, ultimasLinhas,
   escolherPorta, caminhos, esperarSaude,
 };

@@ -74,3 +74,18 @@ test("esperarSaude: para na hora quando parar() é verdadeiro (servidor caiu)", 
   assert.strictEqual(r, false);
   assert.ok(chamadas <= 3);
 });
+
+test("appRenderizado: título 'Streamlit' (esqueleto) ainda não é o app", () => {
+  assert.strictEqual(lib.appRenderizado("Streamlit"), false);
+  assert.strictEqual(lib.appRenderizado(""), false);
+  assert.strictEqual(lib.appRenderizado(undefined), false);
+  assert.strictEqual(lib.appRenderizado("UFRPE BudgetLab"), true);
+});
+
+test("esperarRender: devolve true quando o título muda e false se nunca mudar", async () => {
+  let n = 0;
+  const titulo = async () => (++n < 3 ? "Streamlit" : "UFRPE BudgetLab");
+  assert.strictEqual(await lib.esperarRender(titulo, { tentativas: 10, intervaloMs: 1 }), true);
+  assert.strictEqual(await lib.esperarRender(async () => "Streamlit", { tentativas: 3, intervaloMs: 1 }), false);
+  assert.strictEqual(await lib.esperarRender(async () => { throw new Error("x"); }, { tentativas: 2, intervaloMs: 1 }), false);
+});
