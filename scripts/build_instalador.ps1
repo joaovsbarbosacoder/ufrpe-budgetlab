@@ -53,8 +53,9 @@ $hashReq = (Get-FileHash "requirements.txt" -Algorithm SHA256).Hash.ToLower()
 # 3. Estrutura de dados\ (subpastas de data\) e compilação do instalador
 $dirs = Get-ChildItem "data" -Directory | ForEach-Object { 'Name: "{app}\dados\' + $_.Name + '"' }
 $dirs | Set-Content (Join-Path $build "dirs.iss") -Encoding utf8
-$flag = if ($ComDados) { 1 } else { 0 }
-& $iscc "/DRaiz=$raiz" "/DBuild=$build" "/DComDados=$flag" "installer\budgetlab.iss"
+$argsIscc = @("/DRaiz=$raiz", "/DBuild=$build")
+if ($ComDados) { $argsIscc += "/DComDados" }
+& $iscc @argsIscc "installer\budgetlab.iss"
 if ($LASTEXITCODE -ne 0) { throw "Falha ao compilar o instalador." }
 Get-ChildItem (Join-Path $raiz "dist") -Filter "BudgetLab-Setup*.exe" |
     ForEach-Object { "{0}  ({1:N0} MB)" -f $_.FullName, ($_.Length / 1MB) }

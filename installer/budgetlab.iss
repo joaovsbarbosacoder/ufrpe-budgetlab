@@ -1,10 +1,7 @@
 ; Instalador do UFRPE BudgetLab (Inno Setup 6). Gerado por scripts\build_instalador.ps1,
-; que define Raiz (raiz do repositório), Build (pasta montada) e ComDados (0 ou 1).
+; que define Raiz (raiz do repositório), Build (pasta montada) e, só na variante completa, ComDados.
 ; Ver docs/superpowers/specs/2026-10-19-instalador-windows-design.md.
-#ifndef ComDados
-  #define ComDados 0
-#endif
-#if ComDados
+#ifdef ComDados
   #define Saida "BudgetLab-Setup-Completo"
 #else
   #define Saida "BudgetLab-Setup"
@@ -31,12 +28,12 @@ Name: "ptbr"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
 [Dirs]
 Name: "{app}\dados"
-#include "{#Build}\dirs.iss"
+#include AddBackslash(Build) + "dirs.iss"
 
 [Files]
 Source: "{#Build}\python\*"; DestDir: "{app}\python"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#Build}\app\*"; DestDir: "{app}\app"; Flags: recursesubdirs createallsubdirs ignoreversion
-#if ComDados
+#ifdef ComDados
 ; Nunca sobrescreve dado que o usuário já tenha em dados\.
 Source: "{#Raiz}\data\*"; DestDir: "{app}\dados"; Flags: recursesubdirs createallsubdirs onlyifdoesntexist
 #endif
