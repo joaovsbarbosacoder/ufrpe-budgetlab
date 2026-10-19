@@ -936,7 +936,7 @@ Electron em modo Node): `$env:ELECTRON_RUN_AS_NODE=1; & "build_instalador\electr
 - **Atualização opcional:** a cada abertura, com internet, o sistema consulta o GitHub
   (repositório público, sem token) e atualiza o código e, se mudaram, as dependências
   (tudo ou nada). Sem internet ou em qualquer falha, abre a versão instalada. Nunca toca
-  em `dados\`.
+  em `app\data\`.
 - **Desinstalar:** pelo Windows (*Aplicativos instalados*). Os dados são mantidos por
   padrão; só saem se o usuário confirmar no diálogo.
 
