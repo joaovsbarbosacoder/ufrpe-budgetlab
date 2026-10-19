@@ -40,13 +40,13 @@ Source: "{#Raiz}\data\*"; DestDir: "{app}\dados"; Flags: recursesubdirs createal
 #endif
 
 [Icons]
-Name: "{userprograms}\UFRPE BudgetLab"; Filename: "{app}\python\python.exe"; Parameters: "-m scripts.instalador.iniciar"; WorkingDir: "{app}\app"
-Name: "{userdesktop}\UFRPE BudgetLab"; Filename: "{app}\python\python.exe"; Parameters: "-m scripts.instalador.iniciar"; WorkingDir: "{app}\app"
+Name: "{userprograms}\UFRPE BudgetLab"; Filename: "{app}\python\python.exe"; Parameters: "scripts\instalador\iniciar.py"; WorkingDir: "{app}\app"
+Name: "{userdesktop}\UFRPE BudgetLab"; Filename: "{app}\python\python.exe"; Parameters: "scripts\instalador\iniciar.py"; WorkingDir: "{app}\app"
 
 [Run]
 ; app\data -> dados (junção): os módulos continuam lendo "data/..." sem alteração.
 Filename: "cmd.exe"; Parameters: "/c if not exist ""{app}\app\data"" mklink /J ""{app}\app\data"" ""{app}\dados"""; Flags: runhidden
-Filename: "{app}\python\python.exe"; Parameters: "-m scripts.instalador.iniciar"; WorkingDir: "{app}\app"; Description: "Abrir o UFRPE BudgetLab agora"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\python\python.exe"; Parameters: "scripts\instalador\iniciar.py"; WorkingDir: "{app}\app"; Description: "Abrir o UFRPE BudgetLab agora"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
 ; Remove a junção (rmdir não segue o link) ANTES de qualquer remoção recursiva de app\.

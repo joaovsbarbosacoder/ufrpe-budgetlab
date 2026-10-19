@@ -2,7 +2,8 @@
 
 Tenta a atualização opcional (scripts/instalador/atualizar.py), escolhe uma porta livre,
 abre o navegador quando o servidor responder e executa o Streamlit com o Python embutido.
-Uso: `python -m scripts.instalador.iniciar` com a pasta de trabalho na pasta `app` da instalação.
+Uso: `python scripts/instalador/iniciar.py` com a pasta de trabalho na pasta `app` da instalação
+(o Python embutido ignora a pasta atual ao importar, por isso `-m` não funciona).
 """
 from __future__ import annotations
 
@@ -41,6 +42,15 @@ def comando_streamlit(python: Path, porta: int) -> list[str]:
         "--server.port", str(porta),
         "--browser.gatherUsageStats", "false",
     ]
+
+
+def preparar_sys_path(raiz: Path) -> None:
+    """O Python embutido não põe a pasta atual no sys.path: acrescenta a raiz do app."""
+    if str(raiz) not in sys.path:
+        sys.path.insert(0, str(raiz))
+
+
+preparar_sys_path(Path(__file__).resolve().parents[2])
 
 
 def _abrir_navegador_quando_pronto(porta: int, tentativas: int = 90) -> None:
