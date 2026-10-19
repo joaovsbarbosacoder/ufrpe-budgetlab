@@ -1,0 +1,57 @@
+"""Testes do inicializador do instalador Windows."""
+import socket
+from pathlib import Path
+
+import pytest
+
+from scripts.instalador import iniciar as I
+
+
+class _Resp:
+    def __init__(self, status):
+        self.status = status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def test_sistema_aberto_true_com_200():
+    assert I.sistema_aberto(8501, abrir=lambda url, timeout: _Resp(200)) is True
+
+
+def test_sistema_aberto_false_com_erro():
+    def erro(url, timeout):
+        raise OSError("recusado")
+
+    assert I.sistema_aberto(8501, abrir=erro) is False
+
+
+def test_porta_livre_pula_ocupada():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        ocupada = s.getsockname()[1]
+        livre = I.porta_livre(ocupada, ocupada + 20)
+        assert livre != ocupada
+        assert livre > ocupada
+
+
+def test_porta_livre_sem_nenhuma_levanta():
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        p = s.getsockname()[1]
+        with pytest.raises(RuntimeError):
+            I.porta_livre(p, p)
+
+
+def test_comando_streamlit_com_caminho_com_espacos_e_acentos():
+    py = Path("C:/Users/João Silva/UFRPE BudgetLab/python/python.exe")
+    cmd = I.comando_streamlit(py, 8503)
+    assert cmd[0] == str(py)
+    assert cmd[1:6] == ["-m", "streamlit", "run", "app.py", "--server.headless"]
+    assert cmd[cmd.index("--server.port") + 1] == "8503"
+    assert cmd[cmd.index("--browser.gatherUsageStats") + 1] == "false"

@@ -123,3 +123,7 @@ data/projecao_execucao/*
 # Ajustes manuais da Projecao pela Execucao de Bolsas e Auxilios (mesmo motivo de data/projecao_execucao/ acima)
 data/projecao_execucao_bolsas/*
 !data/projecao_execucao_bolsas/.gitkeep
+
+# Instalador Windows (artefatos de build)
+dist/
+build_instalador/

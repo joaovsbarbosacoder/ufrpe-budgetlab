@@ -886,6 +886,41 @@ O atalho foi pensado para **um único usuário**. Os dados ficam no computador o
 sistema roda: cópias em outras máquinas não compartilham cadastros nem importações.
 Requisitos na primeira execução: Python 3.10+, Git e internet.
 
+### Instalador Windows (sem Python, Git ou internet)
+
+Para instalar o sistema em outros computadores da UFRPE sem exigir Python ou Git, gere
+os instaladores a partir do repositório (design em
+`docs/superpowers/specs/2026-10-19-instalador-windows-design.md`):
+
+```powershell
+.\scripts\build_instalador.ps1              # dist\BudgetLab-Setup.exe (leve, sem dados)
+.\scripts\build_instalador.ps1 -ComDados    # dist\BudgetLab-Setup-Completo.exe (com data\)
+```
+
+O build roda só na máquina do desenvolvedor e precisa de internet, Git, o mesmo Python do
+projeto e o Inno Setup 6. **Gere a partir do `master`** (o script avisa em outro ramo): a
+atualização opcional baixa o `master` do GitHub, e uma versão ainda não integrada a ele
+seria substituída na primeira abertura. `dist/` e `build_instalador/` ficam fora do Git.
+
+Instalação por usuário, sem administrador, em `%LOCALAPPDATA%\UFRPE BudgetLab\`:
+`python\` (Python embutido e dependências), `app\` (código) e `dados\` (as bases do
+usuário). `app\data` é uma junção para `dados\`, então os módulos continuam lendo
+`data/...` sem alteração. Atalhos no menu Iniciar e na área de trabalho.
+
+- **Leve:** cria `dados\` vazio; as bases são importadas pelo próprio sistema.
+- **Completo:** também leva a `data\` do momento do build (~270 MB de dados institucionais;
+  distribua só internamente). Só copia o que ainda não existe em `dados\`: nunca
+  sobrescreve dado de quem já usa o sistema.
+- **Atualização opcional:** a cada abertura, com internet, o sistema consulta o GitHub
+  (repositório público, sem token) e atualiza o código e, se mudaram, as dependências
+  (tudo ou nada). Sem internet ou em qualquer falha, abre a versão instalada. Nunca toca
+  em `dados\`.
+- **Desinstalar:** pelo Windows (*Aplicativos instalados*). Os dados são mantidos por
+  padrão; só saem se o usuário confirmar no diálogo.
+
+O `.exe` não é assinado digitalmente: o antivírus ou a TI pode alertar ou bloquear. O
+plano B é distribuir a pasta montada em `build_instalador\` como `.zip` portátil.
+
 ### Migração dos cadastros nativos
 
 Bolsas e Auxílios e Contratos Contínuos usam cadastros JSON locais, separados das planilhas
