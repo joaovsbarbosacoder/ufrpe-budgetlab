@@ -126,3 +126,18 @@ Nova seção no `README.md` ("Instalação por instalador Windows"), com como ge
 os instaladores, o que cada um contém e como atualizar/desinstalar, ao lado da
 seção do `Iniciar BudgetLab.bat` (que continua válido para quem roda a partir do
 repositório).
+
+## Atualização de 19/10/2026 — dados em pasta real (substitui a junção)
+
+Com o Electron, a junção `app\data → dados\` deixou de funcionar: o Python iniciado pelo
+Electron falha com `WinError 448` ("ponto de montagem não confiável") ao atravessá-la
+(proteção do Windows contra junções criadas por usuário comum). **Decisão:** as bases ficam
+em `app\data\` (pasta real); `dados\` e a junção deixam de existir. As garantias não mudam:
+o atualizador nunca toca em `data/`, o instalador completo só copia o que não existe
+(`onlyifdoesntexist`), e o desinstalador remove tudo de `app\` **menos** `data\`, que só sai
+se o usuário confirmar. Migração: o instalador novo **recusa** instalar sobre a versão com
+junção (o registro de desinstalação antigo remove `app\` recursivamente e apagaria os
+dados); orienta a desinstalar a antiga (que preserva `dados\`) e, ao instalar, move
+`dados\` para `app\data\`. Verificado manualmente: recusa sem alterar nada, desinstalação
+da antiga preserva os arquivos, migração de 49 arquivos, página do Electron carregando sem
+`OSError`, desinstalação da nova preservando os dados.

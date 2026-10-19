@@ -903,9 +903,16 @@ atualização opcional baixa o `master` do GitHub, e uma versão ainda não inte
 seria substituída na primeira abertura. `dist/` e `build_instalador/` ficam fora do Git.
 
 Instalação por usuário, sem administrador, em `%LOCALAPPDATA%\UFRPE BudgetLab\`:
-`python\` (Python embutido e dependências), `app\` (código) e `dados\` (as bases do
-usuário). `app\data` é uma junção para `dados\`, então os módulos continuam lendo
-`data/...` sem alteração. Atalhos no menu Iniciar e na área de trabalho.
+`python\` (Python embutido e dependências), `electron\` (a janela), `app\` (código) e
+`app\data\` (as bases do usuário, pasta **real**: uma junção para outra pasta falha com
+`WinError 448` quando o Python é iniciado pelo Electron). Atualizar e desinstalar nunca
+apagam `app\data\` sem a confirmação do usuário. Atalhos no menu Iniciar e na área de
+trabalho.
+
+**Vindo da versão anterior (com `dados\` e junção):** o instalador novo recusa instalar
+por cima (o registro de desinstalação antigo apagaria `app\` por inteiro). Desinstale a
+versão antiga antes (*Configurações > Aplicativos*; ela mantém `dados\`) e rode o instalador
+novo: ele move `dados\` para `app\data\` sem perder nada.
 
 **Janela própria (Electron).** Os atalhos abrem `electron\UFRPE BudgetLab.exe`: o sistema
 aparece numa janela própria, sem navegador e sem a janela preta. Por trás roda o Streamlit,
@@ -922,9 +929,9 @@ Electron em modo Node): `$env:ELECTRON_RUN_AS_NODE=1; & "build_instalador\electr
 (o runtime de teste é obtido com `. .\scripts\electron_runtime.ps1; Obter-Electron -Destino build_instalador\electron-teste`).
 `Iniciar BudgetLab.bat` e `scripts/instalador/iniciar.py` continuam existindo (navegador).
 
-- **Leve:** cria `dados\` vazio; as bases são importadas pelo próprio sistema.
+- **Leve:** cria `app\data\` vazio; as bases são importadas pelo próprio sistema.
 - **Completo:** também leva a `data\` do momento do build (~270 MB de dados institucionais;
-  distribua só internamente). Só copia o que ainda não existe em `dados\`: nunca
+  distribua só internamente). Só copia o que ainda não existe em `app\data\`: nunca
   sobrescreve dado de quem já usa o sistema.
 - **Atualização opcional:** a cada abertura, com internet, o sistema consulta o GitHub
   (repositório público, sem token) e atualiza o código e, se mudaram, as dependências
