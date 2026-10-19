@@ -56,6 +56,14 @@ function criarJanela() {
     abrirExterno(url);
     return { action: "deny" };
   });
+  // Sem menu, F5 e Ctrl+R não recarregam sozinhos: reativa o recarregamento.
+  janela.webContents.on("before-input-event", (evento, entrada) => {
+    const recarregar = entrada.key === "F5" || (entrada.control && entrada.key.toLowerCase() === "r");
+    if (entrada.type === "keyDown" && recarregar) {
+      evento.preventDefault();
+      janela.webContents.reloadIgnoringCache();
+    }
+  });
   janela.on("closed", () => {
     janela = null;
   });
@@ -116,6 +124,25 @@ function subir(portaTentativa) {
   return Promise.race([pronto, saiu]);
 }
 
+// Carrega o app e confere que ele renderizou (título deixa de ser "Streamlit"). Se a página
+// ficar em branco, recarrega uma vez; se ainda assim não renderizar, mostra a página de erro.
+async function abrirApp(portaApp) {
+  const titulo = () => (janela ? janela.webContents.executeJavaScript("document.title") : "");
+  for (let tentativa = 1; tentativa <= 2 && janela && !encerrando; tentativa++) {
+    registrar(`[janela] carregando o app (tentativa ${tentativa})\n`);
+    if (tentativa === 1) await janela.loadURL(lib.urlApp(portaApp));
+    else janela.webContents.reloadIgnoringCache();
+    registrar("[janela] página carregada; esperando renderizar\n");
+    if (await lib.esperarRender(titulo, { tentativas: 40 })) return;
+    registrar(`[janela] página sem renderizar (tentativa ${tentativa})\n`);
+  }
+  if (janela && !encerrando) {
+    await janela.loadFile(path.join(__dirname, "erro.html"), {
+      query: { log: caminhos.log, texto: "A página não terminou de carregar.\n" + lib.ultimasLinhas(saida, 20) },
+    });
+  }
+}
+
 async function iniciar() {
   Menu.setApplicationMenu(null);
   try {
@@ -131,7 +158,7 @@ async function iniciar() {
   for (let tentativa = 1; tentativa <= TENTATIVAS_PORTA && !encerrando; tentativa++) {
     porta = await lib.escolherPorta();
     if (await subir(porta)) {
-      if (janela) await janela.loadURL(lib.urlApp(porta));
+      if (janela) await abrirApp(porta);
       return;
     }
     matar(servidor);
