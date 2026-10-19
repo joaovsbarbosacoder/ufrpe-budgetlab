@@ -66,3 +66,11 @@ test("esperarSaude: desiste depois das tentativas", async () => {
   const buscar = async () => { throw new Error("recusado"); };
   assert.strictEqual(await lib.esperarSaude(8503, { tentativas: 3, intervaloMs: 1, buscar }), false);
 });
+
+test("esperarSaude: para na hora quando parar() é verdadeiro (servidor caiu)", async () => {
+  let chamadas = 0;
+  const buscar = async () => { chamadas += 1; throw new Error("recusado"); };
+  const r = await lib.esperarSaude(8503, { tentativas: 100, intervaloMs: 1, buscar, parar: () => chamadas >= 2 });
+  assert.strictEqual(r, false);
+  assert.ok(chamadas <= 3);
+});

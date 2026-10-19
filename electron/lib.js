@@ -56,8 +56,9 @@ function caminhos(resourcesPath, env = process.env) {
 
 const dormir = (ms) => new Promise((ok) => setTimeout(ok, ms));
 
-async function esperarSaude(porta, { tentativas = 240, intervaloMs = 500, buscar = fetch } = {}) {
+async function esperarSaude(porta, { tentativas = 240, intervaloMs = 500, buscar = fetch, parar = () => false } = {}) {
   for (let i = 0; i < tentativas; i++) {
+    if (parar()) return false;
     try {
       const resposta = await buscar(urlSaude(porta));
       if (resposta.ok) return true;

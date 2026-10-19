@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>UFRPE BudgetLab</title>
+<style>
+  body { margin: 0; padding: 32px; background: #f4f7fb; color: #0e1f3d;
+         font-family: "Segoe UI", system-ui, sans-serif; }
+  h1 { font-size: 22px; margin: 0 0 8px; color: #a11d1d; }
+  p { color: #5b6b86; }
+  pre { background: #fff; border: 1px solid #cbd6e6; border-radius: 6px; padding: 12px;
+        white-space: pre-wrap; max-height: 50vh; overflow: auto; font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>Não foi possível iniciar o sistema</h1>
+  <p>Feche esta janela e abra o UFRPE BudgetLab de novo. Se o problema continuar, envie o arquivo de log:</p>
+  <p id="log"></p>
+  <pre id="texto"></pre>
+  <script>
+    const q = new URLSearchParams(location.search);
+    document.getElementById("log").textContent = q.get("log") || "";
+    document.getElementById("texto").textContent = q.get("texto") || "(sem saída do servidor)";
+  </script>
+</body>
+</html>
