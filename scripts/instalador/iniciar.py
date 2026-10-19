@@ -7,6 +7,7 @@ Uso: `python scripts/instalador/iniciar.py` com a pasta de trabalho na pasta `ap
 """
 from __future__ import annotations
 
+import os
 import socket
 import subprocess
 import sys
@@ -20,8 +21,9 @@ PORTA_PADRAO = 8501
 
 
 def sistema_aberto(porta: int, abrir=urllib.request.urlopen) -> bool:
+    # 127.0.0.1 e não `localhost`: no Windows `localhost` tenta ::1 primeiro (~2 s a mais).
     try:
-        with abrir(f"http://localhost:{porta}/_stcore/health", timeout=2) as resposta:
+        with abrir(f"http://127.0.0.1:{porta}/_stcore/health", timeout=2) as resposta:
             return resposta.status == 200
     except (OSError, ValueError):
         return False
@@ -30,6 +32,7 @@ def sistema_aberto(porta: int, abrir=urllib.request.urlopen) -> bool:
 def porta_livre(inicio: int = PORTA_PADRAO, fim: int = PORTA_PADRAO + 9) -> int:
     for porta in range(inicio, fim + 1):
         with socket.socket() as s:
+            s.settimeout(0.3)  # porta fechada no Windows levaria ~2 s para recusar
             if s.connect_ex(("127.0.0.1", porta)) != 0:
                 return porta
     raise RuntimeError(f"nenhuma porta livre entre {inicio} e {fim}")
@@ -53,12 +56,23 @@ def preparar_sys_path(raiz: Path) -> None:
 preparar_sys_path(Path(__file__).resolve().parents[2])
 
 
+def abrir_navegador(url: str) -> None:
+    """Abre o navegador padrão; se o `webbrowser` falhar, tenta o Windows direto."""
+    if webbrowser.open(url):
+        return
+    try:
+        os.startfile(url)  # type: ignore[attr-defined]  # só existe no Windows
+    except (AttributeError, OSError):
+        print(f"Não foi possível abrir o navegador. Acesse {url}")
+
+
 def _abrir_navegador_quando_pronto(porta: int, tentativas: int = 90) -> None:
     for _ in range(tentativas):
         if sistema_aberto(porta):
-            webbrowser.open(f"http://localhost:{porta}")
+            abrir_navegador(f"http://localhost:{porta}")
             return
         time.sleep(1)
+    print(f"O sistema não respondeu a tempo. Tente acessar http://localhost:{porta}")
 
 
 def main() -> int:
@@ -68,6 +82,7 @@ def main() -> int:
         python = Path(sys.executable)
 
     print("== UFRPE BudgetLab ==")
+    print("Verificando atualizações...", flush=True)
     from scripts.instalador.atualizar import atualizar
 
     resultado = atualizar(raiz, python)
@@ -75,10 +90,12 @@ def main() -> int:
         "sem_novidade": "Sistema já está na versão mais recente.",
         "atualizado": "Sistema atualizado.",
         "falhou": "Aviso: não foi possível atualizar; abrindo a versão instalada.",
-    }[resultado])
+    }[resultado], flush=True)
 
+    print("Iniciando o sistema, aguarde alguns segundos — o navegador abre sozinho. "
+          "Mantenha esta janela aberta; fechá-la encerra o sistema.", flush=True)
     if sistema_aberto(PORTA_PADRAO):
-        webbrowser.open(f"http://localhost:{PORTA_PADRAO}")
+        abrir_navegador(f"http://localhost:{PORTA_PADRAO}")
         return 0
     try:
         porta = porta_livre()
@@ -86,8 +103,6 @@ def main() -> int:
         print(f"Erro: {erro}")
         return 1
     threading.Thread(target=_abrir_navegador_quando_pronto, args=(porta,), daemon=True).start()
-    print(f"Iniciando em http://localhost:{porta} — mantenha esta janela aberta; "
-          "fechá-la encerra o sistema.")
     return subprocess.run(comando_streamlit(python, porta), cwd=raiz, check=False).returncode
 
 
