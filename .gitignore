@@ -127,3 +127,4 @@ data/projecao_execucao_bolsas/*
 # Instalador Windows (artefatos de build)
 dist/
 build_instalador/
+electron/node_modules/
