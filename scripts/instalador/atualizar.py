@@ -30,7 +30,7 @@ class ErroAtualizacao(Exception):
 
 def ler_versao(app: Path) -> dict:
     try:
-        dados = json.loads((app / "versao.txt").read_text(encoding="utf-8"))
+        dados = json.loads((app / "versao.txt").read_text(encoding="utf-8-sig"))
         return {**_VERSAO_VAZIA, **dados}
     except (OSError, ValueError, TypeError):
         return dict(_VERSAO_VAZIA)

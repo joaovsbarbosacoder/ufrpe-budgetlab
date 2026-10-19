@@ -186,3 +186,12 @@ def test_ler_versao_ausente_ou_invalida(tmp_path):
     assert A.ler_versao(app)["commit"] == ""
     (app / "versao.txt").write_text("{quebrado", encoding="utf-8")
     assert A.ler_versao(app)["arquivos"] == []
+
+
+def test_ler_versao_aceita_bom_do_powershell(tmp_path):
+    """`Set-Content -Encoding utf8` (Windows PowerShell 5.1) grava BOM; o build usa isso."""
+    app = _app(tmp_path)
+    (app / "versao.txt").write_bytes(
+        b"\xef\xbb\xbf" + json.dumps({"commit": "abc", "requirements_sha256": "h", "arquivos": ["a.py"]}).encode()
+    )
+    assert A.ler_versao(app) == {"commit": "abc", "requirements_sha256": "h", "arquivos": ["a.py"]}
