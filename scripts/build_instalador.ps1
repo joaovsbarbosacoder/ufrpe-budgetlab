@@ -51,7 +51,7 @@ $hashReq = (Get-FileHash "requirements.txt" -Algorithm SHA256).Hash.ToLower()
     ConvertTo-Json -Compress | Set-Content (Join-Path $appDir "versao.txt") -Encoding utf8
 
 # 3. Estrutura de dados\ (subpastas de data\) e compilação do instalador
-$dirs = Get-ChildItem "data" -Directory | ForEach-Object { 'Name: "{app}\dados\' + $_.Name + '"' }
+$dirs = Get-ChildItem "data" -Directory | ForEach-Object { 'Name: "{app}\dados\' + $_.Name + '"; Flags: uninsneveruninstall' }
 $dirs | Set-Content (Join-Path $build "dirs.iss") -Encoding utf8
 $argsIscc = @("/DRaiz=$raiz", "/DBuild=$build")
 if ($ComDados) { $argsIscc += "/DComDados" }

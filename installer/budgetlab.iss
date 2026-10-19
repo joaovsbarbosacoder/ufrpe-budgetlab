@@ -27,15 +27,16 @@ UninstallDisplayName=UFRPE BudgetLab
 Name: "ptbr"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 
 [Dirs]
-Name: "{app}\dados"
+Name: "{app}\dados"; Flags: uninsneveruninstall
 #include AddBackslash(Build) + "dirs.iss"
 
 [Files]
-Source: "{#Build}\python\*"; DestDir: "{app}\python"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "{#Build}\app\*"; DestDir: "{app}\app"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#Build}\python\*"; DestDir: "{app}\python"; Excludes: "__pycache__"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#Build}\app\*"; DestDir: "{app}\app"; Excludes: "__pycache__"; Flags: recursesubdirs createallsubdirs ignoreversion
 #ifdef ComDados
-; Nunca sobrescreve dado que o usuário já tenha em dados\.
-Source: "{#Raiz}\data\*"; DestDir: "{app}\dados"; Flags: recursesubdirs createallsubdirs onlyifdoesntexist
+; Nunca sobrescreve dado que o usuário já tenha em dados\. uninsneveruninstall: o desinstalador
+; do Inno apagaria os arquivos que instalou; os dados só saem se o usuário confirmar no diálogo.
+Source: "{#Raiz}\data\*"; DestDir: "{app}\dados"; Flags: recursesubdirs createallsubdirs onlyifdoesntexist uninsneveruninstall
 #endif
 
 [Icons]
@@ -63,7 +64,7 @@ begin
   if CurUninstallStep = usPostUninstall then
   begin
     Dados := ExpandConstant('{app}\dados');
-    if DirExists(Dados) then
+    if DirExists(Dados) and not UninstallSilent then
       if MsgBox('Remover também as bases de dados em:' + #13#10 + Dados + #13#10#13#10 +
                 'Escolha "Não" para manter seus dados (recomendado).',
                 mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
