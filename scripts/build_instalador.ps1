@@ -27,20 +27,30 @@ if (Test-Path $build) {
 # 1. Python embeddable (mesma versão do ambiente de desenvolvimento) + pip + dependências
 $versao = (python -c "import sys;print('%d.%d.%d' % sys.version_info[:3])").Trim()
 $pyDir = Join-Path $build "python"
-$zip = Join-Path $build "python-embed.zip"
-Write-Host "Baixando Python $versao (embeddable)..."
-Invoke-WebRequest "https://www.python.org/ftp/python/$versao/python-$versao-embed-amd64.zip" -OutFile $zip -UseBasicParsing
-Expand-Archive $zip -DestinationPath $pyDir
-Remove-Item $zip
-$pth = Get-ChildItem $pyDir -Filter "python*._pth" | Select-Object -First 1
-(Get-Content $pth.FullName) -replace '^#\s*import site', 'import site' | Set-Content $pth.FullName -Encoding ascii
-$getpip = Join-Path $build "get-pip.py"
-Invoke-WebRequest "https://bootstrap.pypa.io/get-pip.py" -OutFile $getpip -UseBasicParsing
-& "$pyDir\python.exe" $getpip --no-warn-script-location
-Remove-Item $getpip
-Write-Host "Instalando dependências (requirements.txt)..."
-& "$pyDir\python.exe" -m pip install --disable-pip-version-check --no-warn-script-location -r requirements.txt
-if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar as dependências." }
+# Cache do Python já pronto (versão + hash do requirements.txt): pula download e pip nos próximos builds.
+$hashCache = (Get-FileHash (Join-Path $raiz "requirements.txt") -Algorithm SHA256).Hash.Substring(0, 12).ToLower()
+$pyCache = Join-Path $build "cache\python-$versao-$hashCache"
+if (Test-Path (Join-Path $pyCache "python.exe")) {
+    Write-Host "Python $versao com dependências em cache: copiando (multi-thread)..."
+    robocopy $pyCache $pyDir /E /MT:16 /NFL /NDL /NJH /NJS /NP | Out-Null
+} else {
+    $zip = Join-Path $build "python-embed.zip"
+    Write-Host "Baixando Python $versao (embeddable)..."
+    Invoke-WebRequest "https://www.python.org/ftp/python/$versao/python-$versao-embed-amd64.zip" -OutFile $zip -UseBasicParsing
+    Expand-Archive $zip -DestinationPath $pyDir
+    Remove-Item $zip
+    $pth = Get-ChildItem $pyDir -Filter "python*._pth" | Select-Object -First 1
+    (Get-Content $pth.FullName) -replace '^#\s*import site', 'import site' | Set-Content $pth.FullName -Encoding ascii
+    $getpip = Join-Path $build "get-pip.py"
+    Invoke-WebRequest "https://bootstrap.pypa.io/get-pip.py" -OutFile $getpip -UseBasicParsing
+    & "$pyDir\python.exe" $getpip --no-warn-script-location
+    Remove-Item $getpip
+    Write-Host "Instalando dependências (requirements.txt)..."
+    & "$pyDir\python.exe" -m pip install --disable-pip-version-check --no-warn-script-location -r requirements.txt
+    if ($LASTEXITCODE -ne 0) { throw "Falha ao instalar as dependências." }
+    Get-ChildItem (Join-Path $build "cache") -Directory -Filter "python-*" -ErrorAction SilentlyContinue | Remove-Item -Recurse -Force
+    robocopy $pyDir $pyCache /E /MT:16 /NFL /NDL /NJH /NJS /NP | Out-Null
+}
 
 # 2. Código versionado (sem dados, testes e rascunhos) + versao.txt
 $appDir = Join-Path $build "app"
@@ -67,8 +77,8 @@ foreach ($f in "package.json", "main.js", "lib.js", "carregando.html", "erro.htm
 }
 Remove-Item (Join-Path $elDir "resources\default_app.asar") -ErrorAction SilentlyContinue
 
-# 4. Estrutura de dados\ (subpastas de data\) e compilação do instalador
-$dirs = Get-ChildItem "data" -Directory | ForEach-Object { 'Name: "{app}\dados\' + $_.Name + '"; Flags: uninsneveruninstall' }
+# 4. Estrutura de app\data\ (subpastas de data\) e compilação do instalador
+$dirs = Get-ChildItem "data" -Directory | ForEach-Object { 'Name: "{app}\app\data\' + $_.Name + '"; Flags: uninsneveruninstall' }
 $dirs | Set-Content (Join-Path $build "dirs.iss") -Encoding utf8
 $argsIscc = @("/DRaiz=$raiz", "/DBuild=$build")
 if ($ComDados) { $argsIscc += "/DComDados" }
