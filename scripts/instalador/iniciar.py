@@ -50,6 +50,9 @@ def preparar_sys_path(raiz: Path) -> None:
         sys.path.insert(0, str(raiz))
 
 
+preparar_sys_path(Path(__file__).resolve().parents[2])
+
+
 def _abrir_navegador_quando_pronto(porta: int, tentativas: int = 90) -> None:
     for _ in range(tentativas):
         if sistema_aberto(porta):

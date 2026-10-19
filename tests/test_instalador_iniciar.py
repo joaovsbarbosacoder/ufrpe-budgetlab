@@ -66,7 +66,6 @@ def test_inicializador_funciona_sem_cwd_no_sys_path():
     codigo = (
         "import runpy, sys\n"
         f"m = runpy.run_path(r'{raiz / 'scripts' / 'instalador' / 'iniciar.py'}')\n"
-        f"m['preparar_sys_path'](__import__('pathlib').Path(r'{raiz}'))\n"
         "import scripts.instalador.atualizar\n"
     )
     r = subprocess.run([sys.executable, "-I", "-c", codigo], cwd=raiz,
