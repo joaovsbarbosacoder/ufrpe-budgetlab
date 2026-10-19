@@ -55,3 +55,20 @@ def test_comando_streamlit_com_caminho_com_espacos_e_acentos():
     assert cmd[1:6] == ["-m", "streamlit", "run", "app.py", "--server.headless"]
     assert cmd[cmd.index("--server.port") + 1] == "8503"
     assert cmd[cmd.index("--browser.gatherUsageStats") + 1] == "false"
+
+
+def test_inicializador_funciona_sem_cwd_no_sys_path():
+    """Python embutido ignora a pasta atual: o script precisa achar `scripts.*` sozinho."""
+    import subprocess
+    import sys
+
+    raiz = Path(__file__).resolve().parents[1]
+    codigo = (
+        "import runpy, sys\n"
+        f"m = runpy.run_path(r'{raiz / 'scripts' / 'instalador' / 'iniciar.py'}')\n"
+        f"m['preparar_sys_path'](__import__('pathlib').Path(r'{raiz}'))\n"
+        "import scripts.instalador.atualizar\n"
+    )
+    r = subprocess.run([sys.executable, "-I", "-c", codigo], cwd=raiz,
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
