@@ -71,3 +71,31 @@ def test_inicializador_funciona_sem_cwd_no_sys_path():
     r = subprocess.run([sys.executable, "-I", "-c", codigo], cwd=raiz,
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
+
+
+def test_sistema_aberto_usa_127_0_0_1_sem_passar_por_ipv6():
+    """`localhost` tenta ::1 antes (4 s de espera no Windows); o health check usa IPv4 direto."""
+    urls = []
+
+    def abrir(url, timeout):
+        urls.append(url)
+        return _Resp(200)
+
+    I.sistema_aberto(8501, abrir=abrir)
+    assert urls == ["http://127.0.0.1:8501/_stcore/health"]
+
+
+def test_porta_livre_nao_demora_com_porta_fechada():
+    import time
+
+    t = time.time()
+    I.porta_livre(8590, 8599)
+    assert time.time() - t < 1.0
+
+
+def test_abrir_navegador_usa_startfile_se_webbrowser_falha(monkeypatch):
+    chamadas = []
+    monkeypatch.setattr(I.webbrowser, "open", lambda url: False)
+    monkeypatch.setattr(I.os, "startfile", lambda url: chamadas.append(url), raising=False)
+    I.abrir_navegador("http://localhost:8501")
+    assert chamadas == ["http://localhost:8501"]
