@@ -362,14 +362,20 @@ def necessidade_por_linha(filtrado: pd.DataFrame, por_ne: pd.DataFrame, sem_ne: 
     return resultado
 
 
+#: `mes_referencia` de um exercício já encerrado (extração em ano posterior): nada a projetar
+EXERCICIO_ENCERRADO = 13
+
+
 def mes_referencia_do_exercicio(data_extracao: date, exercicio: int) -> int:
     """Último mês (1-12) do `exercicio` já coberto pela extração da Execução Mensal — o mês da
     extração, inclusive (pode estar parcial; o relatório avisa a data). Extração em ano anterior
-    ao exercício: 0; em ano posterior: 12 (exercício encerrado). Usado só para NE sem nenhum
+    ao exercício: 0; em ano posterior: `EXERCICIO_ENCERRADO` (13, exercício encerrado). Extração em
+    dezembro do próprio exercício devolve 12 e NÃO encerra: dezembro ainda é mês a projetar
+    (correção de 20/10/2026; antes 12 valia para os dois casos). Usado só para NE sem nenhum
     registro de competência (ver docstring do módulo)."""
 
     if data_extracao.year > exercicio:
-        return 12
+        return EXERCICIO_ENCERRADO
     if data_extracao.year < exercicio:
         return 0
     return data_extracao.month
@@ -557,7 +563,7 @@ class RelatorioNecessidade:
     #: de `limite_de_projecao`, nulo quando não há o que avisar).
     mensal: pd.DataFrame
     exercicio: int
-    #: último mês coberto pela extração (0 a 12) — ver `mes_referencia_do_exercicio`.
+    #: último mês coberto pela extração (0 a 12; 13 = exercício encerrado) — ver `mes_referencia_do_exercicio`.
     mes_referencia: int
 
     @property
@@ -753,7 +759,7 @@ def montar_relatorio(
         ate_dezembro = max(0, 12 - inicio + 1)
         ate_limite = max(0, limite.ultimo_mes - inicio + 1)
         qtd = min(ate_dezembro, vida, ate_limite)
-        if mes_referencia >= 12:  # exercício encerrado (extração de dezembro em diante): nada a projetar
+        if mes_referencia >= EXERCICIO_ENCERRADO:  # extração em ano posterior ao exercício: nada a projetar
             qtd = 0
         ultimo_projetado = inicio + qtd - 1
         # mês final proporcional só quando é justamente o mês do fim da vigência que fecha a projeção
@@ -847,7 +853,7 @@ def _mes_referencia_texto(relatorio: RelatorioNecessidade, contexto: ContextoRel
     ref = relatorio.mes_referencia
     if ref <= 0:
         return f"nenhum mês de {relatorio.exercicio} coberto pela extração de {contexto.data_extracao}"
-    if ref >= 12:
+    if ref >= EXERCICIO_ENCERRADO:
         return f"{relatorio.exercicio} encerrado (extração de {contexto.data_extracao})"
     return f"{MESES[ref - 1]}/{relatorio.exercicio} (extração de {contexto.data_extracao}; o mês pode estar parcial)"
 

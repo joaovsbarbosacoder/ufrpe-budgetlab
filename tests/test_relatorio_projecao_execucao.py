@@ -139,7 +139,15 @@ class TestProjetarMeses(unittest.TestCase):
         self.assertFalse(projecao.limitado_pelo_teto)
 
     def test_exercicio_encerrado_nao_projeta(self):
-        self.assertEqual(projetar_meses({}, CUSTO_1000, 1.0, 12).total_projetado, 0.0)
+        self.assertEqual(projetar_meses({}, CUSTO_1000, 1.0, 13).total_projetado, 0.0)
+
+    def test_extracao_de_dezembro_projeta_dezembro_e_os_meses_em_aberto(self):
+        # 20/10/2026: antes mes_referencia 12 era tratado como exercício encerrado e nada era projetado
+        realizado = {m: 1000.0 for m in range(1, 10)}  # jan–set fechados/completos; out e nov sem registro
+        projecao = projetar_meses(realizado, CUSTO_1000, 1.0, 12)
+        self.assertEqual(projecao.tipos[9:], [TIPO_RESTANTE_ABERTO, TIPO_RESTANTE_ABERTO, TIPO_PROJETADO])
+        self.assertEqual(projecao.projetado[9:], [1000.0, 1000.0, 1000.0])
+        self.assertEqual(projecao.total_projetado, 3000.0)
 
 
 def _linha(**campos: object) -> dict:
@@ -517,9 +525,20 @@ class TestAjustesDoMes(unittest.TestCase):
         self.assertEqual(projetar_meses({}, CUSTO_1000, 0.9, 10, ajustes={13: 1.0}).superados, [13])
 
     def test_exercicio_encerrado_ignora_ajustes(self):
-        projecao = projetar_meses({}, CUSTO_1000, 0.9, 12, ajustes={12: 500.0})
+        projecao = projetar_meses({}, CUSTO_1000, 0.9, 13, ajustes={12: 500.0})
         self.assertEqual(projecao.total_projetado, 0.0)
         self.assertEqual(projecao.superados, [12])
+
+    def test_ajuste_em_mes_aberto_ja_liquidado_por_inteiro_nao_fica_marcado(self):
+        # 20/10/2026: mês em aberto com liquidado >= ajuste vira "Realizado" (nada a projetar), mas seguia marcado como
+        # ajustado e fora de `superados`, entrando no aviso "Projeção ajustada manualmente"
+        projecao = projetar_meses({8: 648.0}, CUSTO_1000, 0.9, 10, ajustes={8: 620.0, 11: 500.0})
+        self.assertEqual(projecao.tipos[7], "Realizado")
+        self.assertIsNone(projecao.projetado[7])
+        self.assertFalse(projecao.ajustado[7])
+        self.assertTrue(projecao.ajustado[10])  # os demais ajustes seguem valendo
+        self.assertEqual(projecao.superados, [8])
+        self.assertEqual(projecao.total_projetado, 900.0 + 900.0 + 500.0 + 900.0)  # set, out (metodologia), nov (ajuste), dez
 
     def test_metodologia_e_guardada_mesmo_com_ajuste(self):
         sem = projetar_meses({}, CUSTO_1000, 0.9, 10)

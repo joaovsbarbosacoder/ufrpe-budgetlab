@@ -66,6 +66,7 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from src.contratos_aditivos import aditivos_do_registro, custo_mensal
+from src.relatorio_necessidade_empenho import EXERCICIO_ENCERRADO
 
 # ------------------------------------------------------------------ fator de execução (regra)
 JANELA_MESES = 6
@@ -225,8 +226,8 @@ def projetar_meses(
     realizado: dict[int, float], custo: list[float], fator: float, mes_referencia: int,
     teto_mensal: float | None = None, ajustes: dict[int, float] | None = None, unidade: float | None = None,
 ) -> ProjecaoMensal:
-    """Grade Jan–Dez de uma NE (ver docstring do módulo). Exercício encerrado (`mes_referencia` ≥ 12,
-    mesma regra do relatório de Necessidade): nada é projetado. `teto_mensal` (opcional): o esperado do mês
+    """Grade Jan–Dez de uma NE (ver docstring do módulo). Exercício encerrado (`mes_referencia` ≥ 13,
+    `EXERCICIO_ENCERRADO`, mesma regra do relatório de Necessidade): nada é projetado. `teto_mensal` (opcional): o esperado do mês
     (custo × fator) não passa dele. `ajustes` (opcional): mês (1-12) → ESPERADO TOTAL do mês gravado pelo usuário
     (14/10/2026); substitui custo × fator e o teto, em qualquer mês a partir do primeiro em aberto — inclusive nos que
     a metodologia deixa vazios. O liquidado do mês continua descontado. Mês já FECHADO sem execução (`mes_sem_execucao`,
@@ -250,7 +251,7 @@ def projetar_meses(
     metodologias: list[float | None] = [None] * 12
     ajustados = [False] * 12
     limitado = False
-    if mes_referencia >= 12:
+    if mes_referencia >= EXERCICIO_ENCERRADO:
         return ProjecaoMensal(realizado_lista, projetado, cheio, tipos, superados=sorted(ajustes))
     superados = sorted(
         mes for mes in ajustes
@@ -297,13 +298,19 @@ def projetar_meses(
             # Mês (da extração em diante) já liquidado por inteiro (13/10/2026, ex.: contrato pago antecipado): nada
             # a projetar; fica como Realizado, igual aos meses anteriores, em vez de um "Projetado" de 0,00 que
             # escondia o liquidado na grade. A projeção pelo valor cheio (`cheio`) segue como antes.
+            if mes in ajustes:
+                # O ajuste não entrou na conta (20/10/2026): o mês vale o realizado, como em qualquer mês que fecha.
+                # Sem isto o mês seguia marcado como ajustado e fora de `superados`, e o aviso de ajuste listava um
+                # mês que a grade mostra como Realizado.
+                ajustados[mes - 1] = False
+                superados.append(mes)
             continue
         projetado[mes - 1] = max(0.0, esperado - ja)
         esperados[mes - 1] = esperado
         tipos[mes - 1] = tipo
     return ProjecaoMensal(
         realizado_lista, projetado, cheio if cheio_sem_ajuste is None else cheio_sem_ajuste, tipos, limitado, esperados,
-        ajustados, metodologias, superados,
+        ajustados, metodologias, sorted(superados),
     )
 
 
@@ -615,7 +622,7 @@ def montar_relatorio(
         # meses nulos (`custo_mensal`, `custo_mensal_bolsa`) e nenhum mês era projetado — a necessidade
         # saía 0 e o Resultado Orçamentário herdava esse zero. Agora fica nula ("—"), fora dos totais e
         # avisada; valor mensal zero continua zero. Exercício encerrado não projeta nada de qualquer forma.
-        if mes_referencia < 12 and all(_numero(valor) is None for valor in custo) and not any(projecao.ajustado):
+        if mes_referencia < EXERCICIO_ENCERRADO and all(_numero(valor) is None for valor in custo) and not any(projecao.ajustado):
             restante = projetado_execucao = projetado_valor_cheio = necessidade_execucao = None
         registros.append(
             {
@@ -702,8 +709,8 @@ def _avisos(relatorio: RelatorioProjecaoExecucao) -> list[str]:
         return f"{linha['ne_curta']}" + (f" ({rotulos.documento.lower()} {documento})" if pd.notna(documento) else "")
 
     avisos = []
-    if relatorio.mes_referencia >= 12:
-        avisos.append("Extração em dezembro ou depois: exercício encerrado, nada é projetado.")
+    if relatorio.mes_referencia >= EXERCICIO_ENCERRADO:
+        avisos.append("Extração em ano posterior ao exercício: exercício encerrado, nada é projetado.")
     if linhas.empty:
         return avisos
     sem_valor = linhas[linhas["necessidade_execucao"].isna()]
