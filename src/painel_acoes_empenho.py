@@ -1,5 +1,6 @@
 """Cruzamento entre Dotação Anual (por subdivisão, `src.dotacao_anual_analysis`) e
-Execução Anual (Empenhada, `src.execucao_anual`) — usado só por "Painel por Ação de
+Execução (Empenhada) — desde 20/10/2026 a Execução MENSAL, via `empenhada_da_execucao_mensal`
+(antes a Anual, que ficava defasada: a Mensal é a base atualizada com frequência) — usado só por "Painel por Ação de
 Governo" (`app_pages/painel_acoes.py`) para mostrar o valor atualmente empenhado ao
 lado de cada subdivisão de dotação.
 
@@ -38,6 +39,7 @@ from __future__ import annotations
 import pandas as pd
 
 from src.execucao_anual import agregar
+from src.tesouro_execucao_mensal import valor_empenhado_por_bloco
 
 #: dimensões usadas no cruzamento por subdivisão — mesmo código nas duas bases (Ação,
 #: PTRES, Plano Orçamentário, Grupo de Despesa, Resultado Primário, IDUSO). Chave =
@@ -66,6 +68,27 @@ def derivar_fonte_execucao(fonte_recursos_detalhada_codigo: pd.Series) -> pd.Ser
 
     codigos = fonte_recursos_detalhada_codigo.astype("string")
     return codigos.str.slice(1, 4)
+
+
+def empenhada_da_execucao_mensal(mensal_df: pd.DataFrame) -> pd.DataFrame:
+    """Adapta a Execução MENSAL (`src.importacao_execucao_mensal.carregar_atual()`) ao
+    formato que `anexar_empenhado_por_subdivisao` e `empenhado_total_por_acao` consomem
+    (colunas de dimensão + `ano` + `empenhada`). Desde 20/10/2026 (decisão do usuário) o
+    Painel lê a Mensal, base que ele atualiza com frequência, e não mais a Execução Anual.
+
+    O Empenhada mensal repete o mesmo valor em cada linha de NE Item do bloco; por isso a
+    soma passa por `valor_empenhado_por_bloco` (deduplicação por NE/Natureza/Subitem/mês)
+    — somar a base bruta multiplicaria o empenho pelo número de itens. Estornos
+    (negativos) são preservados. `ano` vem do mês de lançamento."""
+
+    por_bloco = valor_empenhado_por_bloco(mensal_df)
+    colunas = [*DIMENSOES_CRUZAMENTO.values(), _COLUNA_FONTE_EXECUCAO]
+    resultado = por_bloco[[*colunas, "empenhada"]].copy()
+    resultado["ano"] = por_bloco["ano_mes"] // 100
+    # `agregar` espera as três medidas; a Mensal só entra aqui pelo empenho.
+    resultado["liquidada"] = 0.0
+    resultado["paga"] = 0.0
+    return resultado
 
 
 def anexar_empenhado_por_subdivisao(
