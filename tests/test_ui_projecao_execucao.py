@@ -235,8 +235,13 @@ class TestMesesEditaveis(unittest.TestCase):
 
     def test_exercicio_encerrado_nao_edita(self):
         por_ne, sem_ne = necessidade_por_ne(pd.DataFrame([_linha()]), None, 2026)
-        encerrado = montar_relatorio(por_ne, sem_ne, None, 2026, 12)
+        encerrado = montar_relatorio(por_ne, sem_ne, None, 2026, 13)
         self.assertEqual(meses_editaveis(encerrado), [])
+
+    def test_extracao_de_dezembro_ainda_edita_dezembro(self):
+        por_ne, sem_ne = necessidade_por_ne(pd.DataFrame([_linha()]), None, 2026)
+        dezembro = montar_relatorio(por_ne, sem_ne, None, 2026, 12)
+        self.assertEqual(meses_editaveis(dezembro), [10, 11, 12])
 
 
 class TestHtml(unittest.TestCase):

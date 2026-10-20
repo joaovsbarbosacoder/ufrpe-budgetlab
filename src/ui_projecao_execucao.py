@@ -23,6 +23,7 @@ import pandas as pd
 import streamlit as st
 
 from src.design_tokens import BORDER, SURFACE_ALT, TEXT_FAINT, TEXT_MUTED, WARNING
+from src.relatorio_necessidade_empenho import EXERCICIO_ENCERRADO
 from src.projecao_ajustes import (
     ErroAjuste,
     ajustes_vigentes,
@@ -148,7 +149,7 @@ def meses_editaveis(relatorio: RelatorioProjecaoExecucao, indice: object | None 
     `relatorio.linhas`), entram antes também os meses já FECHADOS sem execução dessa NE (16/10/2026: fatura ainda não
     liquidada pode ser informada; ver `relatorio_projecao_execucao.mes_sem_execucao`)."""
 
-    if relatorio.mes_referencia >= 12:
+    if relatorio.mes_referencia >= EXERCICIO_ENCERRADO:
         return []
     abertos = list(range(max(relatorio.ultimo_fechado + 1, 1), 13))
     if indice is None:

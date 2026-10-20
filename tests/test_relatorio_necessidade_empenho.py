@@ -197,7 +197,8 @@ class TestProjecaoMensal(unittest.TestCase):
     def test_mes_referencia_do_exercicio(self):
         self.assertEqual(mes_referencia_do_exercicio(date(2026, 9, 30), 2026), 9)
         self.assertEqual(mes_referencia_do_exercicio(date(2025, 12, 31), 2026), 0)
-        self.assertEqual(mes_referencia_do_exercicio(date(2027, 1, 5), 2026), 12)  # encerrado
+        self.assertEqual(mes_referencia_do_exercicio(date(2027, 1, 5), 2026), 13)  # encerrado
+        self.assertEqual(mes_referencia_do_exercicio(date(2026, 12, 5), 2026), 12)  # dezembro ainda é projetado
 
     def test_primeiro_mes_projeta_despesa_mensal_menos_saldo(self):
         # caso real da NE 2026NE000088: despesa 927.298,47, saldo 887.964,05, de agosto a dezembro.
@@ -313,9 +314,17 @@ class TestGradeMensal(unittest.TestCase):
         self.assertTrue((relatorio.mensal["primeiro_mes_projecao"] == 10).all())
 
     def test_exercicio_encerrado_nao_projeta(self):
-        relatorio = _relatorio(_liquidacao_mensal(), mes_ref=12)
+        relatorio = _relatorio(_liquidacao_mensal(), mes_ref=13)
         self.assertTrue(relatorio.mensal[[f"p{m}" for m in range(1, 13)]].isna().all().all())
         self.assertEqual(relatorio.total_projetado, 0.0)
+
+    def test_extracao_de_dezembro_nao_encerra_o_exercicio(self):
+        # 20/10/2026: mes_ref 12 (extração em dezembro) valia como "encerrado" e zerava a projeção
+        encerrado = _relatorio(_liquidacao_mensal(), mes_ref=13)
+        dezembro = _relatorio(_liquidacao_mensal(), mes_ref=12)
+        self.assertEqual(encerrado.total_projetado, 0.0)
+        self.assertGreater(dezembro.total_projetado, 0.0)
+        self.assertTrue(dezembro.mensal["p12"].notna().any())
 
     def test_exercicio_futuro_projeta_o_ano_todo(self):
         relatorio = _relatorio(None, mes_ref=0)
@@ -424,7 +433,7 @@ class TestPdf(unittest.TestCase):
         self.assertTrue(gerar_pdf(relatorio, _contexto(origem_competencia=None)).startswith(b"%PDF"))
 
     def test_pdf_e_excel_nos_extremos_do_calendario(self):
-        for mes_ref in (0, 12):
+        for mes_ref in (0, 12, 13):
             relatorio = _relatorio(_liquidacao_mensal(), mes_ref=mes_ref)
             self.assertTrue(gerar_pdf(relatorio, _contexto()).startswith(b"%PDF"), mes_ref)
             self.assertTrue(gerar_xlsx(relatorio, _contexto()).startswith(b"PK"), mes_ref)
