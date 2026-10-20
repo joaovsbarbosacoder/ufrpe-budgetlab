@@ -502,6 +502,12 @@ isoladamente. Valor nulo (célula ausente na origem) aparece como "—"; valor
 zero aparece como `0` — os dois estados nunca são confundidos. O seletor de
 Ano marca o exercício em andamento com "⏳".
 
+**Coluna Empenhado (20/10/2026):** vem da **Execução Mensal** (manifesto atual), não mais da
+Execução Anual, que ficava defasada. O Empenhada mensal repete o valor em cada linha de NE Item,
+por isso a soma usa a deduplicação por bloco (`valor_empenhado_por_bloco`); estornos negativos são
+preservados e o total por Ação continua calculado direto da base, não somando as subdivisões
+(`src/painel_acoes_empenho.py`).
+
 ### Resultado Orçamentário
 
 A página **Resultado Orçamentário** (menu, logo depois de "Limite de Empenho") responde se a dotação

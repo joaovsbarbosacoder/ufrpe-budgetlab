@@ -10,6 +10,7 @@ import pandas as pd
 from src.painel_acoes_empenho import (
     anexar_empenhado_por_subdivisao,
     derivar_fonte_execucao,
+    empenhada_da_execucao_mensal,
     empenhado_total_por_acao,
 )
 
@@ -129,6 +130,66 @@ class TestEmpenhadoTotalPorAcao(unittest.TestCase):
         total = empenhado_total_por_acao(execucao, 2026)
         self.assertAlmostEqual(float(total["0181"]), 65_000.0)
         self.assertAlmostEqual(float(total["20TP"]), 999_999.0)
+
+
+def _linha_mensal(
+    ne_ccor="2026NE000001", subitem_cod="01", ne_item_cod="1", ano_mes=202610,
+    empenhada=40_000.0, tipo_linha="empenho", **dims,
+):
+    base = dict(
+        acao_cod="0181", ptres="137087", po_cod="0002", gnd_cod="3",
+        resultado_primario_cod="2", iduso_cod="0", fonte_cod="050",
+    )
+    base.update(dims)
+    return dict(
+        ne_ccor=ne_ccor, natureza_detalhada_cod="339030", subitem_cod=subitem_cod,
+        ne_item_cod=ne_item_cod, ano_mes=ano_mes, ano=ano_mes // 100,
+        tipo_linha=tipo_linha, empenhada=empenhada, liquidada=0.0, paga=0.0,
+        elemento_cod="30", elemento_desc="E", natureza_detalhada_desc="N",
+        gnd_desc="G", fonte_desc="F", fonte_recursos_detalhada_cod="1050000000",
+        fonte_recursos_detalhada_desc="FD", acao_desc="A", ugr_cod="1", ugr_desc="U",
+        po_desc="P", resultado_primario_desc="R", iduso_desc="I", **base,
+    )
+
+
+class TestEmpenhadaDaExecucaoMensal(unittest.TestCase):
+    """O Painel passou a ler a Execução Mensal (20/10/2026, aprovado pelo usuário): o
+    Empenhada mensal repete o mesmo valor em cada linha de NE Item do bloco — somar direto
+    multiplicaria o empenho pela quantidade de itens."""
+
+    def test_nao_multiplica_pelo_numero_de_itens_do_bloco(self):
+        mensal = pd.DataFrame([
+            _linha_mensal(ne_item_cod="1"),
+            _linha_mensal(ne_item_cod="2"),
+            _linha_mensal(ne_item_cod="3"),
+        ])
+        base = empenhada_da_execucao_mensal(mensal)
+        total = empenhado_total_por_acao(base, 2026)
+        self.assertAlmostEqual(float(total["0181"]), 40_000.0)  # não 120.000
+
+    def test_soma_meses_e_ignora_linhas_de_item_de_execucao(self):
+        mensal = pd.DataFrame([
+            _linha_mensal(ano_mes=202609, empenhada=10_000.0),
+            _linha_mensal(ano_mes=202610, empenhada=5_000.0),
+            _linha_mensal(ano_mes=202610, empenhada=999.0, tipo_linha="item_execucao", ne_item_cod="9"),
+        ])
+        total = empenhado_total_por_acao(empenhada_da_execucao_mensal(mensal), 2026)
+        self.assertAlmostEqual(float(total["0181"]), 15_000.0)
+
+    def test_preserva_estorno_negativo_e_filtra_ano(self):
+        mensal = pd.DataFrame([
+            _linha_mensal(ne_ccor="A", ano_mes=202610, empenhada=-2_000.0),
+            _linha_mensal(ne_ccor="B", ano_mes=202510, empenhada=7_000.0),
+        ])
+        base = empenhada_da_execucao_mensal(mensal)
+        self.assertAlmostEqual(float(empenhado_total_por_acao(base, 2026)["0181"]), -2_000.0)
+        self.assertAlmostEqual(float(empenhado_total_por_acao(base, 2025)["0181"]), 7_000.0)
+
+    def test_alimenta_o_cruzamento_por_subdivisao(self):
+        subdivisoes = pd.DataFrame([_linha_subdivisao()])
+        base = empenhada_da_execucao_mensal(pd.DataFrame([_linha_mensal(), _linha_mensal(ne_item_cod="2")]))
+        resultado = anexar_empenhado_por_subdivisao(subdivisoes, base, 2026)
+        self.assertAlmostEqual(float(resultado.iloc[0]["empenhada"]), 40_000.0)
 
 
 if __name__ == "__main__":
