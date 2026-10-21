@@ -578,7 +578,20 @@ atualizar a página e a reiniciar o app. Uma célula gravada que sumiu da Dotaç
 reimportação) é mantida no arquivo e avisada como "célula selecionada ausente da base". Arquivo ausente
 equivale a nada marcado; arquivo corrompido gera erro visível e a página não grava por cima.
 
-**Histórico do resultado (13/10/2026).** Seção "6. Histórico do resultado": uma fotografia por dia com o
+**Detalhamento por GND e Ação (20/10/2026; `src/resultado_orcamentario_detalhe.py`).** Seção "3. Detalhamento por GND e Ação",
+logo depois da Composição (as seções seguintes foram renumeradas, 4 a 8). Mostra dotação, executado, projetado a realizar,
+resultado, consumo e situação por GND e por Ação das células **marcadas**, com seletor "GND › Ação" / "Ação › GND"; cada grupo abre
+para o outro eixo. Só leitura: nada muda na conta dos cartões, e a soma das linhas é conferida com eles (diferença exibida).
+Onde cada valor cai: dotação na própria célula; executado das demais origens (DEA, Material de Consumo, Outros) pelo empenhado
+da célula; Contratos e Bolsas, calculados por NE, vão para a célula do empenho da NE — **NE com empenho em mais de uma célula é
+rateada pelo empenhado de cada uma** (regra aprovada em 20/10/2026, com aviso); se o rateio é impossível (empenhado nulo,
+negativo ou total zero) a NE fica em "Sem célula", também em aviso. A parte de NE em célula não marcada (a projeção é por NE e
+entra inteira) aparece em "Fora das células marcadas". Outras despesas previstas usam a célula cadastrada; sem célula, e
+contratos ATIVOS sem NE, ficam em "Sem célula" (dotação zero, por isso aparecem como déficit). O resultado de uma linha usa a mesma
+fórmula do bolsão, mas o saldo de um grupo não cobre o déficit de outro: o único resultado oficial é o total. Valor indisponível
+(projeção de Contratos/Bolsas sem a Liquidação por Competência, dotação nula) deixa nulo o grupo e o total, nunca zero.
+**"OK" nos avisos (20/10/2026).** Cada aviso das seções 3 (Detalhamento) e 6 (Avisos) tem um botão "OK" que o tira da página; "Mostrar N aviso(s) ocultado(s)" o devolve. O OK vale **só na sessão aberta** (nada é gravado em disco: persistência exigiria aprovação) e é pelo texto do aviso — se o fato muda (outro valor, outra NE), o texto muda e o aviso reaparece. O aviso de resultado sem as outras despesas desconsideradas (nos cartões) não tem OK, porque descreve uma escolha ativa.
+**Histórico do resultado (13/10/2026).** Seção "7. Histórico do resultado": uma fotografia por dia com o
 resultado, a dotação, o empenhado por origem, a necessidade por origem, o número de células marcadas e as
 extrações usadas, e, para cada par de fotografias consecutivas, a variação **por componente** da fórmula, com o
 efeito de cada um no resultado (dotação maior melhora; empenhado ou necessidade maiores pioram; os efeitos somam a
@@ -588,7 +601,7 @@ seleção de células salva** (a seleção em edição não vira história), arq
 menos uma célula marcada; a última do dia substitui a anterior e abrir sem mudança não reescreve. O histórico começa
 no primeiro registro: o passado não é reconstruível. Componente nulo (indisponível) em qualquer ponta gera variação
 nula, nunca zero; arquivo ilegível mostra erro e nunca é sobrescrito.
-**Considerar ou desconsiderar as outras despesas (15/10/2026).** Um interruptor no topo da seção 4, "Considerar as outras despesas
+**Considerar ou desconsiderar as outras despesas (15/10/2026).** Um interruptor no topo da seção 5, "Considerar as outras despesas
 previstas no resultado", vem **ligado**. Desligado, as despesas cadastradas continuam listadas e editáveis, mas saem da conta: a
 necessidade de "Outras despesas previstas" vira 0,00 e resultado, cartões e composição recalculam na hora; um aviso nos cartões
 ("Resultado SEM as outras despesas previstas") e a linha "— desconsideradas" na composição deixam isso à vista. A escolha vale só

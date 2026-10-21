@@ -30,6 +30,7 @@ Decisões de tela (08/10/2026):
 from __future__ import annotations
 
 import gc
+import hashlib
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -69,6 +70,7 @@ from src.resultado_orcamentario import (
     separar_ativos_sem_ne,
     soma_ou_nulo,
 )
+from src.resultado_orcamentario_detalhe import detalhar_por_gnd_acao
 from src.resultado_orcamentario_cadastro import ArquivoCorrompido, CelulaChave, DespesaManual
 from src import resultado_orcamentario_historico as historico_ro
 from src.relatorio_projecao_execucao import RelatorioProjecaoExecucao
@@ -82,12 +84,15 @@ from src.sobra_empenho import (
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_cadastro import formatar_brl
 from src.ui_resultado_orcamentario import (
+    AGRUPAR_ACAO,
+    AGRUPAR_GND,
     ESTILO_CELULAS,
     LinhaComposicao,
     html_bloco,
     html_cabecalho_acao,
     html_cartoes,
     html_celula,
+    html_detalhe_gnd_acao,
     html_dotacao_acao,
     html_rodape_totais,
 )
@@ -219,6 +224,36 @@ def _rotulo_celula(chave: CelulaChave | None) -> str:
         return "—"
     iduso, rp, acao, ptres, po, gnd, fonte = (("—" if p is None else p) for p in chave)
     return f"{acao} · PTRES {ptres} · PO {po} · GND {gnd} · Fonte {fonte} · IDUSO {iduso} · RP {rp}"
+
+
+def _avisos_com_ok(avisos: list[str], escopo: str, exercicio: int, destaque: bool = True) -> None:
+    """Mostra os avisos, cada um com um "OK" que o tira da página (pedido de 20/10/2026).
+
+    O OK vale só na sessão aberta (`st.session_state`; nada é gravado em disco) e é pelo TEXTO do aviso: se o fato muda
+    (outro valor, outra NE), o texto muda e o aviso volta. "Mostrar avisos ocultados" desfaz."""
+
+    chave_ocultos = f"ro_avisos_ok_{exercicio}"
+    ocultos: set[str] = st.session_state.setdefault(chave_ocultos, set())
+    visiveis = [a for a in dict.fromkeys(avisos) if a not in ocultos]
+    for aviso in visiveis:
+        coluna_texto, coluna_ok = st.columns([12, 1], vertical_alignment="center")
+        with coluna_texto:
+            if aviso.startswith("Nenhuma célula selecionada"):
+                st.info(_sem_latex(aviso))
+            elif destaque:
+                st.warning(_sem_latex(aviso))
+            else:
+                st.caption(_sem_latex(aviso))
+        digest = hashlib.sha1(f"{escopo}|{aviso}".encode("utf-8")).hexdigest()[:12]
+        if coluna_ok.button("OK", key=f"ro_aviso_ok_{exercicio}_{digest}", help="Dar ciência e ocultar este aviso"):
+            ocultos.add(aviso)
+            st.rerun()
+    escondidos = [a for a in dict.fromkeys(avisos) if a in ocultos]
+    if escondidos and st.button(
+        f"Mostrar {len(escondidos)} aviso(s) ocultado(s)", key=f"ro_aviso_mostrar_{exercicio}_{escopo}", type="tertiary",
+    ):
+        ocultos.difference_update(escondidos)
+        st.rerun()
 
 
 def _mensagem(texto: str) -> None:
@@ -641,13 +676,19 @@ area_cartoes = st.container()
 st.subheader("2. Composição")
 st.caption("Clique em uma linha para ver o detalhe por NE ou por despesa.")
 area_composicao = st.container()
+st.subheader("3. Detalhamento por GND e Ação")
+st.caption(
+    "Dotação, executado, projetado a realizar e resultado das células marcadas, por Grupo de Despesa (GND) e Ação. "
+    "Clique em um grupo para abrir."
+)
+area_detalhe = st.container()
 
 # --------------------------------------------------------------- Células
 # Layout do protótipo aprovado em 08/10/2026 (`docs/superpowers/specs/2026-10-08-resultado-orcamentario-celulas-mockup.html`):
 # células agrupadas por Ação, uma caixa de marcar por célula, "Marcar todas" por Ação, busca, filtro de
 # selecionadas e rodapé fixo com os totais e "Salvar seleção". Substitui a tabela editável, que
 # parecia uma planilha e mostrava os valores fora do formato brasileiro.
-st.subheader("3. Células que fazem frente às despesas")
+st.subheader("4. Células que fazem frente às despesas")
 st.caption(
     'Marque as células da Dotação Anual que entram como recurso (abra "Ver células" em cada ação). As ações com '
     'célula marcada ficam destacadas. A seleção fica gravada por exercício ("Salvar seleção").'
@@ -809,7 +850,7 @@ with st.container(border=True, key="ro_rodape_celulas"):
                 st.caption("Nenhuma seleção gravada para este exercício.")
 
 # --------------------------------------------------------------- Outras despesas previstas
-st.subheader(f"4. {OUTRAS_DESPESAS}")
+st.subheader(f"5. {OUTRAS_DESPESAS}")
 st.caption(
     "Despesas que não estão em Contratos nem em Bolsas e ainda vão ser empenhadas no exercício. "
     "A célula é só informativa: não muda a conta."
@@ -940,7 +981,7 @@ with area_cartoes:
             _sem_latex(
                 f"Resultado SEM {resultado.outras_desconsideradas_qtd} de {len(despesas)} outras despesas previstas "
                 f"({formatar_brl(resultado.outras_desconsideradas_valor)}): estão desconsideradas. Marque 'Considerar' em "
-                "'Outras despesas previstas' (seção 4) para voltar a contá-las."
+                "'Outras despesas previstas' (seção 5) para voltar a contá-las."
             )
         )
     _render_cartoes(resultado, len(marcadas), len(celulas))
@@ -951,20 +992,52 @@ with area_composicao:
     _render_composicao(
         resultado, linhas_contratos, linhas_bolsas, despesas, ativos_sem_ne,
     )
+with area_detalhe:
+    # o controle segmentado do Streamlit não destaca a opção ativa no tema do projeto: marca-a com a cor de destaque
+    st.html(
+        f"<style>.st-key-ro_detalhe_agrupar button[aria-checked='true']{{background:{dt.ACCENT} !important;"
+        f"color:#fff !important;border-color:{dt.ACCENT} !important}}"
+        f".st-key-ro_detalhe_agrupar button[aria-checked='true'] *{{color:#fff !important}}</style>"
+    )
+    _col_modo, _col_abrir, _col_info = st.columns([2, 2, 3], vertical_alignment="center")
+    with _col_modo:
+        _agrupar = st.segmented_control(
+            "Agrupar por", [AGRUPAR_GND, AGRUPAR_ACAO], default=AGRUPAR_GND, selection_mode="single",
+            format_func=lambda v: "GND › Ação" if v == AGRUPAR_GND else "Ação › GND",
+            key="ro_detalhe_agrupar", label_visibility="collapsed",
+        ) or AGRUPAR_GND
+    with _col_abrir:
+        _c1, _c2 = st.columns(2)
+        if _c1.button("Expandir tudo", key="ro_detalhe_expandir", type="tertiary"):
+            st.session_state["ro_detalhe_abrir"] = True
+        if _c2.button("Recolher tudo", key="ro_detalhe_recolher", type="tertiary"):
+            st.session_state["ro_detalhe_abrir"] = False
+    with _col_info:
+        st.caption('Só as células marcadas na seção "Células" entram.')
+    detalhe_gnd_acao = detalhar_por_gnd_acao(resultado, celulas, empenhado, selecao_atual, despesas, ativos_sem_ne)
+    _total_detalhe = (
+        detalhe_gnd_acao.dotacao, detalhe_gnd_acao.executado, detalhe_gnd_acao.projetado, detalhe_gnd_acao.resultado,
+    )
+    st.html(
+        html_detalhe_gnd_acao(
+            detalhe_gnd_acao.linhas, _total_detalhe, _agrupar,
+            ("✓ A soma das linhas confere com os cartões" if detalhe_gnd_acao.fecha
+             else "✗ A soma das linhas não fecha com os cartões")
+            + f" · diferença {formatar_brl(round(detalhe_gnd_acao.diferenca_conferencia, 2) + 0.0)}",
+            "ok" if detalhe_gnd_acao.fecha else "erro", st.session_state.get("ro_detalhe_abrir"),
+        )
+    )
+    _avisos_com_ok(detalhe_gnd_acao.avisos, "detalhe", exercicio)
 
 # --------------------------------------------------------------- Avisos
-st.subheader("5. Avisos")
+st.subheader("6. Avisos")
 # Avisos da projeção (fator baixo, meses em aberto…) ficam aqui, como no protótipo (08/10/2026).
 avisos_projecao = [
     f"Projeção de {origem}: {aviso}"
     for origem, lista in ((ORIGEM_CONTRATOS, avisos_projecao_contratos), (ORIGEM_BOLSAS, avisos_projecao_bolsas))
     for aviso in lista
 ]
-for aviso in [*resultado.avisos, *avisos_extras, *avisos_projecao]:
-    if aviso.startswith("Nenhuma célula selecionada"):
-        st.info(_sem_latex(aviso))
-    else:
-        st.warning(_sem_latex(aviso))
+_avisos_com_ok([*resultado.avisos, *avisos_extras, *avisos_projecao], "geral", exercicio)
 for origem, sem_ne in ((ORIGEM_CONTRATOS, sem_ne_contratos), (ORIGEM_BOLSAS, sem_ne_bolsas)):
     if sem_ne is not None and len(sem_ne):
         colunas = [
@@ -982,7 +1055,7 @@ for origem, sem_ne in ((ORIGEM_CONTRATOS, sem_ne_contratos), (ORIGEM_BOLSAS, sem
                 },
             )
 # --------------------------------------------------------------- Histórico
-st.subheader("6. Histórico do resultado")
+st.subheader("7. Histórico do resultado")
 st.caption(
     "Uma fotografia por dia (a última do dia vale), gravada ao abrir a página com a seleção salva. Só existe a partir "
     "do primeiro registro: o passado anterior não é reconstruível. A variação mostra quanto cada componente da "
@@ -1065,7 +1138,7 @@ else:
             )
 
 # --------------------------------------------------------------- Sobra prevista de empenho (15/10/2026)
-st.subheader("7. Sobra prevista de empenho")
+st.subheader("8. Sobra prevista de empenho")
 if _tabela_sobra is None:
     st.caption("Indisponível: a projeção pela execução de Contratos e Bolsas não pôde ser montada (ver os avisos).")
 else:

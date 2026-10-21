@@ -71,10 +71,10 @@ def test_pagina_abre_sem_excecao(diretorio: Path) -> None:
 
 
 def test_secao_sobra_prevista_de_empenho_com_botao_de_download(diretorio: Path) -> None:
-    """15/10/2026: a seção 7 mostra o resumo da sobra prevista e oferece o Excel; independe das células marcadas."""
+    """15/10/2026: a seção 8 mostra o resumo da sobra prevista e oferece o Excel; independe das células marcadas."""
 
     app = _abrir()
-    assert any(sub.value == "7. Sobra prevista de empenho" for sub in app.subheader)
+    assert any(sub.value == "8. Sobra prevista de empenho" for sub in app.subheader)
     textos = _textos(app)
     assert "NE(s) com sobra prevista" in textos or "Indisponível: a projeção pela execução" in textos
     if "Indisponível: a projeção pela execução" not in textos:
@@ -414,3 +414,20 @@ def test_com_todas_marcadas_a_conta_e_a_de_antes(diretorio: Path) -> None:
     _incluir_despesa(app, 100.0)
     exercicio = _com_selecao_salva(app)
     assert _foto_do_dia(diretorio, exercicio)["necessidade"][OUTRAS] == 100.0
+
+
+def test_ok_no_aviso_o_oculta_e_mostrar_ocultados_o_devolve(diretorio: Path) -> None:
+    """20/10/2026: cada aviso tem um "OK" que o tira da página (só na sessão; nada é gravado) e um botão devolve."""
+
+    app = _abrir()
+    oks = [b for b in app.button if b.key and b.key.startswith("ro_aviso_ok_")]
+    if not oks:
+        pytest.skip("Nenhum aviso nesta base")
+    antes = len(oks)
+    app.button(key=oks[0].key).click().run()
+    assert not app.exception, [e.value for e in app.exception]
+    assert len([b for b in app.button if b.key and b.key.startswith("ro_aviso_ok_")]) == antes - 1
+    mostrar = [b for b in app.button if b.key and b.key.startswith("ro_aviso_mostrar_")]
+    assert mostrar and "1 aviso(s) ocultado(s)" in mostrar[0].label
+    app.button(key=mostrar[0].key).click().run()
+    assert len([b for b in app.button if b.key and b.key.startswith("ro_aviso_ok_")]) == antes

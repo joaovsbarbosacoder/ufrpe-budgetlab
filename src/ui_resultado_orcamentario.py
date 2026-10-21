@@ -270,3 +270,134 @@ def html_bloco(
         partes.append(f'<div class="ro-check {rodape_classe}"><span>{_txt(rodape)}</span></div>')
     partes.append("</div>")
     return ESTILO + "".join(partes)
+
+
+# ------------------------------------------------------------------ detalhamento por GND e Ação
+ESTILO_DETALHE = f"""
+<style>
+.ro-det{{background:{dt.SURFACE};border:1px solid {dt.BORDER};border-radius:{dt.RADIUS};overflow:hidden;
+  font-family:{dt.FONT_BODY};color:{dt.TEXT};font-size:14px}}
+.ro-det .lin{{display:grid;grid-template-columns:minmax(230px,2.6fr) repeat(4,minmax(110px,1fr)) 120px 92px;gap:10px;
+  align-items:center;padding:9px 16px;border-bottom:1px solid #E7EEF6}}
+.ro-det .cab{{background:{dt.SURFACE_ALT};color:{dt.TEXT_MUTED};font-weight:600;font-size:13px}}
+.ro-det .num{{{dt.FONT_MONO_NUM}text-align:right;white-space:nowrap}}
+.ro-det details>summary{{list-style:none;cursor:pointer;font-weight:600}}
+.ro-det details>summary::-webkit-details-marker{{display:none}}
+.ro-det details>summary:hover{{background:{dt.SURFACE_ALT}}}
+.ro-det .chev{{display:inline-block;width:18px;color:{dt.TEXT_FAINT};transition:transform .15s}}
+.ro-det details[open]>summary .chev{{transform:rotate(90deg)}}
+.ro-det details>summary .lin{{background:#FAFCFE}}
+.ro-det .mini{{display:inline-block;width:56px;height:6px;border-radius:3px;background:{dt.SURFACE_ALT};position:relative;
+  overflow:hidden;vertical-align:middle;margin-right:8px}}
+.ro-det .mini i{{position:absolute;left:0;top:0;bottom:0;background:{dt.ACCENT}}}
+.ro-det .mini i.acima{{background:{dt.NEGATIVE}}}
+.ro-det .cons{{white-space:nowrap;text-align:left}}
+.ro-det .sub{{font-weight:400;font-size:13.5px;padding-left:46px}}
+.ro-det .extra{{font-style:italic;color:{dt.TEXT_MUTED}}}
+.ro-det .tot{{font-weight:700;border-top:2px solid {dt.BORDER};border-bottom:0}}
+.ro-det .cod{{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:{dt.TEXT_MUTED};margin-right:8px}}
+.ro-det .pos{{color:{dt.POSITIVE}}} .ro-det .neg{{color:{dt.NEGATIVE}}}
+.ro-det .tag{{font-size:11.5px;font-weight:600;border-radius:6px;padding:1px 8px;text-align:center}}
+.ro-det .tag.pos{{background:{dt.POSITIVE_SOFT}}} .ro-det .tag.neg{{background:{dt.NEGATIVE_SOFT}}}
+.ro-det .tag.neu{{background:{dt.SURFACE_ALT};color:{dt.TEXT_MUTED}}}
+.ro-det .vazio{{padding:12px 16px;color:{dt.TEXT_FAINT}}}
+@media(max-width:820px){{.ro-det{{overflow-x:auto}}.ro-det .lin{{min-width:780px}}}}
+</style>
+"""
+
+AGRUPAR_GND = "gnd"
+AGRUPAR_ACAO = "acao"
+
+
+def _soma(serie: pd.Series) -> float | None:
+    """Soma que mantém nulo (nulo não vira zero); série vazia = 0."""
+
+    valores = serie.astype("float64")
+    return None if valores.isna().any() else float(valores.sum())
+
+
+def _resultado_do(dotacao: float | None, executado: float | None, projetado: float | None) -> float | None:
+    if dotacao is None or executado is None or projetado is None:
+        return None
+    return dotacao - executado - projetado
+
+
+def _linha_detalhe(
+    rotulo: str, dotacao: float | None, executado: float | None, projetado: float | None, resultado: float | None,
+    classe: str = "", prefixo: str = "", cod: str = "",
+) -> str:
+    dotacao, executado, projetado, resultado = (
+        None if v is None or pd.isna(v) else float(v) for v in (dotacao, executado, projetado, resultado)
+    )
+    sinal = "" if resultado is None or resultado == 0 else (" pos" if resultado > 0 else " neg")
+    classe_sit, selo = situacao_resultado(resultado)
+    consumo = percentual(
+        None if executado is None or projetado is None else executado + projetado, dotacao
+    )
+    codigo = f'<span class="cod">{_txt(cod)}</span>' if cod else ""
+    barra = ""
+    if dotacao and executado is not None and projetado is not None and dotacao > 0:
+        usado = (executado + projetado) / dotacao * 100
+        barra = f'<span class="mini"><i class="{"acima" if usado > 100 else ""}" style="width:{min(usado, 100):.1f}%"></i></span>'
+    return (
+        f'<div class="lin {classe}"><span>{prefixo}{codigo}{_txt(rotulo)}</span>'
+        f'<span class="num">{brl(dotacao)}</span><span class="num">{brl(executado)}</span>'
+        f'<span class="num">{brl(projetado)}</span><span class="num{sinal}">{brl(resultado)}</span>'
+        f'<span class="cons">{barra}{_txt(consumo)}</span><span class="tag {classe_sit}">{_txt(selo)}</span></div>'
+    )
+
+
+def _rotulos(registro: pd.Series, chave: str) -> tuple[str, str]:
+    """`(código, descrição)` do GND ou da Ação do registro; descrição ausente fica em branco."""
+
+    codigo, descricao = (
+        (registro["gnd"], registro["gnd_descricao"]) if chave == AGRUPAR_GND else (registro["acao"], registro["acao_descricao"])
+    )
+    rotulo = "GND " + str(codigo) if chave == AGRUPAR_GND else str(codigo)
+    return rotulo, "" if descricao is None or pd.isna(descricao) else f"— {descricao}"
+
+
+def html_detalhe_gnd_acao(
+    linhas: pd.DataFrame, total: tuple[float | None, float | None, float | None, float | None],
+    agrupar: str = AGRUPAR_GND, rodape: str = "", rodape_classe: str = "info", abrir: bool | None = None,
+) -> str:
+    """Tabela do detalhamento (`DetalheGndAcao.linhas`): grupos que abrem para o outro eixo, linhas "Fora das células
+    marcadas" e "Sem célula" quando existirem, e o total do bolsão. `total` = dotação, executado, projetado e resultado.
+    `abrir`: `True` abre todos os grupos, `False` fecha todos, `None` (padrão) abre só o primeiro."""
+
+    cabecalho = (
+        '<div class="lin cab"><span>Grupo</span><span class="num">Dotação atualizada</span>'
+        '<span class="num">Executado</span><span class="num">Projetado a realizar</span><span class="num">Resultado</span>'
+        '<span class="num">Consumo</span><span>Situação</span></div>'
+    )
+    celulas = linhas.loc[linhas["tipo"] == "celula"]
+    partes = [ESTILO_DETALHE, f'<div class="ro-det">{cabecalho}']
+    if celulas.empty and not len(linhas):
+        partes.append('<p class="vazio">Marque ao menos uma célula para ver o detalhamento.</p>')
+    outro = AGRUPAR_ACAO if agrupar == AGRUPAR_GND else AGRUPAR_GND
+    eixo = "gnd" if agrupar == AGRUPAR_GND else "acao"
+    for posicao, (_, grupo) in enumerate(celulas.groupby(eixo, sort=True)):
+        codigo, descricao = _rotulos(grupo.iloc[0], agrupar)
+        dot, exe, prj = _soma(grupo["dotacao"]), _soma(grupo["executado"]), _soma(grupo["projetado"])
+        topo = _linha_detalhe(
+            descricao.removeprefix("— "), dot, exe, prj, _resultado_do(dot, exe, prj),
+            prefixo='<span class="chev">▶</span>', cod=codigo,
+        )
+        internos = []
+        for _, r in grupo.sort_values("acao" if outro == AGRUPAR_ACAO else "gnd").iterrows():
+            cod_i, desc_i = _rotulos(r, outro)
+            internos.append(_linha_detalhe(
+                desc_i.removeprefix("— "), r["dotacao"], r["executado"], r["projetado"], r["resultado"], "sub", cod=cod_i,
+            ))
+        # <summary> precisa ser o primeiro filho: a linha do grupo vira o resumo
+        aberto = " open" if (abrir is True or (abrir is None and posicao == 0)) else ""
+        partes.append(f"<details{aberto}><summary>{topo}</summary>{''.join(internos)}</details>")
+    for tipo, rotulo in (("fora_marcadas", "Fora das células marcadas (parte de NE em célula não marcada)"),
+                         ("sem_celula", "Sem célula (outras despesas previstas e contratos ativos sem NE)")):
+        for _, r in linhas.loc[linhas["tipo"] == tipo].iterrows():
+            partes.append(_linha_detalhe(rotulo, r["dotacao"], r["executado"], r["projetado"], r["resultado"], "extra"))
+    partes.append(_linha_detalhe("Total do bolsão", *total, classe="tot"))
+    if rodape:
+        partes.append(f'<div class="ro-check {rodape_classe}" style="padding:8px 16px"><span>{_txt(rodape)}</span></div>')
+    partes.append("</div>")
+    return ESTILO + "".join(partes)
