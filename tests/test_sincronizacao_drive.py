@@ -353,3 +353,69 @@ def test_duas_sessoes_ao_mesmo_tempo_enviam_uma_unica_versao(drive, a):
 
     assert len(drive.arquivos) == 1
     assert sorted(acoes) == [ACAO_EM_DIA] * 3 + [ACAO_ENVIADO]
+
+
+# ------------------------------------------------------------------------ envio imediato (fim de cada execução)
+def test_alteracao_e_enviada_na_hora_sem_esperar_o_intervalo(drive, a):
+    a.gravar("resultado_orcamentario/2026/despesas_manuais.json", '{"despesas": [1]}')
+    sessao: dict = {}
+    relogio = iter([100.0, 101.0, 102.0, 103.0]).__next__
+    sd.executar_ciclo_na_sessao(sessao, lambda: drive, a.base, a.estado, relogio=relogio)
+    assert len(drive.arquivos) == 1
+
+    # 1 s depois (bem dentro do intervalo do ciclo), o usuário inclui uma despesa
+    a.gravar("resultado_orcamentario/2026/despesas_manuais.json", '{"despesas": [1, 2]}')
+    resultado = sd.enviar_alteracoes_pendentes(sessao, lambda: drive, a.base, a.estado, relogio=relogio)
+    assert resultado.acao == ACAO_ENVIADO and len(drive.arquivos) == 2
+
+    # sem nova mudança: nada de rede
+    chamadas = []
+    original = drive.listar
+    drive.listar = lambda: chamadas.append(1) or original()
+    assert sd.enviar_alteracoes_pendentes(sessao, lambda: drive, a.base, a.estado, relogio=relogio) is None
+    assert chamadas == []
+
+
+def test_o_outro_dispositivo_recebe_a_despesa_enviada_na_hora(drive, a, b):
+    a.gravar("resultado_orcamentario/2026/despesas_manuais.json", '{"despesas": [1]}')
+    a.sincronizar(drive, 0)
+    b.sincronizar(drive, 1)
+    sessao: dict = {}
+    a.gravar("resultado_orcamentario/2026/despesas_manuais.json", '{"despesas": [1, 2]}')
+    sd.enviar_alteracoes_pendentes(sessao, lambda: drive, a.base, a.estado, relogio=lambda: 5.0)
+
+    assert b.sincronizar(drive, 2).acao == ACAO_TRAZIDO
+    assert b.ler("resultado_orcamentario/2026/despesas_manuais.json") == '{"despesas": [1, 2]}'
+
+
+def test_envio_imediato_nao_repete_a_chamada_a_cada_interacao_depois_de_conflito_ou_erro(drive, a):
+    a.gravar("preferencias/ui.json", '{"p": 1}')
+    drive.falhar = True
+    sessao: dict = {}
+    chamadas = []
+    original = drive.listar
+
+    def listar():
+        chamadas.append(1)
+        return original()
+
+    drive.listar = listar
+    tempo = iter([10.0, 11.0, 12.0, 80.0]).__next__
+    for _ in range(3):  # 3 interações em 2 s: só a primeira vai à rede
+        resultado = sd.enviar_alteracoes_pendentes(sessao, lambda: drive, a.base, a.estado, relogio=tempo)
+    assert resultado.acao == ACAO_ERRO and len(chamadas) == 1
+    drive.falhar = False
+    # passado o intervalo, tenta de novo e envia
+    assert sd.enviar_alteracoes_pendentes(sessao, lambda: drive, a.base, a.estado, relogio=tempo).acao == ACAO_ENVIADO
+
+
+def test_envio_imediato_respeita_desligado_e_nao_conectado(drive, a, monkeypatch):
+    a.gravar("preferencias/ui.json", "{}")
+    assert sd.enviar_alteracoes_pendentes({}, lambda: None, a.base, a.estado, relogio=lambda: 1.0) is None
+    estado = sd.carregar_estado(a.estado)
+    estado.automatica = False
+    sd.salvar_estado(estado, a.estado)
+    assert sd.enviar_alteracoes_pendentes({}, lambda: drive, a.base, a.estado, relogio=lambda: 1.0) is None
+    monkeypatch.setenv(sd.VARIAVEL_AMBIENTE, "desligado")
+    assert sd.enviar_alteracoes_pendentes({}, lambda: drive, a.base, a.estado, relogio=lambda: 1.0) is None
+    assert drive.arquivos == {}

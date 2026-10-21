@@ -9,7 +9,7 @@ pedir senha); o pacote nunca leva `token.json` nem `credentials.json`.
 Regras (decisões do usuário em 21/10/2026):
   * Cada envio é um arquivo NOVO (`decisoes-AAAAMMDD-HHMMSS-ffffff-<dispositivo>.zip`): nada é sobrescrito. Ficam as
     `LIMITE_VERSOES` mais recentes; as mais antigas são apagadas depois de um envio bem-sucedido.
-  * Ao iniciar (e de tempos em tempos, só se houver alteração), o sistema compara a versão mais nova do Drive com a
+  * Ao iniciar, e ao fim de cada execução do app se houve alteração (sem esperar intervalo), o sistema compara a versão mais nova do Drive com a
     última sincronizada neste dispositivo:
       - Drive igual à última sincronizada e nada mudou aqui  -> em dia;
       - Drive igual e algo mudou aqui                          -> envia uma versão nova;
@@ -402,6 +402,45 @@ def executar_ciclo_na_sessao(
     except ErroSincronizacao as erro:
         resultado = ResultadoSincronizacao(ACAO_ERRO, str(erro))
     except Exception as erro:  # noqa: BLE001 — a sincronização nunca pode derrubar o app; a página mostra a mensagem
+        resultado = ResultadoSincronizacao(ACAO_ERRO, f"Falha inesperada na sincronização: {type(erro).__name__}: {erro}")
+    sessao["sinc_resultado"] = resultado
+    return resultado
+
+
+def enviar_alteracoes_pendentes(
+    sessao: MutableMapping,
+    criar_armazenamento,
+    base: Path = BASE_PADRAO,
+    diretorio_estado: Path = DIRETORIO_ESTADO,
+    relogio=time.monotonic,
+) -> ResultadoSincronizacao | None:
+    """Chamada ao FIM de cada execução do app: se as decisões mudaram desde a última sincronização, sincroniza já, sem
+    esperar o `INTERVALO_CICLO` (pedido de 21/10/2026: a despesa incluída num dispositivo precisa estar no Drive quando o
+    usuário trocar de dispositivo, e não só um minuto depois). Comparar a impressão digital é local e barato; sem mudança
+    não há rede. Depois de um conflito ou erro, só tenta de novo passado o intervalo, para não repetir a chamada a cada
+    interação. Dispositivo não conectado ou sincronização desligada: não faz nada."""
+
+    if os.environ.get(VARIAVEL_AMBIENTE, "").strip().lower() == "desligado":
+        return None
+    try:
+        estado = carregar_estado(diretorio_estado)
+        if not estado.automatica or impressao_digital(base) == (estado.ultimo_hash or ""):
+            return None
+        agora_relogio = relogio()
+        anterior = sessao.get("sinc_resultado")
+        if (
+            anterior is not None and anterior.acao in (ACAO_CONFLITO, ACAO_ERRO)
+            and agora_relogio - sessao.get("sinc_ultimo_ciclo", float("-inf")) < INTERVALO_CICLO
+        ):
+            return anterior
+        armazenamento = criar_armazenamento()
+        if armazenamento is None:
+            return None
+        sessao["sinc_ultimo_ciclo"] = agora_relogio
+        resultado = sincronizar(armazenamento, base, diretorio_estado)
+    except ErroSincronizacao as erro:
+        resultado = ResultadoSincronizacao(ACAO_ERRO, str(erro))
+    except Exception as erro:  # noqa: BLE001 — a sincronização nunca pode derrubar o app
         resultado = ResultadoSincronizacao(ACAO_ERRO, f"Falha inesperada na sincronização: {type(erro).__name__}: {erro}")
     sessao["sinc_resultado"] = resultado
     return resultado
