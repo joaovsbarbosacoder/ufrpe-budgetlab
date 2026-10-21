@@ -226,33 +226,38 @@ def _rotulo_celula(chave: CelulaChave | None) -> str:
     return f"{acao} · PTRES {ptres} · PO {po} · GND {gnd} · Fonte {fonte} · IDUSO {iduso} · RP {rp}"
 
 
-def _avisos_com_ok(avisos: list[str], escopo: str, exercicio: int, destaque: bool = True) -> None:
+def _avisos_com_ok(avisos: list[str], escopo: str, exercicio: int) -> None:
     """Mostra os avisos, cada um com um "OK" que o tira da página (pedido de 20/10/2026).
 
-    O OK vale só na sessão aberta (`st.session_state`; nada é gravado em disco) e é pelo TEXTO do aviso: se o fato muda
-    (outro valor, outra NE), o texto muda e o aviso volta. "Mostrar avisos ocultados" desfaz."""
+    O OK é gravado por exercício (`avisos_ok.json`, persistência aprovada em 20/10/2026) e vale pelo TEXTO do aviso: se o
+    fato muda (outro valor, outra NE), o texto muda e o aviso volta. "Mostrar avisos ocultados" desfaz. Arquivo ilegível:
+    erro visível, nenhum aviso é ocultado e os botões não gravam por cima."""
 
-    chave_ocultos = f"ro_avisos_ok_{exercicio}"
-    ocultos: set[str] = st.session_state.setdefault(chave_ocultos, set())
-    visiveis = [a for a in dict.fromkeys(avisos) if a not in ocultos]
-    for aviso in visiveis:
+    try:
+        ocultos = cadastro.carregar_avisos_ok(exercicio, diretorio=cadastro.DIRETORIO_PADRAO)
+        legivel = True
+    except ArquivoCorrompido as erro:
+        ocultos, legivel = set(), False
+        st.error(f"{erro}. Os OK dos avisos não puderam ser lidos; corrija ou restaure o arquivo — a página não grava por cima.")
+    unicos = list(dict.fromkeys(avisos))
+    for aviso in [a for a in unicos if a not in ocultos]:
         coluna_texto, coluna_ok = st.columns([12, 1], vertical_alignment="center")
         with coluna_texto:
             if aviso.startswith("Nenhuma célula selecionada"):
                 st.info(_sem_latex(aviso))
-            elif destaque:
-                st.warning(_sem_latex(aviso))
             else:
-                st.caption(_sem_latex(aviso))
+                st.warning(_sem_latex(aviso))
         digest = hashlib.sha1(f"{escopo}|{aviso}".encode("utf-8")).hexdigest()[:12]
-        if coluna_ok.button("OK", key=f"ro_aviso_ok_{exercicio}_{digest}", help="Dar ciência e ocultar este aviso"):
-            ocultos.add(aviso)
+        if coluna_ok.button(
+            "OK", key=f"ro_aviso_ok_{exercicio}_{digest}", help="Dar ciência e ocultar este aviso", disabled=not legivel,
+        ):
+            cadastro.salvar_avisos_ok(exercicio, ocultos | {aviso}, diretorio=cadastro.DIRETORIO_PADRAO)
             st.rerun()
-    escondidos = [a for a in dict.fromkeys(avisos) if a in ocultos]
+    escondidos = [a for a in unicos if a in ocultos]
     if escondidos and st.button(
         f"Mostrar {len(escondidos)} aviso(s) ocultado(s)", key=f"ro_aviso_mostrar_{exercicio}_{escopo}", type="tertiary",
     ):
-        ocultos.difference_update(escondidos)
+        cadastro.salvar_avisos_ok(exercicio, ocultos - set(escondidos), diretorio=cadastro.DIRETORIO_PADRAO)
         st.rerun()
 
 

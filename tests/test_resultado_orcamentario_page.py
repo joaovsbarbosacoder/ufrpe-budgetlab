@@ -416,18 +416,26 @@ def test_com_todas_marcadas_a_conta_e_a_de_antes(diretorio: Path) -> None:
     assert _foto_do_dia(diretorio, exercicio)["necessidade"][OUTRAS] == 100.0
 
 
-def test_ok_no_aviso_o_oculta_e_mostrar_ocultados_o_devolve(diretorio: Path) -> None:
-    """20/10/2026: cada aviso tem um "OK" que o tira da página (só na sessão; nada é gravado) e um botão devolve."""
+def test_ok_no_aviso_o_oculta_sobrevive_a_nova_sessao_e_mostrar_ocultados_o_devolve(diretorio: Path) -> None:
+    """20/10/2026: cada aviso tem um "OK" que o tira da página, gravado por exercício (sobrevive a uma sessão nova); um
+    botão devolve os ocultados."""
+
+    def _oks(app: AppTest) -> list:
+        return [b for b in app.button if b.key and b.key.startswith("ro_aviso_ok_")]
 
     app = _abrir()
-    oks = [b for b in app.button if b.key and b.key.startswith("ro_aviso_ok_")]
+    oks = _oks(app)
     if not oks:
         pytest.skip("Nenhum aviso nesta base")
     antes = len(oks)
     app.button(key=oks[0].key).click().run()
     assert not app.exception, [e.value for e in app.exception]
-    assert len([b for b in app.button if b.key and b.key.startswith("ro_aviso_ok_")]) == antes - 1
-    mostrar = [b for b in app.button if b.key and b.key.startswith("ro_aviso_mostrar_")]
+    assert len(_oks(app)) == antes - 1
+    assert (diretorio / str(_exercicio(app)) / "avisos_ok.json").exists()
+
+    nova = _abrir()  # sessão nova: o OK continua valendo
+    assert len(_oks(nova)) == antes - 1
+    mostrar = [b for b in nova.button if b.key and b.key.startswith("ro_aviso_mostrar_")]
     assert mostrar and "1 aviso(s) ocultado(s)" in mostrar[0].label
-    app.button(key=mostrar[0].key).click().run()
-    assert len([b for b in app.button if b.key and b.key.startswith("ro_aviso_ok_")]) == antes
+    nova.button(key=mostrar[0].key).click().run()
+    assert len(_oks(nova)) == antes
