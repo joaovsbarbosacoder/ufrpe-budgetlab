@@ -419,3 +419,65 @@ def test_envio_imediato_respeita_desligado_e_nao_conectado(drive, a, monkeypatch
     monkeypatch.setenv(sd.VARIAVEL_AMBIENTE, "desligado")
     assert sd.enviar_alteracoes_pendentes({}, lambda: drive, a.base, a.estado, relogio=lambda: 1.0) is None
     assert drive.arquivos == {}
+
+
+# ------------------------------------------------------------------------ arquivos automáticos (histórico do dia)
+HISTORICO = "resultado_orcamentario/2026/historico/2026-10-21.json"
+DESPESAS = "resultado_orcamentario/2026/despesas_manuais.json"
+
+
+def test_so_o_historico_do_dia_mudou_nao_e_alteracao_do_usuario(drive, a):
+    a.gravar(DESPESAS, '{"despesas": [1]}')
+    a.gravar(HISTORICO, '{"foto": 1}')
+    a.sincronizar(drive, 0)
+    a.gravar(HISTORICO, '{"foto": 2}')  # o sistema regrava a fotografia do dia ao abrir a página
+
+    assert a.sincronizar(drive, 1).acao == ACAO_EM_DIA
+    assert len(drive.arquivos) == 1  # nada a enviar
+    a.gravar("resultado_orcamentario/2026/historico/2026-10-22.json", '{"foto": 3}')
+    assert a.sincronizar(drive, 2).acao == ACAO_EM_DIA
+
+
+def test_despesa_nova_num_dispositivo_nao_da_conflito_se_o_outro_so_mudou_o_historico(drive, a, b):
+    a.gravar(DESPESAS, '{"despesas": [1]}')
+    a.gravar(HISTORICO, '{"foto": "a1"}')
+    a.sincronizar(drive, 0)
+    b.sincronizar(drive, 1)
+
+    # a abre a página (regrava o histórico) e acaba enviando uma versão que só difere no histórico
+    a.gravar(HISTORICO, '{"foto": "a2"}')
+    assert a.resolver("manter", drive, 2).acao == ACAO_ENVIADO
+    # b inclui uma despesa (e também regravou o histórico dele)
+    b.gravar(DESPESAS, '{"despesas": [1, 2]}')
+    b.gravar(HISTORICO, '{"foto": "b2"}')
+
+    resultado = b.sincronizar(drive, 3)
+    assert resultado.acao == ACAO_ENVIADO  # antes dava conflito
+    assert a.sincronizar(drive, 4).acao == ACAO_TRAZIDO
+    assert a.ler(DESPESAS) == '{"despesas": [1, 2]}'
+
+
+def test_mudanca_real_dos_dois_lados_continua_sendo_conflito_mesmo_com_historico(drive, a, b):
+    a.gravar(DESPESAS, '{"despesas": [1]}')
+    a.sincronizar(drive, 0)
+    b.sincronizar(drive, 1)
+    a.gravar(DESPESAS, '{"despesas": ["a"]}')
+    a.sincronizar(drive, 2)
+    b.gravar(DESPESAS, '{"despesas": ["b"]}')
+    b.gravar(HISTORICO, '{"foto": "b"}')
+
+    assert b.sincronizar(drive, 3).acao == ACAO_CONFLITO
+    assert b.ler(DESPESAS) == '{"despesas": ["b"]}'
+
+
+def test_versao_do_drive_so_com_historico_novo_sem_mudanca_local_fica_em_dia(drive, a, b):
+    a.gravar(DESPESAS, '{"despesas": [1]}')
+    a.gravar(HISTORICO, '{"foto": "a1"}')
+    a.sincronizar(drive, 0)
+    b.sincronizar(drive, 1)
+    a.gravar(HISTORICO, '{"foto": "a2"}')
+    a.resolver("manter", drive, 2)  # nova versão no Drive, só com o histórico diferente
+
+    assert b.sincronizar(drive, 3).acao == ACAO_EM_DIA
+    assert b.ler(DESPESAS) == '{"despesas": [1]}'
+    assert b.sincronizar(drive, 4).acao == ACAO_EM_DIA
