@@ -28,6 +28,7 @@ Regras (todas cobertas por `tests/test_backup_dados.py`):
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Iterable
 import io
 import json
 import os
@@ -207,12 +208,17 @@ def gerar_backup(
     incluir_credenciais: bool = False,
     agora: datetime | None = None,
     senha: str | None = None,
+    grupos_permitidos: Iterable[str] | None = None,
 ) -> bytes:
-    """Conteúdo do backup (`.zip`, ou o envelope cifrado se `senha`). Só lê `base`."""
+    """Conteúdo do backup (`.zip`, ou o envelope cifrado se `senha`). Só lê `base`.
+
+    `grupos_permitidos` (padrão: `GRUPOS`) amplia a lista de pastas aceitas em `grupos`; usada pelo pacote de decisões
+    da sincronização com o Google Drive (`src/sincronizacao_drive.py`), cujas pastas não estão em `GRUPOS`."""
 
     base = Path(base if base is not None else BASE_PADRAO)
     grupos = list(GRUPOS) if grupos is None else grupos
-    desconhecidos = [g for g in grupos if g not in GRUPOS]
+    permitidos = set(GRUPOS) | set(grupos_permitidos or ())
+    desconhecidos = [g for g in grupos if g not in permitidos]
     if desconhecidos:
         raise ErroBackup(f"Pasta(s) desconhecida(s) para backup: {', '.join(desconhecidos)}.")
     agora = agora or datetime.now()
@@ -248,7 +254,7 @@ def gerar_backup(
     return _criptografar(pacote, senha) if senha else pacote
 
 
-def _caminho_seguro(caminho: object) -> str:
+def _caminho_seguro(caminho: object, grupos_permitidos: Iterable[str] = ()) -> str:
     """Valida um caminho do manifesto; devolve-o ou levanta `ErroBackup`."""
 
     if not isinstance(caminho, str) or not caminho:
@@ -263,7 +269,7 @@ def _caminho_seguro(caminho: object) -> str:
         or "/".join(partes) != caminho  # "raw//a" e afins: forma não canônica
     ):
         raise ErroBackup(f"Caminho recusado no backup (fora de `data/`): {caminho!r}.")
-    if partes[0] not in GRUPOS:
+    if partes[0] not in GRUPOS and partes[0] not in set(grupos_permitidos):
         raise ErroBackup(f"Caminho recusado no backup (pasta desconhecida): {caminho!r}.")
     if partes[-1] in _NOMES_NUNCA:
         raise ErroBackup(f"Arquivo recusado no backup (segredo): {caminho!r}.")
@@ -279,7 +285,7 @@ def _abrir_zip(conteudo: bytes, senha: str | None = None) -> zipfile.ZipFile:
         raise ErroBackup("O arquivo enviado não é um .zip válido.") from exc
 
 
-def _ler_manifesto(zf: zipfile.ZipFile) -> tuple[dict, list[ItemBackup]]:
+def _ler_manifesto(zf: zipfile.ZipFile, grupos_permitidos: Iterable[str] = ()) -> tuple[dict, list[ItemBackup]]:
     try:
         manifesto = json.loads(zf.read(NOME_MANIFESTO).decode("utf-8"))
     except KeyError as exc:
@@ -297,7 +303,7 @@ def _ler_manifesto(zf: zipfile.ZipFile) -> tuple[dict, list[ItemBackup]]:
     for bruto in brutos:
         if not isinstance(bruto, dict):
             raise ErroBackup(f"{NOME_MANIFESTO} com entrada inválida.")
-        caminho = _caminho_seguro(bruto.get("caminho"))
+        caminho = _caminho_seguro(bruto.get("caminho"), grupos_permitidos)
         tamanho, sha = bruto.get("tamanho"), bruto.get("sha256")
         if not isinstance(tamanho, int) or isinstance(tamanho, bool) or tamanho < 0 or not isinstance(sha, str):
             raise ErroBackup(f"Entrada inválida no manifesto: {caminho!r}.")
@@ -349,7 +355,8 @@ def _situacao(base: Path, item: ItemBackup) -> str:
 
 
 def analisar_backup(
-    conteudo: bytes, base: str | Path | None = None, senha: str | None = None
+    conteudo: bytes, base: str | Path | None = None, senha: str | None = None,
+    grupos_permitidos: Iterable[str] = (),
 ) -> PreviaBackup:
     """Valida o pacote inteiro (estrutura, tamanhos e hashes) e compara com `base`.
 
@@ -358,7 +365,7 @@ def analisar_backup(
 
     base = Path(base if base is not None else BASE_PADRAO)
     with _abrir_zip(conteudo, senha) as zf:
-        manifesto, itens = _ler_manifesto(zf)
+        manifesto, itens = _ler_manifesto(zf, grupos_permitidos)
         for item in itens:
             _extrair_verificando(zf, item, None)
     return PreviaBackup(
@@ -376,6 +383,7 @@ def restaurar_backup(
     substituir: bool = False,
     agora: datetime | None = None,
     senha: str | None = None,
+    grupos_permitidos: Iterable[str] = (),
 ) -> ResultadoRestauracao:
     """Restaura o backup em `base`, tudo-ou-nada.
 
@@ -390,7 +398,7 @@ def restaurar_backup(
     raiz = base.resolve()
 
     with _abrir_zip(conteudo, senha) as zf:
-        _, itens = _ler_manifesto(zf)
+        _, itens = _ler_manifesto(zf, grupos_permitidos)
         resultado = ResultadoRestauracao()
         a_gravar: list[ItemBackup] = []
         for item in itens:

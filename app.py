@@ -3,7 +3,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from src import cache_bases
+from src import cache_bases, sincronizacao_drive
 from src.ui_theme import apply_theme
 
 _LOGO_B64 = base64.b64encode(Path("assets/ufrpe_logo.png").read_bytes()).decode()
@@ -18,6 +18,20 @@ apply_theme()
 # Bases já lidas guardadas em Parquet (data/processed/cache_bases/), chaveadas pelo conteúdo do arquivo e
 # pelo código do leitor — ver src/cache_bases.py. Sem pyarrow, segue lendo as planilhas normalmente.
 cache_bases.ativar_no_app()
+
+# Sincronização das decisões com o Google Drive (src/sincronizacao_drive.py): ao iniciar a sessão, e depois no máximo a cada
+# minuto, envia o que mudou aqui ou traz a versão mais nova de outro dispositivo. Só age se o Drive estiver conectado
+# (página "Backup dos dados"); sem internet ou com qualquer falha, o app segue normalmente. Roda ANTES das páginas, para
+# elas já lerem os dados atualizados.
+_sinc = sincronizacao_drive.executar_ciclo_na_sessao(st.session_state, sincronizacao_drive.criar_armazenamento_drive)
+if _sinc is not None and _sinc.acao == sincronizacao_drive.ACAO_CONFLITO:
+    st.warning(
+        "⚠️ Sincronização com o Google Drive: " + _sinc.mensagem + " Abra **Backup dos dados** para resolver."
+    )
+elif _sinc is not None and _sinc.acao == sincronizacao_drive.ACAO_TRAZIDO and _sinc.versao is not None:
+    if st.session_state.get("sinc_avisado") != _sinc.versao.id:
+        st.session_state["sinc_avisado"] = _sinc.versao.id
+        st.toast(_sinc.mensagem, icon="☁️")
 
 st.sidebar.markdown(
     f'<div class="ufrpe-sidebar-brand">'

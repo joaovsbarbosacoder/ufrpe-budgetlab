@@ -13,7 +13,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from src import backup_dados
+from src import backup_dados, sincronizacao_drive as sinc
 from src.ui_theme import render_page_header
 
 render_page_header(
@@ -183,3 +183,90 @@ with st.container(border=True):
                     st.session_state[_CHAVE_MENSAGEM] = ("success", texto)
                     st.session_state[_CHAVE_GERACAO] = geracao + 1
                     st.rerun()
+
+
+# ---------------------------------------------------------------- sincronização com o Google Drive
+# Pedido de 21/10/2026 (src/sincronizacao_drive.py): pacote pequeno só com as decisões do usuário, enviado a cada mudança e
+# buscado ao iniciar; conflito nunca é resolvido sozinho.
+def _executar_sincronizacao(funcao, *args) -> None:
+    """Roda uma operação de sincronização; guarda o resultado (ou o erro) para a próxima execução da página."""
+
+    try:
+        armazenamento = sinc.criar_armazenamento_drive()
+        if armazenamento is None:
+            st.session_state[_CHAVE_MENSAGEM] = ("warning", "Google Drive não conectado.")
+        else:
+            resultado = funcao(armazenamento, *args)
+            st.session_state["sinc_resultado"] = resultado
+            st.session_state[_CHAVE_MENSAGEM] = ("success", resultado.mensagem)
+    except sinc.ErroSincronizacao as erro:
+        st.session_state[_CHAVE_MENSAGEM] = ("error", str(erro))
+    st.rerun()
+
+
+with st.container(border=True):
+    st.subheader("Sincronização com o Google Drive")
+    st.caption(
+        "Envia ao Drive um pacote pequeno (poucos KB) só com as decisões do usuário — Resultado Orçamentário, ajustes de "
+        "projeção, preferências, Limite de Empenho, decisões de conciliação e cadastros de Contratos e Bolsas — e, ao abrir o "
+        "sistema, busca a versão mais nova de outro dispositivo. Planilhas, cache e bancos ficam de fora. Cada envio é um "
+        f"arquivo novo; ficam as {sinc.LIMITE_VERSOES} mais recentes. O acesso é só à pasta que o próprio sistema cria no seu Drive."
+    )
+    situacao_drive = sinc.situacao_conexao_drive()
+    if situacao_drive == "sem_credenciais":
+        st.info(
+            "Falta o `credentials.json` do Google em `data/google_agenda/` (o mesmo da Agenda, ver `docs/google_agenda.md`); "
+            "ative também a **API do Google Drive** no mesmo projeto do Google Cloud. Use o MESMO arquivo em todos os "
+            "dispositivos: é ele que faz um dispositivo enxergar o que o outro enviou."
+        )
+    elif situacao_drive == "desconectado":
+        if st.button("Conectar ao Google Drive", key="sinc_conectar", type="primary"):
+            try:
+                with st.spinner("Autorize o acesso na janela do navegador que se abriu..."):
+                    sinc.conectar_drive()
+                st.session_state[_CHAVE_MENSAGEM] = ("success", "Google Drive conectado.")
+                st.session_state.pop("sinc_ultimo_ciclo", None)  # o próximo ciclo roda já, sem esperar o intervalo
+            except sinc.ErroSincronizacao as erro:
+                st.session_state[_CHAVE_MENSAGEM] = ("error", str(erro))
+            st.rerun()
+    else:
+        try:
+            estado_sinc = sinc.carregar_estado()
+        except sinc.ErroSincronizacao as erro:
+            estado_sinc = None
+            st.error(str(erro))
+        if estado_sinc is not None:
+            ultimo = st.session_state.get("sinc_resultado")
+            linhas = [f"Dispositivo: **{estado_sinc.dispositivo_nome or estado_sinc.dispositivo_id}** (`{estado_sinc.dispositivo_id}`)"]
+            if estado_sinc.ultima_sincronizacao_em:
+                linhas.append(f"Última sincronização: {datetime.fromisoformat(estado_sinc.ultima_sincronizacao_em):%d/%m/%Y %H:%M:%S}")
+            if ultimo is not None:
+                linhas.append(f"Situação: {ultimo.mensagem}")
+            st.markdown("  \n".join(linhas))
+            if ultimo is not None and ultimo.acao == sinc.ACAO_ERRO:
+                st.warning("A sincronização não foi concluída; nada foi alterado. O sistema segue funcionando normalmente.")
+            if ultimo is not None and ultimo.acao == sinc.ACAO_CONFLITO:
+                st.warning(ultimo.mensagem)
+                col_trazer, col_manter = st.columns(2)
+                if col_trazer.button("Trazer a versão do Drive (a local fica guardada)", key="sinc_trazer", width="stretch"):
+                    _executar_sincronizacao(lambda arm: sinc.resolver_conflito("trazer", arm))
+                if col_manter.button("Manter a local e enviar", key="sinc_manter", width="stretch"):
+                    _executar_sincronizacao(lambda arm: sinc.resolver_conflito("manter", arm))
+            col_auto, col_agora, col_desconectar = st.columns([3, 2, 2], vertical_alignment="center")
+            automatica = col_auto.toggle(
+                "Sincronizar automaticamente (ao abrir e a cada alteração)", value=estado_sinc.automatica, key="sinc_automatica",
+            )
+            if automatica != estado_sinc.automatica:
+                estado_sinc.automatica = automatica
+                sinc.salvar_estado(estado_sinc)
+                st.rerun()
+            if col_agora.button("Sincronizar agora", key="sinc_agora", width="stretch"):
+                _executar_sincronizacao(lambda arm: sinc.sincronizar(arm))
+            if col_desconectar.button("Desconectar", key="sinc_desconectar", width="stretch"):
+                revogado = sinc.desconectar_drive()
+                st.session_state.pop("sinc_resultado", None)
+                st.session_state[_CHAVE_MENSAGEM] = (
+                    ("success", "Google Drive desconectado.") if revogado else
+                    ("warning", "Desconectado aqui, mas o acesso não pôde ser revogado no Google (sem internet). Revogue em myaccount.google.com/permissions.")
+                )
+                st.rerun()
