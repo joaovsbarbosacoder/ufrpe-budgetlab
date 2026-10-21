@@ -54,13 +54,17 @@ from src.dotacao_anual_analysis import (
     build_item_indicators,
 )
 from src.importacao_dotacao import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
-from src.importacao_execucao import (
+from src.importacao_execucao_mensal import (
     DIRETORIO_MANIFESTOS_PADRAO as DIRETORIO_MANIFESTOS_EXECUCAO,
     NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO,
     Manifesto as ManifestoExecucao,
     carregar_atual as carregar_execucao_atual,
 )
-from src.painel_acoes_empenho import anexar_empenhado_por_subdivisao, empenhado_total_por_acao
+from src.painel_acoes_empenho import (
+    anexar_empenhado_por_subdivisao,
+    empenhada_da_execucao_mensal,
+    empenhado_total_por_acao,
+)
 from src.ui_theme import (
     format_brl_compact,
     render_alert,
@@ -79,12 +83,14 @@ def _cached_leitura(caminho_ponteiro: str, sha_manifesto: str) -> pd.DataFrame:
     return carregar_atual()
 
 
-@st.cache_data(show_spinner="Lendo a base de Execução Anual...")
+@st.cache_data(show_spinner="Lendo a base de Execução Mensal...")
 def _cached_leitura_execucao(caminho_ponteiro: str, sha_manifesto: str) -> pd.DataFrame:
-    """Mesmo padrão de `_cached_leitura`, para a base de Execução Anual — usada só para
-    a coluna "Empenhado" (`src.painel_acoes_empenho`)."""
+    """Mesmo padrão de `_cached_leitura`, para a base de Execução MENSAL (desde
+    20/10/2026; antes era a Anual) — usada só para a coluna "Empenhado"
+    (`src.painel_acoes_empenho`). Já devolve o empenho deduplicado por bloco, no formato
+    que o cruzamento consome."""
 
-    return carregar_execucao_atual()
+    return empenhada_da_execucao_mensal(carregar_execucao_atual())
 
 
 INDICATOR_DISPLAY_ORDER = (
@@ -467,17 +473,17 @@ _inject_css()
 render_alert("Base de Dotação Anual carregada a partir do manifesto atual.", "success")
 
 # Coluna "Empenhado": degrada sem quebrar a página — a Dotação Anual sozinha já é
-# funcional; a Execução Anual só acrescenta a coluna quando disponível.
+# funcional; a Execução Mensal só acrescenta a coluna quando disponível.
 manifesto_execucao = ManifestoExecucao.atual()
 execucao_df: pd.DataFrame | None = None
 if manifesto_execucao is None:
-    st.caption("⚠ Execução Anual não importada — coluna \"Empenhado\" indisponível.")
+    st.caption("⚠ Execução Mensal não importada — coluna \"Empenhado\" indisponível.")
 else:
     caminho_ponteiro_execucao = DIRETORIO_MANIFESTOS_EXECUCAO / NOME_PONTEIRO_EXECUCAO
     try:
         execucao_df = _cached_leitura_execucao(str(caminho_ponteiro_execucao), manifesto_execucao.sha256)
     except Exception as error:
-        st.caption(f"⚠ Não foi possível ler a Execução Anual: {error} — coluna \"Empenhado\" indisponível.")
+        st.caption(f"⚠ Não foi possível ler a Execução Mensal: {error} — coluna \"Empenhado\" indisponível.")
 
 ano, selections = _render_filters(dataframe, source_key, ano_extracao)
 filtered = apply_dotacao_anual_filters(dataframe, selections)
