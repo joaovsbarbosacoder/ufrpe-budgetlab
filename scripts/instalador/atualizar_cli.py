@@ -1,7 +1,8 @@
 """Atualização opcional chamada pelo Electron antes de abrir o sistema.
 
 Uso: `python scripts/instalador/atualizar_cli.py <pasta app> <python.exe>`.
-Imprime uma linha (`sem_novidade`, `atualizado` ou `falhou`) e devolve 0: falha de
+Imprime o resultado (`sem_novidade`, `atualizado` ou `falhou`; em caso de falha, uma segunda
+linha `motivo: ...`) e devolve 0: falha de
 atualização nunca impede abrir o sistema. Sem argumentos devolve 2.
 """
 from __future__ import annotations
@@ -14,6 +15,7 @@ _RAIZ = str(Path(__file__).resolve().parents[2])
 if _RAIZ not in sys.path:
     sys.path.insert(0, _RAIZ)
 
+from scripts.instalador import atualizar as atualizar_mod  # noqa: E402
 from scripts.instalador.atualizar import atualizar  # noqa: E402
 
 
@@ -22,7 +24,10 @@ def main(argv: list[str] | None = None, atualizar_fn=atualizar) -> int:
     if len(argv) != 2:
         print("uso: atualizar_cli.py <pasta app> <python.exe>", file=sys.stderr)
         return 2
-    print(atualizar_fn(Path(argv[0]), Path(argv[1])))
+    resultado = atualizar_fn(Path(argv[0]), Path(argv[1]))
+    print(resultado)
+    if resultado == "falhou" and atualizar_mod.ultimo_motivo:
+        print(f"motivo: {atualizar_mod.ultimo_motivo}")
     return 0
 
 

@@ -13,6 +13,12 @@ from scripts.instalador import atualizar as A
 RAIZ_ZIP = "ufrpe-budgetlab-master/"
 
 
+@pytest.fixture(autouse=True)
+def _sem_pausa_real(monkeypatch):
+    """A nova tentativa espera alguns segundos; nos testes não precisa esperar de verdade."""
+    monkeypatch.setattr(A.time, "sleep", lambda s: None)
+
+
 def _zip(caminho: Path, arquivos: dict[str, str]) -> Path:
     with zipfile.ZipFile(caminho, "w") as z:
         for nome, conteudo in arquivos.items():
@@ -166,13 +172,12 @@ def test_interrupcao_no_meio_nao_grava_versao(tmp_path, monkeypatch):
 
     def quebra(origem, destino, *a, **k):
         copias["n"] += 1
-        if copias["n"] == 2:
-            raise OSError("energia caiu")
+        raise OSError("energia caiu")
         return original(origem, destino, *a, **k)
 
     monkeypatch.setattr(A.shutil, "copy2", quebra)
     assert A.atualizar(app, Path("py"), sha=lambda: "novo", baixar=baixar,
-                       pip=_pip_nunca) == "falhou"
+                       pip=_pip_nunca, esperar=lambda s: None) == "falhou"
     assert A.ler_versao(app)["commit"] == "velho"
 
     monkeypatch.setattr(A.shutil, "copy2", original)
@@ -195,3 +200,79 @@ def test_ler_versao_aceita_bom_do_powershell(tmp_path):
         b"\xef\xbb\xbf" + json.dumps({"commit": "abc", "requirements_sha256": "h", "arquivos": ["a.py"]}).encode()
     )
     assert A.ler_versao(app) == {"commit": "abc", "requirements_sha256": "h", "arquivos": ["a.py"]}
+
+
+def _sem_espera(_):
+    return None
+
+
+def test_falha_registra_o_motivo(tmp_path):
+    app = _app(tmp_path, {"commit": "velho", "requirements_sha256": "", "arquivos": []})
+
+    def sem_rede():
+        raise A.ErroAtualizacao("não foi possível consultar o GitHub: timeout")
+
+    assert A.atualizar(app, Path("py"), sha=sem_rede, baixar=_baixador({}),
+                       pip=_pip_nunca, esperar=_sem_espera) == "falhou"
+    assert "timeout" in A.ultimo_motivo
+
+
+def test_motivo_de_falha_no_pip_e_de_oserror(tmp_path):
+    app = _app(tmp_path, {"commit": "velho", "requirements_sha256": _sha("a"), "arquivos": []})
+    A.atualizar(app, Path("py"), sha=lambda: "novo",
+                baixar=_baixador({"requirements.txt": "b"}), pip=lambda *_: False, esperar=_sem_espera)
+    assert "dependências" in A.ultimo_motivo
+
+    def quebra(*_):
+        raise OSError("arquivo em uso")
+
+    A.atualizar(app, Path("py"), sha=lambda: "novo",
+                baixar=_baixador({"requirements.txt": "a"}), pip=_pip_nunca,
+                esperar=_sem_espera, _aplicar=quebra)
+    assert "arquivo em uso" in A.ultimo_motivo
+
+
+def test_tenta_de_novo_uma_vez_e_conclui(tmp_path):
+    app = _app(tmp_path, {"commit": "velho", "requirements_sha256": _sha("r"), "arquivos": []})
+    chamadas = {"n": 0}
+
+    def sha_instavel():
+        chamadas["n"] += 1
+        if chamadas["n"] == 1:
+            raise A.ErroAtualizacao("rede oscilou")
+        return "novo"
+
+    pausas = []
+    r = A.atualizar(app, Path("py"), sha=sha_instavel,
+                    baixar=_baixador({"app.py": "x", "requirements.txt": "r"}), pip=_pip_nunca,
+                    esperar=pausas.append)
+    assert r == "atualizado"
+    assert chamadas["n"] == 2
+    assert pausas == [A.PAUSA_ENTRE_TENTATIVAS_S]
+    assert A.ultimo_motivo == ""
+
+
+def test_nao_tenta_mais_de_duas_vezes(tmp_path):
+    app = _app(tmp_path, {"commit": "velho", "requirements_sha256": "", "arquivos": []})
+    chamadas = {"n": 0}
+
+    def sempre_falha():
+        chamadas["n"] += 1
+        raise A.ErroAtualizacao("fora do ar")
+
+    assert A.atualizar(app, Path("py"), sha=sempre_falha, baixar=_baixador({}),
+                       pip=_pip_nunca, esperar=_sem_espera) == "falhou"
+    assert chamadas["n"] == 2
+
+
+def test_sem_novidade_nao_tenta_de_novo_nem_guarda_motivo(tmp_path):
+    app = _app(tmp_path, {"commit": "abc", "requirements_sha256": "", "arquivos": []})
+    chamadas = {"n": 0}
+
+    def sha():
+        chamadas["n"] += 1
+        return "abc"
+
+    assert A.atualizar(app, Path("py"), sha=sha, baixar=_baixador({}), pip=_pip_nunca,
+                       esperar=_sem_espera) == "sem_novidade"
+    assert chamadas["n"] == 1 and A.ultimo_motivo == ""

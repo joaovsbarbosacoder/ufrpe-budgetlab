@@ -15,6 +15,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+import time
 import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
@@ -120,33 +121,57 @@ def _sha256(arquivo: Path) -> str:
     return hashlib.sha256(arquivo.read_bytes()).hexdigest() if arquivo.is_file() else ""
 
 
+PAUSA_ENTRE_TENTATIVAS_S = 3
+TENTATIVAS = 2
+# Motivo da última falha ("" se a última chamada de `atualizar` não falhou); o inicializador
+# o grava no log, para saber por que uma atualização não chegou.
+ultimo_motivo = ""
+
+
+def _uma_tentativa(app: Path, python: Path, sha, baixar, pip, aplicar_fn) -> str:
+    """Uma tentativa completa. Levanta ErroAtualizacao/OSError/ValueError se falhar."""
+    versao = ler_versao(app)
+    novo_sha = sha()
+    if novo_sha == versao["commit"]:
+        return "sem_novidade"
+    with tempfile.TemporaryDirectory(prefix="budgetlab_upd_") as tmp:
+        tmp = Path(tmp)
+        zip_path = tmp / "novo.zip"
+        baixar(zip_path)
+        staging = tmp / "staging"
+        staging.mkdir()
+        extrair_zip(zip_path, staging)
+        requirements = staging / "requirements.txt"
+        hash_novo = _sha256(requirements)
+        if hash_novo and hash_novo != versao["requirements_sha256"]:
+            if not pip(python, requirements):
+                raise ErroAtualizacao("falha ao instalar as dependências (pip)")
+        novos = aplicar_fn(staging, app, versao)
+    (app / "versao.txt").write_text(
+        json.dumps({"commit": novo_sha,
+                    "requirements_sha256": hash_novo or versao["requirements_sha256"],
+                    "arquivos": novos}),
+        encoding="utf-8",
+    )
+    return "atualizado"
+
+
 def atualizar(app: Path, python: Path, *, sha=sha_remoto, baixar=baixar_zip,
-              pip=rodar_pip) -> str:
-    """Devolve "sem_novidade", "atualizado" ou "falhou". Nunca levanta."""
-    try:
-        versao = ler_versao(app)
-        novo_sha = sha()
-        if novo_sha == versao["commit"]:
-            return "sem_novidade"
-        with tempfile.TemporaryDirectory(prefix="budgetlab_upd_") as tmp:
-            tmp = Path(tmp)
-            zip_path = tmp / "novo.zip"
-            baixar(zip_path)
-            staging = tmp / "staging"
-            staging.mkdir()
-            extrair_zip(zip_path, staging)
-            requirements = staging / "requirements.txt"
-            hash_novo = _sha256(requirements)
-            if hash_novo and hash_novo != versao["requirements_sha256"]:
-                if not pip(python, requirements):
-                    return "falhou"
-            novos = aplicar(staging, app, versao)
-        (app / "versao.txt").write_text(
-            json.dumps({"commit": novo_sha,
-                        "requirements_sha256": hash_novo or versao["requirements_sha256"],
-                        "arquivos": novos}),
-            encoding="utf-8",
-        )
-        return "atualizado"
-    except (ErroAtualizacao, OSError, ValueError):
-        return "falhou"
+              pip=rodar_pip, esperar=None, _aplicar=aplicar) -> str:
+    """Devolve "sem_novidade", "atualizado" ou "falhou". Nunca levanta.
+
+    Em caso de falha tenta mais uma vez, depois de uma pausa (rede que oscila); o motivo da
+    última falha fica em `ultimo_motivo`.
+    """
+    global ultimo_motivo
+    ultimo_motivo = ""
+    for tentativa in range(1, TENTATIVAS + 1):
+        try:
+            resultado = _uma_tentativa(app, python, sha, baixar, pip, _aplicar)
+            ultimo_motivo = ""
+            return resultado
+        except (ErroAtualizacao, OSError, ValueError) as erro:
+            ultimo_motivo = str(erro) if isinstance(erro, ErroAtualizacao)                 else f"{type(erro).__name__}: {erro}"
+            if tentativa < TENTATIVAS:
+                (esperar or time.sleep)(PAUSA_ENTRE_TENTATIVAS_S)
+    return "falhou"
