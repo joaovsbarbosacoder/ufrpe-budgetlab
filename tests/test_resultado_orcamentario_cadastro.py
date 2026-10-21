@@ -5,11 +5,13 @@ import pytest
 from src.resultado_orcamentario_cadastro import (
     ArquivoCorrompido,
     atualizar_despesa,
+    carregar_avisos_ok,
     carregar_despesas,
     carregar_selecao,
     definir_consideracao,
     excluir_despesa,
     incluir_despesa,
+    salvar_avisos_ok,
     salvar_selecao,
     validar_despesa,
 )
@@ -127,3 +129,21 @@ def test_arquivo_antigo_sem_o_campo_vale_como_considerada(tmp_path):
 def test_definir_consideracao_de_despesa_inexistente_levanta(tmp_path):
     with pytest.raises(KeyError):
         definir_consideracao(2026, "nao-existe", False, tmp_path)
+
+
+def test_avisos_ok_ida_e_volta_e_arquivo_ausente(tmp_path):
+    assert carregar_avisos_ok(2026, tmp_path) == set()
+    salvar_avisos_ok(2026, {"Aviso B", "Aviso A"}, tmp_path)
+    assert carregar_avisos_ok(2026, tmp_path) == {"Aviso A", "Aviso B"}
+    assert carregar_avisos_ok(2025, tmp_path) == set()  # por exercício
+
+
+def test_avisos_ok_arquivo_corrompido_ou_em_formato_inesperado_levanta(tmp_path):
+    (tmp_path / "2026").mkdir()
+    arquivo = tmp_path / "2026" / "avisos_ok.json"
+    arquivo.write_text("{não é json", encoding="utf-8")
+    with pytest.raises(ArquivoCorrompido):
+        carregar_avisos_ok(2026, tmp_path)
+    arquivo.write_text('{"avisos": [1, 2]}', encoding="utf-8")
+    with pytest.raises(ArquivoCorrompido):
+        carregar_avisos_ok(2026, tmp_path)

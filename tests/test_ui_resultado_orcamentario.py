@@ -12,6 +12,7 @@ from src.ui_resultado_orcamentario import (
     html_cabecalho_acao,
     html_cartoes,
     html_celula,
+    html_detalhe_gnd_acao,
     html_dotacao_acao,
     html_rodape_totais,
     percentual,
@@ -114,3 +115,45 @@ def test_cartoes_no_criterio_executado_projetado_sem_cartao_de_anulacao():
     assert "(−) Executado nas células" in html and "(−) Projetado a realizar" in html
     assert "Anulação" not in html and "Empenhado nas células" not in html
     assert len(re.findall(r'<div class="ro-card[ "]', html)) == 4  # dotação, executado, projetado e resultado
+
+
+def test_detalhe_gnd_acao_agrupa_nos_dois_sentidos_e_nulo_vira_traco():
+    linhas = pd.DataFrame([
+        {"tipo": "celula", "gnd": "3", "gnd_descricao": "OUTRAS CORRENTES", "acao": "20RK", "acao_descricao": "FUNCIONAMENTO",
+         "dotacao": 100.0, "executado": 40.0, "projetado": 30.0, "resultado": 30.0},
+        {"tipo": "celula", "gnd": "4", "gnd_descricao": "INVESTIMENTOS", "acao": "20RK", "acao_descricao": "FUNCIONAMENTO",
+         "dotacao": 50.0, "executado": None, "projetado": None, "resultado": None},
+        {"tipo": "sem_celula", "gnd": None, "gnd_descricao": None, "acao": None, "acao_descricao": None,
+         "dotacao": 0.0, "executado": 0.0, "projetado": 20.0, "resultado": -20.0},
+    ])
+    total = (150.0, None, None, None)
+    por_gnd = html_detalhe_gnd_acao(linhas, total, "gnd")
+    por_acao = html_detalhe_gnd_acao(linhas, total, "acao")
+
+    assert por_gnd.count("<details") == 2 and por_acao.count("<details") == 1  # 2 GNDs; 1 só ação
+    assert "GND 3" in por_gnd and "20RK" in por_acao
+    assert "Sem célula" in por_gnd and "Total do bolsão" in por_gnd
+    assert "Déficit" in por_gnd and "Superávit" in por_gnd
+    assert "R&#36; 0,00" in por_gnd  # a linha sem célula tem dotação zero, não nula
+    # nulo é "—", nunca R$ 0,00: o GND 4 só tem dotação
+    gnd4 = por_gnd[por_gnd.index("GND 4"):]
+    assert "—" in gnd4[:gnd4.index("</summary>")]
+
+
+def test_detalhe_gnd_acao_sem_linhas_pede_selecao():
+    vazio = pd.DataFrame(columns=["tipo", "gnd", "gnd_descricao", "acao", "acao_descricao", "dotacao", "executado", "projetado", "resultado"])
+    assert "Marque ao menos uma célula" in html_detalhe_gnd_acao(vazio, (0.0, 0.0, 0.0, 0.0))
+
+
+def test_detalhe_gnd_acao_abrir_controla_os_grupos():
+    linhas = pd.DataFrame([
+        {"tipo": "celula", "gnd": g, "gnd_descricao": None, "acao": "20RK", "acao_descricao": None,
+         "dotacao": 100.0, "executado": 40.0, "projetado": 30.0, "resultado": 30.0}
+        for g in ("3", "4")
+    ])
+    total = (200.0, 80.0, 60.0, 60.0)
+
+    assert html_detalhe_gnd_acao(linhas, total, "gnd").count("<details open>") == 1  # padrão: só o primeiro
+    assert html_detalhe_gnd_acao(linhas, total, "gnd", abrir=True).count("<details open>") == 2
+    assert html_detalhe_gnd_acao(linhas, total, "gnd", abrir=False).count("<details open>") == 0
+    assert 'class="mini"' in html_detalhe_gnd_acao(linhas, total, "gnd")  # barra de consumo da dotação

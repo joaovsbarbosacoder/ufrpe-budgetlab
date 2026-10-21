@@ -29,8 +29,12 @@ from pathlib import Path
 import pytest
 
 from src.cache_bases import VARIAVEL_AMBIENTE
+from src.sincronizacao_drive import VARIAVEL_AMBIENTE as VARIAVEL_SINCRONIZACAO
 
 os.environ[VARIAVEL_AMBIENTE] = "desligado"
+# Sincronização com o Google Drive (src/sincronizacao_drive.py): o `app.py` dos testes de página nunca a executa, para não
+# falar com um Drive real nem com um token da máquina de quem roda a suíte.
+os.environ[VARIAVEL_SINCRONIZACAO] = "desligado"
 
 _USA_APPTEST: dict[Path, bool] = {}
 

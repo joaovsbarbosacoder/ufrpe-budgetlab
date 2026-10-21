@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resultado por GND e Ação — protótipo</title>
+<style>
+  /* Tokens de src/design_tokens.py (mesmos do protótipo de 08/10/2026) */
+  :root{
+    --bg:#F5F8FC; --surface:#FFFFFF; --surface-alt:#F0F5FA; --border:#D3DFEC;
+    --text:#07133D; --muted:#526584; --faint:#7C8DA8;
+    --accent:#0969DA; --pos:#0A8F3D; --neg:#D20A16; --warn:#C96A00;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 "Inter","Segoe UI",system-ui,sans-serif}
+  main{padding:28px 36px 60px;max-width:1240px;margin:0 auto}
+  .proto{background:#FFF7E6;border:1px dashed var(--warn);color:#7A4300;border-radius:10px;padding:8px 14px;font-size:13px;margin-bottom:18px}
+  h1{font-size:28px;margin:0 0 4px;font-weight:600}
+  h2{font-size:20px;font-weight:600;margin:30px 0 4px}
+  .sub,.hint{color:var(--muted);font-size:13px;margin:0 0 12px}
+  .num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+  .pos-t{color:var(--pos)} .neg-t{color:var(--neg)} .nul{color:var(--faint)}
+
+  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;opacity:.9}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 18px}
+  .card .lbl{font-size:13px;color:var(--muted)} .card .val{font-size:22px;font-weight:600;margin-top:4px}
+  .ghost{font-size:12px;color:var(--faint);margin:6px 0 0}
+
+  .toolbar{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:0 0 12px}
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface)}
+  .seg button{font:inherit;font-size:13px;border:0;background:transparent;color:var(--muted);padding:7px 14px;cursor:pointer}
+  .seg button.on{background:var(--accent);color:#fff}
+  .tools button.link{font:inherit;font-size:13px;border:0;background:none;color:var(--accent);cursor:pointer;padding:0 6px}
+  .pill{font-size:12px;color:var(--muted);background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:5px 12px}
+
+  .box{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  thead th{font-weight:600;color:var(--muted);text-align:left;background:var(--surface-alt);border-bottom:1px solid var(--border);padding:9px 12px;font-size:13px}
+  thead th.num{text-align:right}
+  td{padding:9px 12px;border-bottom:1px solid #E7EEF6;vertical-align:middle}
+  tr.g1 td{font-weight:600;background:#FAFCFE;cursor:pointer}
+  tr.g1:hover td{background:var(--surface-alt)}
+  tr.g2 td:first-child{padding-left:46px}
+  tr.g2 td{font-size:13.5px}
+  tr.sem td{font-style:italic;color:var(--muted)}
+  tr.tot td{font-weight:700;border-top:2px solid var(--border);border-bottom:0;background:var(--surface)}
+  .chev{display:inline-block;width:18px;color:var(--faint);transition:transform .15s}
+  tr.g1.open .chev{transform:rotate(90deg)}
+  .cod{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--muted);margin-right:8px}
+  .tag{display:inline-block;font-size:11.5px;font-weight:600;border-radius:6px;padding:1px 8px}
+  .tag.pos{background:#E3F5EA;color:var(--pos)} .tag.neg{background:#FDE7E8;color:var(--neg)} .tag.eq{background:var(--surface-alt);color:var(--muted)}
+  .mini{width:90px;height:6px;border-radius:3px;background:var(--surface-alt);display:inline-block;vertical-align:middle;position:relative;overflow:hidden;margin-right:8px}
+  .mini i{position:absolute;left:0;top:0;bottom:0;background:var(--accent)}
+  .mini i.over{background:var(--neg)}
+  .conf{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 14px;font-size:12px;color:var(--pos);border-top:1px solid var(--border)}
+
+  .notes{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 20px;margin-top:22px;font-size:13.5px}
+  .notes h3{margin:0 0 6px;font-size:15px} .notes li{margin:4px 0}
+  @media(max-width:800px){main{padding:18px 14px}.cards{grid-template-columns:1fr 1fr}.mini{display:none}}
+</style>
+</head>
+<body>
+<main>
+  <div class="proto"><b>Protótipo de layout — valores fictícios.</b> Nada aqui lê a base real. Serve só para aprovar a disposição da nova seção antes de implementar.</div>
+  <h1>Resultado Orçamentário</h1>
+  <p class="sub">Exercício 2026 · mesma página, com uma seção nova entre "Composição" e "Células".</p>
+
+  <div class="cards" id="cards"></div>
+  <p class="ghost">↑ Cartões e Composição existentes, sem alteração. Os totais da nova seção precisam fechar com os cartões.</p>
+
+  <h2>3. Detalhamento por GND e Ação <span class="pill" style="margin-left:8px">novo</span></h2>
+  <p class="hint">Dotação, executado, projetado a realizar e resultado das células <b>marcadas</b>, quebrados por Grupo de Despesa (GND) e Ação. Clique em uma linha para abrir.</p>
+
+  <div class="toolbar">
+    <div class="seg" id="modo">
+      <button data-m="gnd" class="on">GND › Ação</button>
+      <button data-m="acao">Ação › GND</button>
+    </div>
+    <span class="tools"><button class="link" id="abrir">Expandir tudo</button>·<button class="link" id="fechar">Recolher tudo</button></span>
+    <span class="pill">Só células marcadas na seção "Células"</span>
+  </div>
+
+  <div class="box">
+    <table>
+      <thead><tr>
+        <th>Grupo</th><th class="num">Dotação atualizada</th><th class="num">Executado</th>
+        <th class="num">Projetado a realizar</th><th class="num">Resultado</th>
+        <th>Consumo da dotação</th><th>Situação</th>
+      </tr></thead>
+      <tbody id="corpo"></tbody>
+    </table>
+    <div class="conf" id="conf"></div>
+  </div>
+
+  <div class="notes">
+    <h3>Pontos para você confirmar</h3>
+    <ol>
+      <li><b>Resultado por linha</b> = Dotação − Executado − Projetado, a mesma fórmula do bolsão, aplicada ao grupo. O saldo de um GND ou de uma Ação não "empresta" para outro; o total continua sendo o único resultado oficial.</li>
+      <li><b>Onde cada despesa cai:</b> o empenhado e o executado vêm da célula da NE na Execução Mensal. O projetado de Contratos e Bolsas segue a célula da NE. Outras despesas previstas usam a célula informada no cadastro.</li>
+      <li><b>"Sem célula"</b> (linha em itálico): outras despesas previstas sem célula não têm GND nem Ação. Ficam numa linha própria para o total fechar, e não são distribuídas por palpite.</li>
+      <li><b>Dúvida de regra:</b> uma NE que aparece em mais de uma célula tem o executado e o projetado calculados por NE, não por célula. Proposta: ratear pelo empenhado de cada célula e sinalizar com um aviso. Se preferir outra regra, me diga.</li>
+      <li><b>Valor indisponível</b> (projeção de Contratos/Bolsas sem a Liquidação por Competência) aparece como "—" e deixa o resultado do grupo e o total como "incompleto"; nunca vira zero.</li>
+      <li>A conferência no rodapé compara a soma das linhas com os cartões e mostra a diferença quando for de R$ 0,01 ou mais.</li>
+    </ol>
+  </div>
+</main>
+
+<script>
+/* dados fictícios: dotação, executado, projetado por (GND, Ação). null = indisponível, nunca zero */
+const D = [
+  {gnd:"3", gndN:"Outras Despesas Correntes", acao:"4002", acaoN:"Assistência ao Estudante", dot:12400000.00, exe:7150320.45, prj:4820000.00},
+  {gnd:"3", gndN:"Outras Despesas Correntes", acao:"20RK", acaoN:"Funcionamento das Instituições Federais", dot:18900000.00, exe:12044880.10, prj:6210500.00},
+  {gnd:"4", gndN:"Investimentos", acao:"8282", acaoN:"Reestruturação e Modernização", dot:3200000.00, exe:1980000.00, prj:1450000.00},
+  {gnd:"4", gndN:"Investimentos", acao:"20RK", acaoN:"Funcionamento das Instituições Federais", dot:1500000.00, exe:600000.00, prj:0.00},
+];
+const SEM = {dot:0, exe:0, prj:300000.00};  /* sem célula = sem dotação (zero real, não nulo) */  /* outras despesas previstas sem célula */
+
+const brl = v => v==null ? '<span class="nul">—</span>' :
+  (v<0?'−':'')+'R$ '+Math.abs(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+const soma = (a,k) => a.some(x=>x[k]==null) ? null : a.reduce((s,x)=>s+x[k],0);
+const res = x => (x.dot==null||x.exe==null||x.prj==null) ? null : x.dot-x.exe-x.prj;
+const agg = a => ({dot:soma(a,'dot'),exe:soma(a,'exe'),prj:soma(a,'prj')});
+const sit = r => r==null ? '<span class="nul">—</span>' :
+  r>0 ? '<span class="tag pos">Superávit</span>' : r<0 ? '<span class="tag neg">Déficit</span>' : '<span class="tag eq">Equilíbrio</span>';
+const rc = r => r==null ? '' : r<0 ? 'neg-t' : r>0 ? 'pos-t' : '';
+const barra = x => {
+  if (!x.dot) return '';
+  const p = (x.exe+x.prj)/x.dot*100;
+  return `<span class="mini"><i class="${p>100?'over':''}" style="width:${Math.min(p,100)}%"></i></span>${p.toFixed(1).replace('.',',')}%`;
+};
+const linha = (cls, rot, x, extra='') => {
+  const r = res(x);
+  return `<tr class="${cls}" ${extra}><td>${rot}</td><td class="num">${brl(x.dot)}</td><td class="num">${brl(x.exe)}</td>
+  <td class="num">${brl(x.prj)}</td><td class="num ${rc(r)}">${brl(r)}</td><td>${barra(x)}</td><td>${sit(r)}</td></tr>`;
+};
+
+let modo = 'gnd', abertos = new Set();
+function render(){
+  const k1 = modo==='gnd' ? 'gnd' : 'acao', k2 = modo==='gnd' ? 'acao' : 'gnd';
+  const rot = (d,k) => k==='gnd' ? `<span class="cod">GND ${d.gnd}</span>${d.gndN}` : `<span class="cod">${d.acao}</span>${d.acaoN}`;
+  const grupos = [...new Set(D.map(d=>d[k1]))].sort();
+  let h='';
+  for (const g of grupos){
+    const itens = D.filter(d=>d[k1]===g), id = modo+g, ab = abertos.has(id);
+    h += linha('g1'+(ab?' open':''), `<span class="chev">▶</span>${rot(itens[0],k1)}`, agg(itens), `data-id="${id}"`);
+    if (ab) for (const d of itens) h += linha('g2', rot(d,k2), d);
+  }
+  h += linha('g1 sem', `<span class="chev"></span>Sem célula (outras despesas previstas)`, SEM);
+  const tot = agg([...D, SEM]);
+  h += linha('tot', 'Total do bolsão', tot);
+  corpo.innerHTML = h;
+  corpo.querySelectorAll('tr.g1[data-id]').forEach(tr => tr.onclick = () => {
+    abertos.has(tr.dataset.id) ? abertos.delete(tr.dataset.id) : abertos.add(tr.dataset.id); render();
+  });
+  const r = res(tot);
+  conf.innerHTML = `<span>✓ A soma das linhas confere com os cartões · diferença R$ 0,00</span><span>Resultado total: <b class="${rc(r)}">${brl(r)}</b></span>`;
+  cards.innerHTML = [['Dotação atualizada',tot.dot],['Executado',tot.exe],['Projetado a realizar',tot.prj],['Resultado',r]]
+    .map(([l,v])=>`<div class="card"><div class="lbl">${l}</div><div class="val ${l==='Resultado'?rc(v):''}">${brl(v)}</div></div>`).join('');
+}
+const todosIds = () => [...new Set(D.map(d=>d.gnd))].map(g=>'gnd'+g).concat([...new Set(D.map(d=>d.acao))].map(a=>'acao'+a));
+document.querySelectorAll('#modo button').forEach(b => b.onclick = () => {
+  modo = b.dataset.m; abertos = new Set();
+  document.querySelectorAll('#modo button').forEach(x=>x.classList.toggle('on',x===b)); render();
+});
+abrir.onclick = () => { abertos = new Set(todosIds()); render(); };
+fechar.onclick = () => { abertos = new Set(); render(); };
+abertos = new Set(['gnd3']);
+render();
+</script>
+</body>
+</html>

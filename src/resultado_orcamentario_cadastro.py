@@ -8,7 +8,8 @@ perderia o que montou. Persistência em arquivo aprovada explicitamente pelo usu
 08/10/2026, conforme exige o AGENTS.md deste projeto.
 
 Um diretório por exercício: `<diretorio>/<exercicio>/celulas.json` e
-`<diretorio>/<exercicio>/despesas_manuais.json`. Gravação atômica (temporário + `Path.replace`),
+`<diretorio>/<exercicio>/despesas_manuais.json`. Os "OK" dados aos avisos da página (20/10/2026,
+persistência aprovada pelo usuário) ficam em `<diretorio>/<exercicio>/avisos_ok.json`. Gravação atômica (temporário + `Path.replace`),
 mesmo padrão de `src.limite_empenho_preferencias`. Os códigos são sempre texto, para preservar
 zeros à esquerda (ex.: plano orçamentário "0000"). Células que não existem mais na base são
 mantidas na seleção — quem consome decide como exibi-las. Dado real de instância, não
@@ -118,6 +119,24 @@ def carregar_so_selecionadas(diretorio: Path = DIRETORIO_PADRAO) -> bool:
 
 def salvar_so_selecionadas(valor: bool, diretorio: Path = DIRETORIO_PADRAO) -> None:
     _gravar_atomico(Path(diretorio) / "preferencias.json", {"so_selecionadas": bool(valor), "atualizado_em": _agora()})
+
+
+def carregar_avisos_ok(exercicio: int, diretorio: Path = DIRETORIO_PADRAO) -> set[str]:
+    """Textos dos avisos a que o usuário deu "OK" no exercício. O aviso é identificado pelo texto: se o fato muda, o texto
+    muda e ele reaparece. Arquivo ilegível levanta `ArquivoCorrompido` (a página não grava por cima)."""
+
+    dado = _ler(_pasta(exercicio, diretorio) / "avisos_ok.json")
+    if dado is None:
+        return set()
+    avisos = dado.get("avisos")
+    if not isinstance(avisos, list) or not all(isinstance(a, str) for a in avisos):
+        raise ArquivoCorrompido("Formato inesperado em avisos_ok.json")
+    return set(avisos)
+
+
+def salvar_avisos_ok(exercicio: int, avisos: set[str], diretorio: Path = DIRETORIO_PADRAO) -> None:
+    dado = {"avisos": sorted(avisos), "atualizado_em": _agora()}
+    _gravar_atomico(_pasta(exercicio, diretorio) / "avisos_ok.json", dado)
 
 
 def _caminho_despesas(exercicio: int, diretorio: Path) -> Path:
