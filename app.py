@@ -228,3 +228,8 @@ page = st.navigation(
 )
 
 page.run()
+
+# Envio imediato: a página pode ter gravado uma decisão (ex.: nova despesa); se as decisões mudaram desde a última
+# sincronização, envia agora, sem esperar o intervalo do ciclo — para a alteração já estar no Drive quando o usuário trocar de
+# dispositivo (src/sincronizacao_drive.py). Sem mudança, só compara a impressão digital local; sem conexão, não faz nada.
+sincronizacao_drive.enviar_alteracoes_pendentes(st.session_state, sincronizacao_drive.criar_armazenamento_drive)
