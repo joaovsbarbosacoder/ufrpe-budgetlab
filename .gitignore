@@ -81,6 +81,9 @@ data/google_agenda/*
 
 # Copias dos arquivos substituidos por uma restauracao de backup — ver src/backup_dados.py.
 data/_backup_restauracao/
+data/_antes_da_sincronizacao/
+# Estado local da sincronizacao com o Google Drive (src/sincronizacao_drive.py): por dispositivo, nao versionado
+data/sincronizacao/
 data/.restauracao-*/
 
 # Sistema operacional
