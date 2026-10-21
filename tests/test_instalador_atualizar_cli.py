@@ -32,3 +32,17 @@ def test_funciona_por_script_sem_cwd_no_sys_path():
     r = subprocess.run([sys.executable, "-I", str(raiz / "scripts" / "instalador" / "atualizar_cli.py")],
                        cwd=raiz, capture_output=True, text=True)
     assert r.returncode == 2, r.stderr
+
+
+def test_imprime_o_motivo_quando_falha(capsys, monkeypatch):
+    monkeypatch.setattr(C.atualizar_mod, "ultimo_motivo", "não foi possível consultar o GitHub: timeout")
+    codigo = C.main(["app", "py"], atualizar_fn=lambda app, python: "falhou")
+    linhas = capsys.readouterr().out.strip().splitlines()
+    assert linhas == ["falhou", "motivo: não foi possível consultar o GitHub: timeout"]
+    assert codigo == 0
+
+
+def test_nao_imprime_motivo_quando_nao_falha(capsys, monkeypatch):
+    monkeypatch.setattr(C.atualizar_mod, "ultimo_motivo", "resto de uma falha antiga")
+    C.main(["app", "py"], atualizar_fn=lambda app, python: "atualizado")
+    assert capsys.readouterr().out.strip() == "atualizado"
