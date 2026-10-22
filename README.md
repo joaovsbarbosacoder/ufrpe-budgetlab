@@ -387,6 +387,13 @@ kicker, título e destaque à direita, e linhas/tabelas com valores à direita. 
 linha da NE com dado mensal tem um botão de ícone para a linha do tempo mensal. Apenas a
 apresentação mudou; dados, totais e regras são os mesmos.
 
+**Despesa estimada na Cobertura Orçamentária por PTRES de Bolsas (22/10/2026).** Em Bolsas e Auxílios a despesa de cada PTRES
+deixa de ser o valor anual cheio do cadastro (valor mensal × 12) e passa a ser, para a bolsa que tem NE na "Projeção pela
+execução", **já liquidado + projetado a realizar** (as mesmas medidas do Resultado Orçamentário). Bolsa sem NE, sem linha no
+relatório ou com valor nulo segue pelo valor anual cadastrado, e a tela informa quantas ficaram assim; NE compartilhada é repartida
+pelo peso do valor anual. Exemplo: PEC-G/Promisaes (PTRES 230404) cai de R$ 44.784 para R$ 36.076. Regra em
+`src/bolsas_despesa_estimada.py`; Contratos Contínuos não mudou.
+
 Limites conhecidos: contrato prorrogado com a data de fim desatualizada no cadastro aparece sem
 projeção até a data ser corrigida no card; a competência dos últimos meses costuma estar
 defasada, o que afeta o saldo e o realizado desses meses; a data de início só é considerada

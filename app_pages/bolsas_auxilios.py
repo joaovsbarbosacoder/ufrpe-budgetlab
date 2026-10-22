@@ -183,6 +183,7 @@ from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_m
 from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne_e_mes
 from src.necessidade_empenho import calcular_necessidade_empenho, necessidade_ate_dezembro
 from src.relatorio_necessidade_empenho import mes_referencia_do_exercicio
+from src.bolsas_despesa_estimada import despesa_estimada_por_ptres
 from src.relatorio_projecao_execucao import ContextoProjecaoExecucao, RelatorioProjecaoExecucao
 from src.relatorio_projecao_execucao import gerar_pdf as gerar_pdf_projecao_execucao
 from src.relatorio_projecao_execucao import gerar_xlsx as gerar_xlsx_projecao_execucao
@@ -916,15 +917,23 @@ def _render_card_dotacao(codigo: object, nome: object, grupo: pd.DataFrame) -> N
     st.markdown(cartao_cobertura_ptres(codigo, nome, grupo), unsafe_allow_html=True)
 
 
-def _render_quadro_dotacao(filtrado: pd.DataFrame, dotacao_dimensoes: pd.DataFrame, ano_exercicio: int) -> None:
+def _render_quadro_dotacao(
+    filtrado: pd.DataFrame, dotacao_dimensoes: pd.DataFrame, ano_exercicio: int,
+    relatorio_projecao: RelatorioProjecaoExecucao | None = None,
+) -> None:
     """Um cartão por Ação de Governo (mesmo padrão visual de `painel_acoes.py`), com uma
     subdivisão por Plano Orçamentário/PTRES dentro — cruza, para cada PTRES cadastrado nas
     bolsas (referencial comum entre a Dotação Anual e o cadastro de cada bolsa/programa), a
-    Dotação Atualizada disponível contra a despesa anual estimada (`valor_anual`) das bolsas
-    daquele PTRES."""
+    Dotação Atualizada disponível contra a despesa estimada das bolsas daquele PTRES.
 
-    despesa_por_ptres = filtrado.groupby("ptres")["valor_anual"].sum(min_count=1).fillna(0.0)
-    despesa_por_ptres.index.name = "ptres_codigo"
+    Despesa estimada (22/10/2026): `executado + projetado a realizar` da "Projeção pela execução" quando a bolsa tem NE no
+    relatório; sem NE/linha ou com valor nulo, o `valor_anual` do cadastro (ver `src/bolsas_despesa_estimada.py`). Antes era
+    sempre o `valor_anual` (valor mensal × 12), que superestimava a bolsa paga só a partir de março ou com menos bolsistas."""
+
+    estimada = despesa_estimada_por_ptres(
+        filtrado, None if relatorio_projecao is None else relatorio_projecao.linhas
+    )
+    despesa_por_ptres = estimada.despesa
 
     cruzado = dotacao_dimensoes.set_index("ptres_codigo").join(
         despesa_por_ptres.rename("despesa_estimada"), how="right"
@@ -937,6 +946,17 @@ def _render_quadro_dotacao(filtrado: pd.DataFrame, dotacao_dimensoes: pd.DataFra
         f"{cruzado['acao_codigo'].nunique(dropna=True)} ações · {len(cruzado)} PTRES · exercício {ano_exercicio}"
         + (f" · {sem_dotacao} sem dotação encontrada" if sem_dotacao else "")
     )
+    if relatorio_projecao is None:
+        st.caption(
+            "Despesa estimada pelo valor anual cadastrado (valor mensal × meses do ano): a Projeção pela execução está "
+            "indisponível."
+        )
+    else:
+        st.caption(
+            f"Despesa estimada = já liquidado + projetado a realizar pela execução ({estimada.pela_execucao} bolsa(s))"
+            + (f"; {estimada.pelo_cadastro} sem NE ou sem projeção seguem pelo valor anual cadastrado" if estimada.pelo_cadastro else "")
+            + f". Total {formatar_brl(estimada.total_estimado)} contra {formatar_brl(estimada.total_cadastro)} pelo valor anual cheio."
+        )
 
     # ações mais deficitárias primeiro — mesmo critério de urgência do quadro anterior.
     ordem = (
@@ -1154,7 +1174,7 @@ if relatorio_projecao is not None:
 
 if dotacao_dimensoes is not None:
     st.markdown('<div class="cad-secao-titulo">Cobertura orçamentária por PTRES</div>', unsafe_allow_html=True)
-    _render_quadro_dotacao(filtrado, dotacao_dimensoes, ano_exercicio_dotacao)
+    _render_quadro_dotacao(filtrado, dotacao_dimensoes, ano_exercicio_dotacao, relatorio_projecao)
 else:
     st.info(
         "Nenhuma base de Dotação Anual foi importada ainda — o quadro de cobertura "
