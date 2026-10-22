@@ -33,7 +33,8 @@ esses artefatos.
    - rodadas intermediárias: `python -m pytest tests --testmon -n 8 --dist loadfile`
      (só os testes afetados pelo código alterado, em paralelo);
    - suíte completa (ao concluir a tarefa, ou se mudou fixture, planilha ou
-     base, que o testmon não acompanha): `python -m pytest tests -n 8 --dist loadfile`.
+     base, que o testmon não acompanha): `python -m pytest tests -n 8 --dist loadfile`;
+   - só `tests/test_resultado_orcamentario_page.py`: `-n 8 --dist load` (118 s → 65 s; ver README).
    Se essas ferramentas não estiverem instaladas, instale-as com
    `python -m pip install -r requirements-dev.txt` antes de recorrer ao
    `unittest`.

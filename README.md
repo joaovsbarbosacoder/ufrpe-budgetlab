@@ -1075,6 +1075,14 @@ de memória) abre 16 processos, e cada um recarrega as planilhas reais nas pági
 página estourou o tempo limite sem haver defeito. `--dist loadfile` mantém cada arquivo de teste inteiro num só processo (as
 páginas aquecem uma vez por arquivo). Medido: 4 min 10 s contra 4 min 26 s do `-n auto`, sem falhas. Com mais memória, ajuste o `-n`.
 
+Ao rodar **só** `tests/test_resultado_orcamentario_page.py` (23 testes de página, ~118 s num único processo), use
+`--dist load` em vez de `loadfile` (22/10/2026): os testes se espalham pelos 8 processos e o arquivo cai para ~65 s, com os 23
+passando (cada teste grava no seu `tmp_path`, sem estado compartilhado). Na suíte completa, mantenha `loadfile`:
+
+```powershell
+python -m pytest tests/test_resultado_orcamentario_page.py -n 8 --dist load
+```
+
 ## Evolução prevista
 
 A arquitetura deverá acomodar gradualmente:
