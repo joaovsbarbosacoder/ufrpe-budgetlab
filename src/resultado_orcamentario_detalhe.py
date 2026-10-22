@@ -43,8 +43,10 @@ TIPO_CELULA = "celula"
 TIPO_FORA = "fora_marcadas"
 TIPO_SEM_CELULA = "sem_celula"
 
+#: `receitas` (22/10/2026): parte da `dotacao` do grupo que vem de receitas próprias informadas à mão (já incluída na dotação;
+#: coluna informativa para a tela mostrar de onde vem o valor).
 COLUNAS_DETALHE = [
-    "tipo", "gnd", "gnd_descricao", "acao", "acao_descricao", "dotacao", "executado", "projetado", "resultado",
+    "tipo", "gnd", "gnd_descricao", "acao", "acao_descricao", "dotacao", "executado", "projetado", "resultado", "receitas",
 ]
 
 _IDX_ACAO = CHAVE_CELULA.index("acao_codigo")
@@ -75,6 +77,7 @@ class _Balde:
     def __init__(self) -> None:
         self.valor = dict.fromkeys(_CAMPOS, 0.0)
         self.nulo = dict.fromkeys(_CAMPOS, False)
+        self.receitas = 0.0
 
     def somar(self, campo: str, valor: float | None) -> None:
         if valor is None or pd.isna(valor):
@@ -229,6 +232,7 @@ def detalhar_por_gnd_acao(
             continue
         destino = balde(sem_celula) if receita.gnd is None or receita.acao is None else balde((TIPO_CELULA, receita.gnd, receita.acao))
         destino.somar("dotacao", receita.valor)
+        destino.receitas += float(receita.valor)
 
     # --- Linhas e totais ----------------------------------------------------------------------------
     nome_gnd = _descricoes(celulas, "grupo_despesa_codigo", "grupo_despesa_descricao")
@@ -248,7 +252,7 @@ def detalhar_por_gnd_acao(
         registros.append({
             "tipo": tipo, "gnd": gnd, "gnd_descricao": nome_gnd.get(str(gnd)) if gnd is not None else None,
             "acao": acao, "acao_descricao": nome_acao.get(str(acao)) if acao is not None else None,
-            **valores, "resultado": resultado,
+            **valores, "resultado": resultado, "receitas": b.receitas,
         })
     ordem = {TIPO_CELULA: 0, TIPO_FORA: 1, TIPO_SEM_CELULA: 2}
     registros.sort(key=lambda r: (ordem[r["tipo"]], str(r["gnd"] or ""), str(r["acao"] or "")))

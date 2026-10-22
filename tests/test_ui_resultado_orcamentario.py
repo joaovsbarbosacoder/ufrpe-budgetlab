@@ -157,3 +157,16 @@ def test_detalhe_gnd_acao_abrir_controla_os_grupos():
     assert html_detalhe_gnd_acao(linhas, total, "gnd", abrir=True).count("<details open>") == 2
     assert html_detalhe_gnd_acao(linhas, total, "gnd", abrir=False).count("<details open>") == 0
     assert 'class="mini"' in html_detalhe_gnd_acao(linhas, total, "gnd")  # barra de consumo da dotação
+
+
+def test_detalhe_gnd_acao_mostra_nota_de_receitas_proprias_so_onde_ha():
+    base = {"gnd_descricao": None, "acao_descricao": None, "executado": 40.0, "projetado": 30.0, "resultado": 30.0}
+    linhas = pd.DataFrame([
+        {"tipo": "celula", "gnd": "3", "acao": "20RK", "dotacao": 130.0, "receitas": 30.0, **base},
+        {"tipo": "celula", "gnd": "3", "acao": "20Z1", "dotacao": 100.0, "receitas": 0.0, **base},
+    ])
+    html = html_detalhe_gnd_acao(linhas, (230.0, 80.0, 60.0, 90.0), "gnd")
+    assert html.count("de receitas próprias") == 3  # grupo GND 3, subitem 20RK e total; 20Z1 não tem
+    assert "R&#36; 30,00 de receitas próprias" in html
+    sem_coluna = linhas.drop(columns="receitas")
+    assert "de receitas próprias" not in html_detalhe_gnd_acao(sem_coluna, (230.0, 80.0, 60.0, 90.0), "gnd")
