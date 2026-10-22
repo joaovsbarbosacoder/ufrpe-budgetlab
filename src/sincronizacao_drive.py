@@ -185,19 +185,45 @@ def salvar_estado(estado: Estado, diretorio_estado: Path = DIRETORIO_ESTADO) -> 
             temporario.unlink()
 
 
-def impressao_digital(base: Path = BASE_PADRAO) -> str:
-    """Resumo do conteúdo das decisões em `base` (caminho + SHA-256 de cada arquivo). Vazio (`""`) = sem dados."""
+#: pastas que o próprio sistema regrava sozinho a cada abertura de página (fotografia diária do Resultado Orçamentário):
+#: vão no pacote, mas NÃO contam como "alteração do usuário" — senão toda despesa nova num dispositivo daria conflito com a
+#: versão do outro, que só diferiria nesse arquivo automático (visto em 21/10/2026).
+PASTAS_AUTOMATICAS: tuple[str, ...] = ("historico",)
 
-    arquivos = backup_dados._listar_arquivos(Path(base), list(GRUPOS_DECISOES), incluir_credenciais=False)
-    if not arquivos:
+
+def _conta_na_impressao(relativo: str) -> bool:
+    return not any(parte in PASTAS_AUTOMATICAS for parte in relativo.split("/"))
+
+
+def _resumir(itens: list[tuple[str, str]]) -> str:
+    """Digest de `(caminho, sha256)` ordenados por caminho. Vazio (`""`) = sem dados."""
+
+    if not itens:
         return ""
     resumo = hashlib.sha256()
-    for caminho in arquivos:  # já ordenados por pasta e nome
-        resumo.update(caminho.relative_to(base).as_posix().encode("utf-8"))
-        resumo.update(b"\0")
-        resumo.update(backup_dados._sha256_arquivo(caminho).encode("ascii"))
-        resumo.update(b"\0")
+    for relativo, sha in sorted(itens):
+        resumo.update(relativo.encode("utf-8") + b"\0" + sha.encode("ascii") + b"\0")
     return resumo.hexdigest()
+
+
+def impressao_digital(base: Path = BASE_PADRAO) -> str:
+    """Resumo das decisões do USUÁRIO em `base` (caminho + SHA-256 de cada arquivo, sem `PASTAS_AUTOMATICAS`). Vazio
+    (`""`) = sem dados."""
+
+    base = Path(base)
+    arquivos = backup_dados._listar_arquivos(base, list(GRUPOS_DECISOES), incluir_credenciais=False)
+    itens = [
+        (relativo, backup_dados._sha256_arquivo(caminho))
+        for caminho in arquivos
+        if _conta_na_impressao(relativo := caminho.relative_to(base).as_posix())
+    ]
+    return _resumir(itens)
+
+
+def impressao_do_pacote(previa: "backup_dados.PreviaBackup") -> str:
+    """A mesma impressão digital, calculada a partir do manifesto de um pacote (para comparar com a do último sync)."""
+
+    return _resumir([(i.caminho, i.sha256) for i in previa.itens if _conta_na_impressao(i.caminho)])
 
 
 def gerar_pacote(base: Path = BASE_PADRAO, agora: datetime | None = None) -> bytes:
@@ -267,16 +293,15 @@ def _trazer(
     )
 
 
-def _remota_identica_ao_local(armazenamento: Armazenamento, versao: VersaoRemota, base: Path) -> bool:
-    """O pacote do Drive tem exatamente o que já existe aqui? (então não há o que decidir)"""
+def _previa_remota(armazenamento: Armazenamento, versao: VersaoRemota, base: Path) -> "backup_dados.PreviaBackup | None":
+    """Pacote do Drive validado e comparado com `base`; `None` se estiver inválido (quem o trouxer vai recusá-lo)."""
 
     try:
-        previa = backup_dados.analisar_backup(
+        return backup_dados.analisar_backup(
             armazenamento.baixar(versao.id), base, grupos_permitidos=GRUPOS_DECISOES
         )
     except backup_dados.ErroBackup:
-        return False
-    return all(item.situacao == "identico" for item in previa.itens)
+        return None
 
 
 def _sincronizar(
@@ -306,11 +331,22 @@ def _sincronizar(
         return ResultadoSincronizacao(ACAO_ENVIADO, "Alterações enviadas ao Drive.", versao)
 
     # o Drive tem uma versão que este dispositivo ainda não sincronizou
-    if local and _remota_identica_ao_local(armazenamento, remota, base):
+    previa = _previa_remota(armazenamento, remota, base)
+    if previa is not None and local and all(item.situacao == "identico" for item in previa.itens):
         estado.ultima_versao_id, estado.ultimo_hash = remota.id, local
         estado.ultima_sincronizacao_em = agora.isoformat(timespec="seconds")
         salvar_estado(estado, diretorio_estado)
         return ResultadoSincronizacao(ACAO_EM_DIA, "Dados idênticos aos do Drive; sincronizado.", remota)
+    if previa is not None and estado.ultimo_hash and impressao_do_pacote(previa) == estado.ultimo_hash:
+        # a versão do Drive só difere da última sincronizada em arquivos automáticos (ex.: histórico do dia): não traz nada
+        # de novo, então não há conflito — o que mudou aqui (se algo) é enviado como a versão mais nova
+        if mudou_aqui:
+            versao = _enviar(armazenamento, estado, base, diretorio_estado, agora)
+            return ResultadoSincronizacao(ACAO_ENVIADO, "Alterações enviadas ao Drive.", versao)
+        estado.ultima_versao_id = remota.id
+        estado.ultima_sincronizacao_em = agora.isoformat(timespec="seconds")
+        salvar_estado(estado, diretorio_estado)
+        return ResultadoSincronizacao(ACAO_EM_DIA, f"Em dia com o Drive (versão de {remota.criado_em}).", remota)
     if not mudou_aqui or not local:
         return _trazer(armazenamento, remota, estado, base, diretorio_estado, agora)
     return ResultadoSincronizacao(
