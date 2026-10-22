@@ -104,15 +104,13 @@ def html_cartoes(
     dotacao: float | None, rodape_dotacao: str,
     executado: float | None, projetado: float | None,
     resultado: float | None, rodape_resultado: str,
-    receitas: float | None = None,
 ) -> str:
     """Critério de 15/10/2026: `Resultado = Dotação − Executado − Projetado a realizar` (ver `src.resultado_orcamentario`).
-    `receitas` (22/10/2026): receitas próprias informadas à mão, somadas à dotação; o cartão só aparece quando há valor."""
+    """
 
     classe, selo = situacao_resultado(resultado)
     cartoes = [
         ("Dotação Atualizada", dotacao, rodape_dotacao, ""),
-        *([("(+) Receitas próprias", receitas, "Arrecadação informada à mão, de fonte fora das células", "")] if receitas else []),
         ("(−) Executado nas células", executado, "Contratos e Bolsas: liquidado · demais origens: empenhado", ""),
         ("(−) Projetado a realizar", projetado, "Contratos + Bolsas (o que falta da projeção) + outras previstas", ""),
     ]
@@ -321,7 +319,8 @@ def _soma(serie: pd.Series) -> float | None:
 
 
 def _receitas_do(linhas: pd.DataFrame) -> float | None:
-    """Receitas próprias já somadas na dotação das `linhas` (coluna `receitas`, ausente em quem não a traz)."""
+    """Dotação das `linhas` que veio da célula da fonte 1050 limitada pela arrecadação própria (coluna `receitas`, ausente em
+    quem não a traz)."""
 
     if "receitas" not in linhas.columns:
         return None
@@ -352,8 +351,8 @@ def _linha_detalhe(
     if dotacao and executado is not None and projetado is not None and dotacao > 0:
         usado = (executado + projetado) / dotacao * 100
         barra = f'<span class="mini"><i class="{"acima" if usado > 100 else ""}" style="width:{min(usado, 100):.1f}%"></i></span>'
-    # receitas próprias já somadas na dotação (22/10/2026): nota sob o valor, para ver de onde ele vem
-    nota = f'<small class="rec">inclui {brl(receitas)} de receitas próprias</small>' if receitas else ""
+    # dotação da fonte 1050 limitada pela arrecadação própria (22/10/2026): nota sob o valor, para ver de onde ele vem
+    nota = f'<small class="rec">inclui {brl(receitas)} da fonte 1050 (limitada pela arrecadação própria)</small>' if receitas else ""
     return (
         f'<div class="lin {classe}"><span>{prefixo}{codigo}{_txt(rotulo)}</span>'
         f'<span class="num">{brl(dotacao)}{nota}</span><span class="num">{brl(executado)}</span>'

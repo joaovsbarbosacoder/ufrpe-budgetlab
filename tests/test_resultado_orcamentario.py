@@ -454,29 +454,59 @@ def test_todas_consideradas_nao_avisa():
     assert not any("desconsideradas" in a for a in r.avisos)
 
 
+# Receita própria (22/10/2026): a arrecadação informada LIMITA a dotação da célula 20RK / GND 3 / fonte 1050000000
+R1050 = ("0", "2", "20RK", "230390", "0000", "3", "1050000000")
+
+
 def _receita(valor=100.0, considerada=True, id_="r1") -> ReceitaPropria:
-    return ReceitaPropria(id_, "Arrecadação fonte 050", valor, None, "2026-10-22", "2026-10-22", considerada)
+    return ReceitaPropria(id_, "Arrecadação fonte 1050", valor, None, "2026-10-22", "2026-10-22", considerada)
 
 
-def test_receita_propria_soma_a_dotacao():
-    r = _calc(receitas_proprias=[_receita(100.0), _receita(50.0, id_="r2")])
-    assert r.dotacao == 1500  # a dotação das células não muda
-    assert r.receitas_proprias == 150
-    assert r.resultado == 1500 + 150 - 550 - 200 == 900
+def _celulas_com_1050(dot=415401.8) -> pd.DataFrame:
+    extra = pd.DataFrame({"chave": [R1050], "dotacao_atualizada": pd.array([dot], dtype="Float64")})
+    return pd.concat([_celulas(), extra], ignore_index=True)
 
 
-def test_receita_desconsiderada_fica_fora_com_aviso():
-    r = _calc(receitas_proprias=[_receita(100.0), _receita(70.0, considerada=False, id_="r2")])
-    assert r.receitas_proprias == 100
-    assert r.resultado == 850
-    assert (r.receitas_desconsideradas_qtd, r.receitas_desconsideradas_valor) == (1, 70)
-    assert any("receitas próprias desconsideradas" in a for a in r.avisos)
+def test_receita_limita_a_dotacao_da_celula_1050_marcada():
+    r = _calc(celulas=_celulas_com_1050(1000.0), selecao=[A, B, R1050], receitas_proprias=[_receita(300.0)])
+    assert r.dotacao_integral == 2500 and r.dotacao == 1500 + 300  # a célula conta 300, não 1000
+    assert (r.receita_limite, r.receita_aplicada, r.receita_excedente) == (300, 300, 0)
+    assert r.resultado == 1800 - 550 - 200
+    assert any("limitada pela arrecadação própria" in a for a in r.avisos)
 
 
-def test_sem_receitas_o_resultado_nao_muda():
-    assert _calc().resultado == _calc(receitas_proprias=[]).resultado == 750
+def test_receita_acima_da_dotacao_fica_restrita_a_ela_e_avisa_o_excedente():
+    r = _calc(celulas=_celulas_com_1050(415401.8), selecao=[A, B, R1050], receitas_proprias=[_receita(447514.78)])
+    assert r.receita_aplicada == pytest.approx(415401.8) and r.receita_excedente == pytest.approx(32112.98)
+    assert r.dotacao == pytest.approx(1500 + 415401.8)
+    assert any("ficam fora" in a for a in r.avisos)
 
 
-def test_receita_nao_cobre_dotacao_indeterminada():
-    r = _calc(celulas=_celulas(dot_a=None), receitas_proprias=[_receita(100.0)])
-    assert r.resultado is None and r.incompleto is True
+def test_sem_receita_a_celula_1050_conta_inteira_com_aviso():
+    r = _calc(celulas=_celulas_com_1050(1000.0), selecao=[A, B, R1050])
+    assert r.dotacao == 2500 and r.receita_limite is None
+    assert any("informe a arrecadação própria" in a for a in r.avisos)
+    # lançamento desconsiderado equivale a não informado
+    r2 = _calc(celulas=_celulas_com_1050(1000.0), selecao=[A, B, R1050], receitas_proprias=[_receita(10.0, considerada=False)])
+    assert r2.dotacao == 2500 and r2.receita_limite is None and r2.receitas_desconsideradas_qtd == 1
+
+
+def test_receita_nao_soma_dotacao_com_a_celula_1050_desmarcada():
+    r = _calc(celulas=_celulas_com_1050(1000.0), selecao=[A, B], receitas_proprias=[_receita(300.0)])
+    assert r.dotacao == 1500 and r.resultado == 750  # igual ao cenário sem receita
+    assert r.receita_aplicada == 0 and any("sem efeito" in a for a in r.avisos)
+
+
+def test_fonte_1050000390_nao_entra_no_limite():
+    outra = ("0", "2", "20RK", "230390", "0000", "3", "1050000390")
+    celulas = pd.concat(
+        [_celulas(), pd.DataFrame({"chave": [outra], "dotacao_atualizada": pd.array([207727.2], dtype="Float64")})],
+        ignore_index=True,
+    )
+    r = _calc(celulas=celulas, selecao=[A, B, outra], receitas_proprias=[_receita(10.0)])
+    assert r.dotacao == pytest.approx(1500 + 207727.2) and r.receita_aplicada == 0
+
+
+def test_dotacao_nula_da_celula_1050_continua_nula_com_receita():
+    r = _calc(celulas=_celulas_com_1050(None), selecao=[A, R1050], receitas_proprias=[_receita(10.0)])
+    assert r.dotacao is None and r.resultado is None and r.incompleto is True

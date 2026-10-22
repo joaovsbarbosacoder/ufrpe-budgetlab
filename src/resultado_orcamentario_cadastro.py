@@ -56,8 +56,8 @@ class DespesaManual:
 
 @dataclass(frozen=True)
 class ReceitaPropria:
-    """Arrecadação de receita própria informada à mão (22/10/2026). Soma-se à dotação das células marcadas: a fonte é
-    outra e não está nas células, então não há vínculo com célula."""
+    """Arrecadação de receita própria informada à mão (22/10/2026). A soma dos lançamentos considerados é o LIMITE de uso da
+    dotação da célula 20RK / GND 3 / fonte 1050000000 (ver `src.resultado_orcamentario`); não soma dotação por fora."""
 
     id: str
     descricao: str
@@ -67,10 +67,6 @@ class ReceitaPropria:
     atualizado_em: str
     #: entra na conta do resultado? Arquivo sem o campo = considerada.
     considerada: bool = True
-    #: GND e Ação (códigos, texto) onde a receita cobre despesa: os dois juntos ou nenhum. Só muda em que linha do
-    #: Detalhamento por GND e Ação o valor aparece; o resultado total é o mesmo. Arquivo sem os campos = sem GND/Ação.
-    gnd: str | None = None
-    acao: str | None = None
 
 
 def _agora() -> str:
@@ -300,8 +296,6 @@ def carregar_receitas(exercicio: int, diretorio: Path = DIRETORIO_PADRAO) -> lis
                 criado_em=r["criado_em"],
                 atualizado_em=r["atualizado_em"],
                 considerada=bool(r.get("considerada", True)),
-                gnd=None if r.get("gnd") is None else str(r["gnd"]),
-                acao=None if r.get("acao") is None else str(r["acao"]),
             )
             for r in dado["receitas"]
         ]
@@ -313,11 +307,8 @@ def _salvar_receitas(exercicio: int, receitas: list[ReceitaPropria], diretorio: 
     _gravar_atomico(_caminho_receitas(exercicio, diretorio), {"receitas": [asdict(r) for r in receitas]})
 
 
-def validar_receita(
-    descricao: str, valor: float | None, gnd: str | None = None, acao: str | None = None,
-) -> list[str]:
-    """Mensagens de erro da receita informada; lista vazia significa válida. Valor obrigatório e maior que zero;
-    GND e Ação são informados juntos ou nenhum."""
+def validar_receita(descricao: str, valor: float | None) -> list[str]:
+    """Mensagens de erro da receita informada; lista vazia significa válida. Valor obrigatório e maior que zero."""
 
     erros = []
     if not (descricao or "").strip():
@@ -326,22 +317,19 @@ def validar_receita(
         erros.append("Informe o valor da receita.")
     elif valor <= 0:
         erros.append("O valor da receita deve ser maior que zero.")
-    if (gnd is None) != (acao is None):
-        erros.append("Informe o GND e a Ação juntos, ou nenhum dos dois.")
     return erros
 
 
 def incluir_receita(
     exercicio: int, descricao: str, valor: float, observacao: str | None, diretorio: Path = DIRETORIO_PADRAO,
-    gnd: str | None = None, acao: str | None = None,
 ) -> ReceitaPropria:
-    erros = validar_receita(descricao, valor, gnd, acao)
+    erros = validar_receita(descricao, valor)
     if erros:
         raise ValueError("; ".join(erros))
     agora = _agora()
     nova = ReceitaPropria(
         id=uuid.uuid4().hex, descricao=descricao.strip(), valor=float(valor), observacao=observacao,
-        criado_em=agora, atualizado_em=agora, gnd=gnd, acao=acao,
+        criado_em=agora, atualizado_em=agora,
     )
     _salvar_receitas(exercicio, [*carregar_receitas(exercicio, diretorio), nova], diretorio)
     return nova

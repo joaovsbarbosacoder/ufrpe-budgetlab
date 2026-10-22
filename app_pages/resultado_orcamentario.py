@@ -413,6 +413,15 @@ def _dialogo_excluir(exercicio: int, despesa: DespesaManual) -> None:
 
 
 # ------------------------------------------------------------------- seções
+def _nota_limite_receita(res: ResultadoOrcamentario) -> str:
+    """Rodapé do cartão de dotação quando a arrecadação própria limitou a dotação da fonte 1050 (22/10/2026)."""
+
+    if res.receita_limite is None or res.dotacao is None or res.dotacao_integral is None:
+        return ""
+    reducao = res.dotacao_integral - res.dotacao
+    return f" · fonte 1050 limitada pela arrecadação própria (−{formatar_brl(reducao)})" if reducao > 0.004 else ""
+
+
 def _render_cartoes(res: ResultadoOrcamentario, qtd_selecionadas: int, qtd_celulas: int) -> None:
     """Cartões no desenho do protótipo (08/10/2026): o do Resultado com borda, fundo e selo pela situação."""
 
@@ -422,8 +431,8 @@ def _render_cartoes(res: ResultadoOrcamentario, qtd_selecionadas: int, qtd_celul
         rodape = f"{_pct(res.resultado, res.dotacao)} da dotação selecionada"
     st.html(
         html_cartoes(
-            res.dotacao, f"{qtd_selecionadas} de {qtd_celulas} células selecionadas",
-            res.executado_total, res.projetado_total, res.resultado, rodape, res.receitas_proprias,
+            res.dotacao, f"{qtd_selecionadas} de {qtd_celulas} células selecionadas{_nota_limite_receita(res)}",
+            res.executado_total, res.projetado_total, res.resultado, rodape,
         )
     )
 
@@ -967,25 +976,11 @@ if incluir:
 # --------------------------------------------------------------- Receitas próprias
 st.subheader("Receitas próprias arrecadadas")
 st.caption(
-    "Arrecadação de receita própria informada à mão (fonte fora das células marcadas). Soma-se à dotação das células e "
-    'pode cobrir despesas previstas ou já contratualizadas. "Considerar" desmarcado tira o valor da conta. Com GND e Ação '
-    "informados, o valor aparece nessa linha do Detalhamento por GND e Ação (seção 3); sem eles, em \"Sem célula\"."
+    "Arrecadação de receita própria informada à mão. A dotação da fonte 1050 é uma estimativa da arrecadação: a célula "
+    "da ação 20RK, GND 3, fonte 1050000000 conta só até o valor informado aqui (o menor entre a dotação e a arrecadação). "
+    "O valor não soma dotação por fora e só tem efeito com essa célula marcada na seção 4. "
+    '"Considerar" desmarcado tira o lançamento da conta; sem nenhum considerado, a dotação conta inteira, com aviso.'
 )
-_gnd_nomes = {
-    str(c): str(d) for c, d in zip(celulas["grupo_despesa_codigo"], celulas["grupo_despesa_descricao"]) if pd.notna(c) and pd.notna(d)
-}
-_acao_nomes = {str(c): str(d) for c, d in zip(celulas["acao_codigo"], celulas["acao_descricao"]) if pd.notna(c) and pd.notna(d)}
-_gnds = sorted({str(c) for c in celulas["grupo_despesa_codigo"].dropna()})
-_acoes = sorted({str(c) for c in celulas["acao_codigo"].dropna()})
-
-
-def _rotulo_gnd(codigo: str | None) -> str:
-    return "—" if codigo is None else f"GND {codigo}" + (f" — {_gnd_nomes[codigo]}" if codigo in _gnd_nomes else "")
-
-
-def _rotulo_acao(codigo: str | None) -> str:
-    return "—" if codigo is None else codigo + (f" — {_acao_nomes[codigo]}" if codigo in _acao_nomes else "")
-
 
 if receitas:
     for receita in receitas:
@@ -996,7 +991,6 @@ if receitas:
         )
         col_desc.markdown(_sem_latex(receita.descricao))
         col_obs.markdown(_sem_latex(receita.observacao or "—"))
-        col_obs.caption(_sem_latex(f"{_rotulo_gnd(receita.gnd)} · Ação {_rotulo_acao(receita.acao)}"))
         col_valor.markdown(_sem_latex(formatar_brl(receita.valor)))
         if col_acoes.button("Excluir", key=f"ro_excluir_rec_{receita.id}", disabled=not receitas_legiveis, type="tertiary"):
             _dialogo_excluir_receita(exercicio, receita)
@@ -1014,12 +1008,9 @@ with st.form("ro_nova_receita", clear_on_submit=True):
         "Valor arrecadado (R$)", key="ro_receita_valor", value=None, min_value=0.0, step=100.0, format="%.2f",
     )
     nova_rec_observacao = _c_obs.text_input("Observação", key="ro_receita_observacao", placeholder="Opcional")
-    _c_gnd, _c_acao = st.columns(2)
-    nova_rec_gnd = _c_gnd.selectbox("GND (opcional)", [None, *_gnds], key="ro_receita_gnd", format_func=_rotulo_gnd)
-    nova_rec_acao = _c_acao.selectbox("Ação (opcional)", [None, *_acoes], key="ro_receita_acao", format_func=_rotulo_acao)
     incluir_receita = st.form_submit_button("Incluir receita", type="primary", disabled=not receitas_legiveis)
 if incluir_receita:
-    erros_rec = cadastro.validar_receita(nova_rec_descricao, nova_rec_valor, nova_rec_gnd, nova_rec_acao)
+    erros_rec = cadastro.validar_receita(nova_rec_descricao, nova_rec_valor)
     if erros_rec:
         for erro in erros_rec:
             st.error(erro)
@@ -1027,7 +1018,7 @@ if incluir_receita:
         try:
             cadastro.incluir_receita(
                 exercicio, nova_rec_descricao, nova_rec_valor, nova_rec_observacao.strip() or None,
-                diretorio=cadastro.DIRETORIO_PADRAO, gnd=nova_rec_gnd, acao=nova_rec_acao,
+                diretorio=cadastro.DIRETORIO_PADRAO,
             )
         except ArquivoCorrompido as erro:
             st.error(f"{erro} — nada foi gravado.")
@@ -1134,7 +1125,7 @@ with area_detalhe:
             st.session_state["ro_detalhe_abrir"] = False
     with _col_info:
         st.caption('Só as células marcadas na seção "Células" entram.')
-    detalhe_gnd_acao = detalhar_por_gnd_acao(resultado, celulas, empenhado, selecao_atual, despesas, ativos_sem_ne, receitas)
+    detalhe_gnd_acao = detalhar_por_gnd_acao(resultado, celulas, empenhado, selecao_atual, despesas, ativos_sem_ne)
     _total_detalhe = (
         detalhe_gnd_acao.dotacao, detalhe_gnd_acao.executado, detalhe_gnd_acao.projetado, detalhe_gnd_acao.resultado,
     )

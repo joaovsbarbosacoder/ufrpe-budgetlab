@@ -198,42 +198,37 @@ def test_selecao_vazia_nao_gera_linhas():
     assert det.linhas.empty and det.fecha
 
 
-def _receita(valor, gnd=None, acao=None, considerada=True, id_="r1"):
+def _com_1050(dot=1000.0) -> pd.DataFrame:
+    from tests.test_resultado_orcamentario import R1050
+
+    extra = pd.DataFrame({"chave": [R1050], "dotacao_atualizada": pd.array([dot], dtype="Float64")})
+    return pd.concat([_celulas(), extra], ignore_index=True)
+
+
+def _receita(valor, id_="r1"):
     from src.resultado_orcamentario_cadastro import ReceitaPropria
 
-    return ReceitaPropria(id_, "Arrecadação", valor, None, "2026-10-22", "2026-10-22", considerada, gnd, acao)
+    return ReceitaPropria(id_, "Arrecadação", valor, None, "2026-10-22", "2026-10-22", True)
 
 
-def test_receita_com_gnd_e_acao_soma_na_dotacao_do_grupo_e_fecha_com_os_cartoes():
-    receitas = [_receita(100.0, "4", "20Z1"), _receita(30.0, "3", "20Y0", id_="r2")]
-    res = _calc(receitas_proprias=receitas)
-    det = detalhar_por_gnd_acao(res, _celulas_com_d(), _empenhos_padrao(), [A, B], [_manual()], None, receitas)
+def test_celula_1050_limitada_pela_receita_aparece_no_grupo_e_fecha_com_os_cartoes():
+    from tests.test_resultado_orcamentario import R1050
 
-    assert det.fecha and det.diferenca_conferencia == pytest.approx(0.0)
+    receitas = [_receita(300.0)]
+    res = _calc(celulas=_com_1050(), selecao=[A, B, R1050], receitas_proprias=receitas)
+    det = detalhar_por_gnd_acao(res, _com_1050(), _empenhos_padrao(), [A, B, R1050], [_manual()])
+
+    assert det.fecha and det.dotacao == pytest.approx(res.dotacao) == pytest.approx(1800.0)
     assert det.resultado == pytest.approx(res.resultado)
-    # grupo que já tinha células marcadas: dotação 1500 + 30 de receita
-    assert _linha(det, TIPO_CELULA, "3", "20Y0")["dotacao"] == pytest.approx(1530.0)
-    # grupo sem célula marcada (D não marcada) passa a existir só com a receita
-    novo = _linha(det, TIPO_CELULA, "4", "20Z1")
-    assert novo["dotacao"] == pytest.approx(100.0) and novo["executado"] == 0.0 and novo["resultado"] == pytest.approx(100.0)
+    grupo = _linha(det, TIPO_CELULA, "3", "20RK")
+    assert grupo["dotacao"] == pytest.approx(300.0) and grupo["receitas"] == pytest.approx(300.0)
+    assert _linha(det, TIPO_CELULA, "3", "20Y0")["receitas"] == 0.0
 
 
-def test_receita_sem_gnd_ou_acao_vai_para_sem_celula_e_desconsiderada_fica_fora():
-    receitas = [_receita(70.0), _receita(500.0, "4", "20Z1", considerada=False, id_="r2")]
-    res = _calc(receitas_proprias=receitas)
-    det = detalhar_por_gnd_acao(res, _celulas(), _empenhos_padrao(), [A, B], [_manual()], None, receitas)
+def test_sem_limite_a_celula_1050_entra_inteira_no_detalhe_e_sem_nota():
+    from tests.test_resultado_orcamentario import R1050
 
-    assert det.fecha
-    assert _linha(det, TIPO_SEM_CELULA)["dotacao"] == pytest.approx(70.0)
-    assert not ((det.linhas["gnd"] == "4") & (det.linhas["tipo"] == TIPO_CELULA)).any()
-
-
-def test_coluna_receitas_mostra_quanto_da_dotacao_do_grupo_vem_de_receita_propria():
-    receitas = [_receita(100.0, "4", "20Z1"), _receita(30.0, "3", "20Y0", id_="r2"), _receita(5.0, id_="r3")]
-    res = _calc(receitas_proprias=receitas)
-    det = detalhar_por_gnd_acao(res, _celulas_com_d(), _empenhos_padrao(), [A, B], [_manual()], None, receitas)
-
-    assert _linha(det, TIPO_CELULA, "3", "20Y0")["receitas"] == pytest.approx(30.0)
-    assert _linha(det, TIPO_CELULA, "4", "20Z1")["receitas"] == pytest.approx(100.0)
-    assert _linha(det, TIPO_SEM_CELULA)["receitas"] == pytest.approx(5.0)
-    assert det.linhas["receitas"].sum() == pytest.approx(res.receitas_proprias)
+    res = _calc(celulas=_com_1050(), selecao=[A, B, R1050])
+    det = detalhar_por_gnd_acao(res, _com_1050(), _empenhos_padrao(), [A, B, R1050], [_manual()])
+    assert det.fecha and _linha(det, TIPO_CELULA, "3", "20RK")["dotacao"] == pytest.approx(1000.0)
+    assert det.linhas["receitas"].sum() == 0.0
