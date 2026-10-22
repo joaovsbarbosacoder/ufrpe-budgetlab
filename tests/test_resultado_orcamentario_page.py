@@ -196,6 +196,27 @@ def test_incluir_despesa_manual(diretorio: Path) -> None:
     assert app.button(key=f"ro_excluir_{despesas[0]['id']}") is not None
 
 
+def test_incluir_receita_propria_com_gnd_e_acao(diretorio: Path) -> None:
+    app = _abrir()
+    exercicio = _exercicio(app)
+    app.text_input(key="ro_receita_descricao").input("Arrecadação teste")
+    app.number_input(key="ro_receita_valor").set_value(250.0)
+    # o AppTest reaplica `format_func` ao escolher na lista; por isso o valor bruto vai direto no estado da sessão
+    acao = app.selectbox(key="ro_receita_acao").options[1].split(" ")[0]  # índice 0 = sem Ação
+    # só o GND: recusado, nada gravado
+    app.session_state["ro_receita_gnd"] = "3"
+    app.button(key="FormSubmitter:ro_nova_receita-Incluir receita").click().run()
+    assert any("GND e a Ação juntos" in e.value for e in app.error)
+    assert not (diretorio / str(exercicio) / "receitas_proprias.json").exists()
+
+    app.session_state["ro_receita_acao"] = acao
+    app.button(key="FormSubmitter:ro_nova_receita-Incluir receita").click().run()
+    assert not app.exception, [e.value for e in app.exception]
+    (receita,) = json.loads((diretorio / str(exercicio) / "receitas_proprias.json").read_text(encoding="utf-8"))["receitas"]
+    assert (receita["valor"], receita["gnd"], receita["acao"]) == (250.0, "3", acao)
+    assert any(bloco.value == "Arrecadação teste" for bloco in app.markdown)
+
+
 def test_menu_tem_pagina(diretorio: Path) -> None:
     texto = (PROJECT_ROOT / "app.py").read_text(encoding="utf-8")
     assert '"app_pages/resultado_orcamentario.py"' in texto
