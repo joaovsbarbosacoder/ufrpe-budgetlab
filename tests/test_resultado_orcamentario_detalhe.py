@@ -221,8 +221,9 @@ def test_celula_1050_limitada_pela_receita_aparece_no_grupo_e_fecha_com_os_carto
     assert det.fecha and det.dotacao == pytest.approx(res.dotacao) == pytest.approx(1800.0)
     assert det.resultado == pytest.approx(res.resultado)
     grupo = _linha(det, TIPO_CELULA, "3", "20RK")
-    assert grupo["dotacao"] == pytest.approx(300.0) and grupo["receitas"] == pytest.approx(300.0)
-    assert _linha(det, TIPO_CELULA, "3", "20Y0")["receitas"] == 0.0
+    assert grupo["dotacao"] == pytest.approx(300.0)
+    assert grupo["fonte"] == "1050000000" and grupo["receita_limite"] == pytest.approx(300.0) and grupo["receita_excedente"] == 0.0
+    assert pd.isna(_linha(det, TIPO_CELULA, "3", "20Y0")["receita_limite"])  # só a linha da 1050 carrega a arrecadação
 
 
 def test_sem_limite_a_celula_1050_entra_inteira_no_detalhe_e_sem_nota():
@@ -231,4 +232,30 @@ def test_sem_limite_a_celula_1050_entra_inteira_no_detalhe_e_sem_nota():
     res = _calc(celulas=_com_1050(), selecao=[A, B, R1050])
     det = detalhar_por_gnd_acao(res, _com_1050(), _empenhos_padrao(), [A, B, R1050], [_manual()])
     assert det.fecha and _linha(det, TIPO_CELULA, "3", "20RK")["dotacao"] == pytest.approx(1000.0)
-    assert det.linhas["receitas"].sum() == 0.0
+    assert det.linhas["receita_limite"].isna().all()
+
+
+def test_receita_acima_da_dotacao_leva_o_excedente_na_linha_da_1050():
+    from tests.test_resultado_orcamentario import R1050
+
+    res = _calc(celulas=_com_1050(415401.8), selecao=[A, B, R1050], receitas_proprias=[_receita(447514.78)])
+    det = detalhar_por_gnd_acao(res, _com_1050(415401.8), _empenhos_padrao(), [A, B, R1050], [_manual()])
+    linha = _linha(det, TIPO_CELULA, "3", "20RK")
+    assert det.fecha
+    assert linha["receita_limite"] == pytest.approx(447514.78) and linha["receita_excedente"] == pytest.approx(32112.98)
+
+
+def test_fontes_diferentes_na_mesma_acao_e_gnd_ficam_em_linhas_separadas():
+    from tests.test_resultado_orcamentario import R1050
+
+    rk_1000 = ("0", "2", "20RK", "230390", "0000", "3", "1000000000")
+    celulas = pd.concat(
+        [_celulas(), pd.DataFrame({"chave": [rk_1000, R1050], "dotacao_atualizada": pd.array([5000.0, 400.0], dtype="Float64")})],
+        ignore_index=True,
+    )
+    res = _calc(celulas=celulas, selecao=[rk_1000, R1050])
+    det = detalhar_por_gnd_acao(res, celulas, _empenhado([]), [rk_1000, R1050], [])
+    rk = det.linhas.loc[(det.linhas["tipo"] == TIPO_CELULA) & (det.linhas["acao"] == "20RK")].set_index("fonte")
+    assert set(rk.index) == {"1000000000", "1050000000"}
+    assert rk.loc["1000000000", "dotacao"] == pytest.approx(5000.0) and rk.loc["1050000000", "dotacao"] == pytest.approx(400.0)
+    assert det.dotacao == pytest.approx(5400.0)

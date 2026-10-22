@@ -16,7 +16,7 @@ Onde cada valor cai (protótipo `docs/superpowers/specs/2026-10-20-resultado-orc
   * Outras despesas previstas: célula informada no cadastro; sem célula → "Sem célula".
   * Contrato ATIVO sem NE (projetado pela necessidade contratual): "Sem célula".
   * Receita própria (22/10/2026): a célula 20RK / GND 3 / fonte 1050000000 conta pelo menor entre a sua dotação e a
-    arrecadação informada (`dotacao_pela_receita`), como no cartão; a coluna `receitas` traz o valor com que ela contou.
+    arrecadação informada (`dotacao_pela_receita`), como no cartão; as colunas `receita_limite`/`receita_excedente` trazem a arrecadação e o que passa da dotação.
 
 Nulo continua nulo: um valor indisponível deixa nulo o grupo que ele alimenta (e o total), nunca vira zero.
 """
@@ -44,14 +44,17 @@ TIPO_CELULA = "celula"
 TIPO_FORA = "fora_marcadas"
 TIPO_SEM_CELULA = "sem_celula"
 
-#: `receitas` (22/10/2026): parte da `dotacao` do grupo que vem de receitas próprias informadas à mão (já incluída na dotação;
-#: coluna informativa para a tela mostrar de onde vem o valor).
+#: 22/10/2026: cada fonte tem a sua linha (`fonte`, `fonte_descricao`). `receita_limite`/`receita_excedente` só vêm preenchidos na
+#: linha da célula da receita (20RK / GND 3 / fonte 1050000000) com limite ativo: arrecadação informada e quanto dela passa da
+#: dotação (a tela só avisa quando `receita_excedente` > 0).
 COLUNAS_DETALHE = [
-    "tipo", "gnd", "gnd_descricao", "acao", "acao_descricao", "dotacao", "executado", "projetado", "resultado", "receitas",
+    "tipo", "gnd", "gnd_descricao", "acao", "acao_descricao", "dotacao", "executado", "projetado", "resultado",
+    "fonte", "fonte_descricao", "receita_limite", "receita_excedente",
 ]
 
 _IDX_ACAO = CHAVE_CELULA.index("acao_codigo")
 _IDX_GND = CHAVE_CELULA.index("grupo_despesa_codigo")
+_IDX_FONTE = CHAVE_CELULA.index("fonte_recursos_detalhada_codigo")
 _CAMPOS = ("dotacao", "executado", "projetado")
 
 
@@ -78,7 +81,8 @@ class _Balde:
     def __init__(self) -> None:
         self.valor = dict.fromkeys(_CAMPOS, 0.0)
         self.nulo = dict.fromkeys(_CAMPOS, False)
-        self.receitas = 0.0
+        self.receita_limite: float | None = None
+        self.receita_excedente = 0.0
 
     def somar(self, campo: str, valor: float | None) -> None:
         if valor is None or pd.isna(valor):
@@ -90,8 +94,10 @@ class _Balde:
         return None if self.nulo[campo] else self.valor[campo]
 
 
-def _chave_grupo(chave: CelulaChave) -> tuple[str | None, str | None]:
-    return chave[_IDX_GND], chave[_IDX_ACAO]
+def _chave_grupo(chave: CelulaChave) -> tuple[str | None, str | None, str | None]:
+    """GND, Ação e Fonte detalhada: cada fonte tem a sua linha (22/10/2026), para a fonte 1050 aparecer em separado."""
+
+    return chave[_IDX_GND], chave[_IDX_ACAO], chave[_IDX_FONTE]
 
 
 def _descricoes(celulas: pd.DataFrame, codigo: str, descricao: str) -> dict[str, str]:
@@ -142,7 +148,7 @@ def detalhar_por_gnd_acao(
                 alvo = balde((TIPO_CELULA, *_chave_grupo(chave)))
                 alvo.somar("dotacao", valor)
                 if valor is not None and res.receita_limite is not None and e_celula_da_receita(chave):
-                    alvo.receitas += valor
+                    alvo.receita_limite, alvo.receita_excedente = res.receita_limite, res.receita_excedente
     for chave in marcadas:  # célula marcada sem Dotação na base: o grupo existe e fica sem dotação
         balde((TIPO_CELULA, *_chave_grupo(chave)))
 
@@ -233,6 +239,7 @@ def detalhar_por_gnd_acao(
     # --- Linhas e totais ----------------------------------------------------------------------------
     nome_gnd = _descricoes(celulas, "grupo_despesa_codigo", "grupo_despesa_descricao")
     nome_acao = _descricoes(celulas, "acao_codigo", "acao_descricao")
+    nome_fonte = _descricoes(celulas, "fonte_recursos_detalhada_codigo", "fonte_recursos_detalhada_descricao")
     registros = []
     for chave_balde, b in baldes.items():
         tipo = chave_balde[0]
@@ -240,7 +247,7 @@ def detalhar_por_gnd_acao(
             continue  # nada caiu fora das marcadas
         if tipo == TIPO_SEM_CELULA and not any(b.valor.values()) and not any(b.nulo.values()):
             continue
-        gnd, acao = (chave_balde[1], chave_balde[2]) if tipo == TIPO_CELULA else (None, None)
+        gnd, acao, fonte = (chave_balde[1], chave_balde[2], chave_balde[3]) if tipo == TIPO_CELULA else (None, None, None)
         valores = {campo: b.final(campo) for campo in _CAMPOS}
         if indisponivel:
             valores["executado"] = valores["projetado"] = None
@@ -248,10 +255,11 @@ def detalhar_por_gnd_acao(
         registros.append({
             "tipo": tipo, "gnd": gnd, "gnd_descricao": nome_gnd.get(str(gnd)) if gnd is not None else None,
             "acao": acao, "acao_descricao": nome_acao.get(str(acao)) if acao is not None else None,
-            **valores, "resultado": resultado, "receitas": b.receitas,
+            **valores, "resultado": resultado, "receita_limite": b.receita_limite, "receita_excedente": b.receita_excedente,
+            "fonte": fonte, "fonte_descricao": nome_fonte.get(str(fonte)) if fonte is not None else None,
         })
     ordem = {TIPO_CELULA: 0, TIPO_FORA: 1, TIPO_SEM_CELULA: 2}
-    registros.sort(key=lambda r: (ordem[r["tipo"]], str(r["gnd"] or ""), str(r["acao"] or "")))
+    registros.sort(key=lambda r: (ordem[r["tipo"]], str(r["gnd"] or ""), str(r["acao"] or ""), str(r["fonte"] or "")))
     linhas = pd.DataFrame(registros, columns=COLUNAS_DETALHE)
 
     totais = {campo: soma_ou_nulo(linhas[campo].astype("float64")) if len(linhas) else 0.0 for campo in _CAMPOS}

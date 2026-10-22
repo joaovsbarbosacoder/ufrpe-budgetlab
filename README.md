@@ -532,8 +532,8 @@ Resultado = Dotação Atualizada (células) − Empenhado nas células (Execuç�
 lançamentos considerados é o **limite de uso** da célula **ação 20RK, GND 3, fonte 1050000000**: ela conta o menor entre a
 sua dotação e a arrecadação informada. O valor **não soma dotação por fora**, e só tem efeito com essa célula marcada. O que
 passar da dotação fica fora, em aviso; sem lançamento considerado, a célula conta inteira, com aviso. A fonte 1050000390
-(parte já em execução) não entra no limite. O Detalhamento por GND e Ação mostra, na linha da 20RK, quanto da dotação veio
-dessa célula limitada. A regra fica em `src/resultado_orcamentario.py` (`RECEITA_ACAO`, `RECEITA_GND`, `RECEITA_FONTE`).
+(parte já em execução) não entra no limite. No Detalhamento por GND e Ação cada linha indica a sua **fonte** (a fonte 1050 aparece em linha própria, em azul), e a
+nota "limitada pela arrecadação própria" só aparece nessa linha quando o valor informado **ultrapassa** a dotação da célula. A regra fica em `src/resultado_orcamentario.py` (`RECEITA_ACAO`, `RECEITA_GND`, `RECEITA_FONTE`).
 
 O sinal dá o rótulo: positivo é **Superávit**, negativo é **Déficit**.
 

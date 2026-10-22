@@ -293,6 +293,10 @@ ESTILO_DETALHE = f"""
 .ro-det .mini i{{position:absolute;left:0;top:0;bottom:0;background:{dt.ACCENT}}}
 .ro-det .mini i.acima{{background:{dt.NEGATIVE}}}
 .ro-det .rec{{display:block;font-size:11px;font-weight:400;color:{dt.ACCENT};white-space:nowrap}}
+.ro-det .fonte{{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:6px;font-size:11.5px;font-weight:600;
+  background:{dt.SURFACE_ALT};border:1px solid {dt.BORDER};color:{dt.TEXT_MUTED};white-space:nowrap}}
+.ro-det .fonte.f1050{{background:{dt.ACCENT_SOFT};border-color:{dt.ACCENT};color:{dt.ACCENT}}}
+.ro-det .destaque{{background:{dt.ACCENT_SOFT}}}
 .ro-det .cons{{white-space:nowrap;text-align:left}}
 .ro-det .sub{{font-weight:400;font-size:13.5px;padding-left:46px}}
 .ro-det .extra{{font-style:italic;color:{dt.TEXT_MUTED}}}
@@ -318,16 +322,6 @@ def _soma(serie: pd.Series) -> float | None:
     return None if valores.isna().any() else float(valores.sum())
 
 
-def _receitas_do(linhas: pd.DataFrame) -> float | None:
-    """Dotação das `linhas` que veio da célula da fonte 1050 limitada pela arrecadação própria (coluna `receitas`, ausente em
-    quem não a traz)."""
-
-    if "receitas" not in linhas.columns:
-        return None
-    valor = pd.to_numeric(linhas["receitas"], errors="coerce").sum()
-    return float(valor) if valor else None
-
-
 def _resultado_do(dotacao: float | None, executado: float | None, projetado: float | None) -> float | None:
     if dotacao is None or executado is None or projetado is None:
         return None
@@ -336,7 +330,8 @@ def _resultado_do(dotacao: float | None, executado: float | None, projetado: flo
 
 def _linha_detalhe(
     rotulo: str, dotacao: float | None, executado: float | None, projetado: float | None, resultado: float | None,
-    classe: str = "", prefixo: str = "", cod: str = "", receitas: float | None = None,
+    classe: str = "", prefixo: str = "", cod: str = "", fonte: str | None = None, fonte_descricao: str | None = None,
+    receita_limite: float | None = None, receita_excedente: float | None = None,
 ) -> str:
     dotacao, executado, projetado, resultado = (
         None if v is None or pd.isna(v) else float(v) for v in (dotacao, executado, projetado, resultado)
@@ -351,10 +346,22 @@ def _linha_detalhe(
     if dotacao and executado is not None and projetado is not None and dotacao > 0:
         usado = (executado + projetado) / dotacao * 100
         barra = f'<span class="mini"><i class="{"acima" if usado > 100 else ""}" style="width:{min(usado, 100):.1f}%"></i></span>'
-    # dotação da fonte 1050 limitada pela arrecadação própria (22/10/2026): nota sob o valor, para ver de onde ele vem
-    nota = f'<small class="rec">inclui {brl(receitas)} da fonte 1050 (limitada pela arrecadação própria)</small>' if receitas else ""
+    # fonte da linha (22/10/2026): etiqueta em cada linha; a da fonte 1050 vai em azul e com a descrição
+    etiqueta = ""
+    if fonte:
+        e1050 = str(fonte).startswith("1050")
+        texto = f"Fonte {fonte}" + (f" · {fonte_descricao}" if e1050 and fonte_descricao else "")
+        etiqueta = f'<span class="fonte{" f1050" if e1050 else ""}" title="{_txt(fonte_descricao or "")}">{_txt(texto)}</span>'
+    # só avisa quando a arrecadação informada ULTRAPASSA a dotação da célula (o corte menor aparece no cartão e nos Avisos)
+    nota = (
+        f'<small class="rec">limitada pela arrecadação própria: informado {brl(receita_limite)} · '
+        f'{brl(receita_excedente)} acima da dotação ficam fora</small>'
+        if receita_excedente and receita_excedente > 0.004 and receita_limite is not None else ""
+    )
+    if fonte and str(fonte).startswith("1050"):
+        classe = f"{classe} destaque".strip()
     return (
-        f'<div class="lin {classe}"><span>{prefixo}{codigo}{_txt(rotulo)}</span>'
+        f'<div class="lin {classe}"><span>{prefixo}{codigo}{_txt(rotulo)}{etiqueta}</span>'
         f'<span class="num">{brl(dotacao)}{nota}</span><span class="num">{brl(executado)}</span>'
         f'<span class="num">{brl(projetado)}</span><span class="num{sinal}">{brl(resultado)}</span>'
         f'<span class="cons">{barra}{_txt(consumo)}</span><span class="tag {classe_sit}">{_txt(selo)}</span></div>'
@@ -395,24 +402,24 @@ def html_detalhe_gnd_acao(
         dot, exe, prj = _soma(grupo["dotacao"]), _soma(grupo["executado"]), _soma(grupo["projetado"])
         topo = _linha_detalhe(
             descricao.removeprefix("— "), dot, exe, prj, _resultado_do(dot, exe, prj),
-            prefixo='<span class="chev">▶</span>', cod=codigo, receitas=_receitas_do(grupo),
+            prefixo='<span class="chev">▶</span>', cod=codigo,
         )
         internos = []
-        for _, r in grupo.sort_values("acao" if outro == AGRUPAR_ACAO else "gnd").iterrows():
+        for _, r in grupo.sort_values(["acao" if outro == AGRUPAR_ACAO else "gnd", "fonte"] if "fonte" in grupo else ["acao" if outro == AGRUPAR_ACAO else "gnd"]).iterrows():
             cod_i, desc_i = _rotulos(r, outro)
             internos.append(_linha_detalhe(
                 desc_i.removeprefix("— "), r["dotacao"], r["executado"], r["projetado"], r["resultado"], "sub", cod=cod_i,
-                receitas=_receitas_do(r.to_frame().T),
+                fonte=r.get("fonte"), fonte_descricao=r.get("fonte_descricao"),
+                receita_limite=r.get("receita_limite"), receita_excedente=r.get("receita_excedente"),
             ))
         # <summary> precisa ser o primeiro filho: a linha do grupo vira o resumo
         aberto = " open" if (abrir is True or (abrir is None and posicao == 0)) else ""
         partes.append(f"<details{aberto}><summary>{topo}</summary>{''.join(internos)}</details>")
     for tipo, rotulo in (("fora_marcadas", "Fora das células marcadas (parte de NE em célula não marcada)"),
-                         ("sem_celula", "Sem célula (outras despesas previstas, contratos ativos sem NE e receitas próprias sem GND/Ação)")):
+                         ("sem_celula", "Sem célula (outras despesas previstas e contratos ativos sem NE)")):
         for _, r in linhas.loc[linhas["tipo"] == tipo].iterrows():
-            partes.append(_linha_detalhe(rotulo, r["dotacao"], r["executado"], r["projetado"], r["resultado"], "extra",
-                                         receitas=_receitas_do(r.to_frame().T)))
-    partes.append(_linha_detalhe("Total do bolsão", *total, classe="tot", receitas=_receitas_do(linhas)))
+            partes.append(_linha_detalhe(rotulo, r["dotacao"], r["executado"], r["projetado"], r["resultado"], "extra"))
+    partes.append(_linha_detalhe("Total do bolsão", *total, classe="tot"))
     if rodape:
         partes.append(f'<div class="ro-check {rodape_classe}" style="padding:8px 16px"><span>{_txt(rodape)}</span></div>')
     partes.append("</div>")
