@@ -396,7 +396,7 @@ def html_detalhe_gnd_acao(
         aberto = " open" if (abrir is True or (abrir is None and posicao == 0)) else ""
         partes.append(f"<details{aberto}><summary>{topo}</summary>{''.join(internos)}</details>")
     for tipo, rotulo in (("fora_marcadas", "Fora das células marcadas (parte de NE em célula não marcada)"),
-                         ("sem_celula", "Sem célula (outras despesas previstas e contratos ativos sem NE)")):
+                         ("sem_celula", "Sem célula (outras despesas previstas, contratos ativos sem NE e receitas próprias sem GND/Ação)")):
         for _, r in linhas.loc[linhas["tipo"] == tipo].iterrows():
             partes.append(_linha_detalhe(rotulo, r["dotacao"], r["executado"], r["projetado"], r["resultado"], "extra"))
     partes.append(_linha_detalhe("Total do bolsão", *total, classe="tot"))

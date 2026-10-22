@@ -181,3 +181,17 @@ def test_receitas_arquivo_corrompido_levanta(tmp_path):
     (tmp_path / "2026" / "receitas_proprias.json").write_text("{nao é json", encoding="utf-8")
     with pytest.raises(ArquivoCorrompido):
         carregar_receitas(2026, tmp_path)
+
+
+def test_receita_com_gnd_e_acao_ida_e_volta_e_exige_os_dois(tmp_path):
+    from src.resultado_orcamentario_cadastro import carregar_receitas, incluir_receita, validar_receita
+
+    incluir_receita(2026, "Fonte 050", 10.0, None, tmp_path, gnd="3", acao="20RK")
+    incluir_receita(2026, "Sem destino", 5.0, None, tmp_path)
+    com, sem = carregar_receitas(2026, tmp_path)
+    assert (com.gnd, com.acao) == ("3", "20RK") and (sem.gnd, sem.acao) == (None, None)
+    assert validar_receita("x", 1.0, "3", None) and validar_receita("x", 1.0, None, "20RK")
+    assert validar_receita("x", 1.0, "3", "20RK") == [] and validar_receita("x", 1.0) == []
+    with pytest.raises(ValueError):
+        incluir_receita(2026, "x", 1.0, None, tmp_path, gnd="3")
+    assert len(carregar_receitas(2026, tmp_path)) == 2

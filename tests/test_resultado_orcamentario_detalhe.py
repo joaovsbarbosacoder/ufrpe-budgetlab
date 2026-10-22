@@ -196,3 +196,33 @@ def test_selecao_vazia_nao_gera_linhas():
     det = detalhar_por_gnd_acao(res, _celulas(), _empenhos_padrao(), [], [])
 
     assert det.linhas.empty and det.fecha
+
+
+def _receita(valor, gnd=None, acao=None, considerada=True, id_="r1"):
+    from src.resultado_orcamentario_cadastro import ReceitaPropria
+
+    return ReceitaPropria(id_, "Arrecadação", valor, None, "2026-10-22", "2026-10-22", considerada, gnd, acao)
+
+
+def test_receita_com_gnd_e_acao_soma_na_dotacao_do_grupo_e_fecha_com_os_cartoes():
+    receitas = [_receita(100.0, "4", "20Z1"), _receita(30.0, "3", "20Y0", id_="r2")]
+    res = _calc(receitas_proprias=receitas)
+    det = detalhar_por_gnd_acao(res, _celulas_com_d(), _empenhos_padrao(), [A, B], [_manual()], None, receitas)
+
+    assert det.fecha and det.diferenca_conferencia == pytest.approx(0.0)
+    assert det.resultado == pytest.approx(res.resultado)
+    # grupo que já tinha células marcadas: dotação 1500 + 30 de receita
+    assert _linha(det, TIPO_CELULA, "3", "20Y0")["dotacao"] == pytest.approx(1530.0)
+    # grupo sem célula marcada (D não marcada) passa a existir só com a receita
+    novo = _linha(det, TIPO_CELULA, "4", "20Z1")
+    assert novo["dotacao"] == pytest.approx(100.0) and novo["executado"] == 0.0 and novo["resultado"] == pytest.approx(100.0)
+
+
+def test_receita_sem_gnd_ou_acao_vai_para_sem_celula_e_desconsiderada_fica_fora():
+    receitas = [_receita(70.0), _receita(500.0, "4", "20Z1", considerada=False, id_="r2")]
+    res = _calc(receitas_proprias=receitas)
+    det = detalhar_por_gnd_acao(res, _celulas(), _empenhos_padrao(), [A, B], [_manual()], None, receitas)
+
+    assert det.fecha
+    assert _linha(det, TIPO_SEM_CELULA)["dotacao"] == pytest.approx(70.0)
+    assert not ((det.linhas["gnd"] == "4") & (det.linhas["tipo"] == TIPO_CELULA)).any()
