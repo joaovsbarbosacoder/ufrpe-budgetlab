@@ -533,7 +533,13 @@ lançamentos considerados é o **limite de uso** da célula **ação 20RK, GND 3
 sua dotação e a arrecadação informada. O valor **não soma dotação por fora**, e só tem efeito com essa célula marcada. O que
 passar da dotação fica fora, em aviso; sem lançamento considerado, a célula conta inteira, com aviso. A fonte 1050000390
 (parte já em execução) não entra no limite. No Detalhamento por GND e Ação cada linha indica a sua **fonte** (a fonte 1050 aparece em linha própria, em azul), e a
-nota "limitada pela arrecadação própria" só aparece nessa linha quando o valor informado **ultrapassa** a dotação da célula. A regra fica em `src/resultado_orcamentario.py` (`RECEITA_ACAO`, `RECEITA_GND`, `RECEITA_FONTE`).
+nota "limitada pela arrecadação própria" só aparece nessa linha quando o valor informado **ultrapassa** a dotação da célula.
+
+**Relatório (22/10/2026).** O botão "Baixar relatório" (logo abaixo dos cartões) gera um HTML de uma folha A4, com os mesmos
+números da tela, para imprimir ou salvar em PDF pelo navegador: 1 Resumo, 2 Composição, 3 Detalhamento por GND, Ação e Fonte,
+4 Receitas próprias arrecadadas e 5 Outras despesas previstas. Não inclui avisos, lista de células nem rastreabilidade das
+extrações (decisão do usuário). O gerador é `src/resultado_orcamentario_relatorio.py` (apresentação pura; não recalcula regra) e o
+protótipo aprovado está em `docs/superpowers/specs/2026-10-22-resultado-orcamentario-relatorio-mockup.html`. A regra fica em `src/resultado_orcamentario.py` (`RECEITA_ACAO`, `RECEITA_GND`, `RECEITA_FONTE`).
 
 O sinal dá o rótulo: positivo é **Superávit**, negativo é **Déficit**.
 

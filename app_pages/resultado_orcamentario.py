@@ -71,6 +71,7 @@ from src.resultado_orcamentario import (
     soma_ou_nulo,
 )
 from src.resultado_orcamentario_detalhe import detalhar_por_gnd_acao
+from src.resultado_orcamentario_relatorio import html_relatorio
 from src.resultado_orcamentario_cadastro import ArquivoCorrompido, CelulaChave, DespesaManual, ReceitaPropria
 from src import resultado_orcamentario_historico as historico_ro
 from src.relatorio_projecao_execucao import RelatorioProjecaoExecucao
@@ -1139,6 +1140,21 @@ with area_detalhe:
         )
     )
     _avisos_com_ok(detalhe_gnd_acao.avisos, "detalhe", exercicio)
+
+# Relatório (22/10/2026): HTML de uma folha A4 com os mesmos números da tela (cartões, composição, detalhamento, receitas e
+# outras despesas), para imprimir ou salvar em PDF. Fica junto dos cartões.
+_emitido_em = datetime.now()
+with area_cartoes:
+    st.download_button(
+        "Baixar relatório (HTML para imprimir ou salvar em PDF)",
+        data=html_relatorio(
+            resultado, detalhe_gnd_acao, despesas, receitas, exercicio, len(marcadas), len(celulas), _emitido_em,
+            nota_dotacao=_nota_limite_receita(resultado),
+        ).encode("utf-8"),
+        file_name=f"resultado_orcamentario_{exercicio}_{_emitido_em:%Y-%m-%d}.html",
+        mime="text/html",
+        key="ro_baixar_relatorio",
+    )
 
 # --------------------------------------------------------------- Avisos
 st.subheader("6. Avisos")
