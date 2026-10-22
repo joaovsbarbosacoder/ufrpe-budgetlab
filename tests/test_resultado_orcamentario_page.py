@@ -209,6 +209,15 @@ def test_incluir_receita_propria_grava_e_lista(diretorio: Path) -> None:
     assert not [s for s in app.selectbox if s.key in ("ro_receita_gnd", "ro_receita_acao")]  # sem GND/Ação no cadastro
 
 
+def test_pagina_oferece_o_relatorio_para_baixar(diretorio: Path) -> None:
+    app = _abrir()
+    # o botão de download não é exposto pelo AppTest; o que se confere é que a página montou o relatório sem exceção
+    # e o gerador, sobre o resultado da própria página, produz o documento (cobertura do conteúdo em
+    # `tests/test_resultado_orcamentario_relatorio.py`)
+    assert not app.exception, [e.value for e in app.exception]
+    assert "ro_baixar_relatorio" in str(app.main)
+
+
 def test_menu_tem_pagina(diretorio: Path) -> None:
     texto = (PROJECT_ROOT / "app.py").read_text(encoding="utf-8")
     assert '"app_pages/resultado_orcamentario.py"' in texto
