@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Detalhamento por GND, Ação e Fonte — protótipo</title>
+<style>
+:root{--bg:#F5F8FC;--surface:#fff;--alt:#F0F5FA;--border:#D3DFEC;--text:#07133D;--muted:#526584;--faint:#7C8DA8;
+  --accent:#0969DA;--accent-soft:rgba(9,105,218,.10);--pos:#0A8F3D;--neg:#D20A16;--warn:#C96A00;
+  --pos-soft:rgba(10,143,61,.11);--neg-soft:rgba(210,10,22,.09);--warn-soft:rgba(201,106,0,.11);
+  --mono:ui-monospace,"Cascadia Mono",Consolas,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:"Inter","Segoe UI",system-ui,sans-serif;font-size:14px;padding:24px 16px 48px}
+main{max-width:1180px;margin:0 auto}
+h1{font-size:20px;margin:0 0 4px} h2{font-size:16px;margin:28px 0 6px}
+p.sub{color:var(--muted);margin:0 0 14px;font-size:13px}
+.aviso{background:var(--warn-soft);border:1px solid rgba(201,106,0,.35);border-radius:10px;padding:10px 14px;font-size:13px;margin:12px 0 18px}
+.det{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+.lin{display:grid;grid-template-columns:minmax(300px,3fr) repeat(4,minmax(112px,1fr)) 120px 92px;gap:10px;align-items:center;
+  padding:9px 16px;border-bottom:1px solid #E7EEF6}
+.cab{background:var(--alt);color:var(--muted);font-weight:600;font-size:13px}
+.num{font-family:var(--mono);text-align:right;white-space:nowrap}
+details>summary{list-style:none;cursor:pointer;font-weight:600}
+details>summary::-webkit-details-marker{display:none}
+details>summary:hover{background:var(--alt)}
+details>summary .lin{background:#FAFCFE}
+.chev{display:inline-block;width:18px;color:var(--faint);transition:transform .15s}
+details[open]>summary .chev{transform:rotate(90deg)}
+.sub-l{font-weight:400;font-size:13.5px;padding-left:46px}
+.cod{font-family:var(--mono);font-size:12px;color:var(--muted);margin-right:8px}
+.fonte{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:6px;font-size:11.5px;font-weight:600;
+  background:var(--alt);border:1px solid var(--border);color:var(--muted);white-space:nowrap}
+.fonte.f1050{background:var(--accent-soft);border-color:rgba(9,105,218,.35);color:var(--accent)}
+.rec{display:block;font-size:11px;font-weight:400;color:var(--accent);line-height:1.3;margin-top:3px;white-space:normal;text-align:left}
+.destaque{background:rgba(9,105,218,.045)}
+.cons{white-space:nowrap}
+.mini{display:inline-block;width:56px;height:6px;border-radius:3px;background:var(--alt);position:relative;overflow:hidden;vertical-align:middle;margin-right:8px}
+.mini i{position:absolute;left:0;top:0;bottom:0;background:var(--accent)} .mini i.acima{background:var(--neg)}
+.pos{color:var(--pos)} .neg{color:var(--neg)}
+.tag{font-size:11.5px;font-weight:600;border-radius:6px;padding:1px 8px;text-align:center}
+.tag.pos{background:var(--pos-soft)} .tag.neg{background:var(--neg-soft)}
+.extra{font-style:italic;color:var(--muted)}
+.tot{font-weight:700;border-top:2px solid var(--border);border-bottom:0}
+.ok{padding:8px 16px;color:var(--pos);font-size:13px}
+.legenda{display:grid;gap:8px;margin-top:18px;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px 18px;font-size:13px;color:var(--muted)}
+.legenda b{color:var(--text)}
+.seta{color:var(--accent);font-weight:600}
+@media(max-width:900px){.det{overflow-x:auto}.lin{min-width:860px}}
+</style>
+</head>
+<body>
+<main>
+<h1>3. Detalhamento por GND, Ação e Fonte</h1>
+<p class="sub">Protótipo (22/10/2026). Valores do exercício 2026 com a arrecadação própria informada de R$ 447.514,78. Os grupos abrem ao clicar.</p>
+
+<div class="aviso"><b>O que muda em relação à tela de hoje:</b> cada linha passa a indicar a <b>fonte</b> (etiqueta cinza) e a célula da
+fonte 1050 aparece <b>em linha própria</b> (etiqueta azul), com a nota da arrecadação só nela. Os grupos (GND ou Ação) e o total ficam
+como estão e continuam fechando com os cartões.</div>
+
+<h2>Visão “GND › Ação” (a que vem aberta)</h2>
+<div class="det">
+  <div class="lin cab"><span>Grupo</span><span class="num">Dotação atualizada</span><span class="num">Executado</span><span class="num">Projetado a realizar</span><span class="num">Resultado</span><span>Consumo</span><span>Situação</span></div>
+
+  <details open>
+    <summary><div class="lin"><span><span class="chev">▶</span><span class="cod">GND 3</span>OUTRAS DESPESAS CORRENTES</span>
+      <span class="num">R$ 63.152.834,80</span><span class="num">R$ 42.453.815,52</span><span class="num">R$ 18.565.146,71</span>
+      <span class="num pos">R$ 2.133.872,57</span><span class="cons"><span class="mini"><i style="width:97%"></i></span>97%</span><span class="tag pos">Superávit</span></div></summary>
+
+    <div class="lin sub-l"><span><span class="cod">20GK</span>FOMENTO AS ACOES DE GRADUACAO, POS-GRADUACAO, ENSINO, PESQUISA<span class="fonte">Fonte 1000000000</span></span>
+      <span class="num">R$ 3.931.726,00</span><span class="num">R$ 2.405.860,36</span><span class="num">R$ 951.246,00</span><span class="num pos">R$ 574.619,64</span>
+      <span class="cons"><span class="mini"><i style="width:85%"></i></span>85%</span><span class="tag pos">Superávit</span></div>
+
+    <div class="lin sub-l"><span><span class="cod">20RK</span>FUNCIONAMENTO DE INSTITUICOES FEDERAIS DE ENSINO SUPERIOR<span class="fonte">Fonte 1000000000</span></span>
+      <span class="num">R$ 58.712.871,00</span><span class="num">R$ 39.998.372,72</span><span class="num">R$ 17.597.100,71</span><span class="num pos">R$ 1.117.397,57</span>
+      <span class="cons"><span class="mini"><i style="width:98%"></i></span>98%</span><span class="tag pos">Superávit</span></div>
+
+    <div class="lin sub-l destaque"><span><span class="cod">20RK</span>FUNCIONAMENTO DE INSTITUICOES FEDERAIS DE ENSINO SUPERIOR<span class="fonte f1050">Fonte 1050000000 · Rec. próprios livres da UO</span></span>
+      <span class="num">R$ 415.401,80<span class="rec">limitada pela arrecadação própria:<br>informado R$ 447.514,78 · R$ 32.112,98 acima da dotação ficam fora</span></span>
+      <span class="num">R$ 0,00</span><span class="num">R$ 0,00</span><span class="num pos">R$ 415.401,80</span>
+      <span class="cons"><span class="mini"><i style="width:0%"></i></span>0%</span><span class="tag pos">Superávit</span></div>
+
+    <div class="lin sub-l"><span><span class="cod">216H</span>AJUDA DE CUSTO PARA MORADIA OU AUXILIO-MORADIA A AGENTES PUB<span class="fonte">Fonte 1000000000</span></span>
+      <span class="num">R$ 21.600,00</span><span class="num">R$ 0,00</span><span class="num">R$ 0,00</span><span class="num pos">R$ 21.600,00</span>
+      <span class="cons"><span class="mini"><i style="width:0%"></i></span>0%</span><span class="tag pos">Superávit</span></div>
+
+    <div class="lin sub-l"><span><span class="cod">2165</span>INTERNACIONALIZACAO DA EDUCACAO SUPERIOR<span class="fonte">Fonte 1000000000</span></span>
+      <span class="num">R$ 49.864,00</span><span class="num">R$ 38.500,00</span><span class="num">R$ 16.800,00</span><span class="num neg">-R$ 5.436,00</span>
+      <span class="cons"><span class="mini"><i class="acima" style="width:100%"></i></span>111%</span><span class="tag neg">Déficit</span></div>
+
+    <div class="lin sub-l"><span><span class="cod">4572</span>CAPACITACAO DE SERVIDORES PUBLICOS FEDERAIS EM PROCESSO DE Q<span class="fonte">Fonte 1000000000</span></span>
+      <span class="num">R$ 21.372,00</span><span class="num">R$ 11.082,44</span><span class="num">R$ 0,00</span><span class="num pos">R$ 10.289,56</span>
+      <span class="cons"><span class="mini"><i style="width:52%"></i></span>52%</span><span class="tag pos">Superávit</span></div>
+  </details>
+
+  <details>
+    <summary><div class="lin"><span><span class="chev">▶</span><span class="cod">GND 4</span>INVESTIMENTOS</span>
+      <span class="num">R$ 1.234.481,00</span><span class="num">R$ 131.874,60</span><span class="num">R$ 511.641,04</span>
+      <span class="num pos">R$ 590.965,36</span><span class="cons"><span class="mini"><i style="width:52%"></i></span>52%</span><span class="tag pos">Superávit</span></div></summary>
+    <div class="lin sub-l"><span><span class="cod">20RK</span>FUNCIONAMENTO DE INSTITUICOES FEDERAIS DE ENSINO SUPERIOR<span class="fonte">Fonte 1000000000</span></span>
+      <span class="num">R$ 1.157.828,00</span><span class="num">R$ 131.874,60</span><span class="num">R$ 511.641,04</span><span class="num pos">R$ 514.312,36</span>
+      <span class="cons"><span class="mini"><i style="width:56%"></i></span>56%</span><span class="tag pos">Superávit</span></div>
+    <div class="lin sub-l"><span><span class="cod">8282</span>REESTRUTURACAO E MODERNIZACAO DAS INSTITUICOES FEDERAIS DE E<span class="fonte">Fonte 1000000000</span></span>
+      <span class="num">R$ 76.653,00</span><span class="num">R$ 0,00</span><span class="num">R$ 0,00</span><span class="num pos">R$ 76.653,00</span>
+      <span class="cons"><span class="mini"><i style="width:0%"></i></span>0%</span><span class="tag pos">Superávit</span></div>
+  </details>
+
+  <div class="lin extra"><span>Sem célula (outras despesas previstas e contratos ativos sem NE)</span>
+    <span class="num">R$ 0,00</span><span class="num">R$ 0,00</span><span class="num">R$ 337.860,00</span><span class="num neg">-R$ 337.860,00</span><span>—</span><span class="tag neg">Déficit</span></div>
+
+  <div class="lin tot"><span>Total do bolsão</span><span class="num">R$ 64.387.315,80</span><span class="num">R$ 42.585.690,12</span><span class="num">R$ 19.414.647,75</span>
+    <span class="num pos">R$ 2.386.977,93</span><span class="cons"><span class="mini"><i style="width:96%"></i></span>96%</span><span class="tag pos">Superávit</span></div>
+  <div class="ok">✓ A soma das linhas confere com os cartões · diferença R$ 0,00</div>
+</div>
+
+<h2>Visão “Ação › GND” (mesma lógica, outro eixo)</h2>
+<div class="det">
+  <div class="lin cab"><span>Grupo</span><span class="num">Dotação atualizada</span><span class="num">Executado</span><span class="num">Projetado a realizar</span><span class="num">Resultado</span><span>Consumo</span><span>Situação</span></div>
+  <details open>
+    <summary><div class="lin"><span><span class="chev">▶</span><span class="cod">20RK</span>FUNCIONAMENTO DE INSTITUICOES FEDERAIS DE ENSINO SUPERIOR</span>
+      <span class="num">R$ 60.286.100,80</span><span class="num">R$ 40.130.247,32</span><span class="num">R$ 18.108.741,75</span>
+      <span class="num pos">R$ 2.047.111,73</span><span class="cons"><span class="mini"><i style="width:97%"></i></span>97%</span><span class="tag pos">Superávit</span></div></summary>
+    <div class="lin sub-l"><span><span class="cod">GND 3</span>OUTRAS DESPESAS CORRENTES<span class="fonte">Fonte 1000000000</span></span>
+      <span class="num">R$ 58.712.871,00</span><span class="num">R$ 39.998.372,72</span><span class="num">R$ 17.597.100,71</span><span class="num pos">R$ 1.117.397,57</span>
+      <span class="cons"><span class="mini"><i style="width:98%"></i></span>98%</span><span class="tag pos">Superávit</span></div>
+    <div class="lin sub-l destaque"><span><span class="cod">GND 3</span>OUTRAS DESPESAS CORRENTES<span class="fonte f1050">Fonte 1050000000 · Rec. próprios livres da UO</span></span>
+      <span class="num">R$ 415.401,80<span class="rec">limitada pela arrecadação própria:<br>informado R$ 447.514,78 · R$ 32.112,98 acima da dotação ficam fora</span></span>
+      <span class="num">R$ 0,00</span><span class="num">R$ 0,00</span><span class="num pos">R$ 415.401,80</span>
+      <span class="cons"><span class="mini"><i style="width:0%"></i></span>0%</span><span class="tag pos">Superávit</span></div>
+    <div class="lin sub-l"><span><span class="cod">GND 4</span>INVESTIMENTOS<span class="fonte">Fonte 1000000000</span></span>
+      <span class="num">R$ 1.157.828,00</span><span class="num">R$ 131.874,60</span><span class="num">R$ 511.641,04</span><span class="num pos">R$ 514.312,36</span>
+      <span class="cons"><span class="mini"><i style="width:56%"></i></span>56%</span><span class="tag pos">Superávit</span></div>
+  </details>
+</div>
+
+<div class="legenda">
+  <div><b>Como ler a fonte:</b> a etiqueta em cada linha é a Fonte de Recursos Detalhada da célula. Linhas de fontes diferentes dentro do mesmo GND e Ação deixam de ser somadas numa só.</div>
+  <div><b>Fonte 1050 em destaque:</b> a linha tem fundo e etiqueta azuis. Só ela mostra a nota da arrecadação própria, e <b>apenas quando o valor informado ultrapassa a dotação</b> (como neste exemplo: R$ 447.514,78 contra R$ 415.401,80). Se a arrecadação for menor, a linha fica sem nota e o corte aparece no cartão de dotação e nos Avisos.</div>
+  <div><b>O que não muda:</b> os totais dos grupos (GND ou Ação), o total do bolsão e a conferência com os cartões ficam como hoje. A linha 20RK da fonte 1000000000 passa a mostrar só o que é dela, sem os R$ 415.401,80 da fonte 1050.</div>
+  <div><span class="seta">Dúvida de desenho:</span> se uma mesma Ação/GND tiver uma só fonte, a etiqueta continua aparecendo (nesta proposta, em todas as linhas).</div>
+</div>
+</main>
+</body>
+</html>

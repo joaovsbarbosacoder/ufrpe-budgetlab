@@ -159,14 +159,26 @@ def test_detalhe_gnd_acao_abrir_controla_os_grupos():
     assert 'class="mini"' in html_detalhe_gnd_acao(linhas, total, "gnd")  # barra de consumo da dotação
 
 
-def test_detalhe_gnd_acao_mostra_nota_de_receitas_proprias_so_onde_ha():
-    base = {"gnd_descricao": None, "acao_descricao": None, "executado": 40.0, "projetado": 30.0, "resultado": 30.0}
-    linhas = pd.DataFrame([
-        {"tipo": "celula", "gnd": "3", "acao": "20RK", "dotacao": 130.0, "receitas": 30.0, **base},
-        {"tipo": "celula", "gnd": "3", "acao": "20Z1", "dotacao": 100.0, "receitas": 0.0, **base},
-    ])
-    html = html_detalhe_gnd_acao(linhas, (230.0, 80.0, 60.0, 90.0), "gnd")
-    assert html.count("limitada pela arrecadação própria") == 3  # grupo GND 3, subitem 20RK e total; 20Z1 não tem
-    assert "inclui R&#36; 30,00 da fonte 1050" in html
-    sem_coluna = linhas.drop(columns="receitas")
-    assert "da fonte 1050" not in html_detalhe_gnd_acao(sem_coluna, (230.0, 80.0, 60.0, 90.0), "gnd")
+def _linha_ui(fonte, dotacao, **extra):
+    return {"tipo": "celula", "gnd": "3", "gnd_descricao": None, "acao": "20RK", "acao_descricao": None, "dotacao": dotacao,
+            "executado": 0.0, "projetado": 0.0, "resultado": dotacao, "fonte": fonte, "fonte_descricao": "RECURSOS PROPRIOS LIVRES DA UO",
+            **extra}
+
+
+def test_detalhe_gnd_acao_mostra_a_fonte_em_cada_linha_e_destaca_a_1050():
+    linhas = pd.DataFrame([_linha_ui("1000000000", 100.0), _linha_ui("1050000000", 50.0)])
+    html = html_detalhe_gnd_acao(linhas, (150.0, 0.0, 0.0, 150.0), "gnd")
+    assert "Fonte 1000000000" in html and "Fonte 1050000000 · RECURSOS PROPRIOS LIVRES DA UO" in html
+    assert html.count("fonte f1050") == 1 and "destaque" in html
+    sem_coluna = linhas.drop(columns=["fonte", "fonte_descricao"])
+    assert "Fonte 1050" not in html_detalhe_gnd_acao(sem_coluna, (150.0, 0.0, 0.0, 150.0), "gnd")
+
+
+def test_nota_da_arrecadacao_so_aparece_quando_ultrapassa_a_dotacao():
+    passa = pd.DataFrame([_linha_ui("1050000000", 415401.8, receita_limite=447514.78, receita_excedente=32112.98)])
+    html = html_detalhe_gnd_acao(passa, (415401.8, 0.0, 0.0, 415401.8), "gnd")
+    assert html.count("acima da dotação ficam fora") == 1  # só na linha da 1050, nunca no grupo nem no total
+    assert "informado R&#36; 447.514,78" in html and "R&#36; 32.112,98 acima" in html
+
+    nao_passa = pd.DataFrame([_linha_ui("1050000000", 415401.8, receita_limite=300000.0, receita_excedente=0.0)])
+    assert "acima da dotação" not in html_detalhe_gnd_acao(nao_passa, (415401.8, 0.0, 0.0, 415401.8), "gnd")
