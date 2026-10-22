@@ -294,6 +294,7 @@ ESTILO_DETALHE = f"""
   overflow:hidden;vertical-align:middle;margin-right:8px}}
 .ro-det .mini i{{position:absolute;left:0;top:0;bottom:0;background:{dt.ACCENT}}}
 .ro-det .mini i.acima{{background:{dt.NEGATIVE}}}
+.ro-det .rec{{display:block;font-size:11px;font-weight:400;color:{dt.ACCENT};white-space:nowrap}}
 .ro-det .cons{{white-space:nowrap;text-align:left}}
 .ro-det .sub{{font-weight:400;font-size:13.5px;padding-left:46px}}
 .ro-det .extra{{font-style:italic;color:{dt.TEXT_MUTED}}}
@@ -319,6 +320,15 @@ def _soma(serie: pd.Series) -> float | None:
     return None if valores.isna().any() else float(valores.sum())
 
 
+def _receitas_do(linhas: pd.DataFrame) -> float | None:
+    """Receitas próprias já somadas na dotação das `linhas` (coluna `receitas`, ausente em quem não a traz)."""
+
+    if "receitas" not in linhas.columns:
+        return None
+    valor = pd.to_numeric(linhas["receitas"], errors="coerce").sum()
+    return float(valor) if valor else None
+
+
 def _resultado_do(dotacao: float | None, executado: float | None, projetado: float | None) -> float | None:
     if dotacao is None or executado is None or projetado is None:
         return None
@@ -327,7 +337,7 @@ def _resultado_do(dotacao: float | None, executado: float | None, projetado: flo
 
 def _linha_detalhe(
     rotulo: str, dotacao: float | None, executado: float | None, projetado: float | None, resultado: float | None,
-    classe: str = "", prefixo: str = "", cod: str = "",
+    classe: str = "", prefixo: str = "", cod: str = "", receitas: float | None = None,
 ) -> str:
     dotacao, executado, projetado, resultado = (
         None if v is None or pd.isna(v) else float(v) for v in (dotacao, executado, projetado, resultado)
@@ -342,9 +352,11 @@ def _linha_detalhe(
     if dotacao and executado is not None and projetado is not None and dotacao > 0:
         usado = (executado + projetado) / dotacao * 100
         barra = f'<span class="mini"><i class="{"acima" if usado > 100 else ""}" style="width:{min(usado, 100):.1f}%"></i></span>'
+    # receitas próprias já somadas na dotação (22/10/2026): nota sob o valor, para ver de onde ele vem
+    nota = f'<small class="rec">inclui {brl(receitas)} de receitas próprias</small>' if receitas else ""
     return (
         f'<div class="lin {classe}"><span>{prefixo}{codigo}{_txt(rotulo)}</span>'
-        f'<span class="num">{brl(dotacao)}</span><span class="num">{brl(executado)}</span>'
+        f'<span class="num">{brl(dotacao)}{nota}</span><span class="num">{brl(executado)}</span>'
         f'<span class="num">{brl(projetado)}</span><span class="num{sinal}">{brl(resultado)}</span>'
         f'<span class="cons">{barra}{_txt(consumo)}</span><span class="tag {classe_sit}">{_txt(selo)}</span></div>'
     )
@@ -384,13 +396,14 @@ def html_detalhe_gnd_acao(
         dot, exe, prj = _soma(grupo["dotacao"]), _soma(grupo["executado"]), _soma(grupo["projetado"])
         topo = _linha_detalhe(
             descricao.removeprefix("— "), dot, exe, prj, _resultado_do(dot, exe, prj),
-            prefixo='<span class="chev">▶</span>', cod=codigo,
+            prefixo='<span class="chev">▶</span>', cod=codigo, receitas=_receitas_do(grupo),
         )
         internos = []
         for _, r in grupo.sort_values("acao" if outro == AGRUPAR_ACAO else "gnd").iterrows():
             cod_i, desc_i = _rotulos(r, outro)
             internos.append(_linha_detalhe(
                 desc_i.removeprefix("— "), r["dotacao"], r["executado"], r["projetado"], r["resultado"], "sub", cod=cod_i,
+                receitas=_receitas_do(r.to_frame().T),
             ))
         # <summary> precisa ser o primeiro filho: a linha do grupo vira o resumo
         aberto = " open" if (abrir is True or (abrir is None and posicao == 0)) else ""
@@ -398,8 +411,9 @@ def html_detalhe_gnd_acao(
     for tipo, rotulo in (("fora_marcadas", "Fora das células marcadas (parte de NE em célula não marcada)"),
                          ("sem_celula", "Sem célula (outras despesas previstas, contratos ativos sem NE e receitas próprias sem GND/Ação)")):
         for _, r in linhas.loc[linhas["tipo"] == tipo].iterrows():
-            partes.append(_linha_detalhe(rotulo, r["dotacao"], r["executado"], r["projetado"], r["resultado"], "extra"))
-    partes.append(_linha_detalhe("Total do bolsão", *total, classe="tot"))
+            partes.append(_linha_detalhe(rotulo, r["dotacao"], r["executado"], r["projetado"], r["resultado"], "extra",
+                                         receitas=_receitas_do(r.to_frame().T)))
+    partes.append(_linha_detalhe("Total do bolsão", *total, classe="tot", receitas=_receitas_do(linhas)))
     if rodape:
         partes.append(f'<div class="ro-check {rodape_classe}" style="padding:8px 16px"><span>{_txt(rodape)}</span></div>')
     partes.append("</div>")

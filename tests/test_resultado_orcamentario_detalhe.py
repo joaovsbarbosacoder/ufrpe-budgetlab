@@ -226,3 +226,14 @@ def test_receita_sem_gnd_ou_acao_vai_para_sem_celula_e_desconsiderada_fica_fora(
     assert det.fecha
     assert _linha(det, TIPO_SEM_CELULA)["dotacao"] == pytest.approx(70.0)
     assert not ((det.linhas["gnd"] == "4") & (det.linhas["tipo"] == TIPO_CELULA)).any()
+
+
+def test_coluna_receitas_mostra_quanto_da_dotacao_do_grupo_vem_de_receita_propria():
+    receitas = [_receita(100.0, "4", "20Z1"), _receita(30.0, "3", "20Y0", id_="r2"), _receita(5.0, id_="r3")]
+    res = _calc(receitas_proprias=receitas)
+    det = detalhar_por_gnd_acao(res, _celulas_com_d(), _empenhos_padrao(), [A, B], [_manual()], None, receitas)
+
+    assert _linha(det, TIPO_CELULA, "3", "20Y0")["receitas"] == pytest.approx(30.0)
+    assert _linha(det, TIPO_CELULA, "4", "20Z1")["receitas"] == pytest.approx(100.0)
+    assert _linha(det, TIPO_SEM_CELULA)["receitas"] == pytest.approx(5.0)
+    assert det.linhas["receitas"].sum() == pytest.approx(res.receitas_proprias)
