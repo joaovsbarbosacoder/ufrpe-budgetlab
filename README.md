@@ -526,6 +526,15 @@ confronto célula a célula:
 Resultado = Dotação Atualizada (células) − Empenhado nas células (Execução Mensal) − Necessidade de empenho
 ```
 
+**Receitas próprias (22/10/2026).** A dotação da fonte 1050 é uma estimativa da arrecadação do exercício. Na seção
+"Receitas próprias arrecadadas" o usuário informa à mão o que foi arrecadado (gravado em
+`data/resultado_orcamentario/<exercício>/receitas_proprias.json`, com "Considerar" por lançamento). A soma dos
+lançamentos considerados é o **limite de uso** da célula **ação 20RK, GND 3, fonte 1050000000**: ela conta o menor entre a
+sua dotação e a arrecadação informada. O valor **não soma dotação por fora**, e só tem efeito com essa célula marcada. O que
+passar da dotação fica fora, em aviso; sem lançamento considerado, a célula conta inteira, com aviso. A fonte 1050000390
+(parte já em execução) não entra no limite. O Detalhamento por GND e Ação mostra, na linha da 20RK, quanto da dotação veio
+dessa célula limitada. A regra fica em `src/resultado_orcamentario.py` (`RECEITA_ACAO`, `RECEITA_GND`, `RECEITA_FONTE`).
+
 O sinal dá o rótulo: positivo é **Superávit**, negativo é **Déficit**.
 
 **Célula orçamentária.** Mesma granularidade do Limite de Empenho, com a Fonte de Recursos Detalhada

@@ -166,7 +166,7 @@ def test_detalhe_gnd_acao_mostra_nota_de_receitas_proprias_so_onde_ha():
         {"tipo": "celula", "gnd": "3", "acao": "20Z1", "dotacao": 100.0, "receitas": 0.0, **base},
     ])
     html = html_detalhe_gnd_acao(linhas, (230.0, 80.0, 60.0, 90.0), "gnd")
-    assert html.count("de receitas próprias") == 3  # grupo GND 3, subitem 20RK e total; 20Z1 não tem
-    assert "R&#36; 30,00 de receitas próprias" in html
+    assert html.count("limitada pela arrecadação própria") == 3  # grupo GND 3, subitem 20RK e total; 20Z1 não tem
+    assert "inclui R&#36; 30,00 da fonte 1050" in html
     sem_coluna = linhas.drop(columns="receitas")
-    assert "de receitas próprias" not in html_detalhe_gnd_acao(sem_coluna, (230.0, 80.0, 60.0, 90.0), "gnd")
+    assert "da fonte 1050" not in html_detalhe_gnd_acao(sem_coluna, (230.0, 80.0, 60.0, 90.0), "gnd")

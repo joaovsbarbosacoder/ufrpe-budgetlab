@@ -15,9 +15,8 @@ Onde cada valor cai (protótipo `docs/superpowers/specs/2026-10-20-resultado-orc
     "Fora das células marcadas", para o total fechar com os cartões.
   * Outras despesas previstas: célula informada no cadastro; sem célula → "Sem célula".
   * Contrato ATIVO sem NE (projetado pela necessidade contratual): "Sem célula".
-  * Receitas próprias consideradas (22/10/2026): somam-se à dotação do grupo (GND, Ação) informado no cadastro — o grupo
-    aparece mesmo sem célula marcada nele —; sem GND/Ação, vão para "Sem célula". O total das linhas fecha com
-    `dotacao + receitas próprias` dos cartões.
+  * Receita própria (22/10/2026): a célula 20RK / GND 3 / fonte 1050000000 conta pelo menor entre a sua dotação e a
+    arrecadação informada (`dotacao_pela_receita`), como no cartão; a coluna `receitas` traz o valor com que ela contou.
 
 Nulo continua nulo: um valor indisponível deixa nulo o grupo que ele alimenta (e o total), nunca vira zero.
 """
@@ -35,9 +34,11 @@ from src.resultado_orcamentario import (
     OUTRAS_DESPESAS,
     TOLERANCIA_CONFERENCIA,
     ResultadoOrcamentario,
+    dotacao_pela_receita,
+    e_celula_da_receita,
     soma_ou_nulo,
 )
-from src.resultado_orcamentario_cadastro import CHAVE_CELULA, CelulaChave, DespesaManual, ReceitaPropria
+from src.resultado_orcamentario_cadastro import CHAVE_CELULA, CelulaChave, DespesaManual
 
 TIPO_CELULA = "celula"
 TIPO_FORA = "fora_marcadas"
@@ -116,7 +117,6 @@ def detalhar_por_gnd_acao(
     selecao: list[CelulaChave],
     despesas_manuais: list[DespesaManual],
     ativos_sem_ne: pd.DataFrame | None = None,
-    receitas_proprias: list[ReceitaPropria] | None = None,
 ) -> DetalheGndAcao:
     """Ver a docstring do módulo. `res` é o resultado já calculado (o detalhamento não recalcula a regra); os
     demais argumentos são os mesmos usados por `calcular_resultado`. `ativos_sem_ne`: contratos ATIVOS sem NE
@@ -138,7 +138,11 @@ def detalhar_por_gnd_acao(
     if len(celulas):
         for chave, dotacao in zip(celulas["chave"], celulas["dotacao_atualizada"]):
             if chave in marcadas:
-                balde((TIPO_CELULA, *_chave_grupo(chave))).somar("dotacao", None if pd.isna(dotacao) else float(dotacao))
+                valor = None if pd.isna(dotacao) else dotacao_pela_receita(chave, float(dotacao), res.receita_limite)
+                alvo = balde((TIPO_CELULA, *_chave_grupo(chave)))
+                alvo.somar("dotacao", valor)
+                if valor is not None and res.receita_limite is not None and e_celula_da_receita(chave):
+                    alvo.receitas += valor
     for chave in marcadas:  # célula marcada sem Dotação na base: o grupo existe e fica sem dotação
         balde((TIPO_CELULA, *_chave_grupo(chave)))
 
@@ -226,14 +230,6 @@ def detalhar_por_gnd_acao(
             destino = balde(sem_celula) if despesa.celula is None else balde_da_celula(tuple(despesa.celula))
             destino.somar("projetado", despesa.valor)
 
-    # --- Receitas próprias: somam-se à dotação do grupo informado ----------------------------------------
-    for receita in receitas_proprias or []:
-        if not receita.considerada:
-            continue
-        destino = balde(sem_celula) if receita.gnd is None or receita.acao is None else balde((TIPO_CELULA, receita.gnd, receita.acao))
-        destino.somar("dotacao", receita.valor)
-        destino.receitas += float(receita.valor)
-
     # --- Linhas e totais ----------------------------------------------------------------------------
     nome_gnd = _descricoes(celulas, "grupo_despesa_codigo", "grupo_despesa_descricao")
     nome_acao = _descricoes(celulas, "acao_codigo", "acao_descricao")
@@ -267,7 +263,7 @@ def detalhar_por_gnd_acao(
     diferencas = [
         abs(detalhe - cartao)
         for detalhe, cartao in (
-            (totais["dotacao"], None if res.dotacao is None else res.dotacao + res.receitas_proprias), (totais["executado"], res.executado_total),
+            (totais["dotacao"], res.dotacao), (totais["executado"], res.executado_total),
             (totais["projetado"], res.projetado_total), (resultado_total, res.resultado),
         )
         if detalhe is not None and cartao is not None

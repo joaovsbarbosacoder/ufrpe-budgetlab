@@ -7,7 +7,7 @@ Contratos e Bolsas mudou em 15/10/2026, ver abaixo). Este módulo é regra pura:
 arquivo. Especificação: docs/superpowers/specs/2026-10-08-resultado-orcamentario-design.md.
 
 EXECUTADO + PROJETADO (15/10/2026, pedido do usuário): para Contratos e Bolsas o resultado deixa de usar o empenhado e a
-necessidade de empenho e passa a medir o CONSUMO do orçamento: `Resultado = Dotação + Receitas próprias − Executado − Projetado a realizar`,
+necessidade de empenho e passa a medir o CONSUMO do orçamento: `Resultado = Dotação (limitada pela arrecadação própria) − Executado − Projetado a realizar`,
 onde executado = o que a NE já liquidou (valor empenhado − saldo) e projetado = o que falta da projeção pela execução até
 dezembro (`projetado_execucao`). Como só se soma o que de fato será consumido, a sobra de empenho (saldo que a projeção não
 vai liquidar) não pesa na conta e a antiga "anulação sugerida" como receita deixou de existir aqui (o relatório de Anulação
@@ -49,6 +49,36 @@ _ORIGEM_POR_ELEMENTO = {"92": ORIGEM_DEA, "30": ORIGEM_MATERIAL_CONSUMO}
 OUTRAS_DESPESAS = "Outras despesas previstas"
 
 TOLERANCIA_CONFERENCIA = 0.01
+
+#: Receita própria (22/10/2026, regra do usuário): a dotação da fonte 1050 é estimativa da arrecadação do exercício e só
+#: pode ser usada até o que foi arrecadado. O valor informado à mão é o LIMITE de uso da célula da ação 20RK, GND 3, fonte
+#: detalhada 1050000000: ela conta `menor entre a dotação atualizada e a arrecadação informada`. A arrecadação não soma
+#: dotação por fora. A fonte 1050000390 (parte já em execução) não entra no limite.
+RECEITA_ACAO = "20RK"
+RECEITA_GND = "3"
+RECEITA_FONTE = "1050000000"
+_IDX_CHAVE_ACAO = CHAVE_CELULA.index("acao_codigo")
+_IDX_CHAVE_GND = CHAVE_CELULA.index("grupo_despesa_codigo")
+_IDX_CHAVE_FONTE = CHAVE_CELULA.index("fonte_recursos_detalhada_codigo")
+ROTULO_CELULA_RECEITA = f"ação {RECEITA_ACAO}, GND {RECEITA_GND}, fonte {RECEITA_FONTE}"
+
+
+def e_celula_da_receita(chave: CelulaChave) -> bool:
+    """A célula é aquela cuja dotação a arrecadação própria limita (ação 20RK, GND 3, fonte 1050000000)."""
+
+    return (
+        chave[_IDX_CHAVE_ACAO] == RECEITA_ACAO and chave[_IDX_CHAVE_GND] == RECEITA_GND
+        and chave[_IDX_CHAVE_FONTE] == RECEITA_FONTE
+    )
+
+
+def dotacao_pela_receita(chave: CelulaChave, dotacao: float | None, limite: float | None) -> float | None:
+    """Dotação com que a célula conta: o menor entre ela e a arrecadação informada, se for a célula da receita e houver limite.
+    Dotação nula continua nula (nulo não vira zero)."""
+
+    if limite is None or dotacao is None or not e_celula_da_receita(chave):
+        return dotacao
+    return min(float(dotacao), float(limite))
 
 #: colunas da Execução Mensal (`valor_empenhado_por_bloco`) que formam a chave da célula, na
 #: mesma ordem de `CHAVE_CELULA`.
@@ -95,8 +125,14 @@ class ResultadoOrcamentario:
     #: outras despesas previstas desmarcadas (fora da conta): quantidade e valor somado (15/10/2026)
     outras_desconsideradas_qtd: int = 0
     outras_desconsideradas_valor: float = 0.0
-    #: receitas próprias informadas à mão e consideradas (22/10/2026): somam-se à dotação das células
-    receitas_proprias: float = 0.0
+    #: arrecadação própria informada e considerada (soma dos lançamentos); `None` = nenhuma considerada, sem limite
+    receita_limite: float | None = None
+    #: dotação com que a célula da receita contou (menor entre a dotação e o limite); 0,0 se desmarcada ou sem limite
+    receita_aplicada: float = 0.0
+    #: parte da arrecadação informada que passa da dotação da célula (fica fora, em aviso); 0,0 se não passa
+    receita_excedente: float = 0.0
+    #: dotação das células marcadas SEM o limite (a do cartão é a limitada); igual a `dotacao` quando não há limite
+    dotacao_integral: float | None = None
     receitas_desconsideradas_qtd: int = 0
     receitas_desconsideradas_valor: float = 0.0
 
@@ -303,7 +339,7 @@ def calcular_resultado(
     despesas_manuais: list[DespesaManual],
     receitas_proprias: list[ReceitaPropria] | None = None,
 ) -> ResultadoOrcamentario:
-    """Resultado = Dotação + Receitas próprias (informadas à mão) − Executado (Contratos e Bolsas) − Empenhado (demais origens) − Projetado a realizar (Contratos,
+    """Resultado = Dotação (a da fonte 1050/20RK limitada pela arrecadação própria informada à mão) − Executado (Contratos e Bolsas) − Empenhado (demais origens) − Projetado a realizar (Contratos,
     Bolsas e outras despesas previstas); ver a docstring do módulo. `necessidade_contratos`/`necessidade_bolsas` são os
     `linhas` do relatório de Projeção pela Execução (nome mantido; trazem `valor_empenhado`, `saldo` e `projetado_execucao`).
 
@@ -327,8 +363,21 @@ def calcular_resultado(
     for chave in ausentes:
         avisos.append(f"Célula selecionada ausente da base de Dotação: {' / '.join(str(p) for p in chave)}.")
 
+    # Receitas próprias (22/10/2026): o total considerado é o LIMITE da dotação da célula da receita (ver o topo do módulo).
+    # Lançamento desmarcado ("Considerar") fica fora, em aviso; sem nenhum considerado, não há limite e a dotação conta inteira.
+    receitas = receitas_proprias or []
+    receitas_fora = [r for r in receitas if not r.considerada]
+    if receitas_fora:
+        avisos.append(
+            f"{len(receitas_fora)} de {len(receitas)} receitas próprias desconsideradas "
+            f"({_brl(float(sum(r.valor for r in receitas_fora)))}): fora da conta do resultado."
+        )
+    receita_limite = float(sum(r.valor for r in receitas if r.considerada)) if len(receitas) > len(receitas_fora) else None
+
     presentes = celulas.loc[celulas["chave"].isin(conjunto_selecao)] if len(celulas) else celulas
     dotacao: float | None
+    dotacao_integral: float | None = None
+    receita_aplicada = receita_excedente = 0.0
     if not selecionadas:
         avisos.append("Nenhuma célula selecionada: marque ao menos uma célula para calcular o resultado.")
         dotacao = None
@@ -341,7 +390,34 @@ def calcular_resultado(
         if len(nulas):
             dotacao = None
         else:
-            dotacao = float(presentes["dotacao_atualizada"].astype("Float64").sum())
+            dotacao_integral = float(presentes["dotacao_atualizada"].astype("Float64").sum())
+            dotacao = dotacao_integral
+            alvo = presentes.loc[presentes["chave"].map(e_celula_da_receita)]
+            if len(alvo) and receita_limite is None:
+                avisos.append(
+                    f"A célula da {ROTULO_CELULA_RECEITA} conta pela dotação estimada integral "
+                    f"({_brl(float(alvo['dotacao_atualizada'].astype('Float64').sum()))}): informe a arrecadação própria para limitá-la."
+                )
+            elif len(alvo):
+                dotacao_alvo = float(alvo["dotacao_atualizada"].astype("Float64").sum())
+                receita_aplicada = min(dotacao_alvo, receita_limite)
+                receita_excedente = max(receita_limite - dotacao_alvo, 0.0)
+                dotacao = dotacao_integral - dotacao_alvo + receita_aplicada
+                if receita_excedente:
+                    avisos.append(
+                        f"Arrecadação própria informada ({_brl(receita_limite)}) passa da dotação da célula da "
+                        f"{ROTULO_CELULA_RECEITA} ({_brl(dotacao_alvo)}): {_brl(receita_excedente)} ficam fora."
+                    )
+                elif receita_aplicada < dotacao_alvo:
+                    avisos.append(
+                        f"Dotação da célula da {ROTULO_CELULA_RECEITA} limitada pela arrecadação própria: "
+                        f"{_brl(dotacao_alvo)} → {_brl(receita_aplicada)}."
+                    )
+            elif receita_limite is not None:
+                avisos.append(
+                    f"Arrecadação própria informada ({_brl(receita_limite)}) sem efeito: a célula da "
+                    f"{ROTULO_CELULA_RECEITA} não está marcada."
+                )
 
     # --- Empenhado e origem -----------------------------------------------------------------
     emp = empenhado.copy() if empenhado is not None else pd.DataFrame()
@@ -485,25 +561,13 @@ def calcular_resultado(
         if aviso:
             avisos.append(aviso)
 
-    # --- Receitas próprias (22/10/2026) ----------------------------------------------------------
-    # Arrecadação informada à mão, de fonte diferente das células marcadas: soma-se à dotação. Cada lançamento tem a sua
-    # marca "considerada"; os desmarcados ficam fora, em aviso.
-    receitas = receitas_proprias or []
-    receitas_consideradas = float(sum(r.valor for r in receitas if r.considerada))
-    receitas_fora = [r for r in receitas if not r.considerada]
-    if receitas_fora:
-        avisos.append(
-            f"{len(receitas_fora)} de {len(receitas)} receitas próprias desconsideradas "
-            f"({_brl(float(sum(r.valor for r in receitas_fora)))}): fora da conta do resultado."
-        )
-
     # --- Resultado --------------------------------------------------------------------------
     resultado: float | None = None
     if (
         dotacao is not None and executado_total is not None and not nes_empenho_nulo
         and all(v is not None for v in projetado.values())
     ):
-        resultado = dotacao + receitas_consideradas - executado_total - float(sum(projetado.values()))
+        resultado = dotacao - executado_total - float(sum(projetado.values()))
     incompleto = bool(selecionadas) and resultado is None
 
     return ResultadoOrcamentario(
@@ -521,7 +585,10 @@ def calcular_resultado(
         consumo_por_ne=consumo_por_ne,
         outras_desconsideradas_qtd=len(desconsideradas),
         outras_desconsideradas_valor=float(sum(d.valor for d in desconsideradas)),
-        receitas_proprias=receitas_consideradas,
+        receita_limite=receita_limite,
+        receita_aplicada=receita_aplicada,
+        receita_excedente=receita_excedente,
+        dotacao_integral=dotacao_integral,
         receitas_desconsideradas_qtd=len(receitas_fora),
         receitas_desconsideradas_valor=float(sum(r.valor for r in receitas_fora)),
     )
