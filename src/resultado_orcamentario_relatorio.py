@@ -72,16 +72,22 @@ tr.tot td{{font-weight:700;border-top:2px solid var(--border);border-bottom:0;ba
 .fonte{{display:inline-block;margin-left:6px;padding:0 6px;border-radius:5px;font-size:10px;font-weight:600;background:var(--alt);
   border:1px solid var(--border);color:var(--muted);white-space:nowrap}}
 .fonte.f1050{{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}}
-.rec{{display:block;font-size:10px;font-weight:400;color:var(--accent);line-height:1.3;margin-top:2px;white-space:normal;text-align:right}}
+.rec{{display:block;font-size:10px;font-weight:400;color:var(--accent);line-height:1.3;margin-top:3px;white-space:normal}}
+table.det{{table-layout:fixed}} table.det td:first-child{{overflow-wrap:anywhere}}
+table.det th,table.det td{{padding:4px 4px}} table.det td.n,table.det th.n{{font-size:10px}}
 .pos{{color:var(--pos)}} .neg{{color:var(--neg)}}
+.selo.pos,.selo.neg{{color:#fff}}
 .bar{{display:inline-block;width:44px;height:5px;border-radius:3px;background:var(--alt);position:relative;overflow:hidden;vertical-align:middle;margin-right:5px}}
 .bar i{{position:absolute;left:0;top:0;bottom:0;background:var(--accent)}} .bar i.acima{{background:var(--neg)}}
 .ok{{color:var(--pos);font-size:11px;margin-top:5px}} .erro{{color:var(--neg);font-size:11px;margin-top:5px}}
 footer.rel{{margin-top:18px;padding-top:8px;border-top:1px solid var(--border);display:flex;justify-content:space-between;color:var(--faint);font-size:10.5px}}
-@media(max-width:760px){{.cartoes{{grid-template-columns:1fr 1fr}}.duas{{grid-template-columns:1fr}}.folha{{padding:12px}}
+@media screen and (max-width:760px){{.cartoes{{grid-template-columns:1fr 1fr}}.duas{{grid-template-columns:1fr}}.folha{{padding:12px}}
   header.rel{{flex-direction:column}}header.rel .meta{{text-align:left}}table{{display:block;overflow-x:auto}}}}
-@media print{{body{{background:#fff;padding:0}}.barra{{display:none}}.folha{{box-shadow:none;max-width:none;padding:0}}
-  @page{{size:A4;margin:14mm 12mm}}tr{{page-break-inside:avoid}}h2{{page-break-after:avoid}}.quebra{{page-break-before:always}}}}
+@media print{{*{{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+  body{{background:#fff;padding:0;font-size:10.5px}}.barra{{display:none}}.folha{{box-shadow:none;max-width:none;width:100%;padding:0}}
+  @page{{size:A4;margin:12mm 10mm}}tr{{page-break-inside:avoid}}h2{{page-break-after:avoid}}.quebra{{page-break-before:always}}
+  table{{font-size:9.5px}}th,td{{padding:3px 4px}}td.n,th.n{{font-size:9px}}table.det td.n,table.det th.n{{font-size:8.5px}}.card .v{{font-size:12.5px}}.card{{padding:7px 8px}}
+  .cartoes{{gap:6px}}.duas{{gap:10px}}}}
 </style>
 """
 
@@ -215,8 +221,8 @@ def _secao_detalhamento(detalhe: DetalheGndAcao) -> str:
             dot_r, exe_r, prj_r = _valor(r["dotacao"]), _valor(r["executado"]), _valor(r["projetado"])
             corpo.append(
                 f'<tr class="sub{" alvo" if e1050 else ""}"><td><span class="cod">{_txt(r["acao"])}</span>'
-                f'{_txt("" if desc_acao is None or pd.isna(desc_acao) else desc_acao)}{etiqueta}</td>'
-                f'<td class="n">{brl(dot_r)}{_nota_excedente(r)}</td>{_celula(exe_r)}{_celula(prj_r)}'
+                f'{_txt("" if desc_acao is None or pd.isna(desc_acao) else desc_acao)}{etiqueta}{_nota_excedente(r)}</td>'
+                f'<td class="n">{brl(dot_r)}</td>{_celula(exe_r)}{_celula(prj_r)}'
                 f'{_resultado_celula(_valor(r["resultado"]))}{_consumo(exe_r, prj_r, dot_r)}</tr>'
             )
     for tipo, rotulo in (
@@ -242,7 +248,9 @@ def _secao_detalhamento(detalhe: DetalheGndAcao) -> str:
     return (
         '<h2><span class="n">3</span>Detalhamento por GND, Ação e Fonte</h2>'
         '<p class="nota">Cada linha indica a sua fonte; a fonte 1050 aparece em linha própria.</p>'
-        '<table><thead><tr><th>Grupo</th><th class="n">Dotação atualizada</th><th class="n">Executado</th>'
+        '<table class="det"><colgroup><col style="width:25%"><col style="width:16%"><col style="width:16%"><col style="width:16%">'
+        '<col style="width:16%"><col style="width:11%"></colgroup>'
+        '<thead><tr><th>Grupo</th><th class="n">Dotação atualizada</th><th class="n">Executado</th>'
         '<th class="n">Projetado</th><th class="n">Resultado</th><th>Consumo</th></tr></thead><tbody>'
         + "".join(corpo) + "</tbody></table>" + conferencia
     )
