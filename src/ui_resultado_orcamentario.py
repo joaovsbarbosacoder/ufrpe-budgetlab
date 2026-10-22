@@ -104,12 +104,15 @@ def html_cartoes(
     dotacao: float | None, rodape_dotacao: str,
     executado: float | None, projetado: float | None,
     resultado: float | None, rodape_resultado: str,
+    receitas: float | None = None,
 ) -> str:
-    """Critério de 15/10/2026: `Resultado = Dotação − Executado − Projetado a realizar` (ver `src.resultado_orcamentario`)."""
+    """Critério de 15/10/2026: `Resultado = Dotação − Executado − Projetado a realizar` (ver `src.resultado_orcamentario`).
+    `receitas` (22/10/2026): receitas próprias informadas à mão, somadas à dotação; o cartão só aparece quando há valor."""
 
     classe, selo = situacao_resultado(resultado)
     cartoes = [
         ("Dotação Atualizada", dotacao, rodape_dotacao, ""),
+        *([("(+) Receitas próprias", receitas, "Arrecadação informada à mão, de fonte fora das células", "")] if receitas else []),
         ("(−) Executado nas células", executado, "Contratos e Bolsas: liquidado · demais origens: empenhado", ""),
         ("(−) Projetado a realizar", projetado, "Contratos + Bolsas (o que falta da projeção) + outras previstas", ""),
     ]

@@ -147,3 +147,37 @@ def test_avisos_ok_arquivo_corrompido_ou_em_formato_inesperado_levanta(tmp_path)
     arquivo.write_text('{"avisos": [1, 2]}', encoding="utf-8")
     with pytest.raises(ArquivoCorrompido):
         carregar_avisos_ok(2026, tmp_path)
+
+
+def test_receitas_ida_e_volta_e_consideracao(tmp_path):
+    from src.resultado_orcamentario_cadastro import (
+        carregar_receitas, definir_consideracao_receita, excluir_receita, incluir_receita,
+    )
+
+    assert carregar_receitas(2026, tmp_path) == []
+    nova = incluir_receita(2026, "  Fonte 050 ", 1234.5, "set/2026", tmp_path)
+    (lida,) = carregar_receitas(2026, tmp_path)
+    assert (lida.descricao, lida.valor, lida.observacao, lida.considerada) == ("Fonte 050", 1234.5, "set/2026", True)
+    definir_consideracao_receita(2026, nova.id, False, tmp_path)
+    assert carregar_receitas(2026, tmp_path)[0].considerada is False
+    excluir_receita(2026, nova.id, tmp_path)
+    assert carregar_receitas(2026, tmp_path) == []
+
+
+@pytest.mark.parametrize("valor", [None, 0.0, -5.0])
+def test_receita_valor_invalido_recusado(tmp_path, valor):
+    from src.resultado_orcamentario_cadastro import carregar_receitas, incluir_receita, validar_receita
+
+    assert validar_receita("x", valor)
+    with pytest.raises(ValueError):
+        incluir_receita(2026, "x", valor, None, tmp_path)
+    assert carregar_receitas(2026, tmp_path) == []
+
+
+def test_receitas_arquivo_corrompido_levanta(tmp_path):
+    from src.resultado_orcamentario_cadastro import carregar_receitas
+
+    (tmp_path / "2026").mkdir()
+    (tmp_path / "2026" / "receitas_proprias.json").write_text("{nao é json", encoding="utf-8")
+    with pytest.raises(ArquivoCorrompido):
+        carregar_receitas(2026, tmp_path)

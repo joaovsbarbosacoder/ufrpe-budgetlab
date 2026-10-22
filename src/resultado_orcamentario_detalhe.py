@@ -253,7 +253,7 @@ def detalhar_por_gnd_acao(
         abs(detalhe - cartao)
         for detalhe, cartao in (
             (totais["dotacao"], res.dotacao), (totais["executado"], res.executado_total),
-            (totais["projetado"], res.projetado_total), (resultado_total, res.resultado),
+            (totais["projetado"], res.projetado_total), (resultado_total, None if res.resultado is None else res.resultado - res.receitas_proprias),
         )
         if detalhe is not None and cartao is not None
     ]

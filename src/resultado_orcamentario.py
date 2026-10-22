@@ -7,7 +7,7 @@ Contratos e Bolsas mudou em 15/10/2026, ver abaixo). Este módulo é regra pura:
 arquivo. Especificação: docs/superpowers/specs/2026-10-08-resultado-orcamentario-design.md.
 
 EXECUTADO + PROJETADO (15/10/2026, pedido do usuário): para Contratos e Bolsas o resultado deixa de usar o empenhado e a
-necessidade de empenho e passa a medir o CONSUMO do orçamento: `Resultado = Dotação − Executado − Projetado a realizar`,
+necessidade de empenho e passa a medir o CONSUMO do orçamento: `Resultado = Dotação + Receitas próprias − Executado − Projetado a realizar`,
 onde executado = o que a NE já liquidou (valor empenhado − saldo) e projetado = o que falta da projeção pela execução até
 dezembro (`projetado_execucao`). Como só se soma o que de fato será consumido, a sobra de empenho (saldo que a projeção não
 vai liquidar) não pesa na conta e a antiga "anulação sugerida" como receita deixou de existir aqui (o relatório de Anulação
@@ -33,7 +33,7 @@ from src.dotacao_anual_analysis import (
     build_dotacao_anual_subdivision_analysis,
 )
 from src.execucao_ne_utils import ne_curta
-from src.resultado_orcamentario_cadastro import CHAVE_CELULA, CelulaChave, DespesaManual
+from src.resultado_orcamentario_cadastro import CHAVE_CELULA, CelulaChave, DespesaManual, ReceitaPropria
 from src.tesouro_execucao_mensal import valor_empenhado_por_bloco
 
 ORIGEM_CONTRATOS = "Contratos Contínuos"
@@ -95,6 +95,10 @@ class ResultadoOrcamentario:
     #: outras despesas previstas desmarcadas (fora da conta): quantidade e valor somado (15/10/2026)
     outras_desconsideradas_qtd: int = 0
     outras_desconsideradas_valor: float = 0.0
+    #: receitas próprias informadas à mão e consideradas (22/10/2026): somam-se à dotação das células
+    receitas_proprias: float = 0.0
+    receitas_desconsideradas_qtd: int = 0
+    receitas_desconsideradas_valor: float = 0.0
 
     @property
     def projetado_total(self) -> float | None:
@@ -297,8 +301,9 @@ def calcular_resultado(
     sem_ne_contratos: pd.DataFrame,
     sem_ne_bolsas: pd.DataFrame,
     despesas_manuais: list[DespesaManual],
+    receitas_proprias: list[ReceitaPropria] | None = None,
 ) -> ResultadoOrcamentario:
-    """Resultado = Dotação − Executado (Contratos e Bolsas) − Empenhado (demais origens) − Projetado a realizar (Contratos,
+    """Resultado = Dotação + Receitas próprias (informadas à mão) − Executado (Contratos e Bolsas) − Empenhado (demais origens) − Projetado a realizar (Contratos,
     Bolsas e outras despesas previstas); ver a docstring do módulo. `necessidade_contratos`/`necessidade_bolsas` são os
     `linhas` do relatório de Projeção pela Execução (nome mantido; trazem `valor_empenhado`, `saldo` e `projetado_execucao`).
 
@@ -480,13 +485,25 @@ def calcular_resultado(
         if aviso:
             avisos.append(aviso)
 
+    # --- Receitas próprias (22/10/2026) ----------------------------------------------------------
+    # Arrecadação informada à mão, de fonte diferente das células marcadas: soma-se à dotação. Cada lançamento tem a sua
+    # marca "considerada"; os desmarcados ficam fora, em aviso.
+    receitas = receitas_proprias or []
+    receitas_consideradas = float(sum(r.valor for r in receitas if r.considerada))
+    receitas_fora = [r for r in receitas if not r.considerada]
+    if receitas_fora:
+        avisos.append(
+            f"{len(receitas_fora)} de {len(receitas)} receitas próprias desconsideradas "
+            f"({_brl(float(sum(r.valor for r in receitas_fora)))}): fora da conta do resultado."
+        )
+
     # --- Resultado --------------------------------------------------------------------------
     resultado: float | None = None
     if (
         dotacao is not None and executado_total is not None and not nes_empenho_nulo
         and all(v is not None for v in projetado.values())
     ):
-        resultado = dotacao - executado_total - float(sum(projetado.values()))
+        resultado = dotacao + receitas_consideradas - executado_total - float(sum(projetado.values()))
     incompleto = bool(selecionadas) and resultado is None
 
     return ResultadoOrcamentario(
@@ -504,4 +521,7 @@ def calcular_resultado(
         consumo_por_ne=consumo_por_ne,
         outras_desconsideradas_qtd=len(desconsideradas),
         outras_desconsideradas_valor=float(sum(d.valor for d in desconsideradas)),
+        receitas_proprias=receitas_consideradas,
+        receitas_desconsideradas_qtd=len(receitas_fora),
+        receitas_desconsideradas_valor=float(sum(r.valor for r in receitas_fora)),
     )

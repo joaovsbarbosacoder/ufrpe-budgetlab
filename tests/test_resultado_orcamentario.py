@@ -19,7 +19,7 @@ from src.resultado_orcamentario import (
     celulas_da_dotacao,
     empenhado_por_ne_e_celula,
 )
-from src.resultado_orcamentario_cadastro import CHAVE_CELULA, DespesaManual
+from src.resultado_orcamentario_cadastro import CHAVE_CELULA, DespesaManual, ReceitaPropria
 
 A = ("0", "2", "20Y0", "100001", "0000", "3", "1000000000")
 B = ("0", "2", "20Y0", "100002", "0000", "3", "1000000000")
@@ -452,3 +452,31 @@ def test_todas_consideradas_nao_avisa():
     r = _calc()
     assert r.outras_desconsideradas_qtd == 0 and r.outras_desconsideradas_valor == 0.0
     assert not any("desconsideradas" in a for a in r.avisos)
+
+
+def _receita(valor=100.0, considerada=True, id_="r1") -> ReceitaPropria:
+    return ReceitaPropria(id_, "Arrecadação fonte 050", valor, None, "2026-10-22", "2026-10-22", considerada)
+
+
+def test_receita_propria_soma_a_dotacao():
+    r = _calc(receitas_proprias=[_receita(100.0), _receita(50.0, id_="r2")])
+    assert r.dotacao == 1500  # a dotação das células não muda
+    assert r.receitas_proprias == 150
+    assert r.resultado == 1500 + 150 - 550 - 200 == 900
+
+
+def test_receita_desconsiderada_fica_fora_com_aviso():
+    r = _calc(receitas_proprias=[_receita(100.0), _receita(70.0, considerada=False, id_="r2")])
+    assert r.receitas_proprias == 100
+    assert r.resultado == 850
+    assert (r.receitas_desconsideradas_qtd, r.receitas_desconsideradas_valor) == (1, 70)
+    assert any("receitas próprias desconsideradas" in a for a in r.avisos)
+
+
+def test_sem_receitas_o_resultado_nao_muda():
+    assert _calc().resultado == _calc(receitas_proprias=[]).resultado == 750
+
+
+def test_receita_nao_cobre_dotacao_indeterminada():
+    r = _calc(celulas=_celulas(dot_a=None), receitas_proprias=[_receita(100.0)])
+    assert r.resultado is None and r.incompleto is True

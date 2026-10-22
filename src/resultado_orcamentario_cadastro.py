@@ -54,6 +54,21 @@ class DespesaManual:
     considerada: bool = True
 
 
+@dataclass(frozen=True)
+class ReceitaPropria:
+    """Arrecadação de receita própria informada à mão (22/10/2026). Soma-se à dotação das células marcadas: a fonte é
+    outra e não está nas células, então não há vínculo com célula."""
+
+    id: str
+    descricao: str
+    valor: float
+    observacao: str | None
+    criado_em: str
+    atualizado_em: str
+    #: entra na conta do resultado? Arquivo sem o campo = considerada.
+    considerada: bool = True
+
+
 def _agora() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -260,3 +275,78 @@ def definir_consideracao(
 def excluir_despesa(exercicio: int, id_despesa: str, diretorio: Path = DIRETORIO_PADRAO) -> None:
     despesas = carregar_despesas(exercicio, diretorio)
     _salvar_despesas(exercicio, [d for d in despesas if d.id != id_despesa], diretorio)
+
+
+# ------------------------------------------------------------------- receitas próprias (22/10/2026)
+def _caminho_receitas(exercicio: int, diretorio: Path) -> Path:
+    return _pasta(exercicio, diretorio) / "receitas_proprias.json"
+
+
+def carregar_receitas(exercicio: int, diretorio: Path = DIRETORIO_PADRAO) -> list[ReceitaPropria]:
+    dado = _ler(_caminho_receitas(exercicio, diretorio))
+    if dado is None:
+        return []
+    try:
+        return [
+            ReceitaPropria(
+                id=r["id"],
+                descricao=r["descricao"],
+                valor=float(r["valor"]),
+                observacao=r.get("observacao"),
+                criado_em=r["criado_em"],
+                atualizado_em=r["atualizado_em"],
+                considerada=bool(r.get("considerada", True)),
+            )
+            for r in dado["receitas"]
+        ]
+    except (KeyError, TypeError, ValueError) as erro:
+        raise ArquivoCorrompido("Formato inesperado em receitas_proprias.json") from erro
+
+
+def _salvar_receitas(exercicio: int, receitas: list[ReceitaPropria], diretorio: Path) -> None:
+    _gravar_atomico(_caminho_receitas(exercicio, diretorio), {"receitas": [asdict(r) for r in receitas]})
+
+
+def validar_receita(descricao: str, valor: float | None) -> list[str]:
+    """Mensagens de erro da receita informada; lista vazia significa válida. Valor obrigatório e maior que zero."""
+
+    erros = []
+    if not (descricao or "").strip():
+        erros.append("Informe a descrição da receita.")
+    if valor is None:
+        erros.append("Informe o valor da receita.")
+    elif valor <= 0:
+        erros.append("O valor da receita deve ser maior que zero.")
+    return erros
+
+
+def incluir_receita(
+    exercicio: int, descricao: str, valor: float, observacao: str | None, diretorio: Path = DIRETORIO_PADRAO,
+) -> ReceitaPropria:
+    erros = validar_receita(descricao, valor)
+    if erros:
+        raise ValueError("; ".join(erros))
+    agora = _agora()
+    nova = ReceitaPropria(
+        id=uuid.uuid4().hex, descricao=descricao.strip(), valor=float(valor), observacao=observacao,
+        criado_em=agora, atualizado_em=agora,
+    )
+    _salvar_receitas(exercicio, [*carregar_receitas(exercicio, diretorio), nova], diretorio)
+    return nova
+
+
+def definir_consideracao_receita(
+    exercicio: int, id_receita: str, considerada: bool, diretorio: Path = DIRETORIO_PADRAO,
+) -> ReceitaPropria:
+    receitas = carregar_receitas(exercicio, diretorio)
+    for i, atual in enumerate(receitas):
+        if atual.id == id_receita:
+            receitas[i] = replace(atual, considerada=bool(considerada))
+            _salvar_receitas(exercicio, receitas, diretorio)
+            return receitas[i]
+    raise KeyError(f"Receita inexistente: {id_receita}")
+
+
+def excluir_receita(exercicio: int, id_receita: str, diretorio: Path = DIRETORIO_PADRAO) -> None:
+    receitas = carregar_receitas(exercicio, diretorio)
+    _salvar_receitas(exercicio, [r for r in receitas if r.id != id_receita], diretorio)

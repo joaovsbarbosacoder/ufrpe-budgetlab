@@ -71,7 +71,7 @@ from src.resultado_orcamentario import (
     soma_ou_nulo,
 )
 from src.resultado_orcamentario_detalhe import detalhar_por_gnd_acao
-from src.resultado_orcamentario_cadastro import ArquivoCorrompido, CelulaChave, DespesaManual
+from src.resultado_orcamentario_cadastro import ArquivoCorrompido, CelulaChave, DespesaManual, ReceitaPropria
 from src import resultado_orcamentario_historico as historico_ro
 from src.relatorio_projecao_execucao import RelatorioProjecaoExecucao
 from src.resultado_orcamentario_fontes import projecao_bolsas, projecao_contratos, tabela_bolsas, tabela_contratos
@@ -375,6 +375,30 @@ def _alternar_consideracao(exercicio: int, id_despesa: str) -> None:
         _mensagem(f"{erro} — nada foi gravado.")
 
 
+def _alternar_consideracao_receita(exercicio: int, id_receita: str) -> None:
+    try:
+        cadastro.definir_consideracao_receita(
+            exercicio, id_receita, bool(st.session_state[f"ro_considerar_rec_{id_receita}"]), diretorio=cadastro.DIRETORIO_PADRAO,
+        )
+    except KeyError:
+        _mensagem("Esta receita não existe mais (pode ter sido excluída em outra aba). Nada foi gravado.")
+    except ArquivoCorrompido as erro:
+        _mensagem(f"{erro} — nada foi gravado.")
+
+
+@st.dialog("Excluir receita")
+def _dialogo_excluir_receita(exercicio: int, receita: ReceitaPropria) -> None:
+    st.write(f'Excluir "{receita.descricao}" ({formatar_brl(receita.valor)})? A exclusão não pode ser desfeita.')
+    if st.button("Excluir", type="primary", key="ro_confirmar_exclusao_receita"):
+        try:
+            cadastro.excluir_receita(exercicio, receita.id, diretorio=cadastro.DIRETORIO_PADRAO)
+        except ArquivoCorrompido as erro:
+            st.error(f"{erro} — nada foi gravado.")
+        else:
+            _mensagem(f'Receita "{receita.descricao}" excluída.')
+            st.rerun()
+
+
 @st.dialog("Excluir despesa")
 def _dialogo_excluir(exercicio: int, despesa: DespesaManual) -> None:
     st.write(f'Excluir "{despesa.descricao}" ({formatar_brl(despesa.valor)})? A exclusão não pode ser desfeita.')
@@ -399,7 +423,7 @@ def _render_cartoes(res: ResultadoOrcamentario, qtd_selecionadas: int, qtd_celul
     st.html(
         html_cartoes(
             res.dotacao, f"{qtd_selecionadas} de {qtd_celulas} células selecionadas",
-            res.executado_total, res.projetado_total, res.resultado, rodape,
+            res.executado_total, res.projetado_total, res.resultado, rodape, res.receitas_proprias,
         )
     )
 
@@ -675,6 +699,13 @@ except ArquivoCorrompido as erro:
     despesas, despesas_legiveis = [], False
     st.error(f"{erro}. As despesas manuais não puderam ser lidas; corrija ou restaure o arquivo — a página não grava por cima.")
 
+try:
+    receitas = cadastro.carregar_receitas(exercicio, diretorio=cadastro.DIRETORIO_PADRAO)
+    receitas_legiveis = True
+except ArquivoCorrompido as erro:
+    receitas, receitas_legiveis = [], False
+    st.error(f"{erro}. As receitas próprias não puderam ser lidas; corrija ou restaure o arquivo — a página não grava por cima.")
+
 # Cartões e Composição ficam no topo, mas dependem da seleção em edição (tabela mais abaixo):
 # containers reservados aqui e preenchidos no fim.
 area_cartoes = st.container()
@@ -932,6 +963,57 @@ if incluir:
             _mensagem(f'Despesa "{nova_descricao.strip()}" incluída.')
             st.rerun()
 
+
+# --------------------------------------------------------------- Receitas próprias
+st.subheader("Receitas próprias arrecadadas")
+st.caption(
+    "Arrecadação de receita própria informada à mão (fonte fora das células marcadas). Soma-se à dotação das células e "
+    'pode cobrir despesas previstas ou já contratualizadas. "Considerar" desmarcado tira o valor da conta.'
+)
+if receitas:
+    for receita in receitas:
+        col_ok, col_desc, col_obs, col_valor, col_acoes = st.columns([1, 4, 3, 2, 1], vertical_alignment="center")
+        col_ok.checkbox(
+            "Considerar", value=receita.considerada, key=f"ro_considerar_rec_{receita.id}", label_visibility="collapsed",
+            disabled=not receitas_legiveis, on_change=_alternar_consideracao_receita, args=(exercicio, receita.id),
+        )
+        col_desc.markdown(_sem_latex(receita.descricao))
+        col_obs.markdown(_sem_latex(receita.observacao or "—"))
+        col_valor.markdown(_sem_latex(formatar_brl(receita.valor)))
+        if col_acoes.button("Excluir", key=f"ro_excluir_rec_{receita.id}", disabled=not receitas_legiveis, type="tertiary"):
+            _dialogo_excluir_receita(exercicio, receita)
+    st.caption(
+        f"Total cadastrado: {formatar_brl(sum(r.valor for r in receitas))} · "
+        f"considerado no resultado: {formatar_brl(sum(r.valor for r in receitas if r.considerada))}"
+    )
+elif receitas_legiveis:
+    st.caption("Nenhuma receita própria cadastrada para este exercício.")
+
+with st.form("ro_nova_receita", clear_on_submit=True):
+    _c_desc, _c_valor, _c_obs = st.columns([4, 2, 3])
+    nova_rec_descricao = _c_desc.text_input("Descrição", key="ro_receita_descricao", placeholder="Ex.: Arrecadação fonte 050 — set/2026")
+    nova_rec_valor = _c_valor.number_input(
+        "Valor arrecadado (R$)", key="ro_receita_valor", value=None, min_value=0.0, step=100.0, format="%.2f",
+    )
+    nova_rec_observacao = _c_obs.text_input("Observação", key="ro_receita_observacao", placeholder="Opcional")
+    incluir_receita = st.form_submit_button("Incluir receita", type="primary", disabled=not receitas_legiveis)
+if incluir_receita:
+    erros_rec = cadastro.validar_receita(nova_rec_descricao, nova_rec_valor)
+    if erros_rec:
+        for erro in erros_rec:
+            st.error(erro)
+    else:
+        try:
+            cadastro.incluir_receita(
+                exercicio, nova_rec_descricao, nova_rec_valor, nova_rec_observacao.strip() or None,
+                diretorio=cadastro.DIRETORIO_PADRAO,
+            )
+        except ArquivoCorrompido as erro:
+            st.error(f"{erro} — nada foi gravado.")
+        else:
+            _mensagem(f'Receita "{nova_rec_descricao.strip()}" incluída.')
+            st.rerun()
+
 # --------------------------------------------------------------- conta e topo
 tabela_contratos_df, linhas_contratos, sem_ne_contratos, avisos_projecao_contratos, relatorio_contratos = fontes[ORIGEM_CONTRATOS]
 tabela_bolsas_df, linhas_bolsas, sem_ne_bolsas, avisos_projecao_bolsas, relatorio_bolsas = fontes[ORIGEM_BOLSAS]
@@ -945,8 +1027,13 @@ _tabela_sobra = sobra_por_ne(_relatorios_sobra, data_execucao.date()) if _relato
 # Interruptor da seção 4 (15/10/2026): desligado, as despesas continuam cadastradas e listadas, mas não entram na conta.
 resultado = calcular_resultado(
     celulas, empenhado, selecao_atual, tabela_contratos_df, tabela_bolsas_df,
-    linhas_contratos, linhas_bolsas, sem_ne_contratos, sem_ne_bolsas, despesas,
+    linhas_contratos, linhas_bolsas, sem_ne_contratos, sem_ne_bolsas, despesas, receitas,
 )
+if not receitas_legiveis:
+    resultado = replace(
+        resultado, resultado=None, incompleto=bool(selecao_atual),
+        avisos=[*resultado.avisos, "Receitas próprias ilegíveis: resultado incompleto."],
+    )
 if not despesas_legiveis:
     resultado = replace(
         resultado,
@@ -987,6 +1074,13 @@ with area_cartoes:
                 f"Resultado SEM {resultado.outras_desconsideradas_qtd} de {len(despesas)} outras despesas previstas "
                 f"({formatar_brl(resultado.outras_desconsideradas_valor)}): estão desconsideradas. Marque 'Considerar' em "
                 "'Outras despesas previstas' (seção 5) para voltar a contá-las."
+            )
+        )
+    if resultado.receitas_desconsideradas_qtd:
+        st.warning(
+            _sem_latex(
+                f"Resultado SEM {resultado.receitas_desconsideradas_qtd} de {len(receitas)} receitas próprias "
+                f"({formatar_brl(resultado.receitas_desconsideradas_valor)}): estão desconsideradas."
             )
         )
     _render_cartoes(resultado, len(marcadas), len(celulas))
