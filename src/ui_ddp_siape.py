@@ -13,10 +13,10 @@ import pandas as pd
 import streamlit as st
 
 from src.ddp_siape import (
-    TIPO_DDP, conferencia, confronto_liquidado, ddp_por_natureza, ler_relatorio, plano_operacoes, quadro_reforco,
-    reserva_projetada, separar_competencias, validar_conjunto, variacao_por_natureza,
+    TIPO_DDP, conciliacao_sem_ddp, conferencia, confronto_liquidado, ddp_por_natureza, ler_relatorio, plano_operacoes,
+    quadro_reforco, quadro_sem_ddp, reserva_projetada, separar_competencias, validar_conjunto, variacao_por_natureza,
 )
-from src.despesas_pessoal import MESES_NOMES
+from src.despesas_pessoal import GRUPO_RPPS, MESES_NOMES
 from src.ui_despesas_pessoal_abas import _md, brl
 
 
@@ -121,22 +121,55 @@ def render_variacao(variacao: pd.DataFrame, anterior: int, atual: int) -> None:
         st.dataframe(tabela_variacao(variacao), hide_index=True, width="stretch", height="content")
 
 
+def render_rpps(itens: pd.DataFrame, por_empenho: pd.DataFrame, conciliacao: dict, competencia: int) -> None:
+    """Contribuição patronal ao RPPS (27/10/2026): não está na DDP; o mês vem da projeção do painel."""
+    st.markdown("**RPPS patronal — pela projeção do painel, sem DDP**")
+    if itens.empty:
+        st.info("A projeção do painel não tem o grupo RPPS neste exercício.")
+        return
+    colunas = st.columns(4)
+    colunas[0].metric(f"Projeção de {_mes(competencia)}", brl(itens["ddp"].sum()))
+    colunas[1].metric("Saldo a liquidar", brl(itens["saldo"].sum()))
+    colunas[2].metric("Reforço do mês", brl(por_empenho["reforco_mes"].sum()))
+    colunas[3].metric("Reforço até dezembro", brl(por_empenho["reforco_ate_dezembro"].sum()))
+    st.dataframe(tabela_itens(itens).drop(columns=["Já liquidado no mês"]).rename(columns={"DDP do mês": "Projeção do mês"}),
+                 hide_index=True, width="stretch", height="content")
+    c = conciliacao
+    if c["dotacao"] is not None:
+        st.caption(_md(
+            f"Fecha com o painel: reforço até dezembro {brl(c['reforco_ate_dezembro'])} = déficit de dotação do grupo "
+            f"{brl(c['deficit_dotacao'])} (projetado no ano {brl(c['total_ano'])} − dotação {brl(c['dotacao'])}) + dotação "
+            f"ainda não empenhada {brl(c['dotacao_nao_empenhada'])} + diferença entre o Liquidado da base e a grade nos "
+            f"meses anteriores {brl(c['diferenca_meses_anteriores'])}."
+        ))
+    st.caption(
+        "O valor do mês é a projeção do painel (fórmulas da sessão, sem as edições manuais), não um documento do "
+        "SIAPE — não há o que conferir. A reserva inclui o 13º de novembro. Se o patronal de algum mês for liquidado "
+        "em outro mês, a diferença aparece na conciliação acima; nenhuma regra é presumida."
+    )
+
+
 def planilha_excel(competencia: int, conf: pd.DataFrame, plano: pd.DataFrame, por_empenho: pd.DataFrame,
-                   itens: pd.DataFrame) -> bytes:
+                   itens: pd.DataFrame, itens_rpps: pd.DataFrame | None = None) -> bytes:
     """Planilha para download (gerada em memória, nada é gravado no servidor), com os valores numéricos."""
     arquivo = BytesIO()
     with pd.ExcelWriter(arquivo, engine="openpyxl") as escritor:
         plano.to_excel(escritor, sheet_name="Plano por item", index=False)
         por_empenho.to_excel(escritor, sheet_name="Por empenho", index=False)
         itens.drop(columns=["nes"]).to_excel(escritor, sheet_name="Itens", index=False)
+        if itens_rpps is not None and not itens_rpps.empty:
+            itens_rpps.drop(columns=["nes"]).rename(columns={"ddp": "projecao_mes"}).to_excel(
+                escritor, sheet_name="RPPS (projeção)", index=False)
         conf.to_excel(escritor, sheet_name="Conferência", index=False)
         pd.DataFrame({"competencia": [competencia]}).to_excel(escritor, sheet_name="Referência", index=False)
     return arquivo.getvalue()
 
 
-def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int, procedencia: str) -> None:
+def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int, procedencia: str,
+               dotacao_grupo: pd.Series | None = None) -> None:
     """`grade_linhas`: `grade_mensal(...).linhas` do painel (projeção por natureza
-    detalhada, com as fórmulas da sessão), usada só para a reserva dos meses seguintes."""
+    detalhada, com as fórmulas da sessão), usada para a reserva dos meses seguintes e para o
+    mês do RPPS patronal. `dotacao_grupo`: dotação por grupo, para fechar o RPPS com o painel."""
     st.markdown(
         "Envie os PDFs do SIAPE do mês: **DDP** e **Crédito Bancário**, de servidor e de pensionista. "
         "A aba confere os totais e calcula, por empenho, quanto falta para liquidar a folha. Os arquivos "
@@ -224,9 +257,15 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
         st.info("Nenhum item precisa de anulação ou reforço para esta folha.")
     else:
         st.dataframe(tabela_plano(plano, itens), hide_index=True, width="stretch", height="content")
+
+    itens_rpps, por_empenho_rpps = quadro_sem_ddp(mensal, competencia, grade_linhas, GRUPO_RPPS)
+    dotacao_rpps = None if dotacao_grupo is None else dotacao_grupo.get(GRUPO_RPPS)
+    render_rpps(itens_rpps, por_empenho_rpps,
+                conciliacao_sem_ddp(itens_rpps, grade_linhas, GRUPO_RPPS, competencia, dotacao_rpps), competencia)
+
     st.download_button(
-        "Baixar em Excel (plano, por empenho, itens e conferência)",
-        planilha_excel(competencia, conf, plano, por_empenho, itens),
+        "Baixar em Excel (plano, por empenho, itens, RPPS e conferência)",
+        planilha_excel(competencia, conf, plano, por_empenho, itens, itens_rpps),
         file_name=f"reforco_folha_{competencia}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         key="dp_ddp_excel",
@@ -249,5 +288,5 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
         "restantes). A falta de um item é compensada pela sobra livre de outro item da mesma NE — prática informada, "
         "não confirmada no SIAFI. Natureza em mais de um empenho: repartida pelo Liquidado do mês anterior; sem ele, "
         "os empenhos são somados. A DDP de servidor não separa ativo × aposentado no per capita. A contribuição "
-        "patronal ao RPPS não está na DDP. " + procedencia
+        "patronal ao RPPS não está na DDP: tem quadro próprio, pela projeção, fora dos totais da DDP. " + procedencia
     ))

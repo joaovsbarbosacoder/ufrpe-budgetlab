@@ -24,9 +24,10 @@ import pymupdf
 from src.ddp_siape import (
     CRITERIO_ELEMENTO, CRITERIO_REPARTIDO, CRITERIO_SEM_EMPENHO, CRITERIO_SOMADO, CRITERIO_UNICO,
     OPERACAO_REFORCO, OPERACAO_REMANEJAR, RESERVA_DDP, RESERVA_PROJECAO, SEM_EMPENHO, TIPO_CREDITO, TIPO_DDP,
-    conferencia, confronto_liquidado, ddp_por_natureza, ler_relatorio, plano_operacoes, quadro_reforco,
-    reserva_projetada, separar_competencias, validar_conjunto, variacao_por_natureza,
+    conciliacao_sem_ddp, conferencia, confronto_liquidado, ddp_por_natureza, ler_relatorio, plano_operacoes,
+    quadro_reforco, quadro_sem_ddp, reserva_projetada, separar_competencias, validar_conjunto, variacao_por_natureza,
 )
+from src.despesas_pessoal import GRUPO_RPPS
 from src.tesouro_execucao_mensal import _DIMENSOES_EXTRA_BLOCO
 
 FIXTURES = Path("tests/fixtures")
@@ -310,6 +311,49 @@ class TestQuadroReforco(unittest.TestCase):
         itens, _ = quadro_reforco(_ddp_sintetica(), base, 202610, RESERVA)
         linha = itens.set_index(["empenho", "natureza_detalhada"]).loc[("NE000001", "31901101")]
         self.assertEqual((linha["liquidado_no_mes"], linha["saldo"], linha["falta"]), (500.0, -200.0, 700.0))
+
+
+class TestRppsPatronalSemDdp(unittest.TestCase):
+    """Contribuição patronal ao RPPS: não está na DDP; o mês vem da projeção (grade)."""
+
+    @classmethod
+    def setUpClass(cls):
+        rpps = _item(10, "31911303", 1000.0, {202608: 300.0, 202609: 300.0}, acao="09HB", favorecido="FUNDO RPPS")
+        cls.base = pd.concat([_base_sintetica(), pd.DataFrame(rpps)], ignore_index=True)
+        cls.grade = pd.DataFrame([
+            {"grupo": GRUPO_RPPS, "natureza_detalhada_cod": "31911303", "natureza_detalhada_desc": "PATRONAL RPPS",
+             "meses": [None] * 7 + [300.0, 300.0, 350.0, 700.0, 350.0]},
+            {"grupo": "ativo", "natureza_detalhada_cod": "31901101", "natureza_detalhada_desc": "VENC", "meses": [1.0] * 12},
+        ])
+        cls.itens, cls.por_empenho = quadro_sem_ddp(cls.base, 202610, cls.grade, GRUPO_RPPS)
+
+    def test_mes_da_projecao_reserva_com_13o_e_empenho_fora_da_folha(self):
+        self.assertEqual(self.itens["empenho"].tolist(), ["NE000010"])  # favorecido não é a UG, entra mesmo assim
+        item = self.itens.iloc[0]
+        self.assertEqual((item["saldo"], item["ddp"], item["reserva"], item["tipo_reserva"]),
+                         (400.0, 350.0, 1050.0, RESERVA_PROJECAO))
+        ne = self.por_empenho.iloc[0]
+        self.assertEqual((ne["reforco_mes"], ne["reforco_ate_dezembro"]), (0.0, 1000.0))
+
+    def test_conciliacao_com_o_painel(self):
+        c = conciliacao_sem_ddp(self.itens, self.grade, GRUPO_RPPS, 202610, 1900.0)
+        self.assertEqual((c["total_ano"], c["empenhado"], c["liquidado"]), (2000.0, 1000.0, 600.0))
+        self.assertEqual((c["deficit_dotacao"], c["dotacao_nao_empenhada"], c["diferenca_meses_anteriores"]),
+                         (100.0, 900.0, 0.0))
+        self.assertEqual(c["reforco_ate_dezembro"],
+                         c["deficit_dotacao"] + c["dotacao_nao_empenhada"] + c["diferenca_meses_anteriores"])
+        sem = conciliacao_sem_ddp(self.itens, self.grade, GRUPO_RPPS, 202610, None)
+        self.assertIsNone(sem["deficit_dotacao"])
+        self.assertIsNone(sem["dotacao_nao_empenhada"])
+
+    def test_mes_nulo_na_grade_conta_zero_e_folha_nao_muda(self):
+        grade = self.grade.copy()
+        grade.at[0, "meses"] = [None] * 9 + [None, 700.0, 350.0]
+        itens, _ = quadro_sem_ddp(self.base, 202610, grade, GRUPO_RPPS)
+        self.assertEqual(itens.iloc[0]["ddp"], 0.0)
+        # o quadro da DDP continua só com os empenhos da folha: o do RPPS não entra
+        itens_ddp, _ = quadro_reforco(_ddp_sintetica(), self.base, 202610, RESERVA)
+        self.assertNotIn("NE000010", set(itens_ddp["empenho"]))
 
 
 class TestPlanoOperacoes(unittest.TestCase):

@@ -356,20 +356,22 @@ def _rotulo(nes) -> str:
 # ---------------------------------------------------------------------------
 
 def quadro_reforco(ddp_natureza: pd.DataFrame, mensal_df: pd.DataFrame, ano_mes_ddp: int,
-                   reserva_por_natureza: dict[str, float]) -> tuple[pd.DataFrame, pd.DataFrame]:
+                   reserva_por_natureza: dict[str, float], somente_folha: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
     """(itens, por_empenho). `itens`: uma linha por (empenho, natureza detalhada) dos
-    empenhos da folha que têm alguma natureza da DDP, com `saldo`, `ddp` (líquido do mês),
-    `falta` = máx(0, ddp − saldo), `reserva`, `sobra_livre` = máx(0, saldo − ddp − reserva),
-    `saldo_apos_ano` = saldo − ddp − reserva e os critérios usados. `por_empenho`: soma por
-    empenho, `compensa` = mín(falta, sobra livre), `reforco_mes` = falta − compensa e
-    `reforco_ate_dezembro` = máx(0, −saldo_apos_ano). Ver as regras no docstring do módulo."""
+    empenhos da folha que têm alguma natureza da DDP, com `empenhada`, `liquidada`, `saldo`,
+    `ddp` (líquido do mês), `falta` = máx(0, ddp − saldo), `reserva`, `sobra_livre` =
+    máx(0, saldo − ddp − reserva), `saldo_apos_ano` = saldo − ddp − reserva e os critérios
+    usados. `por_empenho`: soma por empenho, `compensa` = mín(falta, sobra livre),
+    `reforco_mes` = falta − compensa e `reforco_ate_dezembro` = máx(0, −saldo_apos_ano). Ver as
+    regras no docstring do módulo. `somente_folha=False` (RPPS patronal, ver
+    `quadro_sem_ddp`) considera qualquer empenho do exercício, e a reserva vem sempre da projeção."""
     ano, mes = divmod(ano_mes_ddp, 100)
     meses_restantes = 12 - mes
     itens = itens_de_empenho(mensal_df, ano, ano_mes_ddp)
     ddp = ddp_natureza.groupby("natureza_detalhada")["liquido"].sum()
     descricoes = ddp_natureza.groupby("natureza_detalhada")["descricao"].first()
 
-    folha = itens.loc[itens["folha"]]
+    folha = itens.loc[itens["folha"]] if somente_folha else itens
     alvo = set(folha.loc[folha["natureza_detalhada_cod"].isin(ddp.index), "ne_ccor"])
     # natureza sem item: empenho da folha que já tem o mesmo elemento (único), senão "sem empenho"
     destino_sem_item: dict[str, str | None] = {}
@@ -378,7 +380,7 @@ def quadro_reforco(ddp_natureza: pd.DataFrame, mensal_df: pd.DataFrame, ano_mes_
         destino_sem_item[natureza] = candidatos[0] if len(candidatos) == 1 else None
         if len(candidatos) == 1:
             alvo.add(candidatos[0])
-    fora_da_folha = set(itens.loc[~itens["folha"], "natureza_detalhada_cod"])
+    fora_da_folha = set(itens.loc[~itens["folha"], "natureza_detalhada_cod"]) if somente_folha else set()
     alvo_itens = folha.loc[folha["ne_ccor"].isin(alvo)]
 
     linhas = []
@@ -405,7 +407,9 @@ def quadro_reforco(ddp_natureza: pd.DataFrame, mensal_df: pd.DataFrame, ano_mes_
                 "empenho": _rotulo(parte["ne_ccor"]), "nes": tuple(sorted(parte["ne_ccor"])),
                 "natureza_detalhada": natureza, "acao_cod": parte["acao_cod"].iloc[0],
                 # descrição da DDP; item fora da DDP usa a da base
-                "descricao": descricoes.get(natureza, parte["natureza_detalhada_desc"].iloc[0]), "saldo": float(parte["saldo"].sum()),
+                "descricao": descricoes.get(natureza, parte["natureza_detalhada_desc"].iloc[0]),
+                "empenhada": float(parte["empenhada"].sum()), "liquidada": float(parte["liquidada"].sum()),
+                "saldo": float(parte["saldo"].sum()),
                 "ddp": valor_ddp * fracao, "reserva": reserva_natureza * fracao, "fracao": fracao,
                 "criterio": criterio if natureza in ddp.index else "fora da DDP", "tipo_reserva": tipo_reserva,
                 "liquidado_no_mes": float(parte["liquidado_no_mes"].sum()),
@@ -415,13 +419,14 @@ def quadro_reforco(ddp_natureza: pd.DataFrame, mensal_df: pd.DataFrame, ano_mes_
         linhas.append({
             "empenho": _rotulo([destino]) if destino else SEM_EMPENHO, "nes": (destino,) if destino else (),
             "natureza_detalhada": natureza, "acao_cod": None, "descricao": descricoes.get(natureza),
-            "saldo": 0.0, "ddp": valor_ddp,
+            "empenhada": 0.0, "liquidada": 0.0, "saldo": 0.0, "ddp": valor_ddp,
             "reserva": valor_ddp * meses_restantes if natureza in fora_da_folha else float(reserva_por_natureza.get(natureza, 0.0)),
             "fracao": 1.0, "criterio": CRITERIO_ELEMENTO if destino else CRITERIO_SEM_EMPENHO,
             "tipo_reserva": RESERVA_DDP if natureza in fora_da_folha else RESERVA_PROJECAO, "liquidado_no_mes": 0.0,
         })
 
-    colunas = ["empenho", "nes", "natureza_detalhada", "acao_cod", "descricao", "saldo", "ddp", "falta", "reserva",
+    colunas = ["empenho", "nes", "natureza_detalhada", "acao_cod", "descricao", "empenhada", "liquidada", "saldo",
+               "ddp", "falta", "reserva",
                "sobra_livre", "saldo_apos_ano", "fracao", "criterio", "tipo_reserva", "liquidado_no_mes"]
     tabela = pd.DataFrame(linhas, columns=[c for c in colunas if c not in ("falta", "sobra_livre", "saldo_apos_ano")])
     tabela["falta"] = (tabela["ddp"] - tabela["saldo"]).clip(lower=0)
@@ -441,6 +446,47 @@ def quadro_reforco(ddp_natureza: pd.DataFrame, mensal_df: pd.DataFrame, ano_mes_
     por_empenho["reforco_ate_dezembro"] = (-por_empenho["saldo_apos_ano"]).clip(lower=0)
     por_empenho = por_empenho.sort_values(["reforco_mes", "reforco_ate_dezembro"], ascending=False).reset_index()
     return tabela, por_empenho
+
+
+def quadro_sem_ddp(mensal_df: pd.DataFrame, ano_mes: int, grade_linhas: pd.DataFrame,
+                   grupo: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Reforço de um grupo que não está na DDP — a contribuição patronal ao RPPS (27/10/2026)
+    —, pelo mesmo `quadro_reforco`, mas com o valor do mês tirado da projeção do painel
+    (`grade_mensal(...).linhas` do `grupo`) no lugar da DDP. Considera qualquer empenho do
+    exercício com a natureza (o do RPPS não tem a UG como favorecida) e a reserva é a projeção
+    dos meses seguintes (com o 13º de novembro). Mês nulo na grade conta como zero. Não há
+    documento do SIAPE para conferir o valor do mês."""
+    mes = ano_mes % 100
+    linhas = grade_linhas.loc[grade_linhas["grupo"] == grupo]
+    previsto = pd.DataFrame([{
+        "natureza_detalhada": str(l.natureza_detalhada_cod), "publico": "projeção", "descricao": l.natureza_detalhada_desc,
+        "liquido": float(l.meses[mes - 1]) if l.meses[mes - 1] is not None and not pd.isna(l.meses[mes - 1]) else 0.0,
+    } for l in linhas.itertuples(index=False)], columns=["natureza_detalhada", "publico", "descricao", "liquido"])
+    return quadro_reforco(previsto, mensal_df, ano_mes, reserva_projetada(linhas, mes), somente_folha=False)
+
+
+def conciliacao_sem_ddp(itens: pd.DataFrame, grade_linhas: pd.DataFrame, grupo: str, ano_mes: int,
+                        dotacao: float | None) -> dict[str, float | None]:
+    """Fecha o reforço até dezembro do grupo com o painel: reforço = déficit de dotação
+    (total do ano projetado − dotação) + dotação ainda não empenhada (dotação − empenhado) +
+    `diferenca_meses_anteriores` (Liquidado já lançado na base − executado/projetado da grade
+    nos meses antes do mês do quadro; zero quando a base e a grade coincidem). Sem dotação,
+    os termos que dependem dela ficam nulos."""
+    mes = ano_mes % 100
+    linhas = grade_linhas.loc[grade_linhas["grupo"] == grupo]
+    soma = lambda valores: sum(float(v) for v in valores if v is not None and not pd.isna(v))
+    total_ano = soma(v for l in linhas.itertuples(index=False) for v in l.meses)
+    meses_anteriores = soma(v for l in linhas.itertuples(index=False) for v in list(l.meses)[:mes - 1])
+    empenhado, liquidado = float(itens["empenhada"].sum()), float(itens["liquidada"].sum())
+    reforco = max(0.0, -float(itens["saldo_apos_ano"].sum()))
+    sem_dotacao = dotacao is None or pd.isna(dotacao)
+    return {
+        "total_ano": total_ano, "empenhado": empenhado, "liquidado": liquidado, "reforco_ate_dezembro": reforco,
+        "dotacao": None if sem_dotacao else float(dotacao),
+        "deficit_dotacao": None if sem_dotacao else total_ano - float(dotacao),
+        "dotacao_nao_empenhada": None if sem_dotacao else float(dotacao) - empenhado,
+        "diferenca_meses_anteriores": liquidado - meses_anteriores,
+    }
 
 
 OPERACAO_REMANEJAR = "anular e reforçar no mesmo empenho"

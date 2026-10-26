@@ -731,7 +731,9 @@ qual item anular, para qual item levar e o reforço novo que sobra, com download
 Excel gerado na hora); o detalhe por item; e o confronto da DDP
 com a Liquidada do mês na base. Enviando também os PDFs do mês anterior, a aba mostra
 o que mudou na DDP por natureza (novas, que não vieram, altas e quedas); o reforço
-usa sempre a competência mais recente. As regras (empenhos da folha, repartição entre
+usa sempre a competência mais recente. A contribuição patronal ao RPPS, que não está
+na DDP, tem quadro próprio: o mês e a reserva vêm da projeção do painel, e o reforço
+até dezembro fecha com o painel (déficit de dotação + dotação ainda não empenhada). As regras (empenhos da folha, repartição entre
 empenhos, reserva e compensação) estão no docstring de `src/ddp_siape.py`; a leitura
 dos PDFs usa o `pymupdf`. **Fórmulas de
 projeção** descreve cada fórmula e deixa editáveis os seus números: multiplicador
