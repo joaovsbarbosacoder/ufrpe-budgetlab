@@ -22,6 +22,7 @@ from src.despesas_pessoal import (
     valor_mes_referencia, valor_mes_referencia_beneficios,
     regra_para_natureza, saldo_remanescente, saldo_remanescente_beneficios_por_acao,
 )
+from src.ui_despesas_pessoal_abas import aviso_faixa_historica
 
 ASSETS = Path(__file__).resolve().parents[1] / "assets" / "despesas_pessoal"
 _COMPONENTE_PESSOAL = component(
@@ -76,9 +77,41 @@ def _contexto_beneficios(df, medida):
     return {chave: soma(valores) for chave, valores in resultado.items()}
 
 
+def _cartoes(grupos, mes, saldos_por_grupo, saldos_beneficios_df, dotacao_por_acao_beneficios, faixa):
+    """Cartão por grupo da visão geral (27/10/2026, novo visual aprovado): executado até a data-base, projetado
+    depois dela, total, dotação, saldo e — com `faixa` (`faixa_historica_total_anual`) — mínimo/máximo históricos e
+    o saldo no pior caso. Nulo continua nulo (sem dotação ou sem faixa, o campo derivado fica `None`, nunca zero)."""
+    faixa = faixa.set_index("grupo") if faixa is not None and not faixa.empty else None
+    cartoes = []
+    for g in grupos:
+        if g.get("pendente") or g.get("subtotal"):
+            continue
+        executado = soma(g["meses"][:mes])
+        projetado = soma(g["meses"][mes:])
+        faixa_min = faixa_max = None
+        if faixa is not None and g["key"] in faixa.index:
+            faixa_min, faixa_max = numero(faixa.loc[g["key"], "total_min"]), numero(faixa.loc[g["key"], "total_max"])
+        dot = g["dotacao"]
+        saldo_serie = saldos_por_grupo.get(g["key"]) or [None] * 12
+        cartao = {
+            "key": g["key"], "nome": g["nome"], "executado": executado, "projetado": projetado, "total": g["total"],
+            "dotacao": dot, "saldo": saldo_serie[11], "faixaMin": faixa_min, "faixaMax": faixa_max,
+            "pior": None if dot is None or faixa_max is None else dot - faixa_max, "acoes": [],
+        }
+        if g["key"] == GRUPO_OUTROS_BENEFICIOS and not saldos_beneficios_df.empty:
+            for acao_cod, nome in _NOMES_ACAO_BENEFICIOS.items():
+                registro = saldos_beneficios_df.loc[saldos_beneficios_df["acao_cod"] == acao_cod]
+                cartao["acoes"].append({
+                    "nome": nome, "dotacao": numero(dotacao_por_acao_beneficios.get(acao_cod)),
+                    "saldo": numero(registro.iloc[0]["meses"][11]) if not registro.empty else None,
+                })
+        cartoes.append(cartao)
+    return cartoes
+
+
 def montar_painel(grade: ResultadoGradeMensal, mensal, anual, dotacao, ano_dotacao,
                   *, meses_disponiveis, anos_dotacao, procedencia="", editados=None,
-                  dotacao_por_plano_orcamentario=None, dotacao_por_acao_beneficios=None):
+                  dotacao_por_plano_orcamentario=None, dotacao_por_acao_beneficios=None, faixa=None):
     """Dados JSON da interface; todos os valores vêm das bases/processamento atual.
 
     `dotacao_por_plano_orcamentario` (opcional): `pd.Series` indexada por
@@ -91,7 +124,11 @@ def montar_painel(grade: ResultadoGradeMensal, mensal, anual, dotacao, ano_dotac
     `dotacao_por_acao_beneficios` (opcional): `pd.Series` indexada por `acao_codigo`
     (`despesas_pessoal.dotacao_atualizada_por_acao_beneficios`) — decisão 12
     (22/09/2026): separa o Saldo Remanescente de Outros Benefícios em 2 linhas (2004/
-    212B) em vez de uma só. Não afeta os cartões por grupo, só a seção de saldo."""
+    212B) em vez de uma só. Não afeta os cartões por grupo, só a seção de saldo.
+
+    `faixa` (opcional): `despesas_pessoal.faixa_historica_total_anual` já calculada — alimenta a faixa e o pior caso
+    de cada cartão e o aviso "Cenário histórico" (`avisoFaixa`), ambos dentro do componente desde o novo visual
+    (27/10/2026)."""
     historico = execucao_ano_anterior(anual, grade.ano - 1)
     referencia = valor_mes_referencia(mensal, grade.ano_mes_referencia)
     exec_por_chave = _contexto(historico, "execucao_ano_anterior")
@@ -122,7 +159,7 @@ def montar_painel(grade: ResultadoGradeMensal, mensal, anual, dotacao, ano_dotac
                 if chave == GRUPO_OUTROS_BENEFICIOS else None
             )
             filhos.append({
-                "key": list(id_rubrica), "nome": f"{r.natureza_detalhada_desc} · {codigo}",
+                "key": list(id_rubrica), "nome": f"{r.natureza_detalhada_desc} · {codigo}", "regra": r.regra_aplicada,
                 "meses": [numero(v) for v in r.meses], "total": soma(r.meses),
                 "dotacao": dotacao_rubrica, "execAnt": exec_por_chave.get(id_rubrica),
                 "basePloa": None if especial else ref_por_chave.get(id_rubrica),
@@ -192,6 +229,14 @@ def montar_painel(grade: ResultadoGradeMensal, mensal, anual, dotacao, ano_dotac
     else:
         aviso = {"tipo": "success", "texto": f"Dotação suficiente nos grupos calculados até dezembro/{grade.ano}, na projeção atual."}
 
+    saldos_por_grupo = {
+        r.grupo: [numero(v) for v in r.meses] for r in saldos_df.itertuples(index=False)
+    } if not saldos_df.empty else {}
+    cartoes = _cartoes(grupos, grade.ano_mes_referencia % 100, saldos_por_grupo, saldos_beneficios_df,
+                       dotacao_por_acao_beneficios, faixa)
+    serie_saldo = [{"key": c["key"], "nome": c["nome"], "meses": saldos_por_grupo.get(c["key"], [None] * 12)} for c in cartoes]
+    aviso_faixa = aviso_faixa_historica(faixa, dotacao, grade.ano) if faixa is not None else None
+
     reconciliado = soma(f["execAnt"] for g in grupos for f in g["children"])
     validado = soma(exec_grupo)
     diferenca = None if reconciliado is None or validado is None else reconciliado - validado
@@ -206,6 +251,7 @@ def montar_painel(grade: ResultadoGradeMensal, mensal, anual, dotacao, ano_dotac
         # sempre filtrada por um exercício escolhido explicitamente, nunca mistura anos.
         "anosExecucao": sorted({int(v) // 100 for v in meses_disponiveis}),
         "grupos": ordem, "saldos": saldos, "total": total, "saldoDezembro": saldo_total[11],
+        "cartoes": cartoes, "serieSaldo": serie_saldo, "avisoFaixa": aviso_faixa,
         "aviso": aviso, "erros": grade.erros, "alertas": grade.alertas,
         "reconciliacao": {"rubricas": reconciliado, "base": validado, "diferenca": diferenca},
         "procedencia": procedencia, "temEdicoes": bool(editados),

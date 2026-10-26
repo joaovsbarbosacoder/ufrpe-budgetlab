@@ -671,18 +671,29 @@ sem mudar o resultado delas. A especificação completa está em
 
 ### Despesas de Pessoal
 
-A página **Despesas de Pessoal** usa a estrutura do HTML
-`design_handoff_streamlit/acompanhamento-pessoal.dc.html`: cabeçalho com data-base,
-quatro indicadores, faixa de situação, tabela única de rubricas com grupos
-expandidos na própria tabela e tabela de saldos mensais. A primeira coluna fica
-fixa durante a rolagem horizontal. Os valores são das bases locais, não do exemplo
-de design. O componente usa HTML/CSS/JavaScript local, sem dependência do runtime
-externo do arquivo de referência.
+A página **Despesas de Pessoal** é um componente HTML/CSS/JavaScript local
+(`assets/despesas_pessoal/`), com duas visões e valores exatos, com centavos (novo
+visual de 27/10/2026, a partir do protótipo aprovado):
 
-Clique no nome de um grupo para recolher ou expandir suas rubricas; na data-base
-para escolher o mês e o exercício da dotação; e em um valor projetado de rubrica
-para editá-lo. As edições ficam em memória, na sessão e na referência escolhida,
-e podem ser restauradas pelo rodapé. Meses executados permanecem protegidos.
+- **Visão geral**: quatro cartões de resumo (executado + projetado, dotação, saldo
+  em dezembro e execução empenhada do ano anterior); dois avisos separados — o da
+  projeção e o do **cenário histórico** (pior caso da faixa histórica); um cartão
+  por grupo com executado, projetado, dotação, saldo, uma barra da dotação
+  consumida (executado, projetado e o que passa da dotação) e a faixa histórica do
+  total do ano (Outros Benefícios abre o saldo das ações 2004 e 212B); o gráfico do
+  saldo remanescente mês a mês por grupo; a tabela grupo × mês; e a tabela de saldo
+  remanescente por grupo e ação.
+- **Rubrica × mês**: o detalhamento mês a mês de cada rubrica (tabela do handoff
+  `design_handoff_streamlit/acompanhamento-pessoal.dc.html`), com os grupos
+  expandidos, a regra de projeção de cada rubrica, meses projetados destacados e as
+  colunas Total, Dotação Atual, Exec. Ano Anterior e Base PLOA.
+
+Na visão Rubrica × mês, clique no nome de um grupo para recolher ou expandir suas
+rubricas (ou use Expandir/Recolher todos) e em um valor projetado de rubrica para
+editá-lo. Na data-base, escolha o mês e o exercício da dotação. As edições ficam em
+memória, na sessão e na referência escolhida, e podem ser restauradas pelo rodapé.
+Meses executados permanecem protegidos. A primeira coluna das tabelas fica fixa
+durante a rolagem horizontal.
 
 A fonte do realizado é a Liquidada da Execução Mensal. As regras existentes
 em `src/despesas_pessoal.py` alimentam os meses futuros. Execução Anual, Dotação
@@ -701,7 +712,7 @@ não vira zero. O quadro compara a faixa com o total projetado no painel (dentro
 acima ou abaixo) e com a dotação (saldo no pior e no melhor caso). É só leitura:
 não muda projeção, saldo nem edições, e com poucos exercícios é apenas o mínimo
 e o máximo observados. Quando o saldo no pior caso fica negativo em algum grupo,
-um aviso amarelo acima do painel cita os grupos, o déficit e os exercícios usados,
+o aviso "Cenário histórico" da visão geral cita os grupos, o déficit e os exercícios usados,
 deixando claro que é cenário histórico e não a projeção. O aviso do próprio
 painel continua o mesmo. Sem exercício completo ou sem dotação do grupo, não há
 aviso.
