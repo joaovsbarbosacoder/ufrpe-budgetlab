@@ -91,6 +91,23 @@ export default function(component) {
     return `<div class="ap-chart-legend">${legenda}<span><i class="ap-dash"></i>Projetado</span></div>${s}`;
   }
 
+  // Outros Benefícios por Ação, PO e Iduso (27/10/2026): dotação, empenhado, executado, projetado, saldo e empenho
+  // a reforçar; o cenário pela média é só comparação (não muda a projeção).
+  function beneficiosPo() {
+    const q = d.beneficiosPo;
+    if (!q) return '';
+    const cls = v => ok(v) ? (v < 0 ? 'ap-neg' : 'ap-pos') : '';
+    const cells = r => `<td>${brl(r.dotacao)}</td><td>${brl(r.empenhada)}</td><td>${brl(r.executado)}</td><td class="ap-proj">${brl(r.projetado)}</td><td class="ap-col-total">${brl(r.total)}</td><td class="${cls(r.saldo)}">${signed(r.saldo)}</td><td class="${cls(r.empenho_saldo)}">${signed(r.empenho_saldo)}</td><td class="ap-cenario">${brl(r.total_media)}</td><td class="ap-cenario ${cls(r.saldo_media)}">${signed(r.saldo_media)}</td>`;
+    const linhas = q.linhas.map(r => `<tr class="ap-child-row"><th scope="row" class="ap-sticky"><span class="ap-cod">${esc(r.acao)}/${esc(r.po)}</span> ${esc(r.poDesc || '')}</th><td class="ap-center">${esc(r.iduso)}</td>${cells(r)}</tr>`).join('');
+    const sub = (titulo, rs) => `<tr class="ap-sub-title"><th scope="rowgroup" class="ap-sticky" colspan="11">${titulo}</th></tr>` + rs.map(r => `<tr class="ap-group-row"><th scope="row" class="ap-sticky">${esc(r.rotulo)}</th><td></td>${cells(r)}</tr>`).join('');
+    return `<section class="ap-block"><h2 class="ap-section-title">Outros Benefícios por Ação, PO e Iduso</h2>
+      <p class="ap-section-sub">Projetado pela mesma regra do painel (inclui os ajustes manuais da sessão). Saldo = dotação − total. Empenho: empenhado − total (negativo = empenho a reforçar). “Cenário pela média”: média mensal de jan até a data-base nos meses restantes (mês sem liquidação conta como zero; mês já liquidado após a data-base usa o maior valor) — só comparação, útil em PO esporádico.</p>
+      <div class="ap-wrap" tabindex="0" role="region" aria-label="Outros Benefícios por Ação, PO e Iduso, tabela com rolagem horizontal"><table class="ap-tbl ap-tbl-po" aria-label="Outros Benefícios por Ação, PO e Iduso"><thead>
+        <tr class="ap-band"><th class="ap-sticky"></th><th></th><th colspan="7"></th><th colspan="2" class="ap-cenario">Cenário pela média</th></tr>
+        <tr><th scope="col" class="ap-sticky">Ação/PO</th><th scope="col">Iduso</th><th scope="col">Dotação</th><th scope="col">Empenhado</th><th scope="col">Executado ${d.mes === 1 ? 'jan' : 'jan–' + months[d.mes-1].toLowerCase()}</th><th scope="col" class="ap-proj">Projetado até dez</th><th scope="col">Total</th><th scope="col">Saldo da dotação</th><th scope="col">Empenho a reforçar (−) / sobra (+)</th><th scope="col" class="ap-cenario">Total</th><th scope="col" class="ap-cenario">Saldo</th></tr></thead>
+        <tbody>${linhas}${sub('Por ação', q.porAcao)}${sub('Por Iduso', q.porIduso)}<tr class="ap-total-row"><th scope="row" class="ap-sticky">Total</th><td></td>${cells(q.total)}</tr></tbody></table></div></section>`;
+  }
+
   const monthHeaders = saldo => months.map((m,i) => `<th scope="col" class="${!saldo && i >= d.mes ? 'ap-proj' : ''}">${m}</th>`).join('');
   const reais = d.grupos.filter(g => !g.pendente && !g.subtotal);
   const groupMonthRows = [...reais, d.total].map(g => {
@@ -128,6 +145,7 @@ export default function(component) {
       <div class="ap-kpis">${kpis.map(([label,value,cls,sub,extra]) => `<div class="ap-kpi ${extra}"><div class="ap-kpi-label">${esc(label)}</div><div class="ap-kpi-value ${cls}">${esc(value)}</div><div class="ap-kpi-sub">${esc(sub)}</div></div>`).join('')}</div>
       <div class="ap-alerts">${alerts}</div>
       <section class="ap-block"><h2 class="ap-section-title">Por grupo</h2><p class="ap-section-sub">Barra = dotação consumida (executado sólido, projetado hachurado, vermelho acima da dotação); traço laranja = faixa histórica do total do ano.</p><div class="ap-cards">${d.cartoes.map(card).join('')}</div></section>
+      ${beneficiosPo()}
       <section class="ap-block"><h2 class="ap-section-title">Saldo remanescente mês a mês</h2><p class="ap-section-sub">Dotação − (executado + projetado acumulado). Abaixo de zero = déficit.</p><div class="ap-chart">${chart()}</div></section>
       <section class="ap-block"><h2 class="ap-section-title">Grupo × mês</h2><p class="ap-section-sub">Valores exatos em reais. <button class="ap-link" data-goto="rubricas">Abrir o detalhamento mês a mês de cada rubrica →</button></p><div class="ap-wrap" tabindex="0" role="region" aria-label="Grupo por mês, tabela com rolagem horizontal"><table class="ap-tbl" aria-label="Grupo por mês"><thead><tr><th scope="col" class="ap-sticky">Grupo</th>${monthHeaders(false)}<th scope="col">Total</th><th scope="col">Dotação</th><th scope="col">Saldo</th></tr></thead><tbody>${groupMonthRows}</tbody></table></div></section>
       <section class="ap-saldo"><h2 class="ap-section-title">Saldo remanescente por grupo e ação (dotação − executado/projetado acumulado)</h2><div class="ap-wrap" tabindex="0" role="region" aria-label="Saldos por mês, tabela com rolagem horizontal"><table class="ap-tbl" aria-label="Saldo remanescente por grupo"><thead><tr><th scope="col" class="ap-sticky">Grupo</th>${monthHeaders(true)}</tr></thead><tbody>${saldoRows}</tbody></table></div></section>

@@ -174,6 +174,9 @@ Contrato público:
     execucao_exercicio_por_natureza(anual_df, ano) -> pd.DataFrame
     liquidada_mensal_por_grupo(mensal_df, ano) -> pd.DataFrame
     faixa_historica_total_anual(mensal_df, ano, mes_referencia) -> pd.DataFrame
+    projetado_beneficios_por_po(grade) -> dict
+    quadro_beneficios_por_po_iduso(mensal_df, anual_df, dotacao_df, ano, ano_mes_referencia, ...) -> pd.DataFrame
+    resumo_quadro_beneficios(quadro, chave) -> pd.DataFrame
 
 PARÂMETROS EDITÁVEIS (27/09/2026, pedido do usuário: "faça com que [as fórmulas] fiquem
 editáveis em campos"): os números das decisões acima (multiplicadores, meses de
@@ -1942,3 +1945,173 @@ def faixa_historica_total_anual(mensal_df: pd.DataFrame, ano: int, mes_referenci
     base_total = None if any(l["base_referencia"] is None for l in linhas) else sum(l["base_referencia"] for l in linhas)
     linhas.append(linha(LINHA_TOTAL, realizado_total, base_total, por_ano_total))
     return pd.DataFrame(linhas, columns=colunas)
+
+
+# --------------------------------------------------------------------------------------
+# 15. Outros Benefícios por Ação, Plano Orçamentário e Iduso (27/10/2026, aprovado pelo
+#     usuário após a análise das ações 2004/212B). Para cada (Ação, PO, Iduso): Dotação
+#     Atualizada, Empenhado no exercício, executado até a data-base, projetado até dezembro,
+#     saldo da dotação e empenho a reforçar (−) ou sobra (+).
+#     - Projetado: a MESMA regra do painel (`grade_mensal_beneficios`), aplicada a cada
+#       Iduso separadamente — a regra é linear (×12 por natureza), então a soma dos Iduso
+#       é a projeção do PO. Com `projetado_por_po` (a grade do painel, já com os ajustes
+#       manuais da sessão), a diferença entre o painel e a fórmula é repartida entre os
+#       Iduso do PO na proporção da fórmula — o quadro fecha com o painel.
+#     - Cenário pela média (só um CENÁRIO, não muda a projeção): média mensal da Liquidada
+#       de jan até a data-base (mês sem liquidação no PO conta como zero) em cada mês
+#       restante; mês já com Liquidada registrada após a data-base usa o maior dos dois.
+#       Útil para PO esporádico (auxílio-funeral, auxílio-transporte), em que o mês de
+#       referência pode ser um pico ou um zero.
+# --------------------------------------------------------------------------------------
+
+#: rótulo de Iduso nulo na base (não ocorre na base de 27/10/2026; existe para a linha
+#: aparecer explícita em vez de sumir no agrupamento).
+SEM_IDUSO = "(sem Iduso)"
+
+_COLUNAS_QUADRO_BENEFICIOS = [
+    "acao", "po", "po_desc", "iduso", "iduso_desc", "dotacao", "empenhada", "executado", "projetado", "total",
+    "saldo", "empenho_saldo", "projetado_media", "total_media", "saldo_media", "empenho_saldo_media",
+]
+_MEDIDAS_QUADRO_BENEFICIOS = [c for c in _COLUNAS_QUADRO_BENEFICIOS if c not in ("acao", "po", "po_desc", "iduso", "iduso_desc")]
+
+
+def _texto(valor: object, nulo: str) -> str:
+    return nulo if valor is None or pd.isna(valor) else str(valor)
+
+
+def _soma_ou_none(valores) -> float | None:
+    conhecidos = [float(v) for v in valores if v is not None and not pd.isna(v)]
+    return sum(conhecidos) if conhecidos else None
+
+
+def projetado_beneficios_por_po(grade: ResultadoGradeMensal) -> dict[tuple[str, str], float | None]:
+    """Projetado (meses após a data-base) de cada (Ação, PO) de Outros Benefícios na `grade` do painel — já
+    passada por `substituir_beneficios_por_plano_orcamentario` e, se houver, `aplicar_overrides`."""
+
+    mes = grade.ano_mes_referencia % 100
+    linhas = grade.linhas.loc[grade.linhas["grupo"] == GRUPO_OUTROS_BENEFICIOS]
+    return {
+        (str(l.natureza_despesa_cod), _texto(l.natureza_detalhada_cod, SEM_PLANO_ORCAMENTARIO)): _soma_ou_none(l.meses[mes:])
+        for l in linhas.itertuples(index=False)
+    }
+
+
+def quadro_beneficios_por_po_iduso(
+    mensal_df: pd.DataFrame, anual_df: pd.DataFrame, dotacao_df: pd.DataFrame, ano: int, ano_mes_referencia: int,
+    ano_dotacao: int | None = None, parametros: ParametrosProjecao | None = None,
+    projetado_por_po: Mapping[tuple[str, str], float | None] | None = None,
+) -> pd.DataFrame:
+    """Uma linha por (Ação, PO, Iduso) de Outros Benefícios — ver o cabeçalho da seção 15. Colunas:
+    `_COLUNAS_QUADRO_BENEFICIOS`; `saldo` = dotação − total; `empenho_saldo` = empenhado − total (negativo =
+    empenho a reforçar). Nulo continua nulo: sem dotação, `saldo` é nulo (nunca a dotação vira zero).
+    Linha sem dotação, sem empenho e sem execução (ex.: PO com dotação zerada e nada executado) não aparece."""
+
+    ano_dotacao = ano_dotacao if ano_dotacao is not None else ano
+    mes_ref = ano_mes_referencia % 100
+    escopo = _escopo_beneficios(mensal_df).copy()
+    if escopo.empty and dotacao_df.empty:
+        return pd.DataFrame(columns=_COLUNAS_QUADRO_BENEFICIOS)
+    escopo["_iduso"] = [_texto(v, SEM_IDUSO) for v in escopo["iduso_cod"]] if "iduso_cod" in escopo else SEM_IDUSO
+    escopo["_po"] = [_texto(v, SEM_PLANO_ORCAMENTARIO) for v in escopo["po_cod"]]
+    do_ano = escopo.loc[escopo["ano_mes"] // 100 == ano]
+
+    linhas: dict[tuple[str, str, str], dict] = {}
+
+    def linha(acao, po, iduso):
+        return linhas.setdefault((acao, po, iduso), {"acao": acao, "po": po, "iduso": iduso})
+
+    # projeção pela regra do painel, Iduso a Iduso (a grade é por PO; cada recorte tem um só Iduso)
+    for iduso in sorted(escopo["_iduso"].unique()):
+        recorte = mensal_df.loc[escopo.index[escopo["_iduso"] == iduso]]
+        grade = grade_mensal_beneficios(recorte, anual_df, ano, ano_mes_referencia, parametros)
+        for l in grade.linhas.itertuples(index=False):
+            item = linha(str(l.natureza_despesa_cod), _texto(l.natureza_detalhada_cod, SEM_PLANO_ORCAMENTARIO), iduso)
+            item["executado"] = _soma_ou_none(l.meses[:mes_ref])
+            item["projetado"] = _soma_ou_none(l.meses[mes_ref:])
+
+    # repartição do ajuste manual do painel (diferença painel − fórmula) entre os Iduso do PO
+    if projetado_por_po:
+        for (acao, po), painel in projetado_por_po.items():
+            do_po = [v for (a, p, _), v in linhas.items() if (a, p) == (acao, po) and "projetado" in v]
+            formula = _soma_ou_none(v.get("projetado") for v in do_po)
+            if not do_po or painel is None or formula is None or math.isclose(painel, formula, abs_tol=0.005):
+                continue
+            diferenca = painel - formula
+            for v in do_po:
+                peso = (v["projetado"] or 0.0) / formula if formula else 1 / len(do_po)
+                v["projetado"] = (v["projetado"] or 0.0) + diferenca * peso
+
+    # cenário pela média
+    liquidada = (do_ano.loc[do_ano["tipo_linha"] == "item_execucao"]
+                 .assign(_mes=lambda d: d["ano_mes"] % 100)
+                 .groupby(["acao_cod", "_po", "_iduso", "_mes"])["liquidada"].sum(min_count=1))
+    for (acao, po, iduso), por_mes in liquidada.groupby(level=[0, 1, 2]):
+        meses = {int(m): float(v) for (_, _, _, m), v in por_mes.items() if pd.notna(v)}
+        media = sum(meses.get(m, 0.0) for m in range(1, mes_ref + 1)) / mes_ref if mes_ref else 0.0
+        item = linha(str(acao), po, iduso)
+        item["projetado_media"] = sum(max(meses.get(m, 0.0), media) for m in range(mes_ref + 1, 13))
+
+    # empenhado no exercício, sem a duplicação por item (mesma regra de `valor_empenhado_por_bloco`); base sem as
+    # colunas de empenho (recorte reduzido) deixa o empenhado nulo — nunca zero
+    from src.tesouro_execucao_mensal import _CHAVE_BLOCO, _DIMENSOES_EXTRA_BLOCO, valor_empenhado_por_bloco
+    colunas_empenho = {*_CHAVE_BLOCO, *_DIMENSOES_EXTRA_BLOCO.values(), "ne_item_cod", "empenhada"}
+    if not do_ano.empty and colunas_empenho <= set(do_ano.columns):
+        blocos = valor_empenhado_por_bloco(do_ano)
+        if not blocos.empty:
+            blocos = blocos.assign(_po=[_texto(v, SEM_PLANO_ORCAMENTARIO) for v in blocos["po_cod"]],
+                                   _iduso=[_texto(v, SEM_IDUSO) for v in blocos["iduso_cod"]])
+            for (acao, po, iduso), valor in blocos.groupby(["acao_cod", "_po", "_iduso"])["empenhada"].sum(min_count=1).items():
+                linha(str(acao), po, iduso)["empenhada"] = None if pd.isna(valor) else float(valor)
+
+    # dotação atualizada (sem a Regra de Ouro)
+    recorte_dot = _recorte_dotacao_beneficios(dotacao_df, ano_dotacao)
+    descricoes_po = {}
+    descricoes_iduso = {}
+    if not recorte_dot.empty:
+        recorte_dot = recorte_dot.assign(
+            _po=[_texto(v, SEM_PLANO_ORCAMENTARIO) for v in recorte_dot["plano_orcamentario_codigo"]],
+            _iduso=[_texto(v, SEM_IDUSO) for v in recorte_dot["iduso_codigo"]],
+        )
+        for (acao, po, iduso), valor in recorte_dot.groupby(["acao_codigo", "_po", "_iduso"])["valor_movimento_liquido"].sum(min_count=1).items():
+            if pd.notna(valor) and valor != 0:
+                linha(str(acao), po, iduso)["dotacao"] = float(valor)
+        descricoes_po.update(recorte_dot.dropna(subset=["plano_orcamentario_descricao"]).groupby(["acao_codigo", "_po"])["plano_orcamentario_descricao"].first().to_dict())
+        descricoes_iduso.update(recorte_dot.dropna(subset=["iduso_descricao"]).groupby("_iduso")["iduso_descricao"].first().to_dict())
+    for (acao, po), (_acao_desc, po_desc) in _rotulos_po(mensal_df).items():
+        descricoes_po.setdefault((str(acao), _texto(po, SEM_PLANO_ORCAMENTARIO)), po_desc)
+    if "iduso_desc" in escopo:
+        descricoes_iduso_mensal = escopo.dropna(subset=["iduso_desc"]).groupby("_iduso")["iduso_desc"].first().to_dict()
+        for chave, desc in descricoes_iduso_mensal.items():
+            descricoes_iduso.setdefault(chave, desc)
+
+    saida = []
+    for (acao, po, iduso), v in sorted(linhas.items()):
+        executado, projetado = v.get("executado"), v.get("projetado")
+        total = None if executado is None and projetado is None else (executado or 0.0) + (projetado or 0.0)
+        total_media = None if executado is None and v.get("projetado_media") is None else (executado or 0.0) + (v.get("projetado_media") or 0.0)
+        dotacao, empenhada = v.get("dotacao"), v.get("empenhada")
+        if dotacao is None and empenhada is None and total is None:
+            continue
+        diferenca = lambda a, b: None if a is None or b is None else a - b  # noqa: E731
+        saida.append({
+            "acao": acao, "po": po, "po_desc": descricoes_po.get((acao, po)), "iduso": iduso,
+            "iduso_desc": descricoes_iduso.get(iduso), "dotacao": dotacao, "empenhada": empenhada,
+            "executado": executado, "projetado": projetado, "total": total,
+            "saldo": diferenca(dotacao, total), "empenho_saldo": diferenca(empenhada, total),
+            "projetado_media": v.get("projetado_media"), "total_media": total_media,
+            "saldo_media": diferenca(dotacao, total_media), "empenho_saldo_media": diferenca(empenhada, total_media),
+        })
+    return pd.DataFrame(saida, columns=_COLUNAS_QUADRO_BENEFICIOS)
+
+
+def resumo_quadro_beneficios(quadro: pd.DataFrame, chave: str) -> pd.DataFrame:
+    """Subtotais do `quadro_beneficios_por_po_iduso` por `chave` ("acao" ou "iduso") e uma linha `total`.
+    Soma com `min_count=1` (coluna toda nula fica nula, não zero)."""
+
+    colunas = [chave, *_MEDIDAS_QUADRO_BENEFICIOS]
+    if quadro.empty:
+        return pd.DataFrame(columns=colunas)
+    medidas = quadro[_MEDIDAS_QUADRO_BENEFICIOS].apply(pd.to_numeric)
+    por_chave = medidas.groupby(quadro[chave]).sum(min_count=1).reset_index()
+    total = {chave: LINHA_TOTAL, **{m: medidas[m].sum(min_count=1) for m in _MEDIDAS_QUADRO_BENEFICIOS}}
+    return pd.concat([por_chave, pd.DataFrame([total])], ignore_index=True)[colunas]

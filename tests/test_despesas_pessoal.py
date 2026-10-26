@@ -30,6 +30,8 @@ from src.despesas_pessoal import (
     execucao_exercicio_por_grupo,
     execucao_exercicio_por_natureza,
     faixa_historica_total_anual,
+    quadro_beneficios_por_po_iduso,
+    resumo_quadro_beneficios,
     LINHA_TOTAL,
     liquidada_mensal_por_grupo,
     aplicar_overrides,
@@ -1490,3 +1492,78 @@ class TestFaixaHistoricaTotalAnual(unittest.TestCase):
                                   ano_mes=202600 + m, liquidada=10.0, paga=0.0) for m in range(1, 10)]
         sem_historico = faixa_historica_total_anual(self._mensal(extras), 2026, 9)
         self.assertIsNone(aviso_faixa_historica(sem_historico, pd.Series({**folga, GRUPO_RPPS: 1.0}), 2026))
+
+
+class TestQuadroBeneficiosPorPoIduso(unittest.TestCase):
+    """27/10/2026 — Outros Benefícios por Ação, PO e Iduso. Data-base Mar/2026. À mão:
+      212B/0005 (339046, ×12), Iduso 8: Jan 100, Fev 100, Mar 120 → executado 320; projeta Abr–Dez 9 × 120 = 1.080
+        → total 1.400; dotação 1.500 → saldo +100; empenhado 1.300 (1 bloco com 2 itens, sem duplicar) → −100.
+        Média (100+100+120)/3 = 106,67 × 9 = 960 → total 1.280 → saldo +220.
+      212B/1009 (339008, ×12), Iduso 0: Jan 30, sem liquidação em Fev/Mar → executado 30, sem mês de referência
+        (projetado nulo, não zero) → total 30; dotação 100 → saldo +70; sem empenho → empenho nulo.
+        Média 30/3 = 10; Abr já tem 25 liquidados após a data-base → 25 + 8 × 10 = 105 → total 135 → saldo −35.
+      212B/0003 com dotação zero e nada executado → fora do quadro; RO05 (Regra de Ouro) → fora."""
+
+    def _mensal(self):
+        def item(po, natureza, iduso, ano_mes, valor, **extra):
+            return _linha_execucao(ACAO_BENEFICIOS_OBRIGATORIOS, natureza, natureza + "01", po_cod=po, po_desc=f"PO {po}",
+                                   iduso_cod=iduso, iduso_desc=f"IDUSO {iduso}", tipo_linha="item_execucao",
+                                   ano_mes=ano_mes, liquidada=valor, empenhada=0.0, **extra)
+        linhas = [item("0005", "339046", "8", m, v) for m, v in ((202601, 100.0), (202602, 100.0), (202603, 120.0))]
+        linhas += [item("1009", "339008", "0", 202601, 30.0), item("1009", "339008", "0", 202604, 25.0)]
+        for ne_item in ("1", "2"):  # mesmo bloco (NE, natureza detalhada, subitem, mês) repetido por item
+            linhas.append(item("0005", "339046", "8", 202601, 0.0) | dict(
+                tipo_linha="empenho", empenhada=1300.0, liquidada=0.0, ne_ccor="NE1", subitem_cod="01", ne_item_cod=ne_item))
+        from src.tesouro_execucao_mensal import _DIMENSOES_EXTRA_BLOCO
+        colunas = {"ne_ccor", "subitem_cod", "ne_item_cod", *_DIMENSOES_EXTRA_BLOCO.values()}
+        df = pd.DataFrame(linhas)
+        return df.reindex(columns=[*df.columns, *sorted(colunas - set(df.columns))])
+
+    def _dotacao(self):
+        def d(po, iduso, valor):
+            return dict(_linha_dotacao(ACAO_BENEFICIOS_OBRIGATORIOS, "dotacao_atualizada", 2026, valor, po),
+                        iduso_codigo=iduso, iduso_descricao=f"IDUSO {iduso}", plano_orcamentario_descricao=f"PO {po}")
+        return pd.DataFrame([d("0005", "8", 1500.0), d("1009", "0", 100.0), d("0003", "8", 0.0), d("RO05", "-9", 0.0)])
+
+    def _quadro(self, **kw):
+        return quadro_beneficios_por_po_iduso(self._mensal(), _ANUAL_VAZIO, self._dotacao(), 2026, 202603, **kw).set_index(["po", "iduso"])
+
+    def test_valores_por_po_e_iduso_calculados_a_mao(self):
+        q = self._quadro()
+        self.assertEqual(sorted(q.index), [("0005", "8"), ("1009", "0")])
+        a = q.loc[("0005", "8")]
+        self.assertEqual((a["executado"], a["projetado"], a["total"]), (320.0, 1080.0, 1400.0))
+        self.assertEqual((a["dotacao"], a["saldo"]), (1500.0, 100.0))
+        self.assertEqual((a["empenhada"], a["empenho_saldo"]), (1300.0, -100.0))
+        self.assertAlmostEqual(a["total_media"], 1280.0)
+        self.assertAlmostEqual(a["saldo_media"], 220.0)
+
+    def test_po_esporadico_sem_mes_de_referencia_nao_vira_zero(self):
+        b = self._quadro().loc[("1009", "0")]
+        self.assertEqual(b["executado"], 30.0)
+        self.assertTrue(pd.isna(b["projetado"]))
+        self.assertEqual((b["total"], b["saldo"]), (30.0, 70.0))
+        self.assertTrue(pd.isna(b["empenhada"]) and pd.isna(b["empenho_saldo"]))
+        self.assertAlmostEqual(b["total_media"], 135.0)
+        self.assertAlmostEqual(b["saldo_media"], -35.0)
+
+    def test_ajuste_manual_do_painel_entra_no_projetado(self):
+        q = self._quadro(projetado_por_po={(ACAO_BENEFICIOS_OBRIGATORIOS, "0005"): 1170.0})
+        a = q.loc[("0005", "8")]
+        self.assertEqual((a["projetado"], a["total"], a["saldo"]), (1170.0, 1490.0, 10.0))
+
+    def test_subtotais_por_acao_e_por_iduso(self):
+        q = quadro_beneficios_por_po_iduso(self._mensal(), _ANUAL_VAZIO, self._dotacao(), 2026, 202603)
+        por_acao = resumo_quadro_beneficios(q, "acao").set_index("acao")
+        self.assertEqual(por_acao.loc[ACAO_BENEFICIOS_OBRIGATORIOS, "saldo"], 170.0)
+        self.assertEqual(por_acao.loc[ACAO_BENEFICIOS_OBRIGATORIOS, "empenho_saldo"], -100.0)  # nulo não vira zero
+        self.assertEqual(por_acao.loc[LINHA_TOTAL, "total"], 1430.0)
+        por_iduso = resumo_quadro_beneficios(q, "iduso").set_index("iduso")
+        self.assertEqual((por_iduso.loc["0", "dotacao"], por_iduso.loc["8", "dotacao"]), (100.0, 1500.0))
+
+    def test_total_fecha_com_a_grade_do_painel(self):
+        mensal = self._mensal()
+        grade = grade_mensal_beneficios(mensal, _ANUAL_VAZIO, 2026, 202603)
+        total_grade = sum(v for l in grade.linhas["meses"] for v in l if v is not None)
+        q = quadro_beneficios_por_po_iduso(mensal, _ANUAL_VAZIO, self._dotacao(), 2026, 202603)
+        self.assertAlmostEqual(q["total"].sum(), total_grade)

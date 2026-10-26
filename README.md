@@ -680,9 +680,12 @@ visual de 27/10/2026, a partir do protótipo aprovado):
   projeção e o do **cenário histórico** (pior caso da faixa histórica); um cartão
   por grupo com executado, projetado, dotação, saldo, uma barra da dotação
   consumida (executado, projetado e o que passa da dotação) e a faixa histórica do
-  total do ano (Outros Benefícios abre o saldo das ações 2004 e 212B); o gráfico do
-  saldo remanescente mês a mês por grupo; a tabela grupo × mês; e a tabela de saldo
-  remanescente por grupo e ação.
+  total do ano (Outros Benefícios abre o saldo das ações 2004 e 212B); o quadro
+  **Outros Benefícios por Ação, PO e Iduso** (dotação, empenhado, executado,
+  projetado, saldo da dotação e empenho a reforçar ou sobra, com subtotais por ação e
+  por Iduso e um cenário pela média mensal para comparação — ver a seção 15 de
+  `src/despesas_pessoal.py`); o gráfico do saldo remanescente mês a mês por grupo; a
+  tabela grupo × mês; e a tabela de saldo remanescente por grupo e ação.
 - **Rubrica × mês**: o detalhamento mês a mês de cada rubrica (tabela do handoff
   `design_handoff_streamlit/acompanhamento-pessoal.dc.html`), com os grupos
   expandidos, a regra de projeção de cada rubrica, meses projetados destacados e as
