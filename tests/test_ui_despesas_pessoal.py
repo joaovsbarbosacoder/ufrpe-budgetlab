@@ -338,10 +338,11 @@ class TestAbasFormulasEHistorico(unittest.TestCase):
         ativo = dados["grupos"][0]
         return next(f for f in ativo["children"] if f["key"][2] == "31901143")
 
-    def test_padrao_declara_procedencia_e_mostra_tres_abas(self):
+    def test_padrao_declara_procedencia_e_mostra_as_abas(self):
         at, montagens = self._rodar()
         self.assertEqual(len(at.exception), 0)
-        self.assertEqual([t.label for t in at.tabs], ["Acompanhamento", "Fórmulas de projeção", "Exercícios anteriores"])
+        self.assertEqual([t.label for t in at.tabs],
+                         ["Acompanhamento", "Folha (DDP)", "Fórmulas de projeção", "Exercícios anteriores"])
         self.assertIn("Fórmulas de projeção: padrão da metodologia.", montagens[-1]["procedencia"])
         # R_mãe = 100 − 10 (31901101 + 31901131); metade na parcela final de novembro.
         self.assertEqual(self._decimo_terceiro(montagens[-1])["meses"][10], 45)

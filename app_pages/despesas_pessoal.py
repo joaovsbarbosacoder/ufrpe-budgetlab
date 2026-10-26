@@ -5,6 +5,7 @@ futuros. Processamento financeiro permanece em src.despesas_pessoal.
 
 Abas (27/09/2026): "Acompanhamento" (o componente), "Fórmulas de projeção" (campos
 editáveis dos parâmetros, só na sessão) e "Exercícios anteriores" (execução realizada).
+Aba "Folha (DDP)" (27/10/2026): PDFs do SIAPE × saldo dos empenhos da folha (src.ddp_siape).
 """
 from datetime import datetime
 import gc
@@ -34,6 +35,7 @@ from src.importacao_execucao_mensal import (
     Manifesto as ManifestoExecucaoMensal, NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO_MENSAL,
     carregar_atual as carregar_execucao_mensal_atual,
 )
+from src.ui_ddp_siape import render_ddp
 from src.ui_despesas_pessoal import montar_painel, render_painel, validar_edicao
 from src.ui_despesas_pessoal_abas import (
     calcular_faixa_historica, render_exercicios_anteriores, render_faixa_historica, render_formulas,
@@ -66,7 +68,7 @@ gc.collect()
 st.html("""<style>
 .stMainBlockContainer:has(.st-key-dp_painel) {max-width:none; padding:0 0 5rem;}
 .stMainBlockContainer:has(.st-key-dp_painel) [data-testid="stTabs"] [role="tablist"] {padding:0 32px;}
-.st-key-dp_aba_formulas, .st-key-dp_aba_historico, .st-key-dp_aba_aviso, .st-key-dp_faixa {padding:8px 32px 0;}
+.st-key-dp_aba_formulas, .st-key-dp_aba_historico, .st-key-dp_aba_aviso, .st-key-dp_faixa, .st-key-dp_aba_ddp {padding:8px 32px 0;}
 </style>""")
 
 manifesto_execucao = ManifestoExecucao.atual()
@@ -106,7 +108,9 @@ if not meses_disponiveis:
     st.warning("A base mensal não tem nenhum mês com dado.")
     st.stop()
 
-aba_painel, aba_formulas, aba_historico = st.tabs(["Acompanhamento", "Fórmulas de projeção", "Exercícios anteriores"])
+aba_painel, aba_ddp, aba_formulas, aba_historico = st.tabs(
+    ["Acompanhamento", "Folha (DDP)", "Fórmulas de projeção", "Exercícios anteriores"]
+)
 # A aba de fórmulas é montada antes do painel: os parâmetros dela alimentam o cálculo.
 with aba_formulas, st.container(key="dp_aba_formulas"):
     parametros, erro_parametros = render_formulas()
@@ -215,5 +219,10 @@ with aba_painel:
     with st.container(key="dp_faixa"):
         projetado_por_grupo = grade.total_por_grupo_por_mes().sum(axis=1, min_count=1)
         render_faixa_historica(faixa, ano, ano_mes_referencia % 100, projetado_por_grupo, dotacao_grupo, ano_dotacao)
+
+# Folha (DDP) (27/10/2026): PDFs do SIAPE só em memória; a reserva dos meses seguintes vem da grade por
+# natureza detalhada (`bruta`, antes da consolidação), com as fórmulas da sessão.
+with aba_ddp, st.container(key="dp_aba_ddp"):
+    render_ddp(mensal, bruta.linhas, ano, procedencia_bases, dotacao_grupo, dotacao, ano_dotacao)
 
 gc.collect()  # ver o comentário no início da página

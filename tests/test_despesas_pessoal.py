@@ -45,6 +45,7 @@ from src.despesas_pessoal import (
     desvio_por_mes_de_partida,
     resumo_projecao_com_executado,
     dotacao_atualizada_por_acao_beneficios,
+    dotacao_atualizada_por_acao_e_po,
     dotacao_atualizada_por_grupo,
     dotacao_atualizada_por_plano_orcamentario,
     execucao_ano_anterior,
@@ -422,6 +423,25 @@ class TestDotacaoAtualizadaPorPlanoOrcamentario(unittest.TestCase):
         ])
         resultado = dotacao_atualizada_por_plano_orcamentario(df, 2026)
         self.assertTrue(resultado.empty)
+
+
+class TestDotacaoAtualizadaPorAcaoEPo(unittest.TestCase):
+    """27/10/2026: qualquer ação pedida (o reforço da folha cai também em 20RK, 4572...)."""
+
+    def test_acoes_pedidas_sem_regra_de_ouro_e_nulo_preservado(self):
+        df = pd.DataFrame([
+            _linha_dotacao(ACAO_ATIVO, "dotacao_atualizada", 2026, 400_000.0, plano_orcamentario_codigo="0000"),
+            _linha_dotacao("20RK", "dotacao_atualizada", 2026, 111_111.0, plano_orcamentario_codigo="0000"),
+            _linha_dotacao("20RK", "dotacao_atualizada", 2026, 999_999.0, plano_orcamentario_codigo="RO00"),
+            _linha_dotacao(ACAO_INATIVO, "dotacao_atualizada", 2026, 200_000.0, plano_orcamentario_codigo="0000"),
+            _linha_dotacao("4572", "dotacao_atualizada", 2026, None, plano_orcamentario_codigo="0000"),
+        ])
+        resultado = dotacao_atualizada_por_acao_e_po(df, 2026, {ACAO_ATIVO, "20RK", "4572"})
+        self.assertAlmostEqual(float(resultado[(ACAO_ATIVO, "0000")]), 400_000.0)
+        self.assertAlmostEqual(float(resultado[("20RK", "0000")]), 111_111.0)
+        self.assertNotIn(("20RK", "RO00"), resultado.index)
+        self.assertNotIn((ACAO_INATIVO, "0000"), resultado.index)
+        self.assertTrue(pd.isna(resultado[("4572", "0000")]))
 
 
 class TestDotacaoAtualizadaPorAcaoBeneficios(unittest.TestCase):

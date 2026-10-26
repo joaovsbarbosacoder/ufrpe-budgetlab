@@ -937,6 +937,21 @@ def dotacao_atualizada_por_plano_orcamentario(dotacao_df: pd.DataFrame, ano: int
     return recorte.groupby(["acao_codigo", "plano_orcamentario_codigo"])["valor_movimento_liquido"].sum(min_count=1)
 
 
+def dotacao_atualizada_por_acao_e_po(dotacao_df: pd.DataFrame, ano: int, acoes) -> pd.Series:
+    """Dotação Atualizada do ano `ano` por (Ação, Plano Orçamentário) das `acoes` pedidas
+    — qualquer ação, não só as do escopo (27/10/2026: cruzamento do reforço da folha com a
+    dotação disponível, em que aparecem empenhos de 20RK, 4572 etc.). Sem a Regra de Ouro,
+    como `dotacao_atualizada_por_plano_orcamentario`; soma `min_count=1` (só nulos = nulo)."""
+
+    recorte = dotacao_df.loc[
+        (dotacao_df["item_informacao_codigo"] == _ITEM_DOTACAO_ATUALIZADA)
+        & (dotacao_df["ano_lancamento"] == ano)
+        & (dotacao_df["acao_codigo"].isin(list(acoes)))
+        & (~dotacao_df["plano_orcamentario_codigo"].astype(str).str.startswith(_PREFIXO_PO_REGRA_DE_OURO))
+    ]
+    return recorte.groupby(["acao_codigo", "plano_orcamentario_codigo"])["valor_movimento_liquido"].sum(min_count=1)
+
+
 def dotacao_atualizada_por_acao_beneficios(dotacao_df: pd.DataFrame, ano: int) -> pd.Series:
     """Dotação Atualizada do ano `ano`, por AÇÃO — só 2004/212B, um nível acima de
     `dotacao_atualizada_por_plano_orcamentario` (soma todos os PO de cada ação).
