@@ -7,11 +7,13 @@ cálculo financeiro mora aqui: tudo vem de `src.ddp_siape`.
 """
 from __future__ import annotations
 
+from io import BytesIO
+
 import pandas as pd
 import streamlit as st
 
 from src.ddp_siape import (
-    TIPO_DDP, conferencia, confronto_liquidado, ddp_por_natureza, ler_relatorio, quadro_reforco,
+    TIPO_DDP, conferencia, confronto_liquidado, ddp_por_natureza, ler_relatorio, plano_operacoes, quadro_reforco,
     reserva_projetada, validar_conjunto,
 )
 from src.despesas_pessoal import MESES_NOMES
@@ -58,7 +60,7 @@ def tabela_por_empenho(por_empenho: pd.DataFrame) -> pd.DataFrame:
 
 def tabela_itens(itens: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({
-        "Empenho": itens["empenho"], "Natureza": itens["natureza_detalhada"], "Descrição na DDP": itens["descricao"].fillna("—"),
+        "Empenho": itens["empenho"], "Natureza": itens["natureza_detalhada"], "Descrição": itens["descricao"].fillna("—"),
         "Saldo a liquidar": itens["saldo"].map(brl), "DDP do mês": itens["ddp"].map(brl), "Falta": itens["falta"].map(brl),
         "Reserva dos meses seguintes": itens["reserva"].map(brl), "Sobra livre": itens["sobra_livre"].map(brl),
         "Saldo depois de dezembro": itens["saldo_apos_ano"].map(brl), "Critério": itens["criterio"],
@@ -72,6 +74,29 @@ def tabela_confronto(confronto: pd.DataFrame) -> pd.DataFrame:
         "DDP líquida": confronto["ddp"].map(brl), "Liquidada na base": confronto["liquidado_no_mes"].map(brl),
         "Diferença (base − DDP)": confronto["diferenca"].map(brl),
     })
+
+
+def tabela_plano(plano: pd.DataFrame, itens: pd.DataFrame) -> pd.DataFrame:
+    descricao = itens.dropna(subset=["descricao"]).drop_duplicates("natureza_detalhada").set_index("natureza_detalhada")["descricao"]
+    rotulo = lambda n: "—" if n is None or pd.isna(n) else f"{n} {descricao.get(n, '')}".strip()
+    return pd.DataFrame({
+        "Empenho": plano["empenho"], "Operação": plano["operacao"].str.capitalize(),
+        "Anular do item": plano["item_origem"].map(rotulo), "Reforçar o item": plano["item_destino"].map(rotulo),
+        "Valor": plano["valor"].map(brl),
+    })
+
+
+def planilha_excel(competencia: int, conf: pd.DataFrame, plano: pd.DataFrame, por_empenho: pd.DataFrame,
+                   itens: pd.DataFrame) -> bytes:
+    """Planilha para download (gerada em memória, nada é gravado no servidor), com os valores numéricos."""
+    arquivo = BytesIO()
+    with pd.ExcelWriter(arquivo, engine="openpyxl") as escritor:
+        plano.to_excel(escritor, sheet_name="Plano por item", index=False)
+        por_empenho.to_excel(escritor, sheet_name="Por empenho", index=False)
+        itens.drop(columns=["nes"]).to_excel(escritor, sheet_name="Itens", index=False)
+        conf.to_excel(escritor, sheet_name="Conferência", index=False)
+        pd.DataFrame({"competencia": [competencia]}).to_excel(escritor, sheet_name="Referência", index=False)
+    return arquivo.getvalue()
 
 
 def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int, procedencia: str) -> None:
@@ -113,7 +138,8 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
         st.warning("Só foi enviada a DDP de " + publicos[0] + ": o reforço abaixo não inclui a outra folha.")
 
     st.markdown("**Conferência dos totais**")
-    st.dataframe(tabela_conferencia(conferencia(relatorios)), hide_index=True, width="stretch", height="content")
+    conf = conferencia(relatorios)
+    st.dataframe(tabela_conferencia(conf), hide_index=True, width="stretch", height="content")
 
     natureza = ddp_por_natureza(relatorios)
     confronto = confronto_liquidado(natureza, mensal, competencia)
@@ -146,6 +172,25 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
 
     st.markdown("**Reforço por empenho**")
     st.dataframe(tabela_por_empenho(por_empenho), hide_index=True, width="stretch", height="content")
+
+    plano = plano_operacoes(itens)
+    st.markdown("**Plano de anulação e reforço por item**")
+    st.caption(
+        "Em cada empenho, o item com maior falta recebe primeiro, da maior sobra livre; o que a sobra não cobre é "
+        "reforço novo. Nenhum item cede mais que a sobra livre, então todos mantêm a reserva dos meses seguintes. "
+        "Em linhas com dois empenhos (ex.: “NE000040 + NE000166”), escolha em qual deles reforçar."
+    )
+    if plano.empty:
+        st.info("Nenhum item precisa de anulação ou reforço para esta folha.")
+    else:
+        st.dataframe(tabela_plano(plano, itens), hide_index=True, width="stretch", height="content")
+    st.download_button(
+        "Baixar em Excel (plano, por empenho, itens e conferência)",
+        planilha_excel(competencia, conf, plano, por_empenho, itens),
+        file_name=f"reforco_folha_{competencia}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="dp_ddp_excel",
+    )
     with st.expander("Detalhe por item (NE × natureza detalhada)"):
         st.dataframe(tabela_itens(itens), hide_index=True, width="stretch", height="content")
     with st.expander(f"DDP × Liquidada no mês ({_mes(competencia)})"):

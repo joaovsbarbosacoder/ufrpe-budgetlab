@@ -23,9 +23,9 @@ import pymupdf
 
 from src.ddp_siape import (
     CRITERIO_ELEMENTO, CRITERIO_REPARTIDO, CRITERIO_SEM_EMPENHO, CRITERIO_SOMADO, CRITERIO_UNICO,
-    RESERVA_DDP, RESERVA_PROJECAO, SEM_EMPENHO, TIPO_CREDITO, TIPO_DDP,
-    conferencia, confronto_liquidado, ddp_por_natureza, ler_relatorio, quadro_reforco, reserva_projetada,
-    validar_conjunto,
+    OPERACAO_REFORCO, OPERACAO_REMANEJAR, RESERVA_DDP, RESERVA_PROJECAO, SEM_EMPENHO, TIPO_CREDITO, TIPO_DDP,
+    conferencia, confronto_liquidado, ddp_por_natureza, ler_relatorio, plano_operacoes, quadro_reforco,
+    reserva_projetada, validar_conjunto,
 )
 from src.tesouro_execucao_mensal import _DIMENSOES_EXTRA_BLOCO
 
@@ -242,6 +242,40 @@ class TestQuadroReforco(unittest.TestCase):
         self.assertEqual((linha["liquidado_no_mes"], linha["saldo"], linha["falta"]), (500.0, -200.0, 700.0))
 
 
+class TestPlanoOperacoes(unittest.TestCase):
+    def test_plano_da_base_sintetica_fecha_com_o_quadro(self):
+        itens, por_empenho = quadro_reforco(_ddp_sintetica(), _base_sintetica(), 202610, RESERVA)
+        plano = plano_operacoes(itens)
+        remanejar = plano.loc[plano["operacao"] == OPERACAO_REMANEJAR]
+        self.assertEqual(remanejar[["empenho", "item_origem", "item_destino", "valor"]].values.tolist(),
+                         [["NE000001", "31901143", "31901101", 200.0]])
+        novos = plano.loc[plano["operacao"] == OPERACAO_REFORCO].set_index("empenho")
+        self.assertEqual(novos["valor"].to_dict(),
+                         {"(sem empenho)": 7.0, "NE000002": 200.0, "NE000004 + NE000005": 20.0, "NE000006": 19.0})
+        self.assertTrue(novos["item_origem"].isna().all())
+        self.assertEqual(round(novos["valor"].sum(), 2), round(por_empenho["reforco_mes"].sum(), 2))
+
+    def test_reparte_maior_falta_pela_maior_sobra_sem_passar_da_sobra_livre(self):
+        itens = pd.DataFrame([
+            {"empenho": "NE1", "natureza_detalhada": "A", "falta": 70.0, "sobra_livre": 0.0},
+            {"empenho": "NE1", "natureza_detalhada": "B", "falta": 50.0, "sobra_livre": 0.0},
+            {"empenho": "NE1", "natureza_detalhada": "C", "falta": 0.0, "sobra_livre": 60.0},
+            {"empenho": "NE1", "natureza_detalhada": "D", "falta": 0.0, "sobra_livre": 40.005},
+            {"empenho": "NE2", "natureza_detalhada": "A", "falta": 0.0, "sobra_livre": 999.0},  # outra NE: não ajuda
+        ])
+        plano = plano_operacoes(itens)
+        # D tem 40,005 de sobra livre: cede 40,00, nunca 40,01
+        self.assertEqual(plano.fillna({"item_origem": "—"})[["operacao", "item_origem", "item_destino", "valor"]].values.tolist(), [
+            [OPERACAO_REMANEJAR, "C", "A", 60.0], [OPERACAO_REMANEJAR, "D", "A", 10.0],
+            [OPERACAO_REMANEJAR, "D", "B", 30.0], [OPERACAO_REFORCO, "—", "B", 20.0],
+        ])
+        self.assertEqual(set(plano["empenho"]), {"NE1"})
+
+    def test_sem_falta_plano_vazio(self):
+        itens = pd.DataFrame([{"empenho": "NE1", "natureza_detalhada": "A", "falta": 0.0, "sobra_livre": 5.0}])
+        self.assertTrue(plano_operacoes(itens).empty)
+
+
 class TestReservaEConfronto(unittest.TestCase):
     def test_reserva_soma_meses_depois_da_ddp_e_nulo_nao_conta(self):
         grade = pd.DataFrame([
@@ -275,6 +309,21 @@ class TestTabelasDaAba(unittest.TestCase):
         divergente = conferencia(relatorios).assign(dif_credito=[0.0, -10.0])
         self.assertEqual(tabela_conferencia(divergente).loc[1, "Situação"],
                          "Diferença — crédito bancário ≠ líquido: −R$ 10,00")
+
+    def test_plano_e_planilha(self):
+        from io import BytesIO
+        from src.ui_ddp_siape import planilha_excel, tabela_plano
+
+        itens, por_empenho = quadro_reforco(_ddp_sintetica(), _base_sintetica(), 202610, RESERVA)
+        plano = plano_operacoes(itens)
+        tabela = tabela_plano(plano, itens).set_index("Empenho")
+        self.assertEqual(tabela.loc["NE000001", "Anular do item"], "31901143 X")  # fora da DDP: descrição da base
+        self.assertEqual(tabela.loc["NE000001", "Reforçar o item"], "31901101 DESC 31901101")
+        self.assertEqual(tabela.loc["NE000002", "Anular do item"], "—")
+        conteudo = planilha_excel(202610, conferencia(_relatorios_set()), plano, por_empenho, itens)
+        abas = pd.read_excel(BytesIO(conteudo), sheet_name=None)
+        self.assertEqual(list(abas), ["Plano por item", "Por empenho", "Itens", "Conferência", "Referência"])
+        self.assertEqual(round(abas["Plano por item"]["valor"].sum(), 2), 446.0)  # 200 remanejados + 246 novos
 
 
 if __name__ == "__main__":

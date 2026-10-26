@@ -726,7 +726,9 @@ pensionista), que ficam só na memória da sessão, e mostra: a conferência dos
 totais (bruto − descontos = líquido = crédito bancário); por empenho, o saldo a
 liquidar, a DDP do mês, a falta nos itens, o que dá para compensar anulando a sobra
 livre de outro item da mesma NE (saldo − DDP − projeção dos meses seguintes), o
-reforço do mês e o reforço até dezembro; o detalhe por item; e o confronto da DDP
+reforço do mês e o reforço até dezembro; o plano de anulação e reforço por item (de
+qual item anular, para qual item levar e o reforço novo que sobra, com download em
+Excel gerado na hora); o detalhe por item; e o confronto da DDP
 com a Liquidada do mês na base. As regras (empenhos da folha, repartição entre
 empenhos, reserva e compensação) estão no docstring de `src/ddp_siape.py`; a leitura
 dos PDFs usa o `pymupdf`. **Fórmulas de

@@ -36,6 +36,7 @@ Reforço por empenho (regras desta versão, todas visíveis no quadro):
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -283,6 +284,9 @@ def itens_de_empenho(mensal_df: pd.DataFrame, ano: int, ano_mes_ddp: int) -> pd.
     folha = atributos["ne_favorecido"].astype("string").str.strip() == atributos["ug_executora_desc"].astype("string").str.strip()
     resultado["folha"] = resultado["ne_ccor"].map(folha).fillna(False).astype(bool)
     resultado["acao_cod"] = resultado["ne_ccor"].map(atributos["acao_cod"])
+    descricoes = base.dropna(subset=["natureza_detalhada_cod"]).drop_duplicates("natureza_detalhada_cod")
+    resultado["natureza_detalhada_desc"] = resultado["natureza_detalhada_cod"].map(
+        descricoes.set_index("natureza_detalhada_cod")["natureza_detalhada_desc"])
     resultado["natureza_despesa_cod"] = resultado["natureza_detalhada_cod"].astype("string").str[:6]
     return resultado
 
@@ -355,7 +359,8 @@ def quadro_reforco(ddp_natureza: pd.DataFrame, mensal_df: pd.DataFrame, ano_mes_
             linhas.append({
                 "empenho": _rotulo(parte["ne_ccor"]), "nes": tuple(sorted(parte["ne_ccor"])),
                 "natureza_detalhada": natureza, "acao_cod": parte["acao_cod"].iloc[0],
-                "descricao": descricoes.get(natureza), "saldo": float(parte["saldo"].sum()),
+                # descrição da DDP; item fora da DDP usa a da base
+                "descricao": descricoes.get(natureza, parte["natureza_detalhada_desc"].iloc[0]), "saldo": float(parte["saldo"].sum()),
                 "ddp": valor_ddp * fracao, "reserva": reserva_natureza * fracao, "fracao": fracao,
                 "criterio": criterio if natureza in ddp.index else "fora da DDP", "tipo_reserva": tipo_reserva,
                 "liquidado_no_mes": float(parte["liquidado_no_mes"].sum()),
@@ -391,6 +396,41 @@ def quadro_reforco(ddp_natureza: pd.DataFrame, mensal_df: pd.DataFrame, ano_mes_
     por_empenho["reforco_ate_dezembro"] = (-por_empenho["saldo_apos_ano"]).clip(lower=0)
     por_empenho = por_empenho.sort_values(["reforco_mes", "reforco_ate_dezembro"], ascending=False).reset_index()
     return tabela, por_empenho
+
+
+OPERACAO_REMANEJAR = "anular e reforçar no mesmo empenho"
+OPERACAO_REFORCO = "reforço novo"
+
+
+def plano_operacoes(itens: pd.DataFrame) -> pd.DataFrame:
+    """Operações por item que cobrem a falta do mês, a partir de `quadro_reforco(...)[0]`.
+    Em cada empenho, os itens com falta (maior primeiro) recebem a sobra livre dos outros
+    itens (maior sobra primeiro); o que a sobra não cobre vira reforço novo. Uma linha por
+    operação: `empenho`, `operacao`, `item_origem` (nulo no reforço novo), `item_destino`
+    e `valor`. Contas em centavos: a soma das anulações de um empenho é a sua compensação,
+    e nenhum item cede mais que a sobra livre — fica sempre com a reserva dos meses seguintes."""
+    linhas = []
+    for empenho, grupo in itens.groupby("empenho", sort=True):
+        faltas = [(n, round(f * 100)) for n, f in zip(grupo["natureza_detalhada"], grupo["falta"]) if round(f * 100) > 0]
+        # sobra arredondada para baixo: o item nunca cede meio centavo além da sobra livre
+        sobras = [[n, math.floor(s * 100 + 1e-6)] for n, s in zip(grupo["natureza_detalhada"], grupo["sobra_livre"])
+                  if math.floor(s * 100 + 1e-6) > 0]
+        faltas.sort(key=lambda par: (-par[1], par[0]))
+        sobras.sort(key=lambda par: (-par[1], par[0]))
+        for destino, falta in faltas:
+            for origem in sobras:
+                if falta == 0:
+                    break
+                parcela = min(falta, origem[1])
+                if parcela:
+                    linhas.append({"empenho": empenho, "operacao": OPERACAO_REMANEJAR, "item_origem": origem[0],
+                                   "item_destino": destino, "valor": parcela / 100})
+                    origem[1] -= parcela
+                    falta -= parcela
+            if falta:
+                linhas.append({"empenho": empenho, "operacao": OPERACAO_REFORCO, "item_origem": None,
+                               "item_destino": destino, "valor": falta / 100})
+    return pd.DataFrame(linhas, columns=["empenho", "operacao", "item_origem", "item_destino", "valor"])
 
 
 def confronto_liquidado(ddp_natureza: pd.DataFrame, mensal_df: pd.DataFrame, ano_mes: int) -> pd.DataFrame:
