@@ -684,7 +684,9 @@ visual de 27/10/2026, a partir do protótipo aprovado):
   **Outros Benefícios por Ação, PO e Iduso** (dotação, empenhado, executado,
   projetado, saldo da dotação e empenho a reforçar ou sobra, com subtotais por ação e
   por Iduso e um cenário pela média mensal para comparação — ver a seção 15 de
-  `src/despesas_pessoal.py`); o gráfico do saldo remanescente mês a mês por grupo; a
+  `src/despesas_pessoal.py`); o saldo remanescente mês a mês em um gráfico por grupo,
+  cada um na sua escala, com o primeiro mês negativo marcado e o valor exato ao passar
+  o mouse; a
   tabela grupo × mês; e a tabela de saldo remanescente por grupo e ação.
 - **Rubrica × mês**: o detalhamento mês a mês de cada rubrica (tabela do handoff
   `design_handoff_streamlit/acompanhamento-pessoal.dc.html`), com os grupos
