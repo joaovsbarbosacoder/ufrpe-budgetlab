@@ -720,7 +720,16 @@ deixando claro que é cenário histórico e não a projeção. O aviso do própr
 painel continua o mesmo. Sem exercício completo ou sem dotação do grupo, não há
 aviso.
 
-A página tem três abas. **Acompanhamento** é o painel acima. **Fórmulas de
+A página tem quatro abas. **Acompanhamento** é o painel acima. **Folha (DDP)**
+recebe os PDFs do SIAPE do mês (DDP e Crédito Bancário, de servidor e de
+pensionista), que ficam só na memória da sessão, e mostra: a conferência dos
+totais (bruto − descontos = líquido = crédito bancário); por empenho, o saldo a
+liquidar, a DDP do mês, a falta nos itens, o que dá para compensar anulando a sobra
+livre de outro item da mesma NE (saldo − DDP − projeção dos meses seguintes), o
+reforço do mês e o reforço até dezembro; o detalhe por item; e o confronto da DDP
+com a Liquidada do mês na base. As regras (empenhos da folha, repartição entre
+empenhos, reserva e compensação) estão no docstring de `src/ddp_siape.py`; a leitura
+dos PDFs usa o `pymupdf`. **Fórmulas de
 projeção** descreve cada fórmula e deixa editáveis os seus números: multiplicador
 por natureza de despesa, multiplicadores por grupo de sentenças e indenizações,
 multiplicador de rubrica sem regra em 2004/212B, meses e fração do 13º, repetição
