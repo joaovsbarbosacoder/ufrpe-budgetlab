@@ -16,8 +16,9 @@ import streamlit as st
 
 from src.despesas_pessoal import (
     GRUPO_ATIVO, GRUPO_INATIVO, GRUPO_OUTROS_BENEFICIOS, GRUPO_RPPS,
-    MESES_NOMES, PARAMETROS_PADRAO, REGRA_MULTIPLICADOR, TABELA_REGRAS,
+    LINHA_TOTAL, MESES_NOMES, PARAMETROS_PADRAO, REGRA_MULTIPLICADOR, TABELA_REGRAS,
     ParametrosProjecao, comparar_beneficios_por_plano_orcamentario, comparar_projecao_com_executado, desvio_por_mes_de_partida, dotacao_atualizada_por_grupo, execucao_exercicio_por_grupo,
+    faixa_historica_total_anual,
     execucao_exercicio_por_natureza, liquidada_mensal_por_grupo, resumo_projecao_com_executado,
 )
 
@@ -148,6 +149,12 @@ def render_formulas() -> tuple[ParametrosProjecao, str | None]:
                                              key=PREFIXO + "fracao_antecipacao")
     dezembro = st.checkbox("Dezembro projetado do Ativo repete o valor de novembro (real ou projetado)",
                            value=p0.dezembro_ativo_repete_novembro, key=PREFIXO + "dezembro")
+    fracao_13_dezembro = st.number_input(
+        "d — fração do 13º de novembro mantida no 13º de dezembro do Ativo (o restante vai para o 1/3 de férias, "
+        "31901145; total de dezembro inalterado)", min_value=0.0, max_value=1.0,
+        value=p0.fracao_13_dezembro_ativo, step=0.05, format="%.2f", key=PREFIXO + "fracao_13_dezembro",
+        disabled=not dezembro,
+    )
 
     st.markdown("##### 4. Mês fechado (data-base padrão)")
     st.markdown(
@@ -183,6 +190,7 @@ def render_formulas() -> tuple[ParametrosProjecao, str | None]:
             indenizacao_demais=indenizacao_demais, multiplicador_sem_regra_beneficios=sem_regra,
             mes_antecipacao_13=int(mes_antecipacao), mes_parcela_13=int(mes_parcela),
             fracao_antecipacao_13=float(fracao_antecipacao), dezembro_ativo_repete_novembro=bool(dezembro),
+            fracao_13_dezembro_ativo=float(fracao_13_dezembro),
             janela_meses_fechamento=int(janela), fracao_minima_fechamento=float(fracao_fechamento),
         )
     except ValueError as erro:
@@ -266,6 +274,110 @@ def render_exercicios_anteriores(anual: pd.DataFrame, mensal: pd.DataFrame, dota
         }), hide_index=True, width="stretch", height="content")
     if procedencia:
         st.caption(procedencia)
+
+
+def _fator(valor: float) -> str:
+    return f"{valor:.3f}".replace(".", ",")
+
+
+def tabela_faixa_historica(faixa: pd.DataFrame, projetado_por_grupo: pd.Series, dotacao_grupo: pd.Series) -> pd.DataFrame:
+    """Tabela de exibição da `faixa_historica_total_anual` lado a lado com o total
+    projetado no painel e a dotação (os dois chegam por grupo; a linha total soma, nulo
+    preservado). Saldo no pior caso = dotação − máximo da faixa; no melhor = − mínimo."""
+    grupos = [g for g in faixa["grupo"] if g != LINHA_TOTAL]
+
+    def por_linha(serie, grupo):
+        if grupo == LINHA_TOTAL:
+            return serie.reindex(grupos).sum(min_count=1)
+        return serie.get(grupo)
+
+    linhas = []
+    for r in faixa.itertuples(index=False):
+        projetado = por_linha(projetado_por_grupo, r.grupo)
+        dotacao = por_linha(dotacao_grupo, r.grupo)
+        if r.total_min is None or pd.isna(r.total_min) or projetado is None or pd.isna(projetado):
+            posicao = "—"
+        elif projetado < r.total_min:
+            posicao = "Abaixo da faixa"
+        elif projetado > r.total_max:
+            posicao = "Acima da faixa"
+        else:
+            posicao = "Dentro da faixa"
+        sem_dotacao = dotacao is None or pd.isna(dotacao)
+        linhas.append({
+            "Grupo": NOMES_GRUPOS.get(r.grupo, "TOTAL"),
+            "Projetado no painel": brl(projetado),
+            "Faixa histórica: mínimo": brl(r.total_min),
+            "Faixa histórica: máximo": brl(r.total_max),
+            "Projetado × faixa": posicao,
+            "Dotação Atualizada": brl(dotacao),
+            "Saldo no pior caso": "—" if sem_dotacao or r.total_max is None or pd.isna(r.total_max) else brl(float(dotacao) - r.total_max),
+            "Saldo no melhor caso": "—" if sem_dotacao or r.total_min is None or pd.isna(r.total_min) else brl(float(dotacao) - r.total_min),
+            "Fator por exercício": " · ".join(f"{a}: {_fator(v)}" for a, v in r.fatores.items()) or "sem exercício completo",
+        })
+    return pd.DataFrame(linhas)
+
+
+def calcular_faixa_historica(mensal: pd.DataFrame, ano: int, mes_referencia: int) -> pd.DataFrame | None:
+    """`faixa_historica_total_anual`, ou `None` com a data-base em dezembro (sem mês a projetar)."""
+    return None if mes_referencia >= 12 else faixa_historica_total_anual(mensal, ano, mes_referencia)
+
+
+def aviso_faixa_historica(faixa: pd.DataFrame | None, dotacao_grupo: pd.Series, ano: int) -> str | None:
+    """Texto do aviso do topo do painel quando o saldo no PIOR caso da faixa histórica
+    (dotação − máximo) fica negativo em algum grupo — `None` caso contrário, inclusive
+    sem faixa (nenhum exercício completo) ou sem dotação do grupo: nada vira zero. Só
+    grupos (a faixa não abre Outros Benefícios por ação); a linha total não entra, já
+    que um total negativo implica algum grupo negativo."""
+    if faixa is None or faixa.empty:
+        return None
+    deficits, anos = [], set()
+    for r in faixa.itertuples(index=False):
+        dotacao = dotacao_grupo.get(r.grupo)
+        if r.grupo == LINHA_TOTAL or r.total_max is None or pd.isna(r.total_max) or dotacao is None or pd.isna(dotacao):
+            continue
+        saldo = float(dotacao) - r.total_max
+        if round(saldo, 2) < 0:
+            deficits.append(f"{NOMES_GRUPOS.get(r.grupo, r.grupo)} — déficit de até {brl(-saldo)}")
+            anos.update(r.fatores)
+    if not deficits:
+        return None
+    anos = sorted(anos)
+    return (
+        f"Cenário histórico (não é a projeção do painel): se o restante de {ano} repetir o comportamento de "
+        f"{', '.join(map(str, anos))}, a dotação não cobre {'; '.join(deficits)}. "
+        "Detalhes no quadro “Faixa histórica do total anual”, abaixo do painel."
+    )
+
+
+def render_faixa_historica(faixa: pd.DataFrame | None, ano: int, mes_referencia: int,
+                           projetado_por_grupo: pd.Series, dotacao_grupo: pd.Series, ano_dotacao: int) -> None:
+    """Expander abaixo do painel com a faixa histórica do total anual (seção 14 de
+    `src.despesas_pessoal`, já calculada por `calcular_faixa_historica`). Só leitura —
+    não altera projeção, saldo nem edições."""
+    with st.expander("Faixa histórica do total anual", expanded=False):
+        if faixa is None:
+            st.info("Com a data-base em dezembro não há meses a projetar — a faixa não se aplica.")
+            return
+        if faixa.empty:
+            st.info(f"A Execução Mensal não tem Liquidada de pessoal em {ano}.")
+            return
+        st.markdown(
+            f"Quanto o exercício fecharia se, de {MESES_NOMES[mes_referencia]} a dezembro, cada grupo repetisse "
+            f"o comportamento de cada exercício anterior completo na Execução Mensal: **realizado até "
+            f"{MESES_NOMES[mes_referencia - 1]} + Liquidada de {MESES_NOMES[mes_referencia - 1]} × fator**, com "
+            f"fator = (Liquidada de {MESES_NOMES[mes_referencia]} a dezembro ÷ Liquidada de "
+            f"{MESES_NOMES[mes_referencia - 1]}) daquele exercício."
+        )
+        st.dataframe(tabela_faixa_historica(faixa, projetado_por_grupo, dotacao_grupo),
+                     hide_index=True, width="stretch", height="content")
+        st.caption(_md(
+            f"A faixa é só o mínimo e o máximo dos exercícios listados, não um intervalo estatístico. Um "
+            f"exercício com mês faltando de {MESES_NOMES[mes_referencia - 1]} a dezembro fica de fora (não vira "
+            f"zero). Exercício com evento atípico no mês de referência (por exemplo, reajuste retroativo) distorce "
+            f"o fator. Dotação de {ano_dotacao}. A coluna Projetado inclui ajustes manuais e fórmulas da sessão; "
+            f"a faixa não."
+        ))
 
 
 def _pct(valor) -> str:

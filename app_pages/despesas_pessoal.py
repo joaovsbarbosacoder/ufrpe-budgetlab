@@ -34,7 +34,10 @@ from src.importacao_execucao_mensal import (
     carregar_atual as carregar_execucao_mensal_atual,
 )
 from src.ui_despesas_pessoal import montar_painel, render_painel, validar_edicao
-from src.ui_despesas_pessoal_abas import render_exercicios_anteriores, render_formulas
+from src.ui_despesas_pessoal_abas import (
+    aviso_faixa_historica, calcular_faixa_historica, render_exercicios_anteriores, render_faixa_historica,
+    render_formulas,
+)
 
 
 @st.cache_data(show_spinner="Lendo a base de Execução Anual...")
@@ -63,7 +66,7 @@ gc.collect()
 st.html("""<style>
 .stMainBlockContainer:has(.st-key-dp_painel) {max-width:none; padding:0 0 5rem;}
 .stMainBlockContainer:has(.st-key-dp_painel) [data-testid="stTabs"] [role="tablist"] {padding:0 32px;}
-.st-key-dp_aba_formulas, .st-key-dp_aba_historico, .st-key-dp_aba_aviso {padding:8px 32px 0;}
+.st-key-dp_aba_formulas, .st-key-dp_aba_historico, .st-key-dp_aba_aviso, .st-key-dp_faixa, .st-key-dp_aviso_faixa {padding:8px 32px 0;}
 </style>""")
 
 manifesto_execucao = ManifestoExecucao.atual()
@@ -169,6 +172,13 @@ with aba_painel:
     dotacao_grupo = dotacao_atualizada_por_grupo(dotacao, ano_dotacao)
     dotacao_por_po = dotacao_atualizada_por_plano_orcamentario(dotacao, ano_dotacao)
     dotacao_por_acao_beneficios = dotacao_atualizada_por_acao_beneficios(dotacao, ano_dotacao)
+    # Faixa histórica (26/10/2026): calculada uma vez — alimenta o aviso acima do painel e o
+    # quadro abaixo dele. Só leitura; não entra na projeção nem no saldo do componente.
+    faixa = calcular_faixa_historica(mensal, ano, ano_mes_referencia % 100)
+    aviso_faixa = aviso_faixa_historica(faixa, dotacao_grupo, ano)
+    if aviso_faixa:
+        with st.container(key="dp_aviso_faixa"):
+            st.warning(aviso_faixa.replace("$", "\\$"))
 
     procedencia = procedencia_bases + (
         " Fórmulas ajustadas nesta sessão: " + "; ".join(ajustes_formulas) + "."
@@ -199,5 +209,9 @@ with aba_painel:
     if resultado.restaurar and resultado.restaurar.get("referencia") == ano_mes_referencia:
         st.session_state[chave_edicoes] = {}
         st.rerun()
+
+    with st.container(key="dp_faixa"):
+        projetado_por_grupo = grade.total_por_grupo_por_mes().sum(axis=1, min_count=1)
+        render_faixa_historica(faixa, ano, ano_mes_referencia % 100, projetado_por_grupo, dotacao_grupo, ano_dotacao)
 
 gc.collect()  # ver o comentário no início da página
