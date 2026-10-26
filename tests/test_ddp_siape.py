@@ -25,7 +25,7 @@ from src.ddp_siape import (
     CRITERIO_ELEMENTO, CRITERIO_REPARTIDO, CRITERIO_SEM_EMPENHO, CRITERIO_SOMADO, CRITERIO_UNICO,
     OPERACAO_REFORCO, OPERACAO_REMANEJAR, RESERVA_DDP, RESERVA_PROJECAO, SEM_EMPENHO, TIPO_CREDITO, TIPO_DDP,
     conferencia, confronto_liquidado, ddp_por_natureza, ler_relatorio, plano_operacoes, quadro_reforco,
-    reserva_projetada, validar_conjunto,
+    reserva_projetada, separar_competencias, validar_conjunto, variacao_por_natureza,
 )
 from src.tesouro_execucao_mensal import _DIMENSOES_EXTRA_BLOCO
 
@@ -116,15 +116,85 @@ class TestValidacoesDaLeitura(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "sem os totais bruto, desconto, liquido"):
             ler_relatorio(_pdf(linhas), "ddp.pdf")
 
-    def test_conjunto_com_competencias_diferentes_ou_repetido(self):
+    def test_conjunto_com_duas_tres_competencias_ou_repetido(self):
         relatorios = _relatorios_set()
         ddp_serv = relatorios[0]
-        outra = type(ddp_serv)(**{**ddp_serv.__dict__, "competencia": 202610, "nome": "outra.pdf"})
-        erros = validar_conjunto(relatorios + [outra])
-        self.assertTrue(any("competências diferentes" in e for e in erros))
-        self.assertTrue(any("enviado duas vezes" in e for e in erros))
+        copia = lambda **kw: type(ddp_serv)(**{**ddp_serv.__dict__, **kw})
+        self.assertEqual(validar_conjunto(relatorios + [copia(competencia=202610, nome="out.pdf")]), [])
+        erros = validar_conjunto(relatorios + [copia(competencia=202610, nome="out.pdf"),
+                                               copia(competencia=202611, nome="nov.pdf")])
+        self.assertTrue(any("no máximo duas competências" in e for e in erros))
+        erros = validar_conjunto(relatorios + [copia(nome="repetida.pdf")])
+        self.assertEqual(erros, ["DDP de servidor (folha normal) de 09/2026 enviado duas vezes: "
+                                 "ddp_siape_serv_2026-09.pdf e repetida.pdf."])
         self.assertEqual(validar_conjunto([r for r in relatorios if r.tipo == TIPO_CREDITO]),
-                         ["Nenhuma DDP entre os PDFs enviados (só Crédito Bancário)."])
+                         ["Nenhuma DDP de 09/2026 entre os PDFs enviados (só Crédito Bancário)."])
+        # só o crédito bancário do mês anterior: falta a DDP dele
+        cred_out = [type(r)(**{**r.__dict__, "competencia": 202610}) for r in relatorios if r.tipo == TIPO_CREDITO]
+        self.assertEqual(validar_conjunto(relatorios + cred_out),
+                         ["Nenhuma DDP de 10/2026 entre os PDFs enviados (só Crédito Bancário)."])
+
+
+def _ddp_pdf(mes: str, publico: str, naturezas: list[tuple[str, str, float]], anular: float = 0.0) -> bytes:
+    """DDP mínima no layout do SIAPE; `naturezas` = (código x.xxxx.xx.xx, descrição, valor) da seção (1)."""
+    bruto = sum(v for _, _, v in naturezas)
+    fmt = lambda v: f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    linhas = [
+        " __ SIAPE,GERENCIAL,GRFINANC,GRCOFINDDP ( DEMONS. DESPESA C/ PESSOAL-DDP )_____",
+        f" DATA: 26{mes}2026    HORA: 07:31:54    USUARIO: XXXXXXXXXXXX             PRODUCAO",
+        f" ORGAO SOLICITADO: 26248 UFRPE                          MES/ANO SOLIC: {mes}2026",
+        f"       *** DDP FOLHA NORMAL - NIVEL UNIDADE PAGADORA - {publico} ***",
+        "                       *** DESPESAS CORRENTES ( 1 ) ***",
+        f" 3.3000       DESPESAS CORRENTES                    {fmt(bruto):>20}",
+    ] + [f" {c} {d:<40} {fmt(v):>14}" for c, d, v in naturezas] + [
+        "                             *** TOTAIS ( 5 ) ***",
+        f"              99997 BRUTO                         {fmt(bruto):>20}",
+        f"              99998 DESCONTO                      {fmt(anular):>20}",
+        f"              99999 LIQUIDO                       {fmt(bruto - anular):>20}",
+    ]
+    return _pdf(linhas)
+
+
+class TestVariacaoEntreCompetencias(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.setembro = _relatorios_set()
+        # outubro sintético: vencimentos sobem, gratificação cai, licença-prêmio é nova; o resto não veio
+        cls.outubro = [
+            ler_relatorio(_ddp_pdf("OUT", "SERVIDOR", [("3.3190.11.01", "VENCIMENTO E SALARIOS", 16800000.00),
+                                                        ("3.3190.11.31", "GRATIFICACAO DE EXERCICIO DE CARGO", 15000000.00)]), "serv.pdf"),
+            ler_relatorio(_ddp_pdf("OUT", "PENSIONISTA", [("3.3190.03.06", "LICENCA PREMIO PENSIONISTA", 19150.48)]), "pens.pdf"),
+        ]
+
+    def test_mais_recente_e_a_do_reforco(self):
+        atuais, anteriores = separar_competencias(self.setembro + self.outubro)
+        self.assertEqual({r.competencia for r in atuais}, {202610})
+        self.assertEqual({r.competencia for r in anteriores}, {202609})
+        self.assertEqual(len(anteriores), 4)
+        self.assertEqual(separar_competencias(self.setembro)[1], [])
+
+    def test_variacao_por_natureza(self):
+        variacao = variacao_por_natureza(ddp_por_natureza(self.outubro), ddp_por_natureza(self.setembro))
+        v = variacao.set_index("natureza_detalhada")
+        self.assertEqual((v.loc["31901101", "anterior"], v.loc["31901101", "atual"], v.loc["31901101", "variacao"]),
+                         (16753889.62, 16800000.00, 46110.38))
+        self.assertEqual(v.loc["31901101", "situacao"], "alta")
+        self.assertEqual((v.loc["31901131", "variacao"], v.loc["31901131", "situacao"]), (-162405.86, "queda"))
+        self.assertTrue(pd.isna(v.loc["31900306", "anterior"]))  # nova: anterior nulo, não zero
+        self.assertEqual((v.loc["31900306", "variacao"], v.loc["31900306", "situacao"]), (19150.48, "nova"))
+        self.assertTrue(pd.isna(v.loc["31900301", "atual"]))
+        self.assertEqual((v.loc["31900301", "variacao"], v.loc["31900301", "situacao"]), (-4628906.71, "saiu"))
+        # a soma das variações fecha com a diferença dos totais; maior variação primeiro
+        self.assertEqual(round(variacao["variacao"].sum(), 2),
+                         round(variacao["atual"].sum() - variacao["anterior"].sum(), 2))
+        self.assertEqual(variacao["natureza_detalhada"].iloc[0], "31900101")  # proventos (~R$ 11 mi) não vieram
+        # servidor + pensionista somados na mesma natureza (per capita de set/2026)
+        self.assertEqual(v.loc["33909308", "anterior"], 333893.66)
+
+    def test_conferencia_traz_as_duas_competencias(self):
+        conf = conferencia(self.setembro + self.outubro)
+        self.assertEqual(conf["competencia"].tolist(), [202610, 202610, 202609, 202609])
+        self.assertEqual(conf.loc[conf["competencia"] == 202610, "dif_bruto_menos_desconto"].abs().max(), 0.0)
 
 
 # ---------------------------------------------------------------------------

@@ -14,7 +14,7 @@ import streamlit as st
 
 from src.ddp_siape import (
     TIPO_DDP, conferencia, confronto_liquidado, ddp_por_natureza, ler_relatorio, plano_operacoes, quadro_reforco,
-    reserva_projetada, validar_conjunto,
+    reserva_projetada, separar_competencias, validar_conjunto, variacao_por_natureza,
 )
 from src.despesas_pessoal import MESES_NOMES
 from src.ui_despesas_pessoal_abas import _md, brl
@@ -42,7 +42,7 @@ def _situacao(linha) -> str:
 
 def tabela_conferencia(conf: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame([{
-        "Público": linha["publico"].title(), "Folha": linha["folha"].title(),
+        "Competência": _mes(linha["competencia"]), "Público": linha["publico"].title(), "Folha": linha["folha"].title(),
         "Bruto": brl(linha["bruto"]), "Descontos": brl(linha["desconto"]), "Líquido": brl(linha["liquido"]),
         "Crédito bancário": brl(linha["credito_bancario"]), "Situação": _situacao(linha),
     } for _, linha in conf.iterrows()])
@@ -86,6 +86,41 @@ def tabela_plano(plano: pd.DataFrame, itens: pd.DataFrame) -> pd.DataFrame:
     })
 
 
+_SITUACOES = {"nova": "Nova", "saiu": "Não veio neste mês", "alta": "Alta", "queda": "Queda", "sem variação": "Sem variação"}
+
+
+def tabela_variacao(variacao: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame({
+        "Natureza": variacao["natureza_detalhada"], "Descrição na DDP": variacao["descricao"].fillna("—"),
+        "Mês anterior": variacao["anterior"].map(brl), "Mês atual": variacao["atual"].map(brl),
+        "Variação": variacao["variacao"].map(brl), "Situação": variacao["situacao"].map(_SITUACOES),
+    })
+
+
+def render_variacao(variacao: pd.DataFrame, anterior: int, atual: int) -> None:
+    """O que mudou na DDP entre as duas competências enviadas (27/10/2026)."""
+    st.markdown(f"**O que mudou de {_mes(anterior)} para {_mes(atual)}**")
+    total_anterior, total_atual = variacao["anterior"].sum(), variacao["atual"].sum()
+    colunas = st.columns(3)
+    colunas[0].metric(f"DDP líquida de {_mes(anterior)}", brl(total_anterior))
+    colunas[1].metric(f"DDP líquida de {_mes(atual)}", brl(total_atual))
+    colunas[2].metric("Variação", brl(total_atual - total_anterior),
+                      f"{(total_atual / total_anterior - 1):+.1%}".replace(".", ",") if total_anterior else None,
+                      delta_color="off")
+    novas = variacao.loc[variacao["situacao"] == "nova"]
+    sairam = variacao.loc[variacao["situacao"] == "saiu"]
+    if not novas.empty:
+        st.caption(_md("Naturezas novas: " + "; ".join(
+            f"{r.natureza_detalhada} {r.descricao} ({brl(r.atual)})" for r in novas.itertuples()) + "."))
+    if not sairam.empty:
+        st.caption(_md("Não vieram neste mês: " + "; ".join(
+            f"{r.natureza_detalhada} {r.descricao} ({brl(r.anterior)} no anterior)" for r in sairam.itertuples()) + "."))
+    mudaram = variacao.loc[variacao["variacao"] != 0]
+    st.dataframe(tabela_variacao(mudaram.head(10)), hide_index=True, width="stretch", height="content")
+    with st.expander(f"Todas as naturezas ({len(variacao)})"):
+        st.dataframe(tabela_variacao(variacao), hide_index=True, width="stretch", height="content")
+
+
 def planilha_excel(competencia: int, conf: pd.DataFrame, plano: pd.DataFrame, por_empenho: pd.DataFrame,
                    itens: pd.DataFrame) -> bytes:
     """Planilha para download (gerada em memória, nada é gravado no servidor), com os valores numéricos."""
@@ -125,14 +160,16 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
     if erros:
         return
 
-    ddp = next(r for r in relatorios if r.tipo == TIPO_DDP)
+    atuais, anteriores = separar_competencias(relatorios)
+    ddp = next(r for r in atuais if r.tipo == TIPO_DDP)
     competencia = ddp.competencia
-    publicos = sorted({r.publico.lower() for r in relatorios if r.tipo == TIPO_DDP})
+    publicos = sorted({r.publico.lower() for r in atuais if r.tipo == TIPO_DDP})
     st.subheader(f"Folha de {_mes(competencia)}")
     st.caption(
         f"Paga em {_mes(ddp.mes_pagamento)}; relatórios gerados em "
-        f"{', '.join(sorted({r.data_geracao.strftime('%d/%m/%Y') for r in relatorios if r.data_geracao}))}. "
+        f"{', '.join(sorted({r.data_geracao.strftime('%d/%m/%Y') for r in atuais if r.data_geracao}))}. "
         f"DDP de {' e '.join(publicos)}."
+        + (f" Os PDFs de {_mes(anteriores[0].competencia)} entram só na comparação." if anteriores else "")
     )
     if len(publicos) < 2:
         st.warning("Só foi enviada a DDP de " + publicos[0] + ": o reforço abaixo não inclui a outra folha.")
@@ -141,7 +178,10 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
     conf = conferencia(relatorios)
     st.dataframe(tabela_conferencia(conf), hide_index=True, width="stretch", height="content")
 
-    natureza = ddp_por_natureza(relatorios)
+    natureza = ddp_por_natureza(atuais)
+    if anteriores:
+        render_variacao(variacao_por_natureza(natureza, ddp_por_natureza(anteriores)),
+                        anteriores[0].competencia, competencia)
     confronto = confronto_liquidado(natureza, mensal, competencia)
     if competencia // 100 != ano_grade:
         st.warning(

@@ -729,7 +729,9 @@ livre de outro item da mesma NE (saldo − DDP − projeção dos meses seguinte
 reforço do mês e o reforço até dezembro; o plano de anulação e reforço por item (de
 qual item anular, para qual item levar e o reforço novo que sobra, com download em
 Excel gerado na hora); o detalhe por item; e o confronto da DDP
-com a Liquidada do mês na base. As regras (empenhos da folha, repartição entre
+com a Liquidada do mês na base. Enviando também os PDFs do mês anterior, a aba mostra
+o que mudou na DDP por natureza (novas, que não vieram, altas e quedas); o reforço
+usa sempre a competência mais recente. As regras (empenhos da folha, repartição entre
 empenhos, reserva e compensação) estão no docstring de `src/ddp_siape.py`; a leitura
 dos PDFs usa o `pymupdf`. **Fórmulas de
 projeção** descreve cada fórmula e deixa editáveis os seus números: multiplicador

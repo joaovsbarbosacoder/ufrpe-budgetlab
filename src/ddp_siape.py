@@ -195,37 +195,82 @@ def ler_relatorio(conteudo: bytes, nome: str = "") -> RelatorioSiape:
                           naturezas=pd.DataFrame(naturezas))
 
 
+def _competencia(ano_mes: int) -> str:
+    return f"{ano_mes % 100:02d}/{ano_mes // 100}"
+
+
 def validar_conjunto(relatorios: list[RelatorioSiape]) -> list[str]:
-    """Erros que impedem o confronto: competências diferentes, relatório repetido para o
-    mesmo tipo/público/folha, ou nenhuma DDP."""
+    """Erros que impedem o confronto: mais de duas competências (a mais recente é a do
+    reforço; a anterior, só comparação — 27/10/2026), relatório repetido para a mesma
+    competência/tipo/público/folha, ou nenhuma DDP em alguma competência."""
     erros = []
     competencias = sorted({r.competencia for r in relatorios})
-    if len(competencias) > 1:
-        erros.append("Os PDFs são de competências diferentes: " + ", ".join(f"{c % 100:02d}/{c // 100}" for c in competencias) + ".")
+    if len(competencias) > 2:
+        erros.append("Envie no máximo duas competências (a do mês e a anterior, para comparar). Recebidas: "
+                     + ", ".join(_competencia(c) for c in competencias) + ".")
     vistos: dict[tuple, str] = {}
     for r in relatorios:
-        chave = (r.tipo, r.publico, r.folha)
+        chave = (r.competencia, r.tipo, r.publico, r.folha)
         if chave in vistos:
-            erros.append(f"{r.tipo} de {r.publico.lower()} ({r.folha.lower()}) enviado duas vezes: {vistos[chave]} e {r.nome}.")
+            erros.append(f"{r.tipo} de {r.publico.lower()} ({r.folha.lower()}) de {_competencia(r.competencia)} "
+                         f"enviado duas vezes: {vistos[chave]} e {r.nome}.")
         vistos[chave] = r.nome
-    if not any(r.tipo == TIPO_DDP for r in relatorios):
-        erros.append("Nenhuma DDP entre os PDFs enviados (só Crédito Bancário).")
+    for c in competencias:
+        if not any(r.tipo == TIPO_DDP and r.competencia == c for r in relatorios):
+            erros.append(f"Nenhuma DDP de {_competencia(c)} entre os PDFs enviados (só Crédito Bancário).")
     return erros
 
 
+def separar_competencias(relatorios: list[RelatorioSiape]) -> tuple[list[RelatorioSiape], list[RelatorioSiape]]:
+    """(atuais, anteriores): os relatórios da competência mais recente — base do reforço — e
+    os da anterior, se enviada, usados só na comparação."""
+    if not relatorios:
+        return [], []
+    atual = max(r.competencia for r in relatorios)
+    return ([r for r in relatorios if r.competencia == atual], [r for r in relatorios if r.competencia != atual])
+
+
+def variacao_por_natureza(atual: pd.DataFrame, anterior: pd.DataFrame) -> pd.DataFrame:
+    """DDP líquida por natureza detalhada (servidor + pensionista) em duas competências, a
+    partir de `ddp_por_natureza` de cada uma: `anterior`, `atual` (nulo quando a natureza não
+    aparece naquela DDP — não é zero), `variacao` = atual − anterior (ausência conta como zero
+    só aqui) e `situacao`: "nova", "saiu", "alta", "queda" ou "sem variação". Ordenada pelo
+    tamanho da variação."""
+    def por_natureza(tabela):
+        soma = tabela.groupby("natureza_detalhada").agg(descricao=("descricao", "first"), valor=("liquido", "sum"))
+        return soma.assign(valor=soma["valor"].round(2))  # servidor + pensionista, em centavos
+
+    a, b = por_natureza(anterior), por_natureza(atual)
+    tabela = pd.DataFrame({"anterior": a["valor"], "atual": b["valor"]})
+    tabela["descricao"] = b["descricao"].combine_first(a["descricao"])
+    tabela["variacao"] = (tabela["atual"].fillna(0.0) - tabela["anterior"].fillna(0.0)).round(2)
+    tabela["situacao"] = [
+        "nova" if pd.isna(ant) else "saiu" if pd.isna(atu) else "alta" if var > 0 else "queda" if var < 0 else "sem variação"
+        for ant, atu, var in zip(tabela["anterior"], tabela["atual"], tabela["variacao"])
+    ]
+    tabela.index.name = "natureza_detalhada"
+    tabela = tabela.reset_index()[["natureza_detalhada", "descricao", "anterior", "atual", "variacao", "situacao"]]
+    tabela = tabela.assign(_tamanho=tabela["variacao"].abs())
+    return (tabela.sort_values(["_tamanho", "natureza_detalhada"], ascending=[False, True])
+            .drop(columns="_tamanho").reset_index(drop=True))
+
+
 def conferencia(relatorios: list[RelatorioSiape]) -> pd.DataFrame:
-    """Uma linha por (público, folha) com os totais declarados e as conferências. Diferença
-    nula quando falta o termo (ex.: Crédito Bancário não enviado) — nunca zero."""
+    """Uma linha por (competência, público, folha) com os totais declarados e as
+    conferências. Diferença nula quando falta o termo (ex.: Crédito Bancário não enviado) —
+    nunca zero."""
     linhas = []
-    chaves = sorted({(r.publico, r.folha) for r in relatorios if r.tipo == TIPO_DDP})
-    for publico, folha in chaves:
-        ddp = next(r for r in relatorios if r.tipo == TIPO_DDP and (r.publico, r.folha) == (publico, folha))
-        credito = next((r for r in relatorios if r.tipo == TIPO_CREDITO and (r.publico, r.folha) == (publico, folha)), None)
+    chaves = sorted({(r.competencia, r.publico, r.folha) for r in relatorios if r.tipo == TIPO_DDP},
+                    key=lambda c: (-c[0], c[1], c[2]))
+    for competencia, publico, folha in chaves:
+        mesmo = lambda r: (r.competencia, r.publico, r.folha) == (competencia, publico, folha)
+        ddp = next(r for r in relatorios if r.tipo == TIPO_DDP and mesmo(r))
+        credito = next((r for r in relatorios if r.tipo == TIPO_CREDITO and mesmo(r)), None)
         t = ddp.totais
         despesa = ddp.naturezas.loc[ddp.naturezas["secao"] == SECAO_DESPESA, "valor"].sum()
         desconto_calculado = t["anular"] + t["consignacoes"] if "consignacoes" in t else None
         linhas.append({
-            "publico": publico, "folha": folha,
+            "competencia": competencia, "publico": publico, "folha": folha,
             "bruto": t["bruto"], "desconto": t["desconto"], "liquido": t["liquido"],
             "dif_bruto_menos_desconto": round(t["bruto"] - t["desconto"] - t["liquido"], 2),
             "soma_naturezas_despesa": round(despesa, 2),
