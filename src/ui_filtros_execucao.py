@@ -90,16 +90,19 @@ def option_mapping(dataframe: pd.DataFrame, code_column: str, description_column
     options = dataframe.loc[:, columns].drop_duplicates()
     options = options.sort_values(code_column, na_position="last", kind="stable")
 
+    # Colunas percorridas direto, sem `iterrows` (27/10/2026: montar um `Series` por linha
+    # custava ~0,6 s a cada reexecução da Consulta de Empenhos, nos campos com milhares de
+    # valores); mesmas chaves, valores e ordem. `to_numpy` preserva o tipo do valor (ex.:
+    # `numpy.int16` no Exercício), como o `iterrows` devolvia — iterar o `Series` daria `int`.
+    codes = options[code_column].to_numpy()
+    descriptions = options[description_column] if description_column else [pd.NA] * len(options)
     mapping: dict[str, object] = {}
-    for _, row in options.iterrows():
-        code = row[code_column]
+    for code, description in zip(codes, descriptions):
         if pd.isna(code):
             continue
         label = str(code)
-        if description_column:
-            description = row.get(description_column, pd.NA)
-            if pd.notna(description) and str(description) != label:
-                label = f"{label} — {description}"
+        if pd.notna(description) and str(description) != label:
+            label = f"{label} — {description}"
         mapping[label] = code
     return mapping
 

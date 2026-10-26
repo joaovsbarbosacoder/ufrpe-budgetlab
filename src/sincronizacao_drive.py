@@ -206,6 +206,26 @@ def _resumir(itens: list[tuple[str, str]]) -> str:
     return resumo.hexdigest()
 
 
+#: SHA-256 já calculado por arquivo, com a assinatura do arquivo quando foi lido: (mtime em ns, tamanho, inode). 27/10/2026:
+#: `enviar_alteracoes_pendentes` roda ao fim de TODA execução do app e relia ~90 arquivos inteiros a cada clique (~0,8 s).
+#: Arquivo com a mesma assinatura não é relido; qualquer gravação muda o mtime (precisão de ~1 ms medida na pasta `data/`),
+#: e a restauração de pacote troca o arquivo por `os.replace` (inode novo). Só serve a `impressao_digital` — o pacote
+#: (`gerar_pacote`) continua lendo e conferindo cada arquivo.
+_SHA_POR_ARQUIVO: dict[str, tuple[tuple[int, int, int], str]] = {}
+
+
+def _sha256_com_cache(caminho: Path) -> str:
+    info = caminho.stat()
+    assinatura = (info.st_mtime_ns, info.st_size, info.st_ino)
+    chave = os.path.abspath(caminho)
+    guardado = _SHA_POR_ARQUIVO.get(chave)
+    if guardado is not None and guardado[0] == assinatura:
+        return guardado[1]
+    sha = backup_dados._sha256_arquivo(caminho)
+    _SHA_POR_ARQUIVO[chave] = (assinatura, sha)
+    return sha
+
+
 def impressao_digital(base: Path = BASE_PADRAO) -> str:
     """Resumo das decisões do USUÁRIO em `base` (caminho + SHA-256 de cada arquivo, sem `PASTAS_AUTOMATICAS`). Vazio
     (`""`) = sem dados."""
@@ -213,7 +233,7 @@ def impressao_digital(base: Path = BASE_PADRAO) -> str:
     base = Path(base)
     arquivos = backup_dados._listar_arquivos(base, list(GRUPOS_DECISOES), incluir_credenciais=False)
     itens = [
-        (relativo, backup_dados._sha256_arquivo(caminho))
+        (relativo, _sha256_com_cache(caminho))
         for caminho in arquivos
         if _conta_na_impressao(relativo := caminho.relative_to(base).as_posix())
     ]

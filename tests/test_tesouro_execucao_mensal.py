@@ -433,6 +433,38 @@ class TestAgregarPorNe(unittest.TestCase):
         self.assertGreater(self.por_ne["liquidada"].isna().sum(), 0)
 
 
+class TestResumoClassificacaoPorNe(unittest.TestCase):
+    """27/10/2026 — versão vetorizada do resumo de Natureza Detalhada/Subitem por NE (perfil da
+    Consulta de Empenhos). Casos à mão, sem fixture: um valor, vários, só nulos, NE nula."""
+
+    def _df(self):
+        return pd.DataFrame({
+            "ne_ccor": pd.array(["A", "A", "A", "B", "B", "B", "C", None, None], dtype="string"),
+            "natureza_detalhada_label": pd.array(
+                ["X", "X", None, "Z", "Y", "Z", None, "W", "W"], dtype="string"),
+        })
+
+    def test_um_varios_nenhum_e_ne_nula(self):
+        from src.tesouro_execucao_mensal import _resumo_classificacao_por_ne
+
+        df = self._df()
+        indice = df.groupby("ne_ccor", dropna=False).size().index
+        resumo = _resumo_classificacao_por_ne(df, "natureza_detalhada_label", indice)
+        self.assertEqual(resumo["A"], "X")                    # um distinto (nulo ignorado)
+        self.assertEqual(resumo["B"], "2 classificações")     # Z e Y
+        self.assertEqual(resumo["C"], "—")                    # só nulos
+        self.assertEqual(resumo[pd.isna(resumo.index)].iloc[0], "W")  # NE nula vira grupo próprio
+        self.assertEqual(resumo.dtype, df["natureza_detalhada_label"].dtype)  # mesmo dtype de texto
+
+    def test_texto_de_valor_nao_textual(self):
+        from src.tesouro_execucao_mensal import _resumo_classificacao_por_ne
+
+        df = pd.DataFrame({"ne_ccor": ["A", "A", "B"], "subitem_cod": [7, 7, None]})
+        resumo = _resumo_classificacao_por_ne(df, "subitem_cod", pd.Index(["A", "B"]))
+        self.assertEqual(list(resumo), ["7.0", "—"])  # mesmo `str()` da versão anterior
+        self.assertEqual(resumo.dtype, object)
+
+
 @unittest.skipUnless(CAMINHO_BASE.exists(), f"Planilha ausente em {CAMINHO_BASE}")
 class TestValidacaoEstrutural(unittest.TestCase):
     @classmethod
