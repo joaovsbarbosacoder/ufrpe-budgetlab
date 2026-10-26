@@ -24,7 +24,7 @@ import pymupdf
 from src.ddp_siape import (
     CRITERIO_ELEMENTO, CRITERIO_REPARTIDO, CRITERIO_SEM_EMPENHO, CRITERIO_SOMADO, CRITERIO_UNICO,
     OPERACAO_REFORCO, OPERACAO_REMANEJAR, RESERVA_DDP, RESERVA_PROJECAO, SEM_EMPENHO, TIPO_CREDITO, TIPO_DDP,
-    SEM_ACAO, acoes_dos_quadros, conciliacao_sem_ddp, conferencia, confronto_liquidado, ddp_por_natureza, ler_relatorio,
+    SEM_ACAO, acoes_dos_quadros, conciliacao_por_acao, conciliacao_sem_ddp, conferencia, confronto_liquidado, ddp_por_natureza, ler_relatorio,
     plano_operacoes, quadro_reforco, quadro_sem_ddp, reforco_por_acao_po, reserva_projetada, separar_competencias,
     validar_conjunto, variacao_por_natureza,
 )
@@ -406,6 +406,55 @@ class TestReforcoPorAcaoPo(unittest.TestCase):
         self.assertEqual(tabela.loc[("20TP", "X"), "Situação"], "Cabe")
         self.assertEqual(tabela.loc[("0181", "X"), "Situação"], "Sem dotação na base")
         self.assertEqual(tabela.loc[(SEM_ACAO, "—"), "Dotação atualizada"], "—")
+
+
+class TestConciliacaoPorAcao(unittest.TestCase):
+    """Ponte entre o saldo do quadro por ação e o saldo do painel (base sintética)."""
+
+    @classmethod
+    def setUpClass(cls):
+        base = pd.concat([_base_sintetica(), pd.DataFrame(
+            _item(10, "31911303", 1000.0, {202608: 300.0, 202609: 300.0}, acao="09HB", favorecido="FUNDO RPPS"))],
+            ignore_index=True)
+        grade = pd.DataFrame([
+            {"grupo": GRUPO_RPPS, "natureza_detalhada_cod": "31911303", "natureza_detalhada_desc": "RPPS",
+             "meses": [None] * 7 + [300.0, 300.0, 350.0, 700.0, 350.0]},
+            {"grupo": "ativo", "natureza_detalhada_cod": "31901101", "natureza_detalhada_desc": "VENC",
+             "meses": [None] * 7 + [400.0, 300.0, 450.0, 450.0, 450.0]},
+            {"grupo": "outros_beneficios", "natureza_detalhada_cod": "33909308", "natureza_detalhada_desc": "PER CAPITA",
+             "meses": [None] * 8 + [300.0, 400.0, 400.0, 400.0]},
+        ])
+        cls.quadros = [quadro_reforco(_ddp_sintetica(), base, 202610, RESERVA), quadro_sem_ddp(base, 202610, grade, GRUPO_RPPS)]
+        dotacao = pd.Series({("20TP", "X"): 7000.0, ("2004", "X"): 10500.0, ("09HB", "X"): 1900.0})
+        cls.tabela = conciliacao_por_acao(cls.quadros, base, 202610, grade, dotacao).set_index("acao_cod")
+        cls.por_po = reforco_por_acao_po(cls.quadros, base, 2026, dotacao).set_index(["acao_cod", "po_cod"])
+
+    def test_identidade_fecha_em_todas_as_acoes(self):
+        self.assertEqual(self.tabela["diferenca"].dropna().abs().max(), 0.0)
+        self.assertTrue(pd.isna(self.tabela.loc["0181", "diferenca"]))  # sem dotação: nulo, não zero
+
+    def test_saldo_do_quadro_igual_ao_quadro_por_acao_po(self):
+        for acao in ("20TP", "2004", "09HB"):
+            self.assertEqual(round(self.tabela.loc[acao, "saldo_quadro"], 2),
+                             round(self.por_po.loc[(acao, "X"), "saldo_apos_reforco"], 2), acao)
+
+    def test_tabela_da_aba(self):
+        from src.ui_ddp_siape import tabela_conciliacao
+
+        tabela = tabela_conciliacao(self.tabela.reset_index()).set_index("Ação")
+        self.assertEqual(tabela.loc["09HB", "Saldo no painel"], "−R$ 100,00")
+        self.assertEqual(tabela.loc["09HB", "Diferença não explicada"], "R$ 0,00")
+        self.assertEqual(tabela.loc["0181", "Saldo no painel"], "—")
+
+    def test_valores_do_rpps_e_do_ativo(self):
+        rpps = self.tabela.loc["09HB"]
+        # painel: 1.900 − 2.000 = −100; quadro: 1.900 − 1.000 − 1.000 = −100 (mesma projeção, mesmo empenhado)
+        self.assertEqual((rpps["saldo_painel"], rpps["saldo_quadro"], rpps["projecao_fora"]), (-100.0, -100.0, 0.0))
+        ativo = self.tabela.loc["20TP"]
+        self.assertEqual(ativo["total_painel"], 2050.0)
+        self.assertEqual(ativo["saldo_painel"], 7000.0 - 2050.0)
+        # a natureza de benefício vai para a ação em que é executada (2004)
+        self.assertEqual(self.tabela.loc["2004", "total_painel"], 1500.0)
 
 
 class TestPlanoOperacoes(unittest.TestCase):

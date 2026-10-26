@@ -13,11 +13,11 @@ import pandas as pd
 import streamlit as st
 
 from src.ddp_siape import (
-    SEM_ACAO, TIPO_DDP, acoes_dos_quadros, conciliacao_sem_ddp, conferencia, confronto_liquidado, ddp_por_natureza,
+    SEM_ACAO, TIPO_DDP, acoes_dos_quadros, conciliacao_por_acao, conciliacao_sem_ddp, conferencia, confronto_liquidado, ddp_por_natureza,
     ler_relatorio, plano_operacoes, quadro_reforco, quadro_sem_ddp, reforco_por_acao_po, reserva_projetada,
     separar_competencias, validar_conjunto, variacao_por_natureza,
 )
-from src.despesas_pessoal import GRUPO_RPPS, MESES_NOMES, dotacao_atualizada_por_acao_e_po
+from src.despesas_pessoal import ACOES_ESCOPO, GRUPO_RPPS, MESES_NOMES, dotacao_atualizada_por_acao_e_po
 from src.ui_despesas_pessoal_abas import _md, brl
 
 
@@ -183,9 +183,44 @@ def render_acao_po(tabela: pd.DataFrame, ano_dotacao: int) -> None:
     ))
 
 
+_NOMES_GRUPO = {"ativo": "Ativo", "inativo": "Inativo", "rpps": "RPPS", "outros_beneficios": "Outros Benefícios"}
+
+
+def tabela_conciliacao(conc: pd.DataFrame) -> pd.DataFrame:
+    return pd.DataFrame({
+        "Ação": conc["acao_cod"], "Grupo": conc["grupo"].map(_NOMES_GRUPO),
+        "Saldo no painel": conc["saldo_painel"].map(brl),
+        "+ Projeção do painel fora do quadro": conc["projecao_fora"].map(brl),
+        "+ Executado do painel fora dos empenhos do quadro": conc["executado_fora"].map(brl),
+        "− Empenhado fora dos quadros": conc["empenhado_fora"].map(brl),
+        "− Sobra nos empenhos do quadro": conc["sobras"].map(brl),
+        "= Saldo no quadro (disponível − reforço)": conc["saldo_quadro"].map(brl),
+        "Diferença não explicada": conc["diferenca"].map(brl),
+    })
+
+
+def render_conciliacao(conc: pd.DataFrame) -> None:
+    """Ponte entre o saldo do quadro por ação e o saldo do painel (27/10/2026)."""
+    st.markdown("**Do saldo do painel ao saldo do quadro, por ação**")
+    st.dataframe(tabela_conciliacao(conc), hide_index=True, width="stretch", height="content")
+    fora = conc["diferenca"].dropna().abs().max() if conc["diferenca"].notna().any() else 0.0
+    if fora >= 0.005:
+        st.warning(f"Há diferença não explicada de até {brl(fora)} entre o painel e o quadro: confira antes de usar.")
+    sem = conc.attrs.get("naturezas_sem_acao", 0)
+    st.caption(_md(
+        "Saldo do quadro = dotação − empenhado na ação − reforço até dezembro dos empenhos do quadro. Saldo do painel = "
+        "dotação − total do ano projetado. A diferença entre os dois é a soma das parcelas: projeção do painel que o "
+        "quadro não cobre (naturezas sem empenho de folha, diferença entre DDP e projeção), executado que não passou "
+        "pelos empenhos do quadro, empenhado em outras notas da ação e sobra dos empenhos com folga. Outros Benefícios "
+        "é aberto por ação (2004/212B) pela ação em que cada natureza é executada; projeção padrão, sem as edições "
+        "manuais. Ação sem dotação na base fica em branco."
+        + (f" {sem} linha(s) da projeção sem ação única ficaram fora." if sem else "")
+    ))
+
+
 def planilha_excel(competencia: int, conf: pd.DataFrame, plano: pd.DataFrame, por_empenho: pd.DataFrame,
                    itens: pd.DataFrame, itens_rpps: pd.DataFrame | None = None,
-                   acao_po: pd.DataFrame | None = None) -> bytes:
+                   acao_po: pd.DataFrame | None = None, conciliacao: pd.DataFrame | None = None) -> bytes:
     """Planilha para download (gerada em memória, nada é gravado no servidor), com os valores numéricos."""
     arquivo = BytesIO()
     with pd.ExcelWriter(arquivo, engine="openpyxl") as escritor:
@@ -197,6 +232,8 @@ def planilha_excel(competencia: int, conf: pd.DataFrame, plano: pd.DataFrame, po
                 escritor, sheet_name="RPPS (projeção)", index=False)
         if acao_po is not None and not acao_po.empty:
             acao_po.to_excel(escritor, sheet_name="Por ação e PO", index=False)
+        if conciliacao is not None and not conciliacao.empty:
+            conciliacao.to_excel(escritor, sheet_name="Painel × quadro", index=False)
         conf.to_excel(escritor, sheet_name="Conferência", index=False)
         pd.DataFrame({"competencia": [competencia]}).to_excel(escritor, sheet_name="Referência", index=False)
     return arquivo.getvalue()
@@ -302,17 +339,19 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
     render_rpps(itens_rpps, por_empenho_rpps,
                 conciliacao_sem_ddp(itens_rpps, grade_linhas, GRUPO_RPPS, competencia, dotacao_rpps), competencia)
 
-    acao_po = None
+    acao_po = conciliacao = None
     if dotacao_df is not None and ano_dotacao is not None:
         quadros = [(itens, por_empenho), (itens_rpps, por_empenho_rpps)]
-        acoes = acoes_dos_quadros(quadros, mensal, competencia // 100)
-        acao_po = reforco_por_acao_po(quadros, mensal, competencia // 100,
-                                      dotacao_atualizada_por_acao_e_po(dotacao_df, ano_dotacao, acoes))
+        acoes = acoes_dos_quadros(quadros, mensal, competencia // 100) | set(ACOES_ESCOPO)
+        dotacao_acao_po = dotacao_atualizada_por_acao_e_po(dotacao_df, ano_dotacao, acoes)
+        acao_po = reforco_por_acao_po(quadros, mensal, competencia // 100, dotacao_acao_po)
         render_acao_po(acao_po, ano_dotacao)
+        conciliacao = conciliacao_por_acao(quadros, mensal, competencia, grade_linhas, dotacao_acao_po)
+        render_conciliacao(conciliacao)
 
     st.download_button(
-        "Baixar em Excel (plano, por empenho, itens, RPPS, ação/PO e conferência)",
-        planilha_excel(competencia, conf, plano, por_empenho, itens, itens_rpps, acao_po),
+        "Baixar em Excel (plano, por empenho, itens, RPPS, ação/PO, painel × quadro e conferência)",
+        planilha_excel(competencia, conf, plano, por_empenho, itens, itens_rpps, acao_po, conciliacao),
         file_name=f"reforco_folha_{competencia}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         key="dp_ddp_excel",

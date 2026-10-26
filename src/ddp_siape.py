@@ -43,6 +43,10 @@ from datetime import date
 
 import pandas as pd
 
+from src.despesas_pessoal import (
+    ACAO_ASSISTENCIA_MEDICA, ACAO_ATIVO, ACAO_BENEFICIOS_OBRIGATORIOS, ACAO_INATIVO, ACAO_RPPS,
+    GRUPO_ATIVO, GRUPO_INATIVO, GRUPO_OUTROS_BENEFICIOS, GRUPO_RPPS,
+)
 from src.tesouro_execucao_mensal import valor_empenhado_por_bloco
 
 TIPO_DDP = "DDP"
@@ -499,6 +503,17 @@ def acoes_dos_quadros(quadros: list[tuple[pd.DataFrame, pd.DataFrame]], mensal_d
     return set(base.loc[base["ne_ccor"].isin(nes), "acao_cod"].dropna().astype(str))
 
 
+def _acao_po_dos_empenhos(itens: pd.DataFrame, blocos: pd.DataFrame) -> dict[str, tuple[str, str]]:
+    """(Ação, PO) de cada empenho do quadro, pela NE; NEs com Ação/PO diferentes ou sem NE → `SEM_ACAO`."""
+    ne_acao_po = blocos.groupby("ne_ccor")[["acao_cod", "po_cod"]].first()
+    resultado = {}
+    for empenho, nes in itens.groupby("empenho")["nes"].first().items():
+        combinacoes = {tuple(ne_acao_po.loc[ne]) for ne in nes if ne in ne_acao_po.index}
+        acao, po = next(iter(combinacoes)) if len(combinacoes) == 1 else (SEM_ACAO, "")
+        resultado[empenho] = (str(acao), str(po))
+    return resultado
+
+
 def reforco_por_acao_po(quadros: list[tuple[pd.DataFrame, pd.DataFrame]], mensal_df: pd.DataFrame, ano: int,
                         dotacao_por_acao_po: pd.Series) -> pd.DataFrame:
     """O reforço cabe na dotação? (27/10/2026). `quadros`: os pares (itens, por_empenho) de
@@ -512,15 +527,13 @@ def reforco_por_acao_po(quadros: list[tuple[pd.DataFrame, pd.DataFrame]], mensal
     quadros: outras despesas da mesma ação que ainda precisem de empenho não entram."""
     base = mensal_df.loc[mensal_df["ano"] == ano]
     blocos = valor_empenhado_por_bloco(base)
-    ne_acao_po = blocos.groupby("ne_ccor")[["acao_cod", "po_cod"]].first()
     empenhado = blocos.groupby(["acao_cod", "po_cod"])["empenhada"].sum(min_count=1)
 
     linhas = []
     for itens, por_empenho in quadros:
-        nes_por_empenho = itens.groupby("empenho")["nes"].first()
+        acao_po = _acao_po_dos_empenhos(itens, blocos)
         for r in por_empenho.itertuples(index=False):
-            combinacoes = {tuple(ne_acao_po.loc[ne]) for ne in nes_por_empenho.get(r.empenho, ()) if ne in ne_acao_po.index}
-            acao, po = next(iter(combinacoes)) if len(combinacoes) == 1 else (SEM_ACAO, "")
+            acao, po = acao_po[r.empenho]
             linhas.append({"acao_cod": str(acao), "po_cod": str(po), "empenho": r.empenho, "reforco_mes": r.reforco_mes,
                            "reforco_ate_dezembro": r.reforco_ate_dezembro,
                            "sobra_empenhos": max(0.0, float(r.saldo_apos_ano))})
@@ -545,6 +558,99 @@ def reforco_por_acao_po(quadros: list[tuple[pd.DataFrame, pd.DataFrame]], mensal
     resumo["disponivel"] = resumo["dotacao"] - resumo["empenhado"].fillna(0.0)
     resumo["saldo_apos_reforco"] = resumo["disponivel"] - resumo["reforco_ate_dezembro"]
     return resumo.reset_index()[colunas].sort_values(["saldo_apos_reforco", "acao_cod", "po_cod"], na_position="first").reset_index(drop=True)
+
+
+_ACAO_DO_GRUPO = {GRUPO_ATIVO: ACAO_ATIVO, GRUPO_INATIVO: ACAO_INATIVO, GRUPO_RPPS: ACAO_RPPS}
+_GRUPO_DA_ACAO = {ACAO_ATIVO: GRUPO_ATIVO, ACAO_INATIVO: GRUPO_INATIVO, ACAO_RPPS: GRUPO_RPPS,
+                  ACAO_ASSISTENCIA_MEDICA: GRUPO_OUTROS_BENEFICIOS, ACAO_BENEFICIOS_OBRIGATORIOS: GRUPO_OUTROS_BENEFICIOS}
+
+
+def _acao_da_linha_da_grade(grupo: str, natureza: str, acao_por_natureza: dict[str, str | None]) -> str | None:
+    if grupo == GRUPO_OUTROS_BENEFICIOS:
+        return acao_por_natureza.get(natureza)  # 2004 ou 212B, pela execução do exercício
+    return _ACAO_DO_GRUPO.get(grupo)
+
+
+def conciliacao_por_acao(quadros: list[tuple[pd.DataFrame, pd.DataFrame]], mensal_df: pd.DataFrame, ano_mes: int,
+                         grade_linhas: pd.DataFrame, dotacao_por_acao_po: pd.Series) -> pd.DataFrame:
+    """Ponte entre o saldo do quadro por ação (`reforco_por_acao_po`, somado por ação) e o
+    saldo do painel (dotação − total do ano projetado), para as ações do escopo de pessoal
+    (27/10/2026). Identidade exata, parcela a parcela:
+
+    saldo no quadro = saldo do painel
+        + `projecao_fora`: projeção do painel do mês do quadro em diante − (DDP/projeção do mês
+          + reserva) atribuídas aos empenhos do quadro (naturezas sem empenho de folha,
+          pagamentos diretos, diferença entre a DDP e a projeção do mês);
+        + `executado_fora`: executado do painel antes do mês − Liquidado nos empenhos do quadro
+          (o que foi liquidado em outras notas da ação);
+        − `empenhado_fora`: empenhado em notas da ação que não estão nos quadros;
+        − `sobras`: o que sobraria em dezembro nos empenhos do quadro com folga (não anulado);
+        + `diferenca` (resíduo; zero salvo arredondamento).
+
+    Outros Benefícios é aberto por ação (2004/212B) pela ação em que cada natureza é executada
+    no exercício; natureza em mais de uma ação fica fora (contada em `naturezas_sem_acao`).
+    A projeção é a padrão (sem as edições manuais do painel). Dotação nula deixa os saldos nulos."""
+    ano, mes = divmod(ano_mes, 100)
+    base = mensal_df.loc[mensal_df["ano"] == ano]
+    blocos = valor_empenhado_por_bloco(base)
+    acoes_escopo = sorted(_GRUPO_DA_ACAO)
+    beneficios = base.loc[base["acao_cod"].isin([ACAO_ASSISTENCIA_MEDICA, ACAO_BENEFICIOS_OBRIGATORIOS])]
+    unicas = beneficios.groupby("natureza_detalhada_cod")["acao_cod"].agg(lambda a: set(a.dropna().astype(str)))
+    acao_por_natureza = {str(n): next(iter(a)) if len(a) == 1 else None for n, a in unicas.items()}
+
+    soma = lambda valores: sum(float(v) for v in valores if v is not None and not pd.isna(v))
+    projecao = {a: {"anterior": 0.0, "futuro": 0.0} for a in acoes_escopo}
+    sem_acao = 0
+    for l in grade_linhas.itertuples(index=False):
+        acao = _acao_da_linha_da_grade(l.grupo, str(l.natureza_detalhada_cod), acao_por_natureza)
+        if acao not in projecao:
+            sem_acao += 1
+            continue
+        projecao[acao]["anterior"] += soma(list(l.meses)[:mes - 1])
+        projecao[acao]["futuro"] += soma(list(l.meses)[mes - 1:])
+
+    quadro = {a: dict(empenhada=0.0, liquidada=0.0, ddp=0.0, reserva=0.0, sobras=0.0, reforco=0.0) for a in acoes_escopo}
+    for itens, por_empenho in quadros:
+        acao_po = _acao_po_dos_empenhos(itens, blocos)
+        for empenho, grupo in itens.groupby("empenho"):
+            acao = acao_po[empenho][0]
+            if acao not in quadro:
+                continue
+            q = quadro[acao]
+            for coluna in ("empenhada", "liquidada", "ddp", "reserva"):
+                q[coluna] += float(grupo[coluna].sum())
+            saldo_apos = float(grupo["saldo_apos_ano"].sum())
+            q["sobras"] += max(0.0, saldo_apos)
+            q["reforco"] += max(0.0, -saldo_apos)
+
+    dotacao = {}
+    for (acao, _po), valor in dotacao_por_acao_po.items():
+        if valor is not None and not pd.isna(valor):
+            dotacao[str(acao)] = dotacao.get(str(acao), 0.0) + float(valor)
+    empenhado = blocos.groupby("acao_cod")["empenhada"].sum(min_count=1)
+
+    linhas = []
+    for acao in acoes_escopo:
+        t_ant, t_fut, q = projecao[acao]["anterior"], projecao[acao]["futuro"], quadro[acao]
+        emp_total = float(empenhado.get(acao, 0.0) or 0.0)
+        dot = dotacao.get(acao)
+        saldo_painel = None if dot is None else dot - (t_ant + t_fut)
+        saldo_quadro = None if dot is None else dot - emp_total - q["reforco"]
+        parcelas = {
+            "projecao_fora": t_fut - q["ddp"] - q["reserva"],
+            "executado_fora": t_ant - q["liquidada"],
+            "empenhado_fora": emp_total - q["empenhada"],
+            "sobras": q["sobras"],
+        }
+        explicado = parcelas["projecao_fora"] + parcelas["executado_fora"] - parcelas["empenhado_fora"] - parcelas["sobras"]
+        linhas.append({
+            "acao_cod": acao, "grupo": _GRUPO_DA_ACAO[acao], "dotacao": dot, "total_painel": t_ant + t_fut,
+            "saldo_painel": saldo_painel, "reforco_quadro": q["reforco"], "saldo_quadro": saldo_quadro, **parcelas,
+            "diferenca": None if dot is None else round(saldo_quadro - saldo_painel - explicado, 2),
+        })
+    tabela = pd.DataFrame(linhas)
+    tabela.attrs["naturezas_sem_acao"] = sem_acao
+    return tabela
 
 
 OPERACAO_REMANEJAR = "anular e reforçar no mesmo empenho"

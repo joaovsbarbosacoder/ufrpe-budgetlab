@@ -735,7 +735,10 @@ usa sempre a competência mais recente. A contribuição patronal ao RPPS, que n
 na DDP, tem quadro próprio: o mês e a reserva vêm da projeção do painel, e o reforço
 até dezembro fecha com o painel (déficit de dotação + dotação ainda não empenhada).
 O quadro "O reforço cabe na dotação?" cruza o reforço até dezembro (DDP e RPPS) de cada
-empenho com a dotação ainda não empenhada da sua Ação/PO e destaca onde não cabe. As regras (empenhos da folha, repartição entre
+empenho com a dotação ainda não empenhada da sua Ação/PO e destaca onde não cabe. Abaixo
+dele, a ponte "Do saldo do painel ao saldo do quadro, por ação" explica, parcela a parcela,
+por que o saldo do quadro difere do saldo do painel (projeção fora do quadro, executado
+fora dos empenhos do quadro, empenhado em outras notas e sobras), com diferença final zero. As regras (empenhos da folha, repartição entre
 empenhos, reserva e compensação) estão no docstring de `src/ddp_siape.py`; a leitura
 dos PDFs usa o `pymupdf`. **Fórmulas de
 projeção** descreve cada fórmula e deixa editáveis os seus números: multiplicador
