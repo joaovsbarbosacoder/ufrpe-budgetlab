@@ -13,10 +13,11 @@ import pandas as pd
 import streamlit as st
 
 from src.ddp_siape import (
-    TIPO_DDP, conciliacao_sem_ddp, conferencia, confronto_liquidado, ddp_por_natureza, ler_relatorio, plano_operacoes,
-    quadro_reforco, quadro_sem_ddp, reserva_projetada, separar_competencias, validar_conjunto, variacao_por_natureza,
+    SEM_ACAO, TIPO_DDP, acoes_dos_quadros, conciliacao_sem_ddp, conferencia, confronto_liquidado, ddp_por_natureza,
+    ler_relatorio, plano_operacoes, quadro_reforco, quadro_sem_ddp, reforco_por_acao_po, reserva_projetada,
+    separar_competencias, validar_conjunto, variacao_por_natureza,
 )
-from src.despesas_pessoal import GRUPO_RPPS, MESES_NOMES
+from src.despesas_pessoal import GRUPO_RPPS, MESES_NOMES, dotacao_atualizada_por_acao_e_po
 from src.ui_despesas_pessoal_abas import _md, brl
 
 
@@ -149,8 +150,42 @@ def render_rpps(itens: pd.DataFrame, por_empenho: pd.DataFrame, conciliacao: dic
     )
 
 
+def tabela_acao_po(tabela: pd.DataFrame) -> pd.DataFrame:
+    def situacao(v):
+        if v is None or pd.isna(v):
+            return "Sem dotação na base"
+        return "Não cabe" if round(v, 2) < 0 else "Cabe"
+    return pd.DataFrame({
+        "Ação": tabela["acao_cod"], "PO": tabela["po_cod"].replace("", "—"),
+        "Dotação atualizada": tabela["dotacao"].map(brl), "Empenhado": tabela["empenhado"].map(brl),
+        "Disponível para empenhar": tabela["disponivel"].map(brl), "Reforço do mês": tabela["reforco_mes"].map(brl),
+        "Reforço até dezembro": tabela["reforco_ate_dezembro"].map(brl),
+        "Disponível − reforço": tabela["saldo_apos_reforco"].map(brl), "Situação": tabela["saldo_apos_reforco"].map(situacao),
+        "Sobra nos empenhos do quadro": tabela["sobra_empenhos"].map(brl), "Empenhos com reforço": tabela["empenhos"],
+    })
+
+
+def render_acao_po(tabela: pd.DataFrame, ano_dotacao: int) -> None:
+    """O reforço cabe na dotação de cada Ação/PO? (27/10/2026)"""
+    st.markdown("**O reforço cabe na dotação?**")
+    nao_cabe = tabela.loc[tabela["saldo_apos_reforco"].round(2) < 0]
+    if not nao_cabe.empty:
+        st.warning(_md("Reforço até dezembro maior que a dotação ainda não empenhada em: " + "; ".join(
+            f"{r.acao_cod}/{r.po_cod} (falta {brl(-r.saldo_apos_reforco)})" for r in nao_cabe.itertuples()) + "."))
+    st.dataframe(tabela_acao_po(tabela), hide_index=True, width="stretch", height="content")
+    st.caption(_md(
+        f"Disponível = Dotação Atualizada de {ano_dotacao} − tudo o que já foi empenhado na Ação/PO no exercício (todos "
+        "os empenhos, inclusive os fora da folha). Entram só os reforços dos quadros desta aba (DDP e RPPS): outras "
+        "despesas da mesma ação que ainda precisem de empenho não estão aqui, e por isso a conta pode diferir do saldo "
+        "do painel. “Sobra nos empenhos do quadro” é o que ficaria em dezembro nos empenhos com folga e poderia ser "
+        "anulado para liberar dotação na mesma Ação/PO. Nenhum remanejamento entre ações ou POs é presumido. "
+        f"“{SEM_ACAO}”: empenho agrupado com Ação/PO diferentes, ou natureza sem empenho."
+    ))
+
+
 def planilha_excel(competencia: int, conf: pd.DataFrame, plano: pd.DataFrame, por_empenho: pd.DataFrame,
-                   itens: pd.DataFrame, itens_rpps: pd.DataFrame | None = None) -> bytes:
+                   itens: pd.DataFrame, itens_rpps: pd.DataFrame | None = None,
+                   acao_po: pd.DataFrame | None = None) -> bytes:
     """Planilha para download (gerada em memória, nada é gravado no servidor), com os valores numéricos."""
     arquivo = BytesIO()
     with pd.ExcelWriter(arquivo, engine="openpyxl") as escritor:
@@ -160,16 +195,20 @@ def planilha_excel(competencia: int, conf: pd.DataFrame, plano: pd.DataFrame, po
         if itens_rpps is not None and not itens_rpps.empty:
             itens_rpps.drop(columns=["nes"]).rename(columns={"ddp": "projecao_mes"}).to_excel(
                 escritor, sheet_name="RPPS (projeção)", index=False)
+        if acao_po is not None and not acao_po.empty:
+            acao_po.to_excel(escritor, sheet_name="Por ação e PO", index=False)
         conf.to_excel(escritor, sheet_name="Conferência", index=False)
         pd.DataFrame({"competencia": [competencia]}).to_excel(escritor, sheet_name="Referência", index=False)
     return arquivo.getvalue()
 
 
 def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int, procedencia: str,
-               dotacao_grupo: pd.Series | None = None) -> None:
+               dotacao_grupo: pd.Series | None = None, dotacao_df: pd.DataFrame | None = None,
+               ano_dotacao: int | None = None) -> None:
     """`grade_linhas`: `grade_mensal(...).linhas` do painel (projeção por natureza
     detalhada, com as fórmulas da sessão), usada para a reserva dos meses seguintes e para o
-    mês do RPPS patronal. `dotacao_grupo`: dotação por grupo, para fechar o RPPS com o painel."""
+    mês do RPPS patronal. `dotacao_grupo`: dotação por grupo, para fechar o RPPS com o painel.
+    `dotacao_df`/`ano_dotacao`: Dotação Anual e exercício do painel, para o quadro por Ação/PO."""
     st.markdown(
         "Envie os PDFs do SIAPE do mês: **DDP** e **Crédito Bancário**, de servidor e de pensionista. "
         "A aba confere os totais e calcula, por empenho, quanto falta para liquidar a folha. Os arquivos "
@@ -263,9 +302,17 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
     render_rpps(itens_rpps, por_empenho_rpps,
                 conciliacao_sem_ddp(itens_rpps, grade_linhas, GRUPO_RPPS, competencia, dotacao_rpps), competencia)
 
+    acao_po = None
+    if dotacao_df is not None and ano_dotacao is not None:
+        quadros = [(itens, por_empenho), (itens_rpps, por_empenho_rpps)]
+        acoes = acoes_dos_quadros(quadros, mensal, competencia // 100)
+        acao_po = reforco_por_acao_po(quadros, mensal, competencia // 100,
+                                      dotacao_atualizada_por_acao_e_po(dotacao_df, ano_dotacao, acoes))
+        render_acao_po(acao_po, ano_dotacao)
+
     st.download_button(
-        "Baixar em Excel (plano, por empenho, itens, RPPS e conferência)",
-        planilha_excel(competencia, conf, plano, por_empenho, itens, itens_rpps),
+        "Baixar em Excel (plano, por empenho, itens, RPPS, ação/PO e conferência)",
+        planilha_excel(competencia, conf, plano, por_empenho, itens, itens_rpps, acao_po),
         file_name=f"reforco_folha_{competencia}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         key="dp_ddp_excel",

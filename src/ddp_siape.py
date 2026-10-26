@@ -489,6 +489,64 @@ def conciliacao_sem_ddp(itens: pd.DataFrame, grade_linhas: pd.DataFrame, grupo: 
     }
 
 
+SEM_ACAO = "(sem ação única)"
+
+
+def acoes_dos_quadros(quadros: list[tuple[pd.DataFrame, pd.DataFrame]], mensal_df: pd.DataFrame, ano: int) -> set[str]:
+    """Ações dos empenhos que aparecem nos quadros — para buscar só a dotação necessária."""
+    base = mensal_df.loc[mensal_df["ano"] == ano]
+    nes = {ne for itens, _ in quadros for tupla in itens["nes"] for ne in tupla}
+    return set(base.loc[base["ne_ccor"].isin(nes), "acao_cod"].dropna().astype(str))
+
+
+def reforco_por_acao_po(quadros: list[tuple[pd.DataFrame, pd.DataFrame]], mensal_df: pd.DataFrame, ano: int,
+                        dotacao_por_acao_po: pd.Series) -> pd.DataFrame:
+    """O reforço cabe na dotação? (27/10/2026). `quadros`: os pares (itens, por_empenho) de
+    `quadro_reforco` (DDP) e `quadro_sem_ddp` (RPPS). Cada empenho vai para a (Ação, PO) da
+    sua NE; empenho agrupado com NEs de Ação/PO diferentes, ou sem empenho, vai para
+    `SEM_ACAO`. Por (Ação, PO): `dotacao` (Atualizada), `empenhado` (todos os empenhos do
+    exercício na Ação/PO, deduplicado por bloco), `disponivel` = dotação − empenhado,
+    `reforco_mes`, `reforco_ate_dezembro`, `sobra_empenhos` (o que sobraria em dezembro nos
+    empenhos do quadro, anulável) e `saldo_apos_reforco` = disponível − reforço até dezembro
+    (negativo = o reforço não cabe). Dotação ausente fica nula, não zero. Só os empenhos dos
+    quadros: outras despesas da mesma ação que ainda precisem de empenho não entram."""
+    base = mensal_df.loc[mensal_df["ano"] == ano]
+    blocos = valor_empenhado_por_bloco(base)
+    ne_acao_po = blocos.groupby("ne_ccor")[["acao_cod", "po_cod"]].first()
+    empenhado = blocos.groupby(["acao_cod", "po_cod"])["empenhada"].sum(min_count=1)
+
+    linhas = []
+    for itens, por_empenho in quadros:
+        nes_por_empenho = itens.groupby("empenho")["nes"].first()
+        for r in por_empenho.itertuples(index=False):
+            combinacoes = {tuple(ne_acao_po.loc[ne]) for ne in nes_por_empenho.get(r.empenho, ()) if ne in ne_acao_po.index}
+            acao, po = next(iter(combinacoes)) if len(combinacoes) == 1 else (SEM_ACAO, "")
+            linhas.append({"acao_cod": str(acao), "po_cod": str(po), "empenho": r.empenho, "reforco_mes": r.reforco_mes,
+                           "reforco_ate_dezembro": r.reforco_ate_dezembro,
+                           "sobra_empenhos": max(0.0, float(r.saldo_apos_ano))})
+    colunas = ["acao_cod", "po_cod", "dotacao", "empenhado", "disponivel", "reforco_mes", "reforco_ate_dezembro",
+               "sobra_empenhos", "saldo_apos_reforco", "empenhos"]
+    if not linhas:
+        return pd.DataFrame(columns=colunas)
+    tabela = pd.DataFrame(linhas)
+    com_reforco = tabela.loc[tabela["reforco_ate_dezembro"] > 0.004]
+    resumo = tabela.groupby(["acao_cod", "po_cod"]).agg(
+        reforco_mes=("reforco_mes", "sum"), reforco_ate_dezembro=("reforco_ate_dezembro", "sum"),
+        sobra_empenhos=("sobra_empenhos", "sum"),
+    )
+    resumo["empenhos"] = com_reforco.groupby(["acao_cod", "po_cod"])["empenho"].agg(lambda e: ", ".join(sorted(e)))
+    resumo["empenhos"] = resumo["empenhos"].fillna("")
+    chave = lambda serie: {(str(a), str(p)): v for (a, p), v in serie.items()}
+    dotacao, emp = chave(dotacao_por_acao_po), chave(empenhado)
+    resumo["dotacao"] = [dotacao.get(k) if k[0] != SEM_ACAO else None for k in resumo.index]
+    resumo["empenhado"] = [emp.get(k) if k[0] != SEM_ACAO else None for k in resumo.index]
+    resumo["dotacao"] = pd.to_numeric(resumo["dotacao"], errors="coerce")
+    resumo["empenhado"] = pd.to_numeric(resumo["empenhado"], errors="coerce")
+    resumo["disponivel"] = resumo["dotacao"] - resumo["empenhado"].fillna(0.0)
+    resumo["saldo_apos_reforco"] = resumo["disponivel"] - resumo["reforco_ate_dezembro"]
+    return resumo.reset_index()[colunas].sort_values(["saldo_apos_reforco", "acao_cod", "po_cod"], na_position="first").reset_index(drop=True)
+
+
 OPERACAO_REMANEJAR = "anular e reforçar no mesmo empenho"
 OPERACAO_REFORCO = "reforço novo"
 

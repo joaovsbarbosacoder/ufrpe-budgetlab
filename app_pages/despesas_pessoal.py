@@ -223,6 +223,6 @@ with aba_painel:
 # Folha (DDP) (27/10/2026): PDFs do SIAPE só em memória; a reserva dos meses seguintes vem da grade por
 # natureza detalhada (`bruta`, antes da consolidação), com as fórmulas da sessão.
 with aba_ddp, st.container(key="dp_aba_ddp"):
-    render_ddp(mensal, bruta.linhas, ano, procedencia_bases, dotacao_grupo)
+    render_ddp(mensal, bruta.linhas, ano, procedencia_bases, dotacao_grupo, dotacao, ano_dotacao)
 
 gc.collect()  # ver o comentário no início da página
