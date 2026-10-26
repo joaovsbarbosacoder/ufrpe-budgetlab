@@ -690,11 +690,30 @@ Anual e Execução Mensal são lidas pelos seus manifestos (importação version
 `src/importacao_execucao_mensal.py`). As datas das extrações são independentes
 e ficam informadas no rodapé.
 
+Abaixo do painel, o quadro recolhível **Faixa histórica do total anual** mostra,
+por grupo e no total, quanto o exercício fecharia se, do mês seguinte à
+data-base até dezembro, a folha repetisse o comportamento de cada exercício
+anterior completo na Execução Mensal. O cálculo é: realizado até a data-base +
+Liquidada do mês da data-base × fator. O fator de um exercício é a Liquidada do
+mês seguinte até dezembro dividida pela Liquidada do mesmo mês da data-base
+(`faixa_historica_total_anual`). Exercício com mês faltando fica de fora e
+não vira zero. O quadro compara a faixa com o total projetado no painel (dentro,
+acima ou abaixo) e com a dotação (saldo no pior e no melhor caso). É só leitura:
+não muda projeção, saldo nem edições, e com poucos exercícios é apenas o mínimo
+e o máximo observados. Quando o saldo no pior caso fica negativo em algum grupo,
+um aviso amarelo acima do painel cita os grupos, o déficit e os exercícios usados,
+deixando claro que é cenário histórico e não a projeção. O aviso do próprio
+painel continua o mesmo. Sem exercício completo ou sem dotação do grupo, não há
+aviso.
+
 A página tem três abas. **Acompanhamento** é o painel acima. **Fórmulas de
 projeção** descreve cada fórmula e deixa editáveis os seus números: multiplicador
 por natureza de despesa, multiplicadores por grupo de sentenças e indenizações,
 multiplicador de rubrica sem regra em 2004/212B, meses e fração do 13º, repetição
-de novembro em dezembro no Ativo e critério de mês fechado. Os campos começam nas
+de novembro em dezembro no Ativo e critério de mês fechado. Na repetição de
+dezembro, o total do Ativo é o de novembro, mas o 13º (31901143) fica só com
+35% do seu novembro e o restante passa ao 1/3 de férias (31901145) — composição
+real de dezembro em 2024 e 2025; a fração é editável. Os campos começam nas
 regras confirmadas e valem só para a sessão. O painel recalcula na hora e avisa
 que as fórmulas foram ajustadas; a procedência lista cada ajuste. Um valor
 inválido (por exemplo, multiplicador abaixo de 12) aparece como erro, e o painel

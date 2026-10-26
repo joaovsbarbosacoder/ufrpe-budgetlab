@@ -117,6 +117,34 @@ nunca presumir:
       não muda — já é uma linha própria (grupo `rpps` corresponde 1:1 à ação 09HB, ao
       contrário de Outros Benefícios, que sempre foi 2 ações debaixo do mesmo grupo).
       Ver `saldo_remanescente_beneficios_por_acao`/`dotacao_atualizada_por_acao_beneficios`.
+  13. (26/10/2026) Auditoria da projeção contra 2024-2025 (aprovada pelo usuário): a
+      decisão 10 repetia novembro em dezembro RUBRICA A RUBRICA, então o 13º do Ativo
+      (31901143) aparecia cheio duas vezes e o 1/3 de férias (31901145) quase não
+      aparecia em dezembro. Na Liquidada real, dezembro do 13º foi ~35% de novembro
+      (2024: 4,56/12,80; 2025: 5,57/15,87) e o resto de dezembro veio do 1/3 de férias
+      pago para as férias de janeiro (2024: 7,21 mi; 2025: 9,06 mi). CORRIGIDO só a
+      composição: dezembro projetado do 13º do Ativo = `fracao_13_dezembro_ativo`
+      (padrão 0,35) × o seu novembro, e a diferença vai para o 1/3 de férias — o
+      total do grupo em dezembro continua igual a novembro (decisão 10 intacta). Ver
+      `_redistribuir_dezembro_ativo`.
+  14. (26/10/2026) Diagnóstico da sub-projeção do RPPS (319113, ação 09HB) — o backtest
+      partindo de set ficou ~1% abaixo do realizado em 2024 (+R$0,28 mi) e 2025 (+R$0,32
+      mi). DECIDIDO pelo usuário: MANTER x13, sem ajuste. Motivo: as causas foram
+      diferentes em cada ano, não um viés fixo da regra —
+      - 2024: crescimento da folha no 4º trimestre (base regular do Ativo +2,1% de set
+        para out-dez; RPPS dos meses normais +2,0%) = +R$0,41 mi; o extra do 13º saiu
+        0,96× o mês normal = −R$0,12 mi.
+      - 2025: o extra do 13º saiu 1,03× o mês normal = +R$0,25 mi; meses normais +R$0,08 mi.
+      Na média o extra do 13º ≈ 1× o mês (o que x13 pressupõe). O RPPS da 09HB é uma
+      única rubrica (31911303) e equivale a ~26% da base regular do Ativo (0,264-0,267 em
+      2024; 0,258-0,262 em 2025; 0,252-0,260 em 2026, em queda lenta). O patronal do 13º
+      caiu em novembro em 2024 e em DEZEMBRO em 2025; nenhum dos dois anos teve patronal
+      na antecipação de junho (confirma a decisão 11 — o "dobro" de jun/2025 é o atraso
+      do pagamento de maio: mai 2,09 + jun 13,72 ≈ 2 meses). Testado e REJEITADO x13,04
+      (calibrado nos mesmos 2 anos): zerava set/2024 e set/2025, mas piorava a partida
+      out/2024 de −1,0% para −2,3% e embutiria um crescimento presumido. O risco
+      residual (~R$0,3 mi/ano) fica visível pela faixa histórica (seção 14) e pelo aviso
+      do painel. Reavaliar quando a base mensal tiver 2026 completo.
 
 Contrato público:
     classificar_grupo(acao_cod) -> str | None
@@ -145,6 +173,7 @@ Contrato público:
     execucao_exercicio_por_grupo(anual_df, ano) -> pd.DataFrame
     execucao_exercicio_por_natureza(anual_df, ano) -> pd.DataFrame
     liquidada_mensal_por_grupo(mensal_df, ano) -> pd.DataFrame
+    faixa_historica_total_anual(mensal_df, ano, mes_referencia) -> pd.DataFrame
 
 PARÂMETROS EDITÁVEIS (27/09/2026, pedido do usuário: "faça com que [as fórmulas] fiquem
 editáveis em campos"): os números das decisões acima (multiplicadores, meses de
@@ -295,7 +324,8 @@ TABELA_REGRAS: dict[str, RegraRubrica] = {
         "319113", "Obrigações Patronais — RPPS (Ação 09HB)", REGRA_MULTIPLICADOR, MULTIPLICADOR_13,
         extra_concentrado_em_novembro=True,
         origem="Decisão 11 (22/09/2026): mesma razão de 319013 — contribuição patronal não incide "
-        "sobre a antecipação de junho, só sobre o 13º fechado em novembro.",
+        "sobre a antecipação de junho, só sobre o 13º fechado em novembro. Decisão 14 (26/10/2026): "
+        "x13 mantido após diagnóstico do desvio de ~1% em 2024-2025 (x13,04 testado e rejeitado).",
     ),
     # --- grupo ×12 (sem 13º nem férias — linhas separadas) ---
     "319001": _regra("319001", "Aposentadorias, Reserva Remunerada e Reformas (excl. 13º)", REGRA_MULTIPLICADOR, MULTIPLICADOR_12),
@@ -351,10 +381,15 @@ NATUREZAS_DETALHADAS_PROPORCAO_HISTORICA: dict[str, str] = {
 #: naturezas de despesa das 2 ações adicionais (decisão 2) que já têm rubrica própria
 #: identificada na execução 2026 — mapeadas explicitamente para x12 (decisão 5), em vez
 #: de cair só no padrão implícito, para ficarem auditáveis nesta tabela também.
+#: 339093 (26/10/2026, aprovado pelo usuário): ressarcimento de assistência médica/
+#: odontológica (33909308, ação 2004 — único uso na base; a Execução Anual também traz
+#: 33909311 Ressarcimento de Mensalidades, mesma ação), mensal e sem 13º — já projetava
+#: x12 pelo padrão da decisão 5, com alerta; agora com regra explícita, mesmo valor.
 _NATUREZAS_OUTROS_BENEFICIOS_CONHECIDAS = {
     "339046": "Auxílio-Alimentação",
     "339049": "Auxílio-Transporte",
     "339008": "Outros Benefícios Assistenciais do Servidor",
+    "339093": "Indenizações e Restituições (ressarcimento de assistência médica/odontológica)",
 }
 for _cod, _desc in _NATUREZAS_OUTROS_BENEFICIOS_CONHECIDAS.items():
     TABELA_REGRAS[_cod] = _regra(_cod, _desc, REGRA_MULTIPLICADOR, MULTIPLICADOR_12, origem="Decisão 5 (rubrica fora do relatório SPO original).")
@@ -398,6 +433,9 @@ class ParametrosProjecao:
     fracao_antecipacao_13: float = 0.5
     #: decisão 10 — dezembro projetado do Ativo repete novembro.
     dezembro_ativo_repete_novembro: bool = True
+    #: decisão 13 — fração do 13º de novembro (31901143) que fica no 13º de dezembro
+    #: do Ativo; o restante vai para o 1/3 de férias (31901145). Só com a decisão 10.
+    fracao_13_dezembro_ativo: float = 0.35
     #: decisão 9 — critério de "mês fechado" (data-base padrão).
     janela_meses_fechamento: int = 3
     fracao_minima_fechamento: float = 0.5
@@ -426,7 +464,8 @@ class ParametrosProjecao:
                 raise ValueError(f"{nome}: informe um mês entre 1 e 12 (recebido {mes!r}).")
         if self.mes_antecipacao_13 == self.mes_parcela_13:
             raise ValueError("Antecipação e parcela final do 13º precisam cair em meses diferentes.")
-        for nome, fracao in (("Fração paga na antecipação", self.fracao_antecipacao_13), ("Fração mínima de fechamento", self.fracao_minima_fechamento)):
+        for nome, fracao in (("Fração paga na antecipação", self.fracao_antecipacao_13), ("Fração mínima de fechamento", self.fracao_minima_fechamento),
+                             ("Fração do 13º mantida em dezembro", self.fracao_13_dezembro_ativo)):
             if isinstance(fracao, bool) or not isinstance(fracao, (int, float)) or not 0 <= fracao <= 1:
                 raise ValueError(f"{nome}: informe um valor entre 0 e 1 (recebido {fracao!r}).")
         if type(self.janela_meses_fechamento) is not int or not 1 <= self.janela_meses_fechamento <= 12:
@@ -474,6 +513,8 @@ def diferencas_do_padrao(parametros: ParametrosProjecao | None) -> list[str]:
         diferencas.append(f"fração na antecipação do 13º: {parametros.fracao_antecipacao_13:.0%}")
     if parametros.dezembro_ativo_repete_novembro != padrao.dezembro_ativo_repete_novembro:
         diferencas.append("dezembro do Ativo " + ("repete novembro" if parametros.dezembro_ativo_repete_novembro else "segue a regra da rubrica"))
+    if not math.isclose(parametros.fracao_13_dezembro_ativo, padrao.fracao_13_dezembro_ativo):
+        diferencas.append(f"13º mantido em dezembro do Ativo: {parametros.fracao_13_dezembro_ativo:.0%} de novembro")
     if parametros.janela_meses_fechamento != padrao.janela_meses_fechamento:
         diferencas.append(f"janela de fechamento: {parametros.janela_meses_fechamento} meses")
     if not math.isclose(parametros.fracao_minima_fechamento, padrao.fracao_minima_fechamento):
@@ -1116,9 +1157,44 @@ def grade_mensal(
             "regra_aplicada": regra.tipo if regra is not None else "SEM_REGRA",
         })
 
+    if parametros.dezembro_ativo_repete_novembro and 12 in meses_futuros:
+        alerta = _redistribuir_dezembro_ativo(linhas, parametros)
+        if alerta:
+            alertas.append(alerta)
+
     return ResultadoGradeMensal(
         linhas=pd.DataFrame(linhas), ano=ano, ano_mes_referencia=ano_mes_referencia, erros=erros, alertas=alertas,
     )
+
+
+#: decisão 13 — origem (13º do Ativo) e destino (1/3 de férias) da redistribuição de dezembro.
+NATUREZA_DETALHADA_13_ATIVO = "31901143"
+NATUREZA_DETALHADA_FERIAS_ATIVO = "31901145"
+
+
+def _redistribuir_dezembro_ativo(linhas: list[dict], parametros: ParametrosProjecao) -> str | None:
+    """Decisão 13: depois que a decisão 10 copiou novembro em dezembro rubrica a rubrica,
+    mantém no 13º do Ativo só `fracao_13_dezembro_ativo` do seu dezembro e soma o restante
+    ao 1/3 de férias — o total do grupo em dezembro não muda. Altera `linhas` no lugar.
+    Sem linha de 1/3 de férias para receber, não mexe em nada e devolve um alerta (o valor
+    nunca some)."""
+
+    fracao = parametros.fracao_13_dezembro_ativo
+    do_13 = [l for l in linhas if l["grupo"] == GRUPO_ATIVO
+             and l["natureza_detalhada_cod"] == NATUREZA_DETALHADA_13_ATIVO and l["meses"][11] is not None]
+    transferido = sum(l["meses"][11] * (1 - fracao) for l in do_13)
+    if not do_13 or math.isclose(transferido, 0.0, abs_tol=0.005):
+        return None
+    destino = [l for l in linhas if l["grupo"] == GRUPO_ATIVO and l["natureza_detalhada_cod"] == NATUREZA_DETALHADA_FERIAS_ATIVO]
+    if not destino:
+        return (
+            f"Dezembro do Ativo: sem rubrica {NATUREZA_DETALHADA_FERIAS_ATIVO} (1/3 de férias) na base para receber "
+            f"a parte do 13º (decisão 13) — 13º de dezembro mantido igual a novembro."
+        )
+    for linha in do_13:
+        linha["meses"][11] = linha["meses"][11] * fracao
+    destino[0]["meses"][11] = (destino[0]["meses"][11] or 0.0) + transferido
+    return None
 
 
 #: chave de uma rubrica dentro da grade — a mesma tripla usada em toda a grade mensal.
@@ -1790,4 +1866,79 @@ def comparar_beneficios_por_plano_orcamentario(
             linhas.append({"plano": f"{acao}/{po_cod}", "acao_cod": acao, "po_cod": po_cod,
                            "po_desc": descricoes.get(chave), "mes": mes, "projetado": p, "executado": e,
                            "diferenca": None if p is None or e is None else e - p})
+    return pd.DataFrame(linhas, columns=colunas)
+
+
+# --------------------------------------------------------------------------------------
+# 14. Faixa histórica do total anual (26/10/2026, aprovado pelo usuário após a auditoria
+#     da projeção contra 2024-2025). NÃO é projeção nem regra nova: só mostra quanto o
+#     ano fecharia se, do mês de referência até dezembro, cada grupo repetisse o
+#     comportamento de cada exercício anterior completo na base mensal. Fator do ano A =
+#     (Liquidada de ref+1 até dez de A) ÷ (Liquidada do mês ref de A); total = realizado
+#     do ano até ref + Liquidada do mês ref × fator. Com poucos anos na base, a faixa é
+#     só o mínimo e o máximo observados — não um intervalo estatístico.
+# --------------------------------------------------------------------------------------
+
+#: rótulo da linha que soma os 4 grupos na faixa histórica.
+LINHA_TOTAL = "total"
+
+
+def _numero_ou_none(valor: object) -> float | None:
+    return None if valor is None or pd.isna(valor) else float(valor)
+
+
+def faixa_historica_total_anual(mensal_df: pd.DataFrame, ano: int, mes_referencia: int) -> pd.DataFrame:
+    """Uma linha por grupo do exercício `ano` (mais `LINHA_TOTAL`). Colunas: `grupo`,
+    `realizado` (Liquidada de jan até `mes_referencia`), `base_referencia` (Liquidada do
+    mês de referência), `fatores` ({ano anterior: fator}), `total_min`, `total_max`.
+
+    Um exercício anterior só entra para um grupo se tiver Liquidada em TODOS os meses de
+    `mes_referencia` a dezembro e o mês de referência for positivo — mês faltando não
+    vira zero, o ano simplesmente fica de fora. A linha total usa o fator da SOMA dos
+    grupos (não a soma dos mínimos), e só com os anos válidos para todos os grupos.
+    Sem ano válido, `fatores` fica vazio e os totais ficam nulos."""
+
+    if not 1 <= mes_referencia <= 11:
+        raise ValueError("O mês de referência precisa deixar ao menos um mês a projetar (1 a 11).")
+    colunas = ["grupo", "realizado", "base_referencia", "fatores", "total_min", "total_max"]
+    atual = liquidada_mensal_por_grupo(mensal_df, ano)
+    if atual.empty:
+        return pd.DataFrame(columns=colunas)
+
+    meses_ate_ref = list(range(1, mes_referencia + 1))
+    meses_seguintes = list(range(mes_referencia + 1, 13))
+    anos_anteriores = sorted(a for a in {int(m) // 100 for m in mensal_df["ano_mes"].dropna()} if a < ano)
+
+    # (grupo, ano) -> (Liquidada do mês ref, soma dos meses seguintes), só anos completos.
+    historico: dict[str, dict[int, tuple[float, float]]] = {}
+    for a in anos_anteriores:
+        do_ano = liquidada_mensal_por_grupo(mensal_df, a)
+        for grupo in do_ano.index:
+            valores = do_ano.loc[grupo, [mes_referencia, *meses_seguintes]]
+            if valores.isna().any() or float(valores[mes_referencia]) <= 0:
+                continue
+            historico.setdefault(grupo, {})[a] = (float(valores[mes_referencia]), float(valores[meses_seguintes].sum()))
+
+    def linha(grupo, realizado, base, por_ano):
+        fatores = {a: seguintes / ref for a, (ref, seguintes) in sorted(por_ano.items())}
+        if realizado is None or base is None or base <= 0 or not fatores:
+            return {"grupo": grupo, "realizado": realizado, "base_referencia": base, "fatores": fatores,
+                    "total_min": None, "total_max": None}
+        return {"grupo": grupo, "realizado": realizado, "base_referencia": base, "fatores": fatores,
+                "total_min": realizado + base * min(fatores.values()),
+                "total_max": realizado + base * max(fatores.values())}
+
+    linhas = []
+    grupos = [g for g in ORDEM_GRUPOS if g in atual.index]
+    for grupo in grupos:
+        realizados = [_numero_ou_none(v) for v in atual.loc[grupo, meses_ate_ref]]
+        conhecidos = [v for v in realizados if v is not None]
+        linhas.append(linha(grupo, sum(conhecidos) if conhecidos else None,
+                            _numero_ou_none(atual.loc[grupo, mes_referencia]), historico.get(grupo, {})))
+
+    anos_comuns = set.intersection(*(set(historico.get(g, {})) for g in grupos)) if grupos else set()
+    por_ano_total = {a: (sum(historico[g][a][0] for g in grupos), sum(historico[g][a][1] for g in grupos)) for a in anos_comuns}
+    realizado_total = None if any(l["realizado"] is None for l in linhas) else sum(l["realizado"] for l in linhas)
+    base_total = None if any(l["base_referencia"] is None for l in linhas) else sum(l["base_referencia"] for l in linhas)
+    linhas.append(linha(LINHA_TOTAL, realizado_total, base_total, por_ano_total))
     return pd.DataFrame(linhas, columns=colunas)

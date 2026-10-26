@@ -29,6 +29,8 @@ from src.despesas_pessoal import (
     diferencas_do_padrao,
     execucao_exercicio_por_grupo,
     execucao_exercicio_por_natureza,
+    faixa_historica_total_anual,
+    LINHA_TOTAL,
     liquidada_mensal_por_grupo,
     aplicar_overrides,
     classificar_grupo,
@@ -842,7 +844,7 @@ class TestGradeMensalBeneficios(unittest.TestCase):
 
     def test_natureza_sem_regra_gera_alerta_por_po_nao_erro(self):
         resultado = self._grade([
-            _linha_execucao(ACAO_ASSISTENCIA_MEDICA, "339093", "33909308",
+            _linha_execucao(ACAO_ASSISTENCIA_MEDICA, "339039", "33903901",
                              tipo_linha="item_execucao", ano_mes=202601, liquidada=100.0, paga=0.0,
                              po_cod="0001", po_desc="ASSISTENCIA MEDICA", acao_desc=""),
         ])
@@ -850,6 +852,23 @@ class TestGradeMensalBeneficios(unittest.TestCase):
         self.assertEqual(len(resultado.alertas), 1)
         self.assertIn("PO 0001", resultado.alertas[0])
         self.assertAlmostEqual(resultado.linhas.iloc[0]["meses"][0], 100.0)
+
+    def test_ressarcimento_de_assistencia_medica_tem_regra_propria_x12_sem_alerta(self):
+        # 26/10/2026: 339093 (33909308, ação 2004) deixou de cair no padrão com alerta —
+        # regra explícita x12, mesmo valor projetado (fev = jan, sem bump em jun/nov).
+        regra = regra_para_natureza("339093", "33909308")
+        self.assertEqual(regra.tipo, REGRA_MULTIPLICADOR)
+        self.assertEqual(regra.multiplicador, MULTIPLICADOR_12)
+        resultado = self._grade([
+            _linha_execucao(ACAO_ASSISTENCIA_MEDICA, "339093", "33909308",
+                             tipo_linha="item_execucao", ano_mes=202601, liquidada=100.0, paga=0.0,
+                             po_cod="0001", po_desc="ASSISTENCIA MEDICA", acao_desc=""),
+        ])
+        self.assertEqual(resultado.alertas, [])
+        meses = resultado.linhas.iloc[0]["meses"]
+        self.assertAlmostEqual(meses[1], 100.0)
+        self.assertAlmostEqual(meses[10], 100.0)
+        self.assertAlmostEqual(sum(meses), 1_200.0)
 
     def test_mes_futuro_projeta_por_natureza_antes_de_somar_por_po(self):
         # referência = jan/202601; fev é mês futuro sem bump de 13º (só jun/nov) — cada
@@ -899,7 +918,7 @@ class TestSubstituirBeneficiosPorPlanoOrcamentario(unittest.TestCase):
 
     def test_alerta_antigo_por_natureza_e_substituido_pelo_de_po(self):
         mensal = pd.DataFrame([
-            _linha_execucao(ACAO_ASSISTENCIA_MEDICA, "339093", "33909308", tipo_linha="item_execucao", ano_mes=202601, liquidada=10.0, paga=0.0,
+            _linha_execucao(ACAO_ASSISTENCIA_MEDICA, "339039", "33903901", tipo_linha="item_execucao", ano_mes=202601, liquidada=10.0, paga=0.0,
                              po_cod="0001", po_desc="X", acao_desc=""),
         ])
         grade = consolidar_relatorio_ativo(consolidar_por_elemento(grade_mensal(mensal, _ANUAL_VAZIO, 2026, 202601)))
@@ -1021,6 +1040,68 @@ class TestParametrosProjecao(unittest.TestCase):
                                 ParametrosProjecao(dezembro_ativo_repete_novembro=False)).linhas.iloc[0]["meses"]
         self.assertAlmostEqual(ajustada[11], 9_000.0)
 
+    def _mensal_13_e_ferias(self, com_ferias=True, ano_mes=202608, decimo_terceiro_real=0.0):
+        linhas = [
+            _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=ano_mes, liquidada=1_000.0, paga=0.0),
+            _linha_execucao(ACAO_ATIVO, "319011", "31901143", tipo_linha="item_execucao", ano_mes=ano_mes, liquidada=decimo_terceiro_real, paga=0.0),
+        ]
+        if com_ferias:
+            linhas.append(_linha_execucao(ACAO_ATIVO, "319011", "31901145", tipo_linha="item_execucao", ano_mes=ano_mes, liquidada=20.0, paga=0.0))
+        return pd.DataFrame(linhas)
+
+    @staticmethod
+    def _meses(resultado, detalhada):
+        return resultado.linhas[resultado.linhas["natureza_detalhada_cod"] == detalhada].iloc[0]["meses"]
+
+    @staticmethod
+    def _total_mes(resultado, indice):
+        return sum(m[indice] for m in resultado.linhas["meses"] if m[indice] is not None)
+
+    def test_dezembro_do_ativo_move_parte_do_13_para_o_terco_de_ferias(self):
+        # Decisão 13: R_mãe = 1.000 → 13º de nov = 500; dez fica com 35% (175) e os 325
+        # restantes vão para o 1/3 de férias (20 + 325). Total de dezembro = total de novembro.
+        resultado = grade_mensal(self._mensal_13_e_ferias(), self._anual_vazio(), 2026, 202608)
+        decimo, ferias = self._meses(resultado, "31901143"), self._meses(resultado, "31901145")
+        self.assertAlmostEqual(decimo[10], 500.0)
+        self.assertAlmostEqual(decimo[11], 175.0)
+        self.assertAlmostEqual(ferias[10], 20.0)
+        self.assertAlmostEqual(ferias[11], 345.0)
+        self.assertAlmostEqual(self._total_mes(resultado, 11), self._total_mes(resultado, 10))
+        self.assertAlmostEqual(self._total_mes(resultado, 11), 1_520.0)
+        self.assertEqual(resultado.alertas, [])
+
+    def test_fracao_do_13_em_dezembro_editavel_e_um_mantem_a_copia_integral(self):
+        resultado = grade_mensal(self._mensal_13_e_ferias(), self._anual_vazio(), 2026, 202608,
+                                 ParametrosProjecao(fracao_13_dezembro_ativo=1.0))
+        self.assertAlmostEqual(self._meses(resultado, "31901143")[11], 500.0)
+        self.assertAlmostEqual(self._meses(resultado, "31901145")[11], 20.0)
+        resultado = grade_mensal(self._mensal_13_e_ferias(), self._anual_vazio(), 2026, 202608,
+                                 ParametrosProjecao(fracao_13_dezembro_ativo=0.0))
+        self.assertAlmostEqual(self._meses(resultado, "31901143")[11], 0.0)
+        self.assertAlmostEqual(self._meses(resultado, "31901145")[11], 520.0)
+
+    def test_dezembro_do_ativo_sem_terco_de_ferias_mantem_13_e_avisa(self):
+        resultado = grade_mensal(self._mensal_13_e_ferias(com_ferias=False), self._anual_vazio(), 2026, 202608)
+        self.assertAlmostEqual(self._meses(resultado, "31901143")[11], 500.0)  # nada some
+        self.assertTrue(any("31901145" in a and "decisão 13" in a for a in resultado.alertas))
+
+    def test_redistribuicao_de_dezembro_usa_13_real_de_novembro(self):
+        resultado = grade_mensal(self._mensal_13_e_ferias(ano_mes=202611, decimo_terceiro_real=800.0),
+                                 self._anual_vazio(), 2026, 202611)
+        self.assertAlmostEqual(self._meses(resultado, "31901143")[10], 800.0)  # Nov real
+        self.assertAlmostEqual(self._meses(resultado, "31901143")[11], 280.0)  # 35% de 800
+        self.assertAlmostEqual(self._meses(resultado, "31901145")[11], 20.0 + 520.0)
+
+    def test_sem_repeticao_de_dezembro_nao_ha_redistribuicao(self):
+        resultado = grade_mensal(self._mensal_13_e_ferias(), self._anual_vazio(), 2026, 202608,
+                                 ParametrosProjecao(dezembro_ativo_repete_novembro=False))
+        self.assertAlmostEqual(self._meses(resultado, "31901143")[11], 0.0)  # regra do 13º: só jun/nov
+        self.assertAlmostEqual(self._meses(resultado, "31901145")[11], 20.0)
+
+    def test_fracao_do_13_em_dezembro_declarada_quando_ajustada(self):
+        self.assertEqual(diferencas_do_padrao(ParametrosProjecao(fracao_13_dezembro_ativo=0.5)),
+                         ["13º mantido em dezembro do Ativo: 50% de novembro"])
+
     def test_extra_da_patronal_pode_voltar_a_ser_dividido(self):
         mensal = pd.DataFrame([
             _linha_execucao(ACAO_RPPS, "319113", "31911301", tipo_linha="item_execucao", ano_mes=202601, liquidada=10_000.0, paga=0.0),
@@ -1055,6 +1136,7 @@ class TestParametrosProjecao(unittest.TestCase):
             {"multiplicadores_natureza": {"999999": 13.0}}, {"extra_concentrado_natureza": {"319092": True}},
             {"mes_antecipacao_13": 0}, {"mes_parcela_13": 13}, {"mes_antecipacao_13": 11},
             {"fracao_antecipacao_13": 1.5}, {"fracao_minima_fechamento": -0.1}, {"janela_meses_fechamento": 0},
+            {"fracao_13_dezembro_ativo": 1.2}, {"fracao_13_dezembro_ativo": -0.1},
         ):
             with self.subTest(ajuste=ajuste), self.assertRaises(ValueError):
                 ParametrosProjecao(**ajuste)
@@ -1282,3 +1364,129 @@ class TestBeneficiosPorPlanoOrcamentario(unittest.TestCase):
         self.assertIn(f"{ACAO_BENEFICIOS_OBRIGATORIOS}/{SEM_PLANO_ORCAMENTARIO}", set(comparacao["plano"]))
         sem_po = comparacao[comparacao["po_cod"] == SEM_PLANO_ORCAMENTARIO]
         self.assertEqual(sem_po["executado"].tolist(), [40.0] * 4)
+
+
+class TestFaixaHistoricaTotalAnual(unittest.TestCase):
+    """26/10/2026 — faixa histórica do total anual, partida setembro de 2026. À mão:
+      Ativo   2024: Set 100, Out 100, Nov 150, Dez 150 → fator 400/100 = 4,0
+              2025: Set 200, Out 200, Nov 300, Dez 320 → fator 820/200 = 4,1
+              2026: 300 em Jan-Set → realizado 2.700, base 300 → 3.900 a 3.930
+      Inativo 2024: Set 50, Out 50, Nov 75, SEM Dez → ano fica de fora
+              2025: Set 50, Out 50, Nov 75, Dez 50 → fator 175/50 = 3,5
+              2026: 60 em Jan-Set → realizado 540, base 60 → 750
+      Total   só 2025 (comum aos dois): fator (820+175)/(200+50) = 3,98
+              realizado 3.240, base 360 → 3.240 + 360 × 3,98 = 4.672,80"""
+
+    @staticmethod
+    def _linha(acao, ano_mes, valor):
+        natureza = "319011" if acao == ACAO_ATIVO else "319001"
+        return _linha_execucao(acao, natureza, natureza + "01", tipo_linha="item_execucao",
+                               ano_mes=ano_mes, liquidada=valor, paga=0.0)
+
+    def _mensal(self, extras=()):
+        valores = {
+            ACAO_ATIVO: {2024: [100, 100, 150, 150], 2025: [200, 200, 300, 320]},
+            ACAO_INATIVO: {2024: [50, 50, 75], 2025: [50, 50, 75, 50]},
+        }
+        linhas = [self._linha(acao, ano * 100 + 9 + i, float(v))
+                  for acao, por_ano in valores.items() for ano, meses in por_ano.items() for i, v in enumerate(meses)]
+        linhas += [self._linha(ACAO_ATIVO, 202600 + m, 300.0) for m in range(1, 10)]
+        linhas += [self._linha(ACAO_INATIVO, 202600 + m, 60.0) for m in range(1, 10)]
+        linhas += [self._linha(ACAO_ATIVO, 202701, 999.0)]  # exercício posterior: ignorado
+        linhas += list(extras)
+        return pd.DataFrame(linhas)
+
+    def test_fatores_e_totais_calculados_a_mao(self):
+        faixa = faixa_historica_total_anual(self._mensal(), 2026, 9).set_index("grupo")
+        self.assertEqual(list(faixa.index), [GRUPO_ATIVO, GRUPO_INATIVO, LINHA_TOTAL])
+        ativo = faixa.loc[GRUPO_ATIVO]
+        self.assertAlmostEqual(ativo["realizado"], 2_700.0)
+        self.assertAlmostEqual(ativo["base_referencia"], 300.0)
+        self.assertEqual(list(ativo["fatores"]), [2024, 2025])
+        self.assertAlmostEqual(ativo["fatores"][2024], 4.0)
+        self.assertAlmostEqual(ativo["fatores"][2025], 4.1)
+        self.assertAlmostEqual(ativo["total_min"], 3_900.0)
+        self.assertAlmostEqual(ativo["total_max"], 3_930.0)
+
+    def test_ano_com_mes_faltando_fica_de_fora_sem_virar_zero(self):
+        inativo = faixa_historica_total_anual(self._mensal(), 2026, 9).set_index("grupo").loc[GRUPO_INATIVO]
+        self.assertEqual(list(inativo["fatores"]), [2025])
+        self.assertAlmostEqual(inativo["total_min"], 750.0)
+        self.assertAlmostEqual(inativo["total_max"], 750.0)
+
+    def test_linha_total_usa_fator_da_soma_so_dos_anos_comuns(self):
+        total = faixa_historica_total_anual(self._mensal(), 2026, 9).set_index("grupo").loc[LINHA_TOTAL]
+        self.assertEqual(list(total["fatores"]), [2025])
+        self.assertAlmostEqual(total["fatores"][2025], 3.98)
+        self.assertAlmostEqual(total["realizado"], 3_240.0)
+        self.assertAlmostEqual(total["total_min"], 4_672.8)
+
+    def test_grupo_sem_exercicio_completo_fica_sem_faixa(self):
+        extras = [_linha_execucao(ACAO_RPPS, "319113", "31911303", tipo_linha="item_execucao",
+                                  ano_mes=202600 + m, liquidada=10.0, paga=0.0) for m in range(1, 10)]
+        faixa = faixa_historica_total_anual(self._mensal(extras), 2026, 9).set_index("grupo")
+        self.assertEqual(faixa.loc[GRUPO_RPPS, "fatores"], {})
+        self.assertTrue(pd.isna(faixa.loc[GRUPO_RPPS, "total_min"]))
+        # sem ano comum aos 3 grupos, a linha total também fica sem faixa (nunca zero)
+        self.assertTrue(pd.isna(faixa.loc[LINHA_TOTAL, "total_max"]))
+        self.assertAlmostEqual(faixa.loc[LINHA_TOTAL, "realizado"], 3_240.0 + 90.0)
+
+    def test_mes_de_referencia_precisa_deixar_mes_a_projetar(self):
+        with self.assertRaises(ValueError):
+            faixa_historica_total_anual(self._mensal(), 2026, 12)
+
+    def test_exercicio_sem_liquidada_devolve_vazio(self):
+        self.assertTrue(faixa_historica_total_anual(self._mensal(), 2023, 9).empty)
+
+    def test_tabela_de_exibicao_compara_projetado_e_dotacao(self):
+        from src.ui_despesas_pessoal_abas import tabela_faixa_historica
+
+        faixa = faixa_historica_total_anual(self._mensal(), 2026, 9)
+        tabela = tabela_faixa_historica(
+            faixa, pd.Series({GRUPO_ATIVO: 3_950.0, GRUPO_INATIVO: 750.0}),
+            pd.Series({GRUPO_ATIVO: 3_920.0, GRUPO_INATIVO: 800.0}),
+        ).set_index("Grupo")
+        ativo = tabela.loc["Ativo (20TP)"]
+        self.assertEqual(ativo["Projetado × faixa"], "Acima da faixa")
+        self.assertEqual(ativo["Saldo no pior caso"], "−R$ 10,00")    # 3.920 − 3.930
+        self.assertEqual(ativo["Saldo no melhor caso"], "R$ 20,00")   # 3.920 − 3.900
+        self.assertEqual(ativo["Fator por exercício"], "2024: 4,000 · 2025: 4,100")
+        self.assertEqual(tabela.loc["Inativo (0181)", "Projetado × faixa"], "Dentro da faixa")
+        total = tabela.loc["TOTAL"]
+        self.assertEqual(total["Dotação Atualizada"], "R$ 4.720,00")
+        self.assertEqual(total["Saldo no pior caso"], "R$ 47,20")     # 4.720 − 4.672,80
+        self.assertEqual(total["Projetado × faixa"], "Acima da faixa")  # 4.700 > 4.672,80
+
+    def test_aviso_cita_so_grupos_com_deficit_no_pior_caso(self):
+        from src.ui_despesas_pessoal_abas import aviso_faixa_historica
+
+        faixa = faixa_historica_total_anual(self._mensal(), 2026, 9)
+        # Ativo: 3.920 − 3.930 = −10 → aviso; Inativo: 800 − 750 = +50 → fora do aviso.
+        aviso = aviso_faixa_historica(faixa, pd.Series({GRUPO_ATIVO: 3_920.0, GRUPO_INATIVO: 800.0}), 2026)
+        self.assertIn("Ativo (20TP) — déficit de até R$ 10,00", aviso)
+        self.assertNotIn("Inativo", aviso)
+        self.assertIn("2024, 2025", aviso)  # anos do grupo em déficit
+        self.assertIn("não é a projeção", aviso)
+
+    def test_aviso_usa_so_os_anos_do_grupo_em_deficit(self):
+        from src.ui_despesas_pessoal_abas import aviso_faixa_historica
+
+        faixa = faixa_historica_total_anual(self._mensal(), 2026, 9)
+        # Inativo: 700 − 750 = −50, com 2024 fora (mês faltando) → só 2025 citado.
+        aviso = aviso_faixa_historica(faixa, pd.Series({GRUPO_ATIVO: 5_000.0, GRUPO_INATIVO: 700.0}), 2026)
+        self.assertIn("Inativo (0181) — déficit de até R$ 50,00", aviso)
+        self.assertIn("comportamento de 2025,", aviso)
+
+    def test_sem_deficit_sem_faixa_ou_sem_dotacao_nao_ha_aviso(self):
+        from src.ui_despesas_pessoal_abas import aviso_faixa_historica
+
+        faixa = faixa_historica_total_anual(self._mensal(), 2026, 9)
+        folga = pd.Series({GRUPO_ATIVO: 3_930.0, GRUPO_INATIVO: 750.0})  # saldo exatamente zero
+        self.assertIsNone(aviso_faixa_historica(faixa, folga, 2026))
+        self.assertIsNone(aviso_faixa_historica(faixa, pd.Series(dtype=float), 2026))  # dotação ausente ≠ zero
+        self.assertIsNone(aviso_faixa_historica(None, folga, 2026))
+        self.assertIsNone(aviso_faixa_historica(faixa_historica_total_anual(self._mensal(), 2023, 9), folga, 2026))
+        extras = [_linha_execucao(ACAO_RPPS, "319113", "31911303", tipo_linha="item_execucao",
+                                  ano_mes=202600 + m, liquidada=10.0, paga=0.0) for m in range(1, 10)]
+        sem_historico = faixa_historica_total_anual(self._mensal(extras), 2026, 9)
+        self.assertIsNone(aviso_faixa_historica(sem_historico, pd.Series({**folga, GRUPO_RPPS: 1.0}), 2026))
