@@ -344,8 +344,9 @@ def aviso_faixa_historica(faixa: pd.DataFrame | None, dotacao_grupo: pd.Series, 
         return None
     anos = sorted(anos)
     return (
-        f"Cenário histórico (não é a projeção do painel): se o restante de {ano} repetir o comportamento de "
-        f"{', '.join(map(str, anos))}, a dotação não cobre {'; '.join(deficits)}. "
+        # o componente já rotula o aviso como "Cenário histórico" (novo visual, 27/10/2026)
+        f"Se o restante de {ano} repetir o comportamento de {', '.join(map(str, anos))}, a dotação não cobre "
+        f"{'; '.join(deficits)} — não é a projeção do painel. "
         "Detalhes no quadro “Faixa histórica do total anual”, abaixo do painel."
     )
 

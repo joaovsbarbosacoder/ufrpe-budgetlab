@@ -101,6 +101,67 @@ class TestPainelPessoal(unittest.TestCase):
         self.assertEqual(cores["red"], "#F85149")
         self.assertEqual(cores["green"], "#3FB950")
 
+    def _faixa(self, minimo=500.0, maximo=5100.0):
+        return pd.DataFrame([{"grupo": "ativo", "realizado": 95.0, "base_referencia": 95.0, "fatores": {2025: 1.0},
+                              "total_min": minimo, "total_max": maximo}])
+
+    def test_cartao_do_grupo_soma_executado_e_projetado(self):
+        # Base: só Ago/2026 executado (100 − 10 + 0 + 5 = 95); o resto é projetado.
+        d = self.painel()
+        cartao = next(c for c in d["cartoes"] if c["key"] == "ativo")
+        self.assertAlmostEqual(cartao["executado"], 95.0)
+        self.assertAlmostEqual(cartao["executado"] + cartao["projetado"], cartao["total"])
+        self.assertAlmostEqual(cartao["total"], d["total"]["total"])
+        self.assertEqual(cartao["dotacao"], 5000)
+        # sem faixa: nada derivado é inventado
+        self.assertIsNone(cartao["faixaMin"])
+        self.assertIsNone(cartao["pior"])
+        self.assertIsNone(d["avisoFaixa"])
+
+    def test_cartao_com_faixa_calcula_pior_caso_e_aviso(self):
+        d = montar_painel(self.grade, self.mensal, self.anual, pd.Series({"ativo": 5000}), 2026,
+                          meses_disponiveis=[202608], anos_dotacao=[2026], faixa=self._faixa())
+        cartao = next(c for c in d["cartoes"] if c["key"] == "ativo")
+        self.assertEqual((cartao["faixaMin"], cartao["faixaMax"]), (500.0, 5100.0))
+        self.assertEqual(cartao["pior"], -100.0)  # 5.000 − 5.100
+        self.assertIn("Ativo (20TP) — déficit de até R$ 100,00", d["avisoFaixa"])
+        json.dumps(d, allow_nan=False)
+
+    def test_sem_dotacao_cartao_e_serie_ficam_nulos(self):
+        d = montar_painel(self.grade, self.mensal, self.anual, pd.Series(dtype=float), 2026,
+                          meses_disponiveis=[202608], anos_dotacao=[2026], faixa=self._faixa())
+        cartao = next(c for c in d["cartoes"] if c["key"] == "ativo")
+        self.assertIsNone(cartao["dotacao"])
+        self.assertIsNone(cartao["saldo"])
+        self.assertIsNone(cartao["pior"])
+        self.assertIsNone(d["avisoFaixa"])  # dotação ausente não vira déficit
+        serie = next(s for s in d["serieSaldo"] if s["key"] == "ativo")
+        self.assertEqual(serie["meses"], [None] * 12)
+
+    def test_saldo_do_cartao_com_todos_os_meses(self):
+        # À mão: 31901101 = 100 em Jan–Ago (executado 800); Set–Dez projetam 100 (x12; dez repete nov)
+        # → total 1.200; dotação 5.000 → saldo 3.800.
+        mensal = pd.DataFrame([dict(self.mensal.iloc[0]) | {"ano_mes": 202600 + m} for m in range(1, 9)])
+        grade = consolidar_por_elemento(grade_mensal(mensal, self.anual, 2026, 202608))
+        d = montar_painel(grade, mensal, self.anual, pd.Series({"ativo": 5000}), 2026,
+                          meses_disponiveis=[202608], anos_dotacao=[2026])
+        cartao = next(c for c in d["cartoes"] if c["key"] == "ativo")
+        self.assertEqual((cartao["executado"], cartao["projetado"], cartao["total"]), (800, 400, 1200))
+        self.assertEqual(cartao["saldo"], 3800)
+        self.assertEqual(next(s for s in d["serieSaldo"] if s["key"] == "ativo")["meses"][11], 3800)
+
+    def test_serie_de_saldo_termina_no_saldo_do_cartao(self):
+        d = self.painel()
+        cartao = next(c for c in d["cartoes"] if c["key"] == "ativo")
+        serie = next(s for s in d["serieSaldo"] if s["key"] == "ativo")
+        self.assertEqual(serie["meses"][11], cartao["saldo"])
+        saldo_tabela = next(s for s in d["saldos"] if s["key"] == "ativo")
+        self.assertEqual(serie["meses"], saldo_tabela["meses"])
+
+    def test_rubricas_levam_a_regra_de_projecao(self):
+        filhos = self.painel()["grupos"][0]["children"]
+        self.assertEqual({f["regra"] for f in filhos}, {"multiplicador", "decimo_terceiro", "proporcao_historica"})
+
     def test_edicao_preserva_centavos_negativos_e_zero(self):
         for valor in (-10.27, 0, 5.125):
             evento = dict(chave=["ativo", "319011", "319011"], mes=9, valor=valor, referencia=202608)
@@ -165,11 +226,27 @@ class TestContratoVisualDoHandoff(unittest.TestCase):
     def test_preserva_ordem_das_secoes_principais(self):
         referencia = ['class="nav"', 'list="{{ kpis }}"', '>Alerta</span>', "Executado (Jan–Abr)",
                       '<div class="ap-wrap"', "Saldo remanescente", "Estrutura e valores"]
-        implementacao = ['<header class="ap-nav"', '<div class="ap-kpis"', '<div class="ap-alert"',
-                         '<div class="ap-legend"', '<div class="ap-wrap ap-main-wrap"',
-                         '<section class="ap-saldo"', '<footer class="ap-notes"']
+        # Novo visual (27/10/2026, aprovado): visão geral (resumo, avisos, cartões, saldo) e, em seguida, a
+        # visão "Rubrica × mês" com a tabela completa do handoff; notas e diálogos valem para as duas.
+        implementacao = ['<header class="ap-nav"', '<div class="ap-views"', '<div class="ap-kpis"', '<div class="ap-alerts"',
+                         '<div class="ap-cards"', '<div class="ap-chart"', '<section class="ap-saldo"',
+                         '<div class="ap-legend"', '<div class="ap-wrap ap-main-wrap"', '<footer class="ap-notes"']
         self.assertEqual(sorted(self.referencia.find(v) for v in referencia), [self.referencia.find(v) for v in referencia])
-        self.assertEqual(sorted(self.js.find(v) for v in implementacao), [self.js.find(v) for v in implementacao])
+        posicoes = [self.js.find(v) for v in implementacao]
+        self.assertNotIn(-1, posicoes)
+        self.assertEqual(sorted(posicoes), posicoes)
+
+    def test_valores_exibidos_com_centavos(self):
+        # pedido do usuário (27/10/2026): "sem arredondar os valores"
+        self.assertIn("minimumFractionDigits: 2, maximumFractionDigits: 2", self.js)
+        self.assertNotIn("maximumFractionDigits: 0", self.js)
+
+    def test_duas_visoes_e_tabela_de_rubricas_continua_editavel(self):
+        self.assertIn('data-view="geral"', self.js)
+        self.assertIn('data-view="rubricas"', self.js)
+        self.assertIn("setTriggerValue('edicao'", self.js)
+        self.assertIn("setTriggerValue('filtros'", self.js)
+        self.assertIn("setTriggerValue('restaurar'", self.js)
 
     def test_medidas_e_comportamentos_centrais_sao_os_do_handoff(self):
         for trecho in (

@@ -35,8 +35,7 @@ from src.importacao_execucao_mensal import (
 )
 from src.ui_despesas_pessoal import montar_painel, render_painel, validar_edicao
 from src.ui_despesas_pessoal_abas import (
-    aviso_faixa_historica, calcular_faixa_historica, render_exercicios_anteriores, render_faixa_historica,
-    render_formulas,
+    calcular_faixa_historica, render_exercicios_anteriores, render_faixa_historica, render_formulas,
 )
 
 
@@ -66,7 +65,7 @@ gc.collect()
 st.html("""<style>
 .stMainBlockContainer:has(.st-key-dp_painel) {max-width:none; padding:0 0 5rem;}
 .stMainBlockContainer:has(.st-key-dp_painel) [data-testid="stTabs"] [role="tablist"] {padding:0 32px;}
-.st-key-dp_aba_formulas, .st-key-dp_aba_historico, .st-key-dp_aba_aviso, .st-key-dp_faixa, .st-key-dp_aviso_faixa {padding:8px 32px 0;}
+.st-key-dp_aba_formulas, .st-key-dp_aba_historico, .st-key-dp_aba_aviso, .st-key-dp_faixa {padding:8px 32px 0;}
 </style>""")
 
 manifesto_execucao = ManifestoExecucao.atual()
@@ -172,13 +171,9 @@ with aba_painel:
     dotacao_grupo = dotacao_atualizada_por_grupo(dotacao, ano_dotacao)
     dotacao_por_po = dotacao_atualizada_por_plano_orcamentario(dotacao, ano_dotacao)
     dotacao_por_acao_beneficios = dotacao_atualizada_por_acao_beneficios(dotacao, ano_dotacao)
-    # Faixa histórica (26/10/2026): calculada uma vez — alimenta o aviso acima do painel e o
-    # quadro abaixo dele. Só leitura; não entra na projeção nem no saldo do componente.
+    # Faixa histórica (26/10/2026): calculada uma vez — alimenta os cartões e o aviso "Cenário histórico" do
+    # componente (novo visual, 27/10/2026) e o quadro abaixo dele. Só leitura; não entra na projeção nem no saldo.
     faixa = calcular_faixa_historica(mensal, ano, ano_mes_referencia % 100)
-    aviso_faixa = aviso_faixa_historica(faixa, dotacao_grupo, ano)
-    if aviso_faixa:
-        with st.container(key="dp_aviso_faixa"):
-            st.warning(aviso_faixa.replace("$", "\\$"))
 
     procedencia = procedencia_bases + (
         " Fórmulas ajustadas nesta sessão: " + "; ".join(ajustes_formulas) + "."
@@ -188,7 +183,7 @@ with aba_painel:
                           meses_disponiveis=meses_disponiveis, anos_dotacao=anos_dotacao,
                           procedencia=procedencia, editados=edicoes,
                           dotacao_por_plano_orcamentario=dotacao_por_po,
-                          dotacao_por_acao_beneficios=dotacao_por_acao_beneficios)
+                          dotacao_por_acao_beneficios=dotacao_por_acao_beneficios, faixa=faixa)
     resultado = render_painel(dados)
     if resultado.edicao:
         try:
