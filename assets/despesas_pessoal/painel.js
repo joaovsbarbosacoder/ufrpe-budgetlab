@@ -62,33 +62,58 @@ export default function(component) {
     </article>`;
   }
 
-  function chart() {
-    const series = d.serieSaldo.filter(s => s.meses.some(ok));
-    if (!series.length) return '<p class="ap-empty">Sem dotação para calcular o saldo.</p>';
-    const W = 1000, H = 300, P = {l: 120, r: 24, t: 14, b: 30};
-    const valores = series.flatMap(s => s.meses.filter(ok));
-    const max = Math.max(0, ...valores), min = Math.min(0, ...valores);
-    const passo = (() => { const bruto = (max - min) / 5 || 1; const p = 10 ** Math.floor(Math.log10(bruto)); return [1, 2, 5, 10].map(m => m * p).find(v => v >= bruto); })();
-    const x = i => P.l + i * (W - P.l - P.r) / 11;
-    const y = v => P.t + (max - v) * (H - P.t - P.b) / ((max - min) || 1);
-    let s = `<svg class="ap-svg" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Saldo remanescente por grupo, de janeiro a dezembro">`;
-    if (d.mes < 12) s += `<rect class="ap-svg-proj" x="${x(d.mes - 1)}" y="${P.t}" width="${x(11) - x(d.mes - 1)}" height="${H - P.t - P.b}"/><text class="ap-svg-proj-label" x="${x(d.mes - 1) + 6}" y="${P.t + 12}">projetado</text>`;
-    for (let v = Math.ceil(min / passo) * passo; v <= max; v += passo) {
-      s += `<line class="${v === 0 ? 'ap-svg-zero' : 'ap-svg-grid'}" x1="${P.l}" x2="${W - P.r}" y1="${y(v)}" y2="${y(v)}"/><text class="ap-svg-axis" x="${P.l - 8}" y="${y(v) + 4}" text-anchor="end">${esc(new Intl.NumberFormat('pt-BR').format(v))}</text>`;
-    }
-    months.forEach((m, i) => { s += `<text class="ap-svg-axis" x="${x(i)}" y="${H - 8}" text-anchor="middle">${m}</text>`; });
-    series.forEach(sr => {
-      const cor = groupColor[sr.key] || '#0969DA';
-      const pts = sr.meses.map((v, i) => ok(v) ? `${x(i)},${y(v)}` : null);
-      const real = pts.slice(0, d.mes).filter(Boolean), proj = pts.slice(d.mes - 1).filter(Boolean);
-      if (real.length) s += `<polyline points="${real.join(' ')}" fill="none" stroke="${cor}" stroke-width="2.4"/>`;
-      if (proj.length > 1) s += `<polyline points="${proj.join(' ')}" fill="none" stroke="${cor}" stroke-width="2.4" stroke-dasharray="6 5"/>`;
-      const fim = sr.meses[11];
-      if (ok(fim)) s += `<circle cx="${x(11)}" cy="${y(fim)}" r="${fim < 0 ? 5 : 3.5}" fill="${fim < 0 ? 'var(--red)' : cor}" stroke="#fff" stroke-width="1.5"/>`;
+  // Saldo remanescente (27/10/2026): um painel por grupo, cada um na sua escala — no gráfico único o Ativo
+  // achatava os demais. Linha cheia = executado, tracejada = projetado; faixa vermelha = abaixo de zero (déficit),
+  // com o primeiro mês negativo marcado. Os rótulos do eixo são abreviados; o valor exato aparece ao passar o mouse.
+  const compacto = v => {
+    const a = Math.abs(v), f = (n, u) => (v < 0 ? '−' : '') + 'R$ ' + new Intl.NumberFormat('pt-BR', {maximumFractionDigits: 1}).format(n) + u;
+    return a >= 1e9 ? f(a / 1e9, ' bi') : a >= 1e6 ? f(a / 1e6, ' mi') : a >= 1e3 ? f(a / 1e3, ' mil') : f(a, '');
+  };
+  const primeiroNegativo = sr => sr.meses.findIndex(v => ok(v) && v < 0);
+  const CH = {W: 460, H: 190, l: 78, r: 14, t: 14, b: 24};
+  const chX = i => CH.l + i * (CH.W - CH.l - CH.r) / 11;
+
+  function miniChart(sr, k) {
+    const cor = groupColor[sr.key] || '#0969DA';
+    const valores = sr.meses.filter(ok);
+    const neg = primeiroNegativo(sr), fim = sr.meses[11];
+    const estado = !valores.length ? ['Sem dotação', ''] : neg >= 0
+      ? [`Negativo a partir de ${months[neg].toLowerCase()} (${signed(sr.meses[neg])})`, 'ap-neg'] : ['Positivo até dezembro', 'ap-pos'];
+    const cabeca = `<header><h3><i class="ap-swatch" style="background:${cor}"></i>${esc(sr.nome)}</h3><span>Dez <b class="${ok(fim) ? (fim < 0 ? 'ap-neg' : 'ap-pos') : ''}">${signed(fim)}</b></span></header><p class="ap-mini-status ${estado[1]}">${esc(estado[0])}</p>`;
+    if (!valores.length) return `<div class="ap-mini">${cabeca}</div>`;
+    let max = Math.max(0, ...valores), min = Math.min(0, ...valores);
+    const bruto = (max - min) / 3 || 1, pot = 10 ** Math.floor(Math.log10(bruto));
+    const passo = [1, 2, 2.5, 5, 10].map(m => m * pot).find(v => v >= bruto);
+    // o déficit não é arredondado para baixo até o próximo passo (achataria a linha); só uma folga mínima visível
+    max = Math.ceil(max / passo) * passo; min = min < 0 ? Math.min(min * 1.1, -max * 0.05) : 0;
+    const {W, H, l, r, t, b} = CH;
+    const y = v => t + (max - v) * (H - t - b) / ((max - min) || 1);
+    const ticks = [];
+    for (let v = 0; v <= max + passo / 2; v += passo) ticks.push(v);
+    for (let v = -passo; v >= min; v -= passo) ticks.push(v);
+    let s = `<svg class="ap-svg" viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${esc(sr.nome)}: saldo remanescente de janeiro a dezembro; ${esc(estado[0])}">`;
+    if (d.mes < 12) s += `<rect class="ap-svg-proj" x="${chX(d.mes - 1)}" y="${t}" width="${chX(11) - chX(d.mes - 1)}" height="${H - t - b}"/>`;
+    if (min < 0) s += `<rect class="ap-svg-neg" x="${l}" y="${y(0)}" width="${W - l - r}" height="${y(min) - y(0)}"/>`;
+    ticks.forEach(v => {
+      s += `<line class="${v === 0 ? 'ap-svg-zero' : 'ap-svg-grid'}" x1="${l}" x2="${W - r}" y1="${y(v)}" y2="${y(v)}"/><text class="ap-svg-axis" x="${l - 8}" y="${y(v) + 4}" text-anchor="end">${esc(v === 0 ? 'R$ 0' : compacto(v))}</text>`;
     });
-    s += `<text class="ap-svg-axis" x="${P.l - 8}" y="${P.t - 2}" text-anchor="end">R$</text></svg>`;
-    const legenda = series.map(sr => `<span><i style="background:${groupColor[sr.key] || '#0969DA'}"></i>${esc(sr.nome)} · dez <b class="${ok(sr.meses[11]) && sr.meses[11] < 0 ? 'ap-neg' : 'ap-pos'}">${signed(sr.meses[11])}</b></span>`).join('');
-    return `<div class="ap-chart-legend">${legenda}<span><i class="ap-dash"></i>Projetado</span></div>${s}`;
+    months.forEach((m, i) => { s += `<text class="ap-svg-axis" x="${chX(i)}" y="${H - 6}" text-anchor="middle">${m}</text>`; });
+    const pts = sr.meses.map((v, i) => ok(v) ? `${chX(i)},${y(v)}` : null);
+    const real = pts.slice(0, d.mes).filter(Boolean), proj = pts.slice(d.mes - 1).filter(Boolean);
+    if (real.length) s += `<polyline points="${real.join(' ')}" fill="none" stroke="${cor}" stroke-width="2" stroke-linejoin="round"/>`;
+    if (proj.length > 1) s += `<polyline points="${proj.join(' ')}" fill="none" stroke="${cor}" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>`;
+    if (neg >= 0) s += `<circle class="ap-svg-ring" cx="${chX(neg)}" cy="${y(sr.meses[neg])}" r="5" fill="var(--red)"/>`;
+    // camada de hover: guia vertical + ponto; colunas invisíveis maiores que a marca
+    s += `<line class="ap-svg-cross" x1="0" x2="0" y1="${t}" y2="${H - b}" visibility="hidden"/><circle class="ap-svg-ring ap-svg-dot" r="4.5" fill="${cor}" visibility="hidden"/>`;
+    const largura = (W - l - r) / 11;
+    sr.meses.forEach((v, i) => { if (ok(v)) s += `<rect class="ap-svg-hit" data-k="${k}" data-i="${i}" data-y="${y(v)}" x="${chX(i) - largura / 2}" y="${t}" width="${largura}" height="${H - t - b}"/>`; });
+    return `<div class="ap-mini">${cabeca}<div class="ap-mini-plot">${s}</svg><div class="ap-tip" role="tooltip" hidden></div></div></div>`;
+  }
+
+  function chart() {
+    const series = d.serieSaldo;
+    if (!series.some(s => s.meses.some(ok))) return '<p class="ap-empty">Sem dotação para calcular o saldo.</p>';
+    return `<div class="ap-chart-legend"><span><i style="background:var(--muted)"></i>Executado</span><span><i class="ap-dash"></i>Projetado</span><span><i class="ap-neg-key"></i>Abaixo de zero: déficit</span><span>Cada grupo na sua escala; passe o mouse para ver o valor exato.</span></div><div class="ap-minis">${series.map(miniChart).join('')}</div>`;
   }
 
   // Outros Benefícios por Ação, PO e Iduso (27/10/2026): dotação, empenhado, executado, projetado, saldo e empenho
@@ -146,7 +171,7 @@ export default function(component) {
       <div class="ap-alerts">${alerts}</div>
       <section class="ap-block"><h2 class="ap-section-title">Por grupo</h2><p class="ap-section-sub">Barra = dotação consumida (executado sólido, projetado hachurado, vermelho acima da dotação); traço laranja = faixa histórica do total do ano.</p><div class="ap-cards">${d.cartoes.map(card).join('')}</div></section>
       ${beneficiosPo()}
-      <section class="ap-block"><h2 class="ap-section-title">Saldo remanescente mês a mês</h2><p class="ap-section-sub">Dotação − (executado + projetado acumulado). Abaixo de zero = déficit.</p><div class="ap-chart">${chart()}</div></section>
+      <section class="ap-block"><h2 class="ap-section-title">Saldo remanescente mês a mês</h2><p class="ap-section-sub">Dotação − (executado + projetado acumulado), por grupo. Os valores exatos estão na tabela “Saldo remanescente por grupo e ação”, abaixo.</p><div class="ap-chart">${chart()}</div></section>
       <section class="ap-block"><h2 class="ap-section-title">Grupo × mês</h2><p class="ap-section-sub">Valores exatos em reais. <button class="ap-link" data-goto="rubricas">Abrir o detalhamento mês a mês de cada rubrica →</button></p><div class="ap-wrap" tabindex="0" role="region" aria-label="Grupo por mês, tabela com rolagem horizontal"><table class="ap-tbl" aria-label="Grupo por mês"><thead><tr><th scope="col" class="ap-sticky">Grupo</th>${monthHeaders(false)}<th scope="col">Total</th><th scope="col">Dotação</th><th scope="col">Saldo</th></tr></thead><tbody>${groupMonthRows}</tbody></table></div></section>
       <section class="ap-saldo"><h2 class="ap-section-title">Saldo remanescente por grupo e ação (dotação − executado/projetado acumulado)</h2><div class="ap-wrap" tabindex="0" role="region" aria-label="Saldos por mês, tabela com rolagem horizontal"><table class="ap-tbl" aria-label="Saldo remanescente por grupo"><thead><tr><th scope="col" class="ap-sticky">Grupo</th>${monthHeaders(true)}</tr></thead><tbody>${saldoRows}</tbody></table></div></section>
     </div>
@@ -163,6 +188,23 @@ export default function(component) {
     <dialog class="ap-dialog" id="ap-filters" aria-labelledby="ap-filters-title"><form><h2 id="ap-filters-title">Referência da comparação</h2><label for="ap-exercise">Exercício</label><select id="ap-exercise">${d.anosExecucao.map(v => `<option value="${v}" ${v===Math.floor(d.referencia/100) ? 'selected' : ''}>${v}</option>`).join('')}</select><label for="ap-reference">Mês de referência (data-base)</label><select id="ap-reference">${d.mesesDisponiveis.filter(v => Math.floor(v/100) === Math.floor(d.referencia/100)).map(v => `<option value="${v}" ${v===d.referencia ? 'selected' : ''}>${months[v%100-1]}/${Math.floor(v/100)}</option>`).join('')}</select><label for="ap-budget">Dotação de referência</label><select id="ap-budget">${d.anosDotacao.map(v => `<option value="${v}" ${v===d.anoDotacao ? 'selected' : ''}>${v}</option>`).join('')}</select><p class="ap-dialog-description">O exercício escolhido nunca mistura meses de anos diferentes na mesma referência. Meses até a data-base são executados; os seguintes são projetados. Os ajustes manuais ficam restritos à referência escolhida nesta sessão.</p><div class="ap-dialog-actions"><button type="button" data-cancel>Cancelar</button><button type="submit">Atualizar</button></div></form></dialog>
   </section>`;
   root.querySelectorAll('.ap-wrap').forEach((el,i) => { el.scrollLeft = scrolls[i] || 0; });
+
+  // Hover do saldo remanescente: guia vertical, ponto e dica com o valor exato do mês.
+  root.querySelectorAll('.ap-mini-plot').forEach(plot => {
+    const cross = plot.querySelector('.ap-svg-cross'), dot = plot.querySelector('.ap-svg-dot'), tip = plot.querySelector('.ap-tip');
+    plot.querySelectorAll('.ap-svg-hit').forEach(hit => {
+      hit.onmouseenter = () => {
+        const sr = d.serieSaldo[+hit.dataset.k], i = +hit.dataset.i, cx = chX(i), cy = +hit.dataset.y, v = sr.meses[i];
+        cross.setAttribute('x1', cx); cross.setAttribute('x2', cx); cross.setAttribute('visibility', 'visible');
+        dot.setAttribute('cx', cx); dot.setAttribute('cy', cy); dot.setAttribute('visibility', 'visible');
+        tip.innerHTML = `<b>${months[i]}/${d.ano}</b> · ${i < d.mes ? 'executado' : 'projetado'}<br>Saldo <span class="${v < 0 ? 'ap-neg' : ''}">${esc(signed(v))}</span>`;
+        tip.style.left = `${cx / CH.W * 100}%`; tip.style.top = `${cy / CH.H * 100}%`;
+        tip.classList.toggle('ap-tip-left', i > 6);
+        tip.hidden = false;
+      };
+    });
+    plot.onmouseleave = () => { cross.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); tip.hidden = true; };
+  });
 
   const showView = v => {
     root._view = v;
