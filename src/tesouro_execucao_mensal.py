@@ -435,17 +435,26 @@ _DIMENSOES_CONSTANTES_POR_NE = [
 ]
 
 
-def _resumo_classificacao(valores: pd.Series) -> str:
-    """Valor único se a NE tem só uma classificação; contagem, caso contrário. Mesma função
-    de `src.execucao_anual._resumo_classificacao`, duplicada aqui de propósito — os dois
-    módulos não se importam entre si (bases independentes, ver docstring do módulo)."""
+def _resumo_classificacao_por_ne(df: pd.DataFrame, coluna: str, indice: pd.Index) -> pd.Series:
+    """Resumo de `coluna` para cada NE de `indice`: valor único se a NE tem só uma
+    classificação; contagem, caso contrário — mesma regra de
+    `src.execucao_anual._resumo_classificacao` (os dois módulos não se importam entre si,
+    bases independentes, ver docstring do módulo). Distintos não nulos na ordem de aparição;
+    um só → o próprio valor em texto; vários → "N classificações"; nenhum → "—".
 
-    unicos = valores.dropna().unique()
-    if len(unicos) == 0:
-        return "—"
-    if len(unicos) == 1:
-        return str(unicos[0])
-    return f"{len(unicos)} classificações"
+    Vetorizado em 27/10/2026: a versão anterior (`.agg` com uma função Python por NE)
+    respondia por ~60% de cada reexecução da Consulta de Empenhos; saída conferida idêntica
+    (valores, dtypes, ordem) na fixture e na base real."""
+
+    distintos = df[["ne_ccor", coluna]].dropna(subset=[coluna]).drop_duplicates()
+    por_ne = distintos.groupby("ne_ccor", dropna=False, sort=False)[coluna]
+    quantidade = por_ne.size()
+    primeiro = por_ne.first().map(str)
+    resumo = primeiro.where(quantidade == 1, quantidade.astype(str) + " classificações").reindex(indice).fillna("—")
+    # mesmo dtype que o `.agg` com função Python devolvia: ele reconverte o resultado para o
+    # dtype de texto da coluna de entrada; fora isso, fica `object`.
+    dtype = df[coluna].dtype
+    return resumo.astype(dtype if isinstance(dtype, pd.StringDtype) else object)
 
 
 def agregar_por_ne(df: pd.DataFrame) -> pd.DataFrame:
@@ -471,9 +480,9 @@ def agregar_por_ne(df: pd.DataFrame) -> pd.DataFrame:
     liquidada_paga_por_ne = liquidado_pago.groupby("ne_ccor")[["liquidada", "paga"]].sum(min_count=1)
 
     agregacoes: dict[str, object] = {coluna: "first" for coluna in _DIMENSOES_CONSTANTES_POR_NE}
-    agregacoes["natureza_detalhada_label"] = _resumo_classificacao
-    agregacoes["subitem_cod"] = _resumo_classificacao
     resultado = df.groupby("ne_ccor", dropna=False).agg(agregacoes)
+    for coluna in ("natureza_detalhada_label", "subitem_cod"):
+        resultado[coluna] = _resumo_classificacao_por_ne(df, coluna, resultado.index)
 
     resultado["empenhada"] = empenhada_por_ne
     resultado[["liquidada", "paga"]] = liquidada_paga_por_ne

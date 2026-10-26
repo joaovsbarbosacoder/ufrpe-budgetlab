@@ -7,6 +7,7 @@ O Drive é trocado por um armazenamento em memória; cada "dispositivo" é uma �
 from __future__ import annotations
 
 import io
+import os
 import zipfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -468,6 +469,47 @@ def test_mudanca_real_dos_dois_lados_continua_sendo_conflito_mesmo_com_historico
 
     assert b.sincronizar(drive, 3).acao == ACAO_CONFLITO
     assert b.ler(DESPESAS) == '{"despesas": ["b"]}'
+
+
+def _decisao(base: Path, conteudo: str) -> Path:
+    caminho = base / DESPESAS
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    caminho.write_text(conteudo, encoding="utf-8")
+    return caminho
+
+
+def test_impressao_nao_rele_arquivo_sem_mudanca(tmp_path, monkeypatch):
+    # 27/10/2026: a impressão roda ao fim de toda execução do app; arquivo intacto não é relido.
+    _decisao(tmp_path, '{"despesas": [1]}')
+    primeira = sd.impressao_digital(tmp_path)
+    leituras = []
+    original = sd.backup_dados._sha256_arquivo
+    monkeypatch.setattr(sd.backup_dados, "_sha256_arquivo", lambda c: leituras.append(c) or original(c))
+
+    assert sd.impressao_digital(tmp_path) == primeira
+    assert leituras == []
+
+
+def test_impressao_percebe_conteudo_novo_do_mesmo_tamanho(tmp_path):
+    caminho = _decisao(tmp_path, '{"despesas": [1]}')
+    antes = sd.impressao_digital(tmp_path)
+    caminho.write_text('{"despesas": [2]}', encoding="utf-8")  # mesmo tamanho, conteúdo diferente
+
+    depois = sd.impressao_digital(tmp_path)
+    assert depois != antes
+    caminho.write_text('{"despesas": [1]}', encoding="utf-8")
+    assert sd.impressao_digital(tmp_path) == antes  # voltou ao conteúdo original
+
+
+def test_impressao_percebe_arquivo_trocado_por_replace(tmp_path):
+    # restauração de pacote grava por `os.replace` — arquivo novo no mesmo caminho
+    caminho = _decisao(tmp_path, '{"despesas": [1]}')
+    antes = sd.impressao_digital(tmp_path)
+    novo = tmp_path / "novo.json"
+    novo.write_text('{"despesas": [9]}', encoding="utf-8")
+    os.replace(novo, caminho)
+
+    assert sd.impressao_digital(tmp_path) != antes
 
 
 def test_versao_do_drive_so_com_historico_novo_sem_mudanca_local_fica_em_dia(drive, a, b):
