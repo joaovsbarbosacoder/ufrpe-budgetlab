@@ -158,6 +158,30 @@ class TestPainelPessoal(unittest.TestCase):
         saldo_tabela = next(s for s in d["saldos"] if s["key"] == "ativo")
         self.assertEqual(serie["meses"], saldo_tabela["meses"])
 
+    def test_quadro_de_beneficios_vira_json_com_subtotais(self):
+        self.assertIsNone(self.painel()["beneficiosPo"])  # sem quadro, a seção não aparece
+        quadro = pd.DataFrame([
+            {"acao": "212B", "po": "0005", "po_desc": "AUXILIO-ALIMENTACAO", "iduso": "8", "iduso_desc": "MDE",
+             "dotacao": 1500.0, "empenhada": 1300.0, "executado": 320.0, "projetado": 1080.0, "total": 1400.0,
+             "saldo": 100.0, "empenho_saldo": -100.0, "projetado_media": 960.0, "total_media": 1280.0,
+             "saldo_media": 220.0, "empenho_saldo_media": 20.0},
+            {"acao": "212B", "po": "1009", "po_desc": None, "iduso": "0", "iduso_desc": None,
+             "dotacao": 100.0, "empenhada": None, "executado": 30.0, "projetado": None, "total": 30.0,
+             "saldo": 70.0, "empenho_saldo": None, "projetado_media": 105.0, "total_media": 135.0,
+             "saldo_media": -35.0, "empenho_saldo_media": None},
+        ])
+        d = montar_painel(self.grade, self.mensal, self.anual, pd.Series({"ativo": 5000}), 2026,
+                          meses_disponiveis=[202608], anos_dotacao=[2026], quadro_beneficios=quadro)
+        q = d["beneficiosPo"]
+        json.dumps(q, allow_nan=False)
+        self.assertEqual([(l["acao"], l["po"], l["iduso"]) for l in q["linhas"]], [("212B", "0005", "8"), ("212B", "1009", "0")])
+        self.assertIsNone(q["linhas"][1]["projetado"])
+        self.assertEqual(q["porAcao"][0]["rotulo"], "212B — BENEFÍCIOS OBRIGATÓRIOS")
+        self.assertEqual(q["porAcao"][0]["saldo"], 170.0)
+        self.assertEqual(q["porAcao"][0]["empenho_saldo"], -100.0)
+        self.assertEqual([r["rotulo"] for r in q["porIduso"]], ["Iduso 0", "Iduso 8 — MDE"])
+        self.assertEqual(q["total"]["total"], 1430.0)
+
     def test_rubricas_levam_a_regra_de_projecao(self):
         filhos = self.painel()["grupos"][0]["children"]
         self.assertEqual({f["regra"] for f in filhos}, {"multiplicador", "decimo_terceiro", "proporcao_historica"})

@@ -18,7 +18,7 @@ from src.despesas_pessoal import (
     ACAO_ASSISTENCIA_MEDICA, ACAO_BENEFICIOS_OBRIGATORIOS,
     GRUPO_ATIVO, GRUPO_INATIVO, GRUPO_RPPS, GRUPO_OUTROS_BENEFICIOS,
     REGRA_DECIMO_TERCEIRO, REGRA_PROPORCAO_HISTORICA,
-    ResultadoGradeMensal, execucao_ano_anterior, execucao_ano_anterior_beneficios,
+    LINHA_TOTAL, ResultadoGradeMensal, execucao_ano_anterior, execucao_ano_anterior_beneficios, resumo_quadro_beneficios,
     valor_mes_referencia, valor_mes_referencia_beneficios,
     regra_para_natureza, saldo_remanescente, saldo_remanescente_beneficios_por_acao,
 )
@@ -109,9 +109,40 @@ def _cartoes(grupos, mes, saldos_por_grupo, saldos_beneficios_df, dotacao_por_ac
     return cartoes
 
 
+_MEDIDAS_BENEFICIOS = ("dotacao", "empenhada", "executado", "projetado", "total", "saldo", "empenho_saldo",
+                       "total_media", "saldo_media", "empenho_saldo_media")
+
+
+def _beneficios_po(quadro):
+    """Quadro de Outros Benefícios por Ação/PO/Iduso (`despesas_pessoal.quadro_beneficios_por_po_iduso`) em
+    JSON, com subtotais por ação e por Iduso — `None` sem quadro (a seção não aparece)."""
+    if quadro is None or quadro.empty:
+        return None
+
+    def registros(df, rotulo):
+        return [{"rotulo": rotulo(r), **{m: numero(r[m]) for m in _MEDIDAS_BENEFICIOS}} for _, r in df.iterrows()]
+
+    acoes = {**{a: n for a, n in _NOMES_ACAO_BENEFICIOS.items()}}
+    linhas = [{
+        "acao": r["acao"], "po": r["po"], "poDesc": None if pd.isna(r["po_desc"]) else str(r["po_desc"]),
+        "iduso": r["iduso"], **{m: numero(r[m]) for m in _MEDIDAS_BENEFICIOS},
+    } for _, r in quadro.iterrows()]
+    idusos = {r["iduso"]: (None if pd.isna(r["iduso_desc"]) else str(r["iduso_desc"])) for _, r in quadro.iterrows()}
+    por_acao = resumo_quadro_beneficios(quadro, "acao")
+    por_iduso = resumo_quadro_beneficios(quadro, "iduso")
+    return {
+        "linhas": linhas,
+        "porAcao": registros(por_acao.loc[por_acao["acao"] != LINHA_TOTAL], lambda r: acoes.get(r["acao"], r["acao"])),
+        "porIduso": registros(por_iduso.loc[por_iduso["iduso"] != LINHA_TOTAL],
+                              lambda r: f"Iduso {r['iduso']}" + (f" — {idusos[r['iduso']]}" if idusos.get(r["iduso"]) else "")),
+        "total": registros(por_acao.loc[por_acao["acao"] == LINHA_TOTAL], lambda r: "Total")[0],
+    }
+
+
 def montar_painel(grade: ResultadoGradeMensal, mensal, anual, dotacao, ano_dotacao,
                   *, meses_disponiveis, anos_dotacao, procedencia="", editados=None,
-                  dotacao_por_plano_orcamentario=None, dotacao_por_acao_beneficios=None, faixa=None):
+                  dotacao_por_plano_orcamentario=None, dotacao_por_acao_beneficios=None, faixa=None,
+                  quadro_beneficios=None):
     """Dados JSON da interface; todos os valores vêm das bases/processamento atual.
 
     `dotacao_por_plano_orcamentario` (opcional): `pd.Series` indexada por
@@ -128,7 +159,10 @@ def montar_painel(grade: ResultadoGradeMensal, mensal, anual, dotacao, ano_dotac
 
     `faixa` (opcional): `despesas_pessoal.faixa_historica_total_anual` já calculada — alimenta a faixa e o pior caso
     de cada cartão e o aviso "Cenário histórico" (`avisoFaixa`), ambos dentro do componente desde o novo visual
-    (27/10/2026)."""
+    (27/10/2026).
+
+    `quadro_beneficios` (opcional): `despesas_pessoal.quadro_beneficios_por_po_iduso` — vira `beneficiosPo`, o
+    quadro de Outros Benefícios por Ação, PO e Iduso da visão geral (27/10/2026)."""
     historico = execucao_ano_anterior(anual, grade.ano - 1)
     referencia = valor_mes_referencia(mensal, grade.ano_mes_referencia)
     exec_por_chave = _contexto(historico, "execucao_ano_anterior")
@@ -252,6 +286,7 @@ def montar_painel(grade: ResultadoGradeMensal, mensal, anual, dotacao, ano_dotac
         "anosExecucao": sorted({int(v) // 100 for v in meses_disponiveis}),
         "grupos": ordem, "saldos": saldos, "total": total, "saldoDezembro": saldo_total[11],
         "cartoes": cartoes, "serieSaldo": serie_saldo, "avisoFaixa": aviso_faixa,
+        "beneficiosPo": _beneficios_po(quadro_beneficios),
         "aviso": aviso, "erros": grade.erros, "alertas": grade.alertas,
         "reconciliacao": {"rubricas": reconciliado, "base": validado, "diferenca": diferenca},
         "procedencia": procedencia, "temEdicoes": bool(editados),

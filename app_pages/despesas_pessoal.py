@@ -16,7 +16,8 @@ from src.despesas_pessoal import (
     aplicar_overrides, diferencas_do_padrao, consolidar_por_elemento, consolidar_relatorio_ativo,
     dotacao_atualizada_por_acao_beneficios, dotacao_atualizada_por_grupo,
     dotacao_atualizada_por_plano_orcamentario,
-    grade_mensal, substituir_beneficios_por_plano_orcamentario, ultimo_mes_fechado,
+    grade_mensal, projetado_beneficios_por_po, quadro_beneficios_por_po_iduso,
+    substituir_beneficios_por_plano_orcamentario, ultimo_mes_fechado,
 )
 from src.importacao_dotacao import (
     DIRETORIO_MANIFESTOS_PADRAO as DIRETORIO_MANIFESTOS_DOTACAO,
@@ -174,6 +175,11 @@ with aba_painel:
     # Faixa histórica (26/10/2026): calculada uma vez — alimenta os cartões e o aviso "Cenário histórico" do
     # componente (novo visual, 27/10/2026) e o quadro abaixo dele. Só leitura; não entra na projeção nem no saldo.
     faixa = calcular_faixa_historica(mensal, ano, ano_mes_referencia % 100)
+    # Outros Benefícios por Ação, PO e Iduso (27/10/2026): mesma projeção do painel (com os ajustes da sessão),
+    # dotação do exercício escolhido e empenhado do exercício — fecha com o grupo Outros Benefícios.
+    quadro_beneficios = quadro_beneficios_por_po_iduso(
+        mensal, anual, dotacao, ano, ano_mes_referencia, ano_dotacao, parametros, projetado_beneficios_por_po(grade),
+    )
 
     procedencia = procedencia_bases + (
         " Fórmulas ajustadas nesta sessão: " + "; ".join(ajustes_formulas) + "."
@@ -183,7 +189,8 @@ with aba_painel:
                           meses_disponiveis=meses_disponiveis, anos_dotacao=anos_dotacao,
                           procedencia=procedencia, editados=edicoes,
                           dotacao_por_plano_orcamentario=dotacao_por_po,
-                          dotacao_por_acao_beneficios=dotacao_por_acao_beneficios, faixa=faixa)
+                          dotacao_por_acao_beneficios=dotacao_por_acao_beneficios, faixa=faixa,
+                          quadro_beneficios=quadro_beneficios)
     resultado = render_painel(dados)
     if resultado.edicao:
         try:
