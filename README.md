@@ -722,6 +722,17 @@ deixando claro que é cenário histórico e não a projeção. O aviso do própr
 painel continua o mesmo. Sem exercício completo ou sem dotação do grupo, não há
 aviso.
 
+**DDP guardada e painel (27/10/2026).** Os PDFs enviados na aba Folha (DDP) ficam guardados: o
+original é copiado sem alteração para `data/raw/ddp_siape/AAAAMM/` (fora do git) e um manifesto
+versionado em `data/manifestos/ddp_siape_AAAAMM_*.json` (hash e data) aponta a versão atual de cada
+competência; reenviar um PDF diferente cria uma versão nova e preserva a anterior
+(`src/ddp_siape_arquivos.py`). O painel passa a usar a DDP do mês com esta prioridade por mês:
+liquidação na Execução Mensal, depois a DDP guardada, depois a projeção (`src/ddp_realizado.py`).
+A DDP só vale enquanto o mês não fechou pela liquidação (mesmo critério de `ultimo_mes_fechado`) e
+se o mês anterior já fechou; com a liquidação fechada, a DDP não é somada. Naturezas que a DDP não
+traz (RPPS patronal e outras) ficam pela projeção; natureza da DDP sem linha de empenho para
+distribuir é listada na tela e não entra no painel. A DDP é líquida, não a liquidação do SIAFI.
+
 A página tem quatro abas. **Acompanhamento** é o painel acima. **Folha (DDP)**
 recebe os PDFs do SIAPE do mês (DDP e Crédito Bancário, de servidor e de
 pensionista), que ficam só na memória da sessão, e mostra: a conferência dos

@@ -226,6 +226,7 @@ class TestPainelPessoal(unittest.TestCase):
              patch("src.importacao_execucao.carregar_atual", return_value=self.anual), \
              patch("src.importacao_dotacao.carregar_atual", return_value=dotacao), \
              patch("src.importacao_execucao_mensal.carregar_atual", return_value=self.mensal), \
+             patch("src.ddp_siape_arquivos.DIRETORIO_MANIFESTOS", Path("tests/_sem_ddp_guardada")), \
              patch("src.ui_despesas_pessoal.render_painel", side_effect=render), \
              patch("pathlib.Path.exists", lambda p: True if caminho_base(p) else exists_original(p)), \
              patch("pathlib.Path.stat", stat_base):
@@ -323,6 +324,7 @@ class TestAbasFormulasEHistorico(unittest.TestCase):
              patch("src.importacao_execucao.carregar_atual", return_value=self.anual), \
              patch("src.importacao_dotacao.carregar_atual", return_value=dotacao), \
              patch("src.importacao_execucao_mensal.carregar_atual", return_value=self.mensal), \
+             patch("src.ddp_siape_arquivos.DIRETORIO_MANIFESTOS", Path("tests/_sem_ddp_guardada")), \
              patch("src.ui_despesas_pessoal.render_painel", side_effect=render), \
              patch("pathlib.Path.exists", lambda p: True if p.name in nomes else exists_original(p)), \
              patch("pathlib.Path.stat", lambda p, *a, **k: stat_original(Path(__file__)) if p.name in nomes else stat_original(p, *a, **k)):

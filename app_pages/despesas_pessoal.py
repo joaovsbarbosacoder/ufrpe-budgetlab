@@ -35,7 +35,9 @@ from src.importacao_execucao_mensal import (
     Manifesto as ManifestoExecucaoMensal, NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO_MENSAL,
     carregar_atual as carregar_execucao_mensal_atual,
 )
-from src.ui_ddp_siape import render_ddp
+from src.ddp_realizado import aplicar_ddp
+from src.ddp_siape_arquivos import ArquivoGuardadoInvalido, chave_cache as chave_ddp_guardada, ultima_ddp_completa
+from src.ui_ddp_siape import aviso_ddp_aplicada, mes_ano as _mes_ano, render_ddp
 from src.ui_despesas_pessoal import montar_painel, render_painel, validar_edicao
 from src.ui_despesas_pessoal_abas import (
     calcular_faixa_historica, render_exercicios_anteriores, render_faixa_historica, render_formulas,
@@ -55,6 +57,13 @@ def _cached_execucao_mensal(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.
 @st.cache_data(show_spinner="Lendo a base de Dotação Anual...")
 def _cached_dotacao_anual(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
     return carregar_dotacao_atual()
+
+
+@st.cache_data(show_spinner="Lendo a DDP guardada...")
+def _cached_ddp_guardada(chave: tuple) -> list | None:
+    """DDP/Crédito Bancário da competência mais recente com servidor e pensionista (PDFs guardados);
+    `chave` = (competência, versão) de cada competência guardada, só para renovar o cache."""
+    return ultima_ddp_completa()
 
 
 # Memória (07/10/2026): a cada interação o `st.cache_data` devolve CÓPIAS das bases (DataFrames
@@ -116,7 +125,19 @@ with aba_formulas, st.container(key="dp_aba_formulas"):
     parametros, erro_parametros = render_formulas()
 ajustes_formulas = diferencas_do_padrao(parametros)
 
-mes_padrao = ultimo_mes_fechado(mensal, parametros) or meses_disponiveis[-1]
+# DDP guardada (27/10/2026): prioridade liquidação > DDP guardada > projeção. `mensal` segue sendo a base REAL
+# (aba Folha (DDP), conferências); `mensal_painel` é a cópia com o mês da DDP como realizado provisório,
+# quando a liquidação ainda não fechou o mês.
+try:
+    ddp_guardada = _cached_ddp_guardada(chave_ddp_guardada())
+    erro_ddp_guardada = None
+except ArquivoGuardadoInvalido as erro:
+    ddp_guardada, erro_ddp_guardada = None, str(erro)
+resultado_ddp = aplicar_ddp(mensal, anual, ddp_guardada, parametros)
+mensal_painel = resultado_ddp.mensal
+
+mes_padrao = (resultado_ddp.competencia if resultado_ddp.aplicada
+              else ultimo_mes_fechado(mensal, parametros)) or meses_disponiveis[-1]
 anos_dotacao = sorted(int(v) for v in dotacao["ano_lancamento"].dropna().unique())
 if not anos_dotacao:
     st.warning("A base de Dotação não contém exercícios disponíveis.")
@@ -143,7 +164,7 @@ procedencia_bases = (
 
 with aba_historico, st.container(key="dp_aba_historico"):
     ano_corrente = max([int(v) for v in anual["ano"].dropna().unique()] + [int(meses_disponiveis[-1]) // 100])
-    render_exercicios_anteriores(anual, mensal, dotacao, ano_corrente, procedencia_bases,
+    render_exercicios_anteriores(anual, mensal_painel, dotacao, ano_corrente, procedencia_bases,
                                  parametros=parametros, mes_referencia_padrao=ano_mes_referencia % 100,
                                  formulas_ajustadas=bool(ajustes_formulas))
 
@@ -155,12 +176,17 @@ with aba_painel:
             else:
                 st.warning("Projeção com fórmulas ajustadas nesta sessão: " + "; ".join(ajustes_formulas) + ".")
 
-    bruta = grade_mensal(mensal, anual, ano, ano_mes_referencia, parametros)
+    aviso_ddp = aviso_ddp_aplicada(resultado_ddp, erro_ddp_guardada, ano_mes_referencia)
+    if aviso_ddp:
+        with st.container(key="dp_aba_aviso"):
+            getattr(st, aviso_ddp[0])(aviso_ddp[1])
+
+    bruta = grade_mensal(mensal_painel, anual, ano, ano_mes_referencia, parametros)
     if bruta.linhas.empty:
         st.info("Não há despesas de pessoal nas ações acompanhadas para esta referência.")
         st.stop()
     grade_base = substituir_beneficios_por_plano_orcamentario(
-        consolidar_relatorio_ativo(consolidar_por_elemento(bruta)), mensal, anual, parametros,
+        consolidar_relatorio_ativo(consolidar_por_elemento(bruta)), mensal_painel, anual, parametros,
     )
     chave_edicoes = f"dp_edicoes_{ano_mes_referencia}"
     # Conserva ajustes da interface anterior, se a sessão ainda os possuir.
@@ -178,18 +204,21 @@ with aba_painel:
     dotacao_por_acao_beneficios = dotacao_atualizada_por_acao_beneficios(dotacao, ano_dotacao)
     # Faixa histórica (26/10/2026): calculada uma vez — alimenta os cartões e o aviso "Cenário histórico" do
     # componente (novo visual, 27/10/2026) e o quadro abaixo dele. Só leitura; não entra na projeção nem no saldo.
-    faixa = calcular_faixa_historica(mensal, ano, ano_mes_referencia % 100)
+    faixa = calcular_faixa_historica(mensal_painel, ano, ano_mes_referencia % 100)
     # Outros Benefícios por Ação, PO e Iduso (27/10/2026): mesma projeção do painel (com os ajustes da sessão),
     # dotação do exercício escolhido e empenhado do exercício — fecha com o grupo Outros Benefícios.
     quadro_beneficios = quadro_beneficios_por_po_iduso(
-        mensal, anual, dotacao, ano, ano_mes_referencia, ano_dotacao, parametros, projetado_beneficios_por_po(grade),
+        mensal_painel, anual, dotacao, ano, ano_mes_referencia, ano_dotacao, parametros, projetado_beneficios_por_po(grade),
     )
 
     procedencia = procedencia_bases + (
         " Fórmulas ajustadas nesta sessão: " + "; ".join(ajustes_formulas) + "."
         if ajustes_formulas else " Fórmulas de projeção: padrão da metodologia."
+    ) + (
+        f" {_mes_ano(resultado_ddp.competencia)} com valores da DDP do SIAPE (ainda não liquidados)."
+        if resultado_ddp.aplicada and ano_mes_referencia == resultado_ddp.competencia else ""
     )
-    dados = montar_painel(grade, mensal, anual, dotacao_grupo, ano_dotacao,
+    dados = montar_painel(grade, mensal_painel, anual, dotacao_grupo, ano_dotacao,
                           meses_disponiveis=meses_disponiveis, anos_dotacao=anos_dotacao,
                           procedencia=procedencia, editados=edicoes,
                           dotacao_por_plano_orcamentario=dotacao_por_po,
