@@ -25,8 +25,8 @@ from src.ddp_siape import (
     CRITERIO_ELEMENTO, CRITERIO_REPARTIDO, CRITERIO_SEM_EMPENHO, CRITERIO_SOMADO, CRITERIO_UNICO,
     OPERACAO_REFORCO, OPERACAO_REMANEJAR, RESERVA_DDP, RESERVA_PROJECAO, SEM_EMPENHO, TIPO_CREDITO, TIPO_DDP,
     SEM_ACAO, acoes_dos_quadros, conciliacao_por_acao, conciliacao_sem_ddp, conferencia, confronto_liquidado, ddp_por_natureza, ler_relatorio,
-    plano_operacoes, quadro_reforco, quadro_sem_ddp, reforco_por_acao_po, reserva_projetada, separar_competencias,
-    validar_conjunto, variacao_por_natureza,
+    plano_operacoes, por_empenho_somente_reforco, quadro_reforco, quadro_sem_ddp, reforco_por_acao_po, reserva_projetada,
+    separar_competencias, somente_reforco, sugestoes_anulacao, validar_conjunto, variacao_por_natureza,
 )
 from src.despesas_pessoal import GRUPO_RPPS
 from src.tesouro_execucao_mensal import _DIMENSOES_EXTRA_BLOCO
@@ -314,6 +314,39 @@ class TestQuadroReforco(unittest.TestCase):
         self.assertEqual((linha["liquidado_no_mes"], linha["saldo"], linha["falta"]), (500.0, -200.0, 700.0))
 
 
+class TestSomenteReforcoESugestoesDeAnulacao(unittest.TestCase):
+    """Cenário sem anulação agora e lista do que pode ser anulado (27/10/2026)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.itens, cls.por_empenho = quadro_reforco(_ddp_sintetica(), _base_sintetica(), 202610, RESERVA)
+        cls.plano = plano_operacoes(cls.itens)
+
+    def test_somente_reforco_usa_a_falta_inteira_de_cada_item(self):
+        tabela = somente_reforco(self.itens).set_index(["empenho", "natureza_detalhada"])
+        self.assertEqual(tabela.loc[("NE000001", "31901101"), ["reforco_mes", "reforco_ate_dezembro"]].tolist(), [200.0, 1200.0])
+        self.assertNotIn(("NE000001", "31901143"), tabela.index)  # item com sobra não entra
+        self.assertEqual(tabela.loc[("NE000006", "31900301"), "reforco_ate_dezembro"], 100.0)  # sem falta no mês, falta até dez
+        self.assertEqual(round(tabela["reforco_mes"].sum(), 2), 446.0)
+        self.assertEqual(round(tabela["reforco_ate_dezembro"].sum(), 2), 2146.0)
+
+    def test_por_empenho_sem_anulacao_e_sobra_parada(self):
+        tabela = por_empenho_somente_reforco(self.itens).set_index("empenho")
+        self.assertEqual(tabela.loc["NE000001", ["reforco_mes", "reforco_ate_dezembro", "sobra_parada"]].tolist(), [200.0, 1200.0, 2000.0])
+        self.assertEqual(tabela.loc["NE000001", "saldo_apos_ano"], 2000.0)  # para reforco_por_acao_po: sobra continua empenhada
+        # com anulação o reforço do mês cai de 446 para 246 (a NE1 cobre os seus 200 com o 13º)
+        self.assertEqual(round(tabela["reforco_mes"].sum(), 2), 446.0)
+        self.assertEqual(round(self.por_empenho["reforco_mes"].sum(), 2), 246.0)
+
+    def test_sugestoes_de_anulacao(self):
+        tabela = sugestoes_anulacao(self.itens, self.plano).set_index(["empenho", "natureza_detalhada"])
+        self.assertEqual(tabela.loc[("NE000001", "31901143"), ["pode_anular", "usado_no_plano", "restante"]].tolist(),
+                         [2000.0, 200.0, 1800.0])
+        self.assertEqual(tabela.loc[("NE000003", "33909308"), ["pode_anular", "usado_no_plano"]].tolist(), [200.0, 0.0])
+        self.assertEqual(len(tabela), 2)
+        self.assertTrue(sugestoes_anulacao(self.itens.iloc[0:0], self.plano.iloc[0:0]).empty)
+
+
 class TestRppsPatronalSemDdp(unittest.TestCase):
     """Contribuição patronal ao RPPS: não está na DDP; o mês vem da projeção (grade)."""
 
@@ -442,9 +475,9 @@ class TestConciliacaoPorAcao(unittest.TestCase):
         from src.ui_ddp_siape import tabela_conciliacao
 
         tabela = tabela_conciliacao(self.tabela.reset_index()).set_index("Ação")
-        self.assertEqual(tabela.loc["09HB", "Saldo no painel"], "−R$ 100,00")
-        self.assertEqual(tabela.loc["09HB", "Diferença não explicada"], "R$ 0,00")
-        self.assertEqual(tabela.loc["0181", "Saldo no painel"], "—")
+        self.assertEqual(tabela.loc["09HB", "Saldo da dotação pela projeção do painel"], "−R$ 100,00")
+        self.assertEqual(tabela.loc["09HB", "Diferença (deve ser zero)"], "R$ 0,00")
+        self.assertEqual(tabela.loc["0181", "Saldo da dotação pela projeção do painel"], "—")
 
     def test_valores_do_rpps_e_do_ativo(self):
         rpps = self.tabela.loc["09HB"]
@@ -530,9 +563,9 @@ class TestTabelasDaAba(unittest.TestCase):
 
         itens, _ = quadro_reforco(_ddp_sintetica(), _base_sintetica(), 202610, RESERVA)
         tabela = tabela_plano(plano_operacoes(itens), itens).set_index("Empenho")
-        self.assertEqual(tabela.loc["NE000001", "Anular do item"], "31901143 X")  # fora da DDP: descrição da base
-        self.assertEqual(tabela.loc["NE000001", "Reforçar o item"], "31901101 DESC 31901101")
-        self.assertEqual(tabela.loc["NE000002", "Anular do item"], "—")
+        self.assertEqual(tabela.loc["NE000001", "Item que cede (anular)"], "31901143 X")  # fora da DDP: descrição da base
+        self.assertEqual(tabela.loc["NE000001", "Item que recebe (reforçar)"], "31901101 DESC 31901101")
+        self.assertEqual(tabela.loc["NE000002", "Item que cede (anular)"], "—")
 
 
 if __name__ == "__main__":

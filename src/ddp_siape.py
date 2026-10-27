@@ -690,6 +690,43 @@ def plano_operacoes(itens: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(linhas, columns=["empenho", "operacao", "item_origem", "item_destino", "valor"])
 
 
+def somente_reforco(itens: pd.DataFrame) -> pd.DataFrame:
+    """Cenário sem anulação agora (27/10/2026: a anulação será feita, mas talvez não no momento):
+    cada item com falta recebe reforço do valor inteiro, sem usar a sobra de outro item. Uma linha
+    por item com falta no mês ou até dezembro: `reforco_mes` = falta do item e
+    `reforco_ate_dezembro` = máx(0, −saldo depois de dezembro) do próprio item."""
+    tabela = itens.assign(reforco_mes=itens["falta"], reforco_ate_dezembro=(-itens["saldo_apos_ano"]).clip(lower=0))
+    tabela = tabela.loc[(tabela["reforco_mes"] > 0.004) | (tabela["reforco_ate_dezembro"] > 0.004)]
+    return tabela[["empenho", "nes", "natureza_detalhada", "descricao", "acao_cod", "saldo", "ddp", "reserva",
+                   "reforco_mes", "reforco_ate_dezembro"]].reset_index(drop=True)
+
+
+def por_empenho_somente_reforco(itens: pd.DataFrame) -> pd.DataFrame:
+    """`somente_reforco` somado por empenho, no formato de `quadro_reforco(...)[1]` (para
+    `reforco_por_acao_po`): `saldo_apos_ano` passa a ser só a sobra que ficaria parada em
+    dezembro nos itens com folga — sem anulação ela continua empenhada."""
+    base = itens.assign(reforco_mes=itens["falta"], reforco_ate_dezembro=(-itens["saldo_apos_ano"]).clip(lower=0),
+                        sobra_parada=itens["saldo_apos_ano"].clip(lower=0))
+    tabela = base.groupby("empenho").agg(acao_cod=("acao_cod", "first"), saldo=("saldo", "sum"), ddp=("ddp", "sum"),
+                                         reforco_mes=("reforco_mes", "sum"), reforco_ate_dezembro=("reforco_ate_dezembro", "sum"),
+                                         sobra_parada=("sobra_parada", "sum"))
+    tabela["saldo_apos_ano"] = tabela["sobra_parada"]
+    return tabela.sort_values(["reforco_mes", "reforco_ate_dezembro"], ascending=False).reset_index()
+
+
+def sugestoes_anulacao(itens: pd.DataFrame, plano: pd.DataFrame) -> pd.DataFrame:
+    """Itens que podem ser anulados sem faltar nos meses seguintes: `pode_anular` = sobra livre
+    (saldo − folha do mês − reserva de nov/dez); `usado_no_plano` = quanto o plano de anulação +
+    reforço tira do item para cobrir faltas da mesma NE; `restante` = o que ainda sobraria."""
+    usado = (plano.loc[plano["operacao"] == OPERACAO_REMANEJAR].groupby(["empenho", "item_origem"])["valor"].sum()
+             if len(plano) else pd.Series(dtype=float))
+    tabela = itens.loc[itens["sobra_livre"] > 0.004, ["empenho", "nes", "natureza_detalhada", "descricao", "acao_cod",
+                                                      "saldo", "ddp", "reserva", "sobra_livre"]].copy()
+    tabela["usado_no_plano"] = [float(usado.get((e, n), 0.0)) for e, n in zip(tabela["empenho"], tabela["natureza_detalhada"])]
+    tabela["restante"] = tabela["sobra_livre"] - tabela["usado_no_plano"]
+    return tabela.rename(columns={"sobra_livre": "pode_anular"}).sort_values("pode_anular", ascending=False).reset_index(drop=True)
+
+
 def confronto_liquidado(ddp_natureza: pd.DataFrame, mensal_df: pd.DataFrame, ano_mes: int) -> pd.DataFrame:
     """DDP líquida × Liquidada da base no mês da DDP, por natureza detalhada, só nos
     empenhos da folha. Com a folha já liquidada, as diferenças são o que a liquidação não
