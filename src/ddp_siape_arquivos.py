@@ -155,6 +155,25 @@ def guardar(itens: list[tuple[RelatorioSiape, bytes]], diretorio_dados_brutos=No
     return ResultadoGuarda(versoes_novas=novas, sem_mudanca=iguais)
 
 
+def validar_troca(entrada: dict, relatorio: RelatorioSiape, conteudo: bytes) -> list[str]:
+    """Erros que impedem trocar o PDF guardado `entrada` (item do manifesto) pelo `relatorio` enviado:
+    o novo precisa ser da mesma competência, tipo, público e folha — a troca nunca muda o que o
+    arquivo representa — e diferente do guardado."""
+    erros = []
+    esperado = (entrada["tipo"], entrada["publico"], entrada["folha"])
+    recebido = (relatorio.tipo, relatorio.publico, relatorio.folha)
+    competencia = int(entrada["arquivo"].split("/")[1])
+    if relatorio.competencia != competencia or recebido != esperado:
+        erros.append(
+            f"O PDF enviado é {relatorio.tipo} de {relatorio.publico.lower()} ({relatorio.folha.lower()}) de "
+            f"{relatorio.competencia % 100:02d}/{relatorio.competencia // 100}, mas o guardado a trocar é {entrada['tipo']} de "
+            f"{entrada['publico'].lower()} ({entrada['folha'].lower()}) de {competencia % 100:02d}/{competencia // 100}."
+        )
+    elif hashlib.sha256(conteudo).hexdigest() == entrada["sha256"]:
+        erros.append("O PDF enviado é idêntico ao guardado: não há o que trocar.")
+    return erros
+
+
 def carregar(competencia: int, diretorio_dados_brutos=None, diretorio_manifestos=None) -> list[RelatorioSiape]:
     """Relatórios da versão atual da competência, relidos dos PDFs guardados (hash conferido)."""
     manifesto = manifesto_atual(competencia, diretorio_manifestos)

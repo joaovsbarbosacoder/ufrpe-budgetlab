@@ -7,6 +7,8 @@ cálculo financeiro mora aqui: tudo vem de `src.ddp_siape`.
 """
 from __future__ import annotations
 
+import hashlib
+
 import pandas as pd
 import streamlit as st
 
@@ -20,7 +22,7 @@ from src import ui_cartoes as cd
 from src.ddp_siape_relatorio import CRITERIOS, OPERACOES, DadosRelatorio, _nota_empenho, relatorio_excel
 from src.ddp_siape_arquivos import (
     ArquivoGuardadoInvalido, carregar as carregar_guardada, competencias_com_ddp, competencias_guardadas, guardar,
-    historico, manifesto_atual,
+    historico, manifesto_atual, validar_troca,
 )
 from src.despesas_pessoal import ACOES_ESCOPO, GRUPO_RPPS, MESES_NOMES, dotacao_atualizada_por_acao_e_po
 from src.ui_despesas_pessoal_abas import _md, brl
@@ -311,6 +313,40 @@ def render_guardadas(competencias: list[int]) -> None:
             "manifesto anteriores ficam preservados. Os arquivos estão em `data/raw/ddp_siape/` e os manifestos em "
             "`data/manifestos/`."
         )
+        render_troca(competencias)
+
+
+def render_troca(competencias: list[int]) -> None:
+    """Troca explícita de um PDF guardado por outro da mesma competência, tipo, público e folha."""
+    st.markdown("**Trocar um arquivo guardado**")
+    opcoes = [(c, a) for c in reversed(competencias) for a in manifesto_atual(c)["arquivos"]]
+    rotulo = lambda par: (f"{_mes(par[0])} · {par[1]['tipo']} · {par[1]['publico'].title()} · {par[1]['folha'].title()}"
+                          f" — {par[1]['nome_original']}")
+    escolha = st.selectbox("Arquivo a trocar", opcoes, format_func=rotulo, key="dp_ddp_troca_alvo")
+    # chave com contador: após a troca o envio volta vazio (um widget não pode ser limpo por código)
+    novo = st.file_uploader("PDF substituto", type="pdf", key=f"dp_ddp_troca_pdf_{st.session_state.get('dp_ddp_troca_n', 0)}")
+    if not novo or escolha is None:
+        return
+    competencia, entrada = escolha
+    conteudo = novo.getvalue()
+    try:
+        relatorio = ler_relatorio(conteudo, novo.name)
+    except ValueError as erro:
+        st.error(str(erro))
+        return
+    erros = validar_troca(entrada, relatorio, conteudo)
+    for erro in erros:
+        st.error(erro)
+    if erros:
+        return
+    st.info(f"Será trocado: **{entrada['nome_original']}** (hash {entrada['sha256'][:8]}, gerado em {entrada['data_geracao'] or '—'}) "
+            f"por **{novo.name}** (hash {hashlib.sha256(conteudo).hexdigest()[:8]}, gerado em "
+            f"{relatorio.data_geracao.isoformat() if relatorio.data_geracao else '—'}). O PDF e o manifesto atuais ficam preservados.")
+    if st.button("Confirmar troca", type="primary", key="dp_ddp_troca_confirmar"):
+        guardar([(relatorio, conteudo)])
+        st.session_state["dp_ddp_msg"] = f"Arquivo trocado em {_mes(competencia)}. O painel já usa o novo."
+        st.session_state["dp_ddp_troca_n"] = st.session_state.get("dp_ddp_troca_n", 0) + 1
+        st.rerun()
 
 
 def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int, procedencia: str,
