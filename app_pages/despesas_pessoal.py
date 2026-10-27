@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 from src.despesas_pessoal import (
-    aplicar_overrides, diferencas_do_padrao, consolidar_por_elemento, consolidar_relatorio_ativo,
+    MESES_NOMES, aplicar_overrides, diferencas_do_padrao, consolidar_por_elemento, consolidar_relatorio_ativo,
     dotacao_atualizada_por_acao_beneficios, dotacao_atualizada_por_grupo,
     dotacao_atualizada_por_plano_orcamentario,
     grade_mensal, projetado_beneficios_por_po, quadro_beneficios_por_po_iduso,
@@ -218,6 +218,11 @@ with aba_painel:
     ) + (
         f" {_mes_ano(resultado_ddp.competencia)} com valores da DDP do SIAPE (ainda não liquidados)."
         if resultado_ddp.aplicada and ano_mes_referencia == resultado_ddp.competencia else ""
+    ) + (
+        f" Patronal do RPPS projetado a {bruta.razao_patronal_rpps:.2%} da base do Ativo (vencimentos + gratificação), "
+        .replace(".", ",") + (f"razão observada em {MESES_NOMES[bruta.mes_razao_patronal_rpps - 1].lower()}."
+                              if bruta.mes_razao_patronal_rpps else "razão informada.")
+        if bruta.razao_patronal_rpps else ""
     )
     dados = montar_painel(grade, mensal_painel, anual, dotacao_grupo, ano_dotacao,
                           meses_disponiveis=meses_disponiveis, anos_dotacao=anos_dotacao,
