@@ -14,6 +14,8 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from src import ui_cartoes as cd
+
 from src.despesas_pessoal import (
     GRUPO_ATIVO, GRUPO_INATIVO, GRUPO_OUTROS_BENEFICIOS, GRUPO_RPPS,
     LINHA_TOTAL, MESES_NOMES, PARAMETROS_PADRAO, REGRA_MULTIPLICADOR, TABELA_REGRAS,
@@ -23,6 +25,7 @@ from src.despesas_pessoal import (
 )
 
 PREFIXO = "dp_f_"
+COR_GRUPO = {"ativo": "azul", "inativo": "laranja", "rpps": "verde", "outros_beneficios": "cinza", "total": "cinza"}
 NOMES_GRUPOS = {
     GRUPO_ATIVO: "Ativo (20TP)", GRUPO_INATIVO: "Inativo (0181)",
     GRUPO_RPPS: "RPPS (09HB)", GRUPO_OUTROS_BENEFICIOS: "Outros Benefícios (2004/212B)",
@@ -240,20 +243,14 @@ def render_exercicios_anteriores(anual: pd.DataFrame, mensal: pd.DataFrame, dota
     total = {"grupo": "total", **{c: resumo[c].sum(min_count=1) for c in ("dotacao", "empenhada", "liquidada", "paga")}}
     resumo = pd.concat([resumo, pd.DataFrame([total])], ignore_index=True)
 
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Dotação Atualizada", brl(total["dotacao"]))
-    k2.metric("Empenhada", brl(total["empenhada"]))
-    k3.metric("Liquidada", brl(total["liquidada"]))
-    k4.metric("Paga", brl(total["paga"]))
-
-    st.markdown("##### Resumo por grupo (Execução Anual)")
-    st.dataframe(pd.DataFrame({
-        "Grupo": resumo["grupo"].map(lambda g: NOMES_GRUPOS.get(g, "TOTAL")),
-        "Dotação Atualizada": resumo["dotacao"].map(brl),
-        "Empenhada": resumo["empenhada"].map(brl),
-        "Liquidada": resumo["liquidada"].map(brl),
-        "Paga": resumo["paga"].map(brl),
-    }), hide_index=True, width="stretch", height="content")
+    st.html(cd.CSS + cd.kpis([
+        {"rotulo": "Dotação Atualizada", "valor": brl(total["dotacao"])},
+        {"rotulo": "Empenhada", "valor": brl(total["empenhada"]), "tom": "laranja"},
+        {"rotulo": "Liquidada", "valor": brl(total["liquidada"]), "tom": "verde"},
+        {"rotulo": "Paga", "valor": brl(total["paga"]), "tom": "cinza"},
+    ]) + cd.secao("Resumo por grupo (Execução Anual)", "A barra mostra quanto da dotação atualizada foi liquidada.") + cd.grade([
+        cd.cartao_grupo_execucao(NOMES_GRUPOS.get(r.grupo, "TOTAL"), r.dotacao, r.empenhada, r.liquidada, r.paga,
+                                 COR_GRUPO.get(r.grupo, "cinza")) for r in resumo.itertuples()]))
 
     st.markdown("##### Liquidada mês a mês (Execução Mensal)")
     mensal_ano = liquidada_mensal_por_grupo(mensal, ano)
@@ -262,14 +259,11 @@ def render_exercicios_anteriores(anual: pd.DataFrame, mensal: pd.DataFrame, dota
         cobertura = f"de {anos_mensal[0]} a {anos_mensal[-1]}" if anos_mensal else "nenhum exercício"
         st.info(f"A Execução Mensal importada cobre {cobertura}; para {ano} há apenas o total anual acima.")
     else:
-        # meses nas linhas, grupos nas colunas: 12 colunas de mês não cabem em 1366px.
         totais_grupo = mensal_ano.sum(axis=1, min_count=1)
         totais_mes = mensal_ano.sum(axis=0, min_count=1)
-        tabela = pd.DataFrame({"Mês": [*MESES_NOMES, "Total"]})
-        for grupo in mensal_ano.index:
-            tabela[NOMES_GRUPOS[grupo]] = [brl(v) for v in [*mensal_ano.loc[grupo], totais_grupo[grupo]]]
-        tabela["Total"] = [brl(v) for v in [*totais_mes, totais_grupo.sum(min_count=1)]]
-        st.dataframe(tabela, hide_index=True, width="stretch", height="content")
+        st.html(cd.grade([cd.cartao_serie_mensal(NOMES_GRUPOS[g], [mensal_ano.loc[g, m] for m in range(1, 13)], totais_grupo[g], MESES_NOMES,
+                                                 COR_GRUPO.get(g, "azul")) for g in mensal_ano.index]
+                         + [cd.cartao_serie_mensal("Total", [totais_mes[m] for m in range(1, 13)], totais_grupo.sum(min_count=1), MESES_NOMES, "cinza")]))
         soma_mensal = totais_grupo.sum(min_count=1)
         diferenca = None if pd.isna(soma_mensal) or pd.isna(total["liquidada"]) else float(total["liquidada"]) - float(soma_mensal)
         st.caption(_md(
@@ -297,7 +291,7 @@ def _fator(valor: float) -> str:
     return f"{valor:.3f}".replace(".", ",")
 
 
-def tabela_faixa_historica(faixa: pd.DataFrame, projetado_por_grupo: pd.Series, dotacao_grupo: pd.Series) -> pd.DataFrame:
+def tabela_faixa_historica(faixa: pd.DataFrame, projetado_por_grupo: pd.Series, dotacao_grupo: pd.Series, bruto: bool = False) -> pd.DataFrame:
     """Tabela de exibição da `faixa_historica_total_anual` lado a lado com o total
     projetado no painel e a dotação (os dois chegam por grupo; a linha total soma, nulo
     preservado). Saldo no pior caso = dotação − máximo da faixa; no melhor = − mínimo."""
@@ -321,6 +315,13 @@ def tabela_faixa_historica(faixa: pd.DataFrame, projetado_por_grupo: pd.Series, 
         else:
             posicao = "Dentro da faixa"
         sem_dotacao = dotacao is None or pd.isna(dotacao)
+        if bruto:  # valores numéricos para os cartões (o texto formatado é só da tabela)
+            linhas.append({"grupo": NOMES_GRUPOS.get(r.grupo, "TOTAL"), "projetado": projetado, "minimo": r.total_min, "maximo": r.total_max,
+                           "posicao": posicao, "dotacao": None if sem_dotacao else float(dotacao),
+                           "saldo_pior": None if sem_dotacao or r.total_max is None or pd.isna(r.total_max) else float(dotacao) - r.total_max,
+                           "saldo_melhor": None if sem_dotacao or r.total_min is None or pd.isna(r.total_min) else float(dotacao) - r.total_min,
+                           "fatores": " · ".join(f"{a}: {_fator(v)}" for a, v in r.fatores.items()) or "sem exercício completo"})
+            continue
         linhas.append({
             "Grupo": NOMES_GRUPOS.get(r.grupo, "TOTAL"),
             "Projetado no painel": brl(projetado),
@@ -333,6 +334,12 @@ def tabela_faixa_historica(faixa: pd.DataFrame, projetado_por_grupo: pd.Series, 
             "Fator por exercício": " · ".join(f"{a}: {_fator(v)}" for a, v in r.fatores.items()) or "sem exercício completo",
         })
     return pd.DataFrame(linhas)
+
+
+def _cartao_faixa(r) -> str:
+    nulo = lambda v: None if v is None or pd.isna(v) else float(v)
+    return cd.cartao_faixa(r.grupo, nulo(r.projetado), nulo(r.minimo), nulo(r.maximo), nulo(r.dotacao), nulo(r.saldo_pior), nulo(r.saldo_melhor),
+                           r.posicao, r.fatores)
 
 
 def calcular_faixa_historica(mensal: pd.DataFrame, ano: int, mes_referencia: int) -> pd.DataFrame | None:
@@ -387,8 +394,9 @@ def render_faixa_historica(faixa: pd.DataFrame | None, ano: int, mes_referencia:
             f"fator = (Liquidada de {MESES_NOMES[mes_referencia]} a dezembro ÷ Liquidada de "
             f"{MESES_NOMES[mes_referencia - 1]}) daquele exercício."
         )
-        st.dataframe(tabela_faixa_historica(faixa, projetado_por_grupo, dotacao_grupo),
-                     hide_index=True, width="stretch", height="content")
+        st.html(cd.CSS + cd.grade([_cartao_faixa(r) for r in tabela_faixa_historica(faixa, projetado_por_grupo, dotacao_grupo, bruto=True).itertuples()]))
+        with st.expander("Tabela da faixa histórica"):
+            st.dataframe(tabela_faixa_historica(faixa, projetado_por_grupo, dotacao_grupo), hide_index=True, width="stretch", height="content")
         st.caption(_md(
             f"A faixa é só o mínimo e o máximo dos exercícios listados, não um intervalo estatístico. Um "
             f"exercício com mês faltando de {MESES_NOMES[mes_referencia - 1]} a dezembro fica de fora (não vira "
@@ -432,14 +440,8 @@ def render_projecao_com_executado(mensal: pd.DataFrame, anual: pd.DataFrame, ano
         st.info("Não há rubricas de pessoal para projetar nesta referência.")
         return
     resumo = resumo_projecao_com_executado(comparacao)
-    st.dataframe(pd.DataFrame({
-        "Grupo": resumo["grupo"].map(lambda g: NOMES_GRUPOS.get(g, "TOTAL")),
-        "Meses comparados": resumo["meses"],
-        "Projetado": resumo["projetado"].map(brl),
-        "Executado": resumo["executado"].map(brl),
-        "Diferença": resumo["diferenca"].map(brl),
-        "Diferença %": resumo["diferenca_pct"].map(_pct),
-    }), hide_index=True, width="stretch", height="content")
+    st.html(cd.CSS + cd.grade([cd.cartao_comparacao(NOMES_GRUPOS.get(r.grupo, "TOTAL"), r.meses, r.projetado, r.executado, r.diferenca, _pct(r.diferenca_pct),
+                                           COR_GRUPO.get(r.grupo, "cinza")) for r in resumo.itertuples()]))
     with st.expander("Mês a mês por grupo"):
         st.dataframe(pd.DataFrame({
             "Grupo": comparacao["grupo"].map(NOMES_GRUPOS),
@@ -484,7 +486,13 @@ def render_desvio_por_mes_de_partida(mensal: pd.DataFrame, anual: pd.DataFrame, 
         "Sinal constante em várias linhas indica desvio sistemático da fórmula; um valor isolado "
         "muito alto costuma indicar um mês de partida atípico (a projeção repete aquele mês)."
     )
-    st.dataframe(tabela_desvio_por_mes_de_partida(desvio), hide_index=True, width="stretch", height="content")
+    meses = sorted(desvio["mes_referencia"].unique())
+    grupos = [g for g in NOMES_GRUPOS if g in set(desvio["grupo"])] + ["total"]
+    valores = [[desvio.loc[(desvio["grupo"] == g) & (desvio["mes_referencia"] == m), "diferenca_pct"].head(1).pipe(
+        lambda s: None if s.empty or pd.isna(s.iloc[0]) else float(s.iloc[0])) for g in grupos] for m in meses]
+    st.html(cd.CSS + cd.mapa_calor([MESES_NOMES[m - 1] for m in meses], [NOMES_GRUPOS.get(g, "TOTAL") for g in grupos], valores, "Mês de partida"))
+    with st.expander("Tabela do desvio por mês de partida"):
+        st.dataframe(tabela_desvio_por_mes_de_partida(desvio), hide_index=True, width="stretch", height="content")
 
 
 def render_beneficios_por_plano(mensal: pd.DataFrame, anual: pd.DataFrame, ano: int, mes_ref: int,
@@ -504,6 +512,18 @@ def render_beneficios_por_plano(mensal: pd.DataFrame, anual: pd.DataFrame, ano: 
         "Mesma referência e mesmas fórmulas da tabela acima, só para Outros Benefícios; ordenado pela "
         "maior diferença absoluta. Diferença % fica “—” quando o projetado é zero ou negativo."
     )
+    st.html(cd.CSS + cd.grade([
+        cd.cartao_comparacao(
+            "TOTAL" if r.plano == "total" else f"Ação {rotulos['acao_cod'].get(r.plano, '')} · PO {rotulos['po_cod'].get(r.plano, '')}",
+            r.meses, r.projetado, r.executado, r.diferenca, _pct(r.diferenca_pct), "cinza" if r.plano == "total" else "azul",
+            None if r.plano == "total" else rotulos["po_desc"].get(r.plano, ""))
+        for r in ordenado.itertuples()]))
+    with st.expander("Tabela por Plano Orçamentário"):
+        _tabela_beneficios_por_plano(ordenado, rotulos)
+    _avisa_soma_planos(resumo, projetado_grupo)
+
+
+def _tabela_beneficios_por_plano(ordenado: pd.DataFrame, rotulos: pd.DataFrame) -> None:
     st.dataframe(pd.DataFrame({
         "Ação": ordenado["plano"].map(lambda k: rotulos["acao_cod"].get(k, "TOTAL")),
         "PO": ordenado["plano"].map(lambda k: rotulos["po_cod"].get(k, "")),
@@ -518,6 +538,9 @@ def render_beneficios_por_plano(mensal: pd.DataFrame, anual: pd.DataFrame, ano: 
         "Meses comparados": st.column_config.NumberColumn("Meses", width=60),
         "Descrição": st.column_config.TextColumn(width="medium"),
     })
+
+
+def _avisa_soma_planos(resumo: pd.DataFrame, projetado_grupo) -> None:
     total_po = resumo.set_index("plano").loc["total", "projetado"]
     if not (pd.isna(total_po) and pd.isna(projetado_grupo)) and (
         pd.isna(total_po) or pd.isna(projetado_grupo) or round(float(total_po), 2) != round(float(projetado_grupo), 2)

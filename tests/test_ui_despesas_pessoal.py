@@ -398,7 +398,7 @@ class TestAbasFormulasEHistorico(unittest.TestCase):
         at, _ = self._rodar()
         seletor = at.selectbox(key="dp_hist_ano")
         self.assertEqual(seletor.options, ["2025"])
-        textos = " ".join(m.value for m in at.metric)
+        textos = " ".join(h.proto.body for h in at.get("html"))  # indicadores em cartões (st.html)
         self.assertIn("R$ 7.000,00", textos)  # dotação 2025
         self.assertIn("R$ 1.030,00", textos)  # empenhada 2025 (1000 − 100 + 80 + 50)
         self.assertTrue(any("cobre de 2026 a 2026" in i.value for i in at.info))
@@ -420,12 +420,13 @@ class TestAbasFormulasEHistorico(unittest.TestCase):
         at, _ = self._rodar()
         self.assertEqual(len(at.exception), 0)
         self.assertEqual(at.selectbox(key="dp_hist_mes_referencia").value, 8)
-        tabela = next(t.value for t in at.dataframe if "Meses comparados" in t.value.columns)
-        total = tabela.set_index("Grupo").loc["TOTAL"]
-        self.assertEqual(total["Projetado"], "R$ 400,00")
-        self.assertEqual(total["Executado"], "R$ 440,00")
-        self.assertEqual(total["Diferença"], "R$ 40,00")
-        self.assertEqual(total["Diferença %"], "+10,0%")
+        # cartões de comparação (st.html): o do TOTAL traz projetado, executado, diferença e %
+        cartoes = [h.proto.body for h in at.get("html") if "mês(es) comparado(s)" in h.proto.body]
+        self.assertTrue(cartoes)
+        total = next(c for c in cartoes[0].split('<div class="cd-card"') if "<h4>TOTAL</h4>" in c)
+        self.assertIn("R$ 400,00", total)
+        self.assertIn("R$ 440,00", total)
+        self.assertIn("+R$ 40,00 (+10,0%)", total)
 
     def test_todos_os_meses_de_partida_sob_demanda(self):
         # 2025: 31901101 = 100 em Jan-Ago e 110 em Set-Dez.
