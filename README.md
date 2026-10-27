@@ -733,6 +733,14 @@ se o mês anterior já fechou; com a liquidação fechada, a DDP não é somada.
 traz (RPPS patronal e outras) ficam pela projeção; natureza da DDP sem linha de empenho para
 distribuir é listada na tela e não entra no painel. A DDP é líquida, não a liquidação do SIAFI.
 
+**Patronal do RPPS acompanha a folha do Ativo (decisão 15, 27/10/2026).** Nos meses projetados e
+no mês da DDP ainda não liquidado, o patronal (31911303, ação 09HB) passa a ser a razão
+patronal ÷ (vencimentos + gratificação de cargo do Ativo, 31901101 + 31901131) aplicada à base do
+Ativo de cada mês, mantendo o mês do extra do 13º da regra da rubrica. A razão é a do último mês com
+liquidação real das duas (em 2026, entre 26,7% e 27,4%) ou a informada na aba Fórmulas de projeção,
+onde a regra também pode ser desligada; a procedência do painel declara a razão usada. Com a base
+igual à do mês de referência, o valor não muda.
+
 A página tem quatro abas. **Acompanhamento** é o painel acima. **Folha (DDP)**
 recebe os PDFs do SIAPE do mês (DDP e Crédito Bancário, de servidor e de
 pensionista), que ficam só na memória da sessão, e mostra: a conferência dos

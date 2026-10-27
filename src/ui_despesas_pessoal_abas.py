@@ -170,6 +170,22 @@ def render_formulas() -> tuple[ParametrosProjecao, str | None]:
                                             value=p0.fracao_minima_fechamento, step=0.05, format="%.2f",
                                             key=PREFIXO + "fracao_fechamento")
 
+    st.markdown("##### 5. Patronal do RPPS (31911303, ação 09HB)")
+    st.markdown(
+        "Nos meses projetados e no mês da DDP ainda não liquidado, o patronal acompanha a folha do Ativo: "
+        "**valor da regra da rubrica × razão × (31901101 + 31901131 do Ativo no mês) ÷ patronal do mês de referência**. "
+        "Razão = patronal ÷ (vencimentos + gratificação) do último mês com liquidação real das duas (em 2026, "
+        "entre 26,7% e 27,4%), ou a razão informada abaixo. O 13º continua no mês da regra da rubrica."
+    )
+    c1, c2 = st.columns(2)
+    with c1:
+        patronal_base = st.checkbox("Patronal acompanha a base do Ativo", value=p0.patronal_rpps_acompanha_base,
+                                    key=PREFIXO + "patronal_base")
+    with c2:
+        razao_patronal = st.number_input("Razão informada (0 = observada no último mês real)", min_value=0.0,
+                                         max_value=0.9999, value=p0.razao_patronal_rpps, step=0.0005, format="%.4f",
+                                         key=PREFIXO + "razao_patronal", disabled=not patronal_base)
+
     with st.expander("Fórmulas fixas (não editáveis)"):
         st.markdown(
             "- **Despesas de Exercícios Anteriores** (319092/339092/319192): meses futuros = 0.\n"
@@ -192,6 +208,7 @@ def render_formulas() -> tuple[ParametrosProjecao, str | None]:
             fracao_antecipacao_13=float(fracao_antecipacao), dezembro_ativo_repete_novembro=bool(dezembro),
             fracao_13_dezembro_ativo=float(fracao_13_dezembro),
             janela_meses_fechamento=int(janela), fracao_minima_fechamento=float(fracao_fechamento),
+            patronal_rpps_acompanha_base=bool(patronal_base), razao_patronal_rpps=float(razao_patronal),
         )
     except ValueError as erro:
         st.error(f"Parâmetro inválido — o painel está usando as fórmulas padrão até a correção: {erro}")

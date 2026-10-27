@@ -154,6 +154,7 @@ def aplicar_ddp(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, relatorios: lis
         nova["paga"] = np.nan
         nova["ano_mes"], nova["mes"] = competencia, mes
         nova["arquivo_origem"], nova["aba_origem"], nova["linha_origem"] = origem, origem, np.nan
+        nova["provisorio"] = True  # o painel distingue do liquidado real (ex.: razão do patronal do RPPS)
         novas.append(nova)
         detalhe.append({"natureza_detalhada": natureza, "origem": origem, "valor": round(float(valores.sum()), 2),
                         "linhas": len(nova)})

@@ -1,0 +1,44 @@
+{
+  "base": "ddp_siape",
+  "competencia": 202610,
+  "versao": "5c911461",
+  "gravado_em": "2026-10-27T00:18:09.831672+00:00",
+  "arquivos": [
+    {
+      "tipo": "CRED-BANC",
+      "publico": "PENSIONISTA",
+      "folha": "FOLHA NORMAL",
+      "arquivo": "ddp_siape/202610/cred-banc_pensionista_folha-normal_c9f9cbd7.pdf",
+      "sha256": "c9f9cbd736857c3c4ba0c79c4f5e255d8a39a0ef8bca5b1632db6dacd5150271",
+      "nome_original": "CRED-BANC-PENS-OUT2026.pdf",
+      "data_geracao": "2026-10-26"
+    },
+    {
+      "tipo": "CRED-BANC",
+      "publico": "SERVIDOR",
+      "folha": "FOLHA NORMAL",
+      "arquivo": "ddp_siape/202610/cred-banc_servidor_folha-normal_96f6b5a5.pdf",
+      "sha256": "96f6b5a5013ab480e776797ec9828fc18af4313508b01f48eae4b9452945e02d",
+      "nome_original": "CRED-BANC-SERV-OUT2026.pdf",
+      "data_geracao": "2026-10-26"
+    },
+    {
+      "tipo": "DDP",
+      "publico": "PENSIONISTA",
+      "folha": "FOLHA NORMAL",
+      "arquivo": "ddp_siape/202610/ddp_pensionista_folha-normal_64a44f98.pdf",
+      "sha256": "64a44f98d89520a167377fb3be7df90deb96b446c21c822fd0df16b86c8daa05",
+      "nome_original": "DDP-PENS-OUT2026.pdf",
+      "data_geracao": "2026-10-26"
+    },
+    {
+      "tipo": "DDP",
+      "publico": "SERVIDOR",
+      "folha": "FOLHA NORMAL",
+      "arquivo": "ddp_siape/202610/ddp_servidor_folha-normal_9f155a09.pdf",
+      "sha256": "9f155a09ed99d4d7d91044717bd9b90d326bb4470a5d6de5bbb0912a93f9263f",
+      "nome_original": "DDP-SERV-OUT2026.pdf",
+      "data_geracao": "2026-10-26"
+    }
+  ]
+}

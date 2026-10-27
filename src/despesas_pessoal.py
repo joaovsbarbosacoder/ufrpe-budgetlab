@@ -442,6 +442,12 @@ class ParametrosProjecao:
     #: decisão 9 — critério de "mês fechado" (data-base padrão).
     janela_meses_fechamento: int = 3
     fracao_minima_fechamento: float = 0.5
+    #: decisão 15 (27/10/2026) — o patronal do RPPS (31911303) acompanha a base do Ativo
+    #: (31901101 + 31901131) nos meses projetados ou provisórios (DDP), pela razão
+    #: patronal/base. `razao_patronal_rpps` = 0 usa a razão observada no último mês com
+    #: liquidação real das duas; outro valor (entre 0 e 1) é a razão informada.
+    patronal_rpps_acompanha_base: bool = True
+    razao_patronal_rpps: float = 0.0
 
     def __post_init__(self) -> None:
         # Todos os multiplicadores alimentam `_distribuir_mes_futuro`, que distribui
@@ -473,6 +479,9 @@ class ParametrosProjecao:
                 raise ValueError(f"{nome}: informe um valor entre 0 e 1 (recebido {fracao!r}).")
         if type(self.janela_meses_fechamento) is not int or not 1 <= self.janela_meses_fechamento <= 12:
             raise ValueError(f"Janela de meses de fechamento: informe um inteiro entre 1 e 12 (recebido {self.janela_meses_fechamento!r}).")
+        razao = self.razao_patronal_rpps
+        if isinstance(razao, bool) or not isinstance(razao, (int, float)) or not math.isfinite(razao) or not 0 <= razao < 1:
+            raise ValueError(f"Razão do patronal do RPPS: informe 0 (observada) ou um valor entre 0 e 1 (recebido {razao!r}).")
 
 
 PARAMETROS_PADRAO = ParametrosProjecao()
@@ -522,6 +531,11 @@ def diferencas_do_padrao(parametros: ParametrosProjecao | None) -> list[str]:
         diferencas.append(f"janela de fechamento: {parametros.janela_meses_fechamento} meses")
     if not math.isclose(parametros.fracao_minima_fechamento, padrao.fracao_minima_fechamento):
         diferencas.append(f"fração mínima de fechamento: {parametros.fracao_minima_fechamento:.0%}")
+    if parametros.patronal_rpps_acompanha_base != padrao.patronal_rpps_acompanha_base:
+        diferencas.append("patronal do RPPS " + ("acompanha a base do Ativo" if parametros.patronal_rpps_acompanha_base
+                                                  else "repete o mês de referência"))
+    if parametros.patronal_rpps_acompanha_base and not math.isclose(parametros.razao_patronal_rpps, padrao.razao_patronal_rpps):
+        diferencas.append(f"razão do patronal do RPPS informada: {parametros.razao_patronal_rpps:.2%}".replace(".", ","))
     return diferencas
 
 
@@ -1000,6 +1014,9 @@ class ResultadoGradeMensal:
     ano: int
     ano_mes_referencia: int
     erros: list[str] = field(default_factory=list)
+    #: decisão 15 — razão patronal/base usada no RPPS e mês de onde veio (`None` = informada ou não aplicada).
+    razao_patronal_rpps: float | None = None
+    mes_razao_patronal_rpps: int | None = None
     alertas: list[str] = field(default_factory=list)
 
     @property
@@ -1180,9 +1197,71 @@ def grade_mensal(
         if alerta:
             alertas.append(alerta)
 
+    razao, mes_razao = None, None
+    if parametros.patronal_rpps_acompanha_base:
+        razao, mes_razao = _patronal_acompanha_base(do_ano, valor_ref, linhas, ano_mes_referencia, meses_futuros, parametros)
+
     return ResultadoGradeMensal(
         linhas=pd.DataFrame(linhas), ano=ano, ano_mes_referencia=ano_mes_referencia, erros=erros, alertas=alertas,
+        razao_patronal_rpps=razao, mes_razao_patronal_rpps=mes_razao,
     )
+
+
+#: decisão 15 — patronal do RPPS e a base do Ativo sobre a qual ele é estimado.
+NATUREZA_PATRONAL_RPPS = "31911303"
+NATUREZAS_BASE_PATRONAL_RPPS = ("31901101", "31901131")
+
+
+def _patronal_acompanha_base(
+    do_ano: pd.DataFrame, valor_ref: pd.DataFrame, linhas: list[dict], ano_mes_referencia: int,
+    meses_futuros: list[int], parametros: ParametrosProjecao,
+) -> tuple[float | None, int | None]:
+    """Decisão 15 (27/10/2026): o patronal do RPPS acompanha a folha do Ativo. Nos meses
+    projetados e nos provisórios (DDP aplicada — linhas com `provisorio`), o valor do patronal
+    passa a ser o da regra da rubrica (mantém o mês do extra do 13º) × razão × base do mês ÷
+    patronal do mês de referência; base = 31901101 + 31901131 do Ativo na própria grade. Razão =
+    a informada em `parametros`, ou patronal/base do último mês até a referência com liquidação
+    real (não provisória) das duas. Com a base igual à do mês de referência e a razão dele, o
+    valor não muda. Altera `linhas` no lugar; devolve (razão usada, mês da razão observada)."""
+    patronal = next((l for l in linhas if l["grupo"] == GRUPO_RPPS and str(l["natureza_detalhada_cod"]) == NATUREZA_PATRONAL_RPPS), None)
+    base_linhas = [l for l in linhas if l["grupo"] == GRUPO_ATIVO and str(l["natureza_detalhada_cod"]) in NATUREZAS_BASE_PATRONAL_RPPS]
+    if patronal is None or not base_linhas:
+        return None, None
+
+    escopo = filtrar_escopo(do_ano)
+    provisorio = escopo["provisorio"].fillna(False).astype(bool) if "provisorio" in escopo else pd.Series(False, index=escopo.index)
+    meses_provisorios = {int(m) % 100 for m in escopo.loc[provisorio, "ano_mes"].unique()}
+    reais = escopo.loc[~provisorio]
+    mes_ref = ano_mes_referencia % 100
+
+    mes_razao = None
+    if parametros.razao_patronal_rpps > 0:
+        razao = float(parametros.razao_patronal_rpps)
+    else:
+        natureza = reais["natureza_detalhada_cod"].astype(str)
+        pat = reais.loc[natureza == NATUREZA_PATRONAL_RPPS].groupby(reais["ano_mes"] % 100)["liquidada"].sum(min_count=1)
+        base = reais.loc[(reais["grupo"] == GRUPO_ATIVO) & natureza.isin(NATUREZAS_BASE_PATRONAL_RPPS)].groupby(
+            reais["ano_mes"] % 100)["liquidada"].sum(min_count=1)
+        candidatos = [m for m in sorted(set(pat.dropna().index) & set(base.dropna().index), reverse=True)
+                      if m <= mes_ref and float(base[m]) > 0]
+        if not candidatos:
+            return None, None
+        mes_razao = int(candidatos[0])
+        razao = float(pat[mes_razao]) / float(base[mes_razao])
+
+    linha_ref = valor_ref.loc[(valor_ref["grupo"] == GRUPO_RPPS)
+                              & (valor_ref["natureza_detalhada_cod"].astype(str) == NATUREZA_PATRONAL_RPPS)]
+    patronal_ref = float(linha_ref["valor_mes_referencia"].sum()) if len(linha_ref) else 0.0
+    if patronal_ref <= 0:
+        return razao, mes_razao
+    meses = list(patronal["meses"])
+    for mes in sorted(set(meses_futuros) | {m for m in meses_provisorios if m <= mes_ref}):
+        valores_base = [l["meses"][mes - 1] for l in base_linhas]
+        if meses[mes - 1] is None or any(v is None or pd.isna(v) for v in valores_base):
+            continue
+        meses[mes - 1] = float(meses[mes - 1]) * razao * sum(float(v) for v in valores_base) / patronal_ref
+    patronal["meses"] = meses
+    return razao, mes_razao
 
 
 #: decisão 13 — origem (13º do Ativo) e destino (1/3 de férias) da redistribuição de dezembro.

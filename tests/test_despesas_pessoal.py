@@ -1164,6 +1164,70 @@ class TestParametrosProjecao(unittest.TestCase):
                 ParametrosProjecao(**ajuste)
 
 
+class TestPatronalRppsAcompanhaBase(unittest.TestCase):
+    """Decisão 15 (27/10/2026): patronal do RPPS = razão × (31901101 + 31901131 do Ativo)."""
+
+    @staticmethod
+    def _base(outubro_provisorio=False):
+        linhas = []
+        for mes in range(1, 10):
+            am = 202600 + mes
+            linhas += [
+                _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=am, liquidada=1000.0),
+                _linha_execucao(ACAO_ATIVO, "319011", "31901131", tipo_linha="item_execucao", ano_mes=am, liquidada=500.0),
+                _linha_execucao(ACAO_RPPS, "319113", "31911303", tipo_linha="item_execucao", ano_mes=am, liquidada=405.0),
+            ]
+        if outubro_provisorio:  # como a DDP aplicada: base de outubro maior, patronal ainda na projeção
+            linhas += [
+                _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202610, liquidada=1100.0, provisorio=True),
+                _linha_execucao(ACAO_ATIVO, "319011", "31901131", tipo_linha="item_execucao", ano_mes=202610, liquidada=550.0, provisorio=True),
+                _linha_execucao(ACAO_RPPS, "319113", "31911303", tipo_linha="item_execucao", ano_mes=202610, liquidada=405.0, provisorio=True),
+            ]
+        anual = pd.DataFrame([_linha_execucao(ACAO_ATIVO, "319011", "31901101", ano=2025, tipo_linha="empenho", empenhada=12000.0)])
+        return pd.DataFrame(linhas), anual
+
+    @staticmethod
+    def _patronal(grade):
+        linhas = grade.linhas
+        return linhas.loc[linhas["natureza_detalhada_cod"] == "31911303", "meses"].iloc[0]
+
+    def test_com_a_base_da_referencia_nada_muda(self):
+        mensal, anual = self._base()
+        nova = grade_mensal(mensal, anual, 2026, 202609)
+        antiga = grade_mensal(mensal, anual, 2026, 202609, ParametrosProjecao(patronal_rpps_acompanha_base=False))
+        self.assertEqual([round(v, 6) for v in self._patronal(nova)], [round(v, 6) for v in self._patronal(antiga)])
+        self.assertAlmostEqual(nova.razao_patronal_rpps, 0.27)
+        self.assertEqual(nova.mes_razao_patronal_rpps, 9)
+
+    def test_mes_provisorio_e_seguintes_acompanham_a_base(self):
+        mensal, anual = self._base(outubro_provisorio=True)
+        grade = grade_mensal(mensal, anual, 2026, 202610)
+        meses = self._patronal(grade)
+        # razão vem de setembro (real), não de outubro (provisório): 405 ÷ 1.500 = 27%
+        self.assertEqual(grade.mes_razao_patronal_rpps, 9)
+        self.assertAlmostEqual(meses[9], 0.27 * 1650)        # outubro: base da DDP
+        self.assertAlmostEqual(meses[10], 2 * 0.27 * 1650)   # novembro: extra do 13º (regra ×13 na parcela final)
+        self.assertAlmostEqual(meses[11], 0.27 * 1650)
+        self.assertEqual(meses[8], 405.0)                    # setembro real não muda
+        antiga = self._patronal(grade_mensal(mensal, anual, 2026, 202610, ParametrosProjecao(patronal_rpps_acompanha_base=False)))
+        self.assertEqual(antiga[9], 405.0)
+
+    def test_razao_informada(self):
+        mensal, anual = self._base(outubro_provisorio=True)
+        grade = grade_mensal(mensal, anual, 2026, 202610, ParametrosProjecao(razao_patronal_rpps=0.3))
+        self.assertAlmostEqual(self._patronal(grade)[9], 0.3 * 1650)
+        self.assertIsNone(grade.mes_razao_patronal_rpps)
+
+    def test_validacao_e_procedencia(self):
+        for invalida in (1.0, -0.1, float("nan"), True):
+            with self.subTest(razao=invalida), self.assertRaises(ValueError):
+                ParametrosProjecao(razao_patronal_rpps=invalida)
+        self.assertEqual(diferencas_do_padrao(ParametrosProjecao(razao_patronal_rpps=0.2744)),
+                         ["razão do patronal do RPPS informada: 27,44%"])
+        self.assertEqual(diferencas_do_padrao(ParametrosProjecao(patronal_rpps_acompanha_base=False)),
+                         ["patronal do RPPS repete o mês de referência"])
+
+
 class TestExecucaoExerciciosAnteriores(unittest.TestCase):
     def _anual(self):
         return pd.DataFrame([
