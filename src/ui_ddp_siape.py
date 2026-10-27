@@ -22,7 +22,7 @@ from src import ui_cartoes as cd
 from src.ddp_siape_relatorio import CRITERIOS, OPERACOES, DadosRelatorio, _nota_empenho, relatorio_excel
 from src.ddp_siape_arquivos import (
     ArquivoGuardadoInvalido, carregar as carregar_guardada, competencias_com_ddp, competencias_guardadas, guardar,
-    historico, manifesto_atual, validar_troca,
+    historico, manifesto_atual, remover, validar_troca,
 )
 from src.despesas_pessoal import ACOES_ESCOPO, GRUPO_RPPS, MESES_NOMES, dotacao_atualizada_por_acao_e_po
 from src.ui_despesas_pessoal_abas import _md, brl
@@ -324,6 +324,19 @@ def render_troca(competencias: list[int]) -> None:
                           f" — {par[1]['nome_original']}")
     escolha = st.selectbox("Arquivo a trocar", opcoes, format_func=rotulo, key="dp_ddp_troca_alvo")
     # chave com contador: após a troca o envio volta vazio (um widget não pode ser limpo por código)
+    if escolha is not None:
+        with st.expander("Apagar este arquivo"):
+            st.caption(
+                "O arquivo deixa de valer para o painel e para a aba. Por rastreabilidade, o PDF e o manifesto "
+                "anteriores continuam em `data/raw/ddp_siape/` e `data/manifestos/` (a versão anterior fica no histórico)."
+            )
+            if st.checkbox("Confirmo que quero apagar este arquivo", key=f"dp_ddp_apagar_ok_{st.session_state.get('dp_ddp_troca_n', 0)}"):
+                if st.button("Apagar", key="dp_ddp_apagar"):
+                    c, a = escolha
+                    remover(c, a["tipo"], a["publico"], a["folha"])
+                    st.session_state["dp_ddp_troca_n"] = st.session_state.get("dp_ddp_troca_n", 0) + 1
+                    st.session_state["dp_ddp_msg"] = f"Arquivo apagado de {_mes(c)}: {a['nome_original']}. O painel deixa de usá-lo."
+                    st.rerun()
     novo = st.file_uploader("PDF substituto", type="pdf", key=f"dp_ddp_troca_pdf_{st.session_state.get('dp_ddp_troca_n', 0)}")
     if not novo or escolha is None:
         return

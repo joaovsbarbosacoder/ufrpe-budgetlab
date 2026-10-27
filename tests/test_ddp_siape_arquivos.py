@@ -13,7 +13,7 @@ from pathlib import Path
 from src.ddp_siape import ler_relatorio, validar_conjunto
 from src.ddp_siape_arquivos import (
     ArquivoGuardadoInvalido, carregar, chave_cache, competencias_com_ddp, competencias_guardadas, guardar, historico,
-    manifesto_atual, ultima_ddp_completa, validar_troca,
+    manifesto_atual, remover, ultima_ddp_completa, validar_troca,
 )
 from tests.test_ddp_siape import ARQUIVOS_SET, FIXTURES, _ddp_pdf
 
@@ -106,6 +106,32 @@ class TestDdpGuardada(unittest.TestCase):
         # trocar e guardar: nova versão, o antigo preservado
         guardar([novo], agora=AGORA, **self.kw)
         self.assertEqual(len(historico(202610, self.raiz / "manifestos")), 2)
+
+    def test_remover_cria_versao_sem_o_arquivo_e_preserva_pdf_e_historico(self):
+        guardar([_outubro("SERVIDOR", 100.0, "serv.pdf"), _outubro("PENSIONISTA", 10.0, "pens.pdf")], agora=AGORA, **self.kw)
+        manifestos = self.raiz / "manifestos"
+        antigo = manifesto_atual(202610, manifestos)
+        serv = next(a for a in antigo["arquivos"] if a["publico"] == "SERVIDOR")
+        depois = datetime(2026, 10, 28, 9, 0, tzinfo=timezone.utc)
+        self.assertTrue(remover(202610, "DDP", "SERVIDOR", serv["folha"], manifestos, agora=depois))
+        novo = manifesto_atual(202610, manifestos)
+        self.assertEqual([a["publico"] for a in novo["arquivos"]], ["PENSIONISTA"])
+        self.assertNotEqual(novo["versao"], antigo["versao"])
+        self.assertTrue((self.raiz / "raw" / serv["arquivo"]).exists())          # o PDF não é apagado do disco
+        self.assertEqual(len(historico(202610, manifestos)), 2)                  # a versão anterior continua
+        self.assertEqual([r.publico for r in carregar(202610, **self.kw)], ["PENSIONISTA"])
+        self.assertFalse(remover(202610, "DDP", "SERVIDOR", serv["folha"], manifestos))  # já fora da versão atual
+
+    def test_remover_o_ultimo_arquivo_tira_a_competencia_das_guardadas(self):
+        guardar([_outubro("SERVIDOR", 100.0, "serv.pdf")], agora=AGORA, **self.kw)
+        manifestos = self.raiz / "manifestos"
+        folha = manifesto_atual(202610, manifestos)["arquivos"][0]["folha"]
+        self.assertTrue(remover(202610, "DDP", "SERVIDOR", folha, manifestos, agora=AGORA))
+        self.assertEqual(competencias_guardadas(manifestos), [])
+        self.assertEqual(carregar(202610, **self.kw), [])
+        self.assertEqual(len(historico(202610, manifestos)), 2)
+        # reenviar o mesmo PDF volta a guardá-lo
+        self.assertEqual(guardar([_outubro("SERVIDOR", 100.0, "serv.pdf")], agora=AGORA, **self.kw).versoes_novas, [202610])
 
     def test_competencias_e_ultima_ddp_completa(self):
         guardar(_setembro(), agora=AGORA, **self.kw)
