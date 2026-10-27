@@ -11,12 +11,13 @@ import pandas as pd
 import streamlit as st
 
 from src.ddp_siape import (
-    SEM_ACAO, TIPO_DDP, acoes_dos_quadros, conciliacao_por_acao, conciliacao_sem_ddp, conferencia, confronto_liquidado, ddp_por_natureza,
+    OPERACAO_REMANEJAR, SEM_ACAO, TIPO_DDP, acoes_dos_quadros, conciliacao_por_acao, conciliacao_sem_ddp, conferencia, confronto_liquidado, ddp_por_natureza,
     ler_relatorio, plano_operacoes, quadro_reforco, quadro_sem_ddp, reforco_por_acao_po, reserva_projetada,
     separar_competencias, validar_conjunto, variacao_por_natureza,
 )
 from src.ddp_siape import por_empenho_somente_reforco
-from src.ddp_siape_relatorio import CRITERIOS, OPERACOES, DadosRelatorio, relatorio_excel
+from src import ui_cartoes as cd
+from src.ddp_siape_relatorio import CRITERIOS, OPERACOES, DadosRelatorio, _nota_empenho, relatorio_excel
 from src.ddp_siape_arquivos import (
     ArquivoGuardadoInvalido, carregar as carregar_guardada, competencias_com_ddp, competencias_guardadas, guardar,
     historico, manifesto_atual,
@@ -131,56 +132,94 @@ def tabela_variacao(variacao: pd.DataFrame) -> pd.DataFrame:
     })
 
 
+def cartoes_plano(plano: pd.DataFrame, itens: pd.DataFrame) -> list[str]:
+    descricao = (itens.dropna(subset=["descricao"]).drop_duplicates("natureza_detalhada").set_index("natureza_detalhada")["descricao"].to_dict()
+                 if len(itens) else {})
+    notas = {e: _nota_empenho(n) for e, n in itens.groupby("empenho")["nes"].first().items()} if len(itens) else {}
+    acoes = itens.groupby("empenho")["acao_cod"].first().to_dict() if len(itens) else {}
+    cartoes = []
+    for empenho, grupo in plano.groupby("empenho", sort=False):
+        cartoes.append(cd.cartao_operacoes(notas.get(empenho, empenho), acoes.get(empenho) if isinstance(acoes.get(empenho), str) else None, [
+            {"tipo": "remanejar" if o.operacao == OPERACAO_REMANEJAR else "reforco", "de": o.item_origem, "de_desc": descricao.get(o.item_origem),
+             "para": o.item_destino, "para_desc": descricao.get(o.item_destino), "valor": o.valor} for o in grupo.itertuples()]))
+    return cartoes
+
+
+def cartoes_conferencia(conf: pd.DataFrame) -> list[str]:
+    cartoes = []
+    for _, linha in conf.iterrows():
+        situacao = _situacao(linha)
+        problemas = situacao.removeprefix("Diferença — ").split("; ") if situacao.startswith("Diferença") else []
+        curto = ("Confere" if situacao == "Confere" else "Confere (crédito bancário não enviado)" if situacao.startswith("Confere")
+                 else "Há diferença")
+        cartoes.append(cd.cartao_conferencia(linha["publico"].title(), f"{_mes(linha['competencia'])} · {linha['folha'].title()}", linha["bruto"],
+                                             linha["desconto"], linha["liquido"], linha["credito_bancario"], curto, problemas))
+    return cartoes
+
+
 def render_variacao(variacao: pd.DataFrame, anterior: int, atual: int) -> None:
     """O que mudou na DDP entre as duas competências enviadas (27/10/2026)."""
-    st.markdown(f"**O que mudou de {_mes(anterior)} para {_mes(atual)}**")
     total_anterior, total_atual = variacao["anterior"].sum(), variacao["atual"].sum()
-    colunas = st.columns(3)
-    colunas[0].metric(f"DDP líquida de {_mes(anterior)}", brl(total_anterior))
-    colunas[1].metric(f"DDP líquida de {_mes(atual)}", brl(total_atual))
-    colunas[2].metric("Variação", brl(total_atual - total_anterior),
-                      f"{(total_atual / total_anterior - 1):+.1%}".replace(".", ",") if total_anterior else None,
-                      delta_color="off")
+    delta = total_atual - total_anterior
+    st.html(cd.secao(f"O que mudou de {_mes(anterior)} para {_mes(atual)}", "Maiores variações da DDP líquida por natureza (servidor + pensionista). "
+                     "Barra para a direita: a folha subiu; para a esquerda: caiu.") + cd.kpis([
+        {"rotulo": f"DDP líquida de {_mes(anterior)}", "valor": brl(total_anterior), "tom": "cinza"},
+        {"rotulo": f"DDP líquida de {_mes(atual)}", "valor": brl(total_atual)},
+        {"rotulo": "Variação", "valor": brl(delta), "tom": "vermelho" if delta > 0 else "verde",
+         "sub": f"{(total_atual / total_anterior - 1):+.1%}".replace(".", ",") if total_anterior else None},
+    ]))
     novas = variacao.loc[variacao["situacao"] == "nova"]
     sairam = variacao.loc[variacao["situacao"] == "saiu"]
     if not novas.empty:
-        st.caption(_md("Naturezas novas: " + "; ".join(
-            f"{r.natureza_detalhada} {r.descricao} ({brl(r.atual)})" for r in novas.itertuples()) + "."))
+        st.caption(_md("Naturezas novas: " + "; ".join(f"{r.natureza_detalhada} {r.descricao} ({brl(r.atual)})" for r in novas.itertuples()) + "."))
     if not sairam.empty:
         st.caption(_md("Não vieram neste mês: " + "; ".join(
             f"{r.natureza_detalhada} {r.descricao} ({brl(r.anterior)} no anterior)" for r in sairam.itertuples()) + "."))
-    mudaram = variacao.loc[variacao["variacao"] != 0]
-    st.dataframe(tabela_variacao(mudaram.head(10)), hide_index=True, width="stretch", height="content")
+    mudaram = variacao.loc[variacao["variacao"] != 0].head(10)
+    st.html('<div class="cd-card" style="--c:#0969DA">' + cd.barras_divergentes([
+        {"nome": f"{r.natureza_detalhada} {r.descricao or ''}".strip(), "valor": r.variacao,
+         "detalhe": f"{brl(r.anterior)} → {brl(r.atual)} · {_SITUACOES.get(r.situacao, r.situacao)}"} for r in mudaram.itertuples()
+    ]) + "</div>")
     with st.expander(f"Todas as naturezas ({len(variacao)})"):
         st.dataframe(tabela_variacao(variacao), hide_index=True, width="stretch", height="content")
 
 
+def _itens_do_cartao(itens: pd.DataFrame, empenho: str) -> list[dict]:
+    do_empenho = itens.loc[itens["empenho"] == empenho]
+    return [{"natureza": r.natureza_detalhada, "descricao": r.descricao, "folha": r.ddp, "falta": r.falta, "sobra": r.sobra_livre}
+            for r in do_empenho.itertuples()]
+
+
+def cartoes_empenhos(por_empenho: pd.DataFrame, itens: pd.DataFrame, mes: str, ano: int, origem: str | None = None) -> list[str]:
+    """Um cartão por empenho, do que mais precisa de reforço para o que menos precisa."""
+    notas = {e: _nota_empenho(n) for e, n in itens.groupby("empenho")["nes"].first().items()} if len(itens) else {}
+    return [cd.cartao_empenho(notas.get(r.empenho, r.empenho), r.acao_cod if isinstance(r.acao_cod, str) else None, r.saldo, r.ddp,
+                              r.falta, r.sobra_livre, r.compensa, r.reforco_mes, r.reforco_ate_dezembro,
+                              _itens_do_cartao(itens, r.empenho), mes, ano, origem)
+            for r in por_empenho.itertuples()]
+
+
 def render_rpps(itens: pd.DataFrame, por_empenho: pd.DataFrame, conciliacao: dict, competencia: int) -> None:
     """Contribuição patronal ao RPPS (27/10/2026): não está na DDP; o mês vem da projeção do painel."""
-    st.markdown("**RPPS patronal — pela projeção do painel, sem DDP**")
+    mes, ano = _mes(competencia), competencia // 100
+    st.html(cd.secao("RPPS patronal — pela projeção do painel, sem DDP",
+                     "A contribuição patronal não vem na DDP: o valor do mês e a necessidade de nov e dez são a projeção do painel "
+                     "(acompanhando vencimentos + gratificação do Ativo), sem as edições manuais."))
     if itens.empty:
         st.info("A projeção do painel não tem o grupo RPPS neste exercício.")
         return
-    colunas = st.columns(4)
-    colunas[0].metric(f"Projeção de {_mes(competencia)}", brl(itens["ddp"].sum()))
-    colunas[1].metric("Saldo do empenho", brl(itens["saldo"].sum()))
-    colunas[2].metric("Reforço do mês", brl(por_empenho["reforco_mes"].sum()))
-    colunas[3].metric("Reforço até dezembro", brl(por_empenho["reforco_ate_dezembro"].sum()))
-    st.dataframe(tabela_itens(itens).drop(columns=["Já liquidado no mês"]).rename(columns={"Folha do mês (DDP)": "Projeção do mês"}),
-                 hide_index=True, width="stretch", height="content")
+    st.html(cd.kpis([
+        {"rotulo": f"Projeção de {mes}", "valor": brl(itens["ddp"].sum())}, {"rotulo": "Saldo do empenho", "valor": brl(itens["saldo"].sum()), "tom": "cinza"},
+        {"rotulo": "Reforço necessário para o mês", "valor": brl(por_empenho["reforco_mes"].sum()), "tom": "laranja"},
+        {"rotulo": "Reforço necessário até dezembro", "valor": brl(por_empenho["reforco_ate_dezembro"].sum()), "tom": "vermelho"},
+    ]) + cd.grade(cartoes_empenhos(por_empenho, itens, mes, ano, f"RPPS patronal — folha de {mes} pela projeção")))
     c = conciliacao
     if c["dotacao"] is not None:
         st.caption(_md(
             f"Fecha com o painel: reforço até dezembro {brl(c['reforco_ate_dezembro'])} = déficit de dotação do grupo "
             f"{brl(c['deficit_dotacao'])} (projetado no ano {brl(c['total_ano'])} − dotação {brl(c['dotacao'])}) + dotação "
-            f"ainda não empenhada {brl(c['dotacao_nao_empenhada'])} + diferença entre o Liquidado da base e a grade nos "
-            f"meses anteriores {brl(c['diferenca_meses_anteriores'])}."
-        ))
-    st.caption(
-        "O valor do mês é a projeção do painel (fórmulas da sessão, sem as edições manuais), não um documento do "
-        "SIAPE — não há o que conferir. A reserva inclui o 13º de novembro. Se o patronal de algum mês for liquidado "
-        "em outro mês, a diferença aparece na conciliação acima; nenhuma regra é presumida."
-    )
+            f"ainda não empenhada {brl(c['dotacao_nao_empenhada'])} + diferença entre o liquidado da base e a grade nos "
+            f"meses anteriores {brl(c['diferenca_meses_anteriores'])}."))
 
 
 def tabela_acao_po(tabela: pd.DataFrame) -> pd.DataFrame:
@@ -200,20 +239,15 @@ def tabela_acao_po(tabela: pd.DataFrame) -> pd.DataFrame:
 
 def render_acao_po(tabela: pd.DataFrame, ano_dotacao: int) -> None:
     """O reforço cabe na dotação de cada Ação/PO? (27/10/2026)"""
-    st.markdown("**O reforço cabe na dotação?**")
+    st.html(cd.secao("O reforço cabe na dotação?", f"Dotação Atualizada de {ano_dotacao} menos tudo o que já foi empenhado na Ação/PO no exercício "
+                     "(inclusive empenhos fora da folha). Entram só os reforços desta aba (DDP e RPPS). Nenhum remanejamento entre ações ou "
+                     f"POs é presumido. “{SEM_ACAO}”: empenho agrupado com Ação/PO diferentes, ou natureza sem empenho."))
     nao_cabe = tabela.loc[tabela["saldo_apos_reforco"].round(2) < 0]
     if not nao_cabe.empty:
         st.warning(_md("Reforço até dezembro maior que a dotação ainda não empenhada em: " + "; ".join(
             f"{r.acao_cod}/{r.po_cod} (falta {brl(-r.saldo_apos_reforco)})" for r in nao_cabe.itertuples()) + "."))
-    st.dataframe(tabela_acao_po(tabela), hide_index=True, width="stretch", height="content")
-    st.caption(_md(
-        f"Disponível = Dotação Atualizada de {ano_dotacao} − tudo o que já foi empenhado na Ação/PO no exercício (todos "
-        "os empenhos, inclusive os fora da folha). Entram só os reforços dos quadros desta aba (DDP e RPPS): outras "
-        "despesas da mesma ação que ainda precisem de empenho não estão aqui, e por isso a conta pode diferir do saldo "
-        "do painel. “Sobra nos empenhos do quadro” é o que ficaria em dezembro nos empenhos com folga e poderia ser "
-        "anulado para liberar dotação na mesma Ação/PO. Nenhum remanejamento entre ações ou POs é presumido. "
-        f"“{SEM_ACAO}”: empenho agrupado com Ação/PO diferentes, ou natureza sem empenho."
-    ))
+    st.html(cd.grade([cd.cartao_dotacao(r.acao_cod, r.po_cod, r.dotacao, r.empenhado, r.disponivel, r.reforco_mes, r.reforco_ate_dezembro,
+                                        r.saldo_apos_reforco, r.sobra_empenhos, r.empenhos) for r in tabela.itertuples()]))
 
 
 _NOMES_GRUPO = {"ativo": "Ativo", "inativo": "Inativo", "rpps": "RPPS", "outros_beneficios": "Outros Benefícios"}
@@ -233,22 +267,25 @@ def tabela_conciliacao(conc: pd.DataFrame) -> pd.DataFrame:
 
 
 def render_conciliacao(conc: pd.DataFrame) -> None:
-    """Ponte entre o saldo do quadro por ação e o saldo do painel (27/10/2026)."""
-    st.markdown("**Conciliação com o painel, por ação**")
-    st.dataframe(tabela_conciliacao(conc), hide_index=True, width="stretch", height="content")
+    """Ponte entre o saldo do relatório por ação e o saldo do painel (27/10/2026)."""
+    st.html(cd.secao("Conciliação com o painel, por ação",
+                     "Por que o saldo deste relatório (dotação − empenhado − reforço) difere do saldo do painel (dotação − despesa projetada "
+                     "no ano): a soma das parcelas explica a diferença, que deve ser zero. Outros Benefícios é aberto por ação (2004/212B); "
+                     "projeção padrão, sem as edições manuais."))
     fora = conc["diferenca"].dropna().abs().max() if conc["diferenca"].notna().any() else 0.0
     if fora >= 0.005:
-        st.warning(f"Há diferença não explicada de até {brl(fora)} entre o painel e o quadro: confira antes de usar.")
+        st.warning(f"Há diferença não explicada de até {brl(fora)} entre o painel e o relatório: confira antes de usar.")
+    st.html(cd.grade([cd.cartao_conciliacao(r.acao_cod, _NOMES_GRUPO.get(r.grupo, r.grupo), [
+        ("Saldo da dotação pela projeção do painel", r.saldo_painel, "normal"),
+        ("+ Despesa projetada fora dos empenhos da folha", r.projecao_fora, "normal"),
+        ("+ Já liquidado por outras notas da ação", r.executado_fora, "normal"),
+        ("− Empenhado em outras notas da ação", r.empenhado_fora, "normal"),
+        ("− Sobra prevista nos empenhos da folha", r.sobras, "normal"),
+        ("= Saldo da dotação após os reforços", r.saldo_quadro, "total"),
+    ], r.diferenca) for r in conc.itertuples()]))
     sem = conc.attrs.get("naturezas_sem_acao", 0)
-    st.caption(_md(
-        "Saldo do quadro = dotação − empenhado na ação − reforço até dezembro dos empenhos do quadro. Saldo do painel = "
-        "dotação − total do ano projetado. A diferença entre os dois é a soma das parcelas: projeção do painel que o "
-        "quadro não cobre (naturezas sem empenho de folha, diferença entre DDP e projeção), executado que não passou "
-        "pelos empenhos do quadro, empenhado em outras notas da ação e sobra dos empenhos com folga. Outros Benefícios "
-        "é aberto por ação (2004/212B) pela ação em que cada natureza é executada; projeção padrão, sem as edições "
-        "manuais. Ação sem dotação na base fica em branco."
-        + (f" {sem} linha(s) da projeção sem ação única ficaram fora." if sem else "")
-    ))
+    if sem:
+        st.caption(f"{sem} linha(s) da projeção sem ação única ficaram fora.")
 
 
 def tabela_guardadas(competencias: list[int], diretorio_manifestos=None) -> pd.DataFrame:
@@ -335,19 +372,17 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
         return
     competencia = ddp.competencia
     publicos = sorted({r.publico.lower() for r in atuais if r.tipo == TIPO_DDP})
-    st.subheader(f"Folha de {_mes(competencia)}")
-    st.caption(
-        f"Paga em {_mes(ddp.mes_pagamento)}; relatórios gerados em "
-        f"{', '.join(sorted({r.data_geracao.strftime('%d/%m/%Y') for r in atuais if r.data_geracao}))}. "
-        f"DDP de {' e '.join(publicos)}."
-        + (f" Os PDFs de {_mes(anteriores[0].competencia)} entram só na comparação." if anteriores else "")
-    )
+    st.html(cd.CSS + cd.secao(f"Folha de {_mes(competencia)}",
+                              f"Paga em {_mes(ddp.mes_pagamento)}; relatórios gerados em "
+                              f"{', '.join(sorted({r.data_geracao.strftime('%d/%m/%Y') for r in atuais if r.data_geracao}))}. "
+                              f"DDP de {' e '.join(publicos)}."
+                              + (f" Os PDFs de {_mes(anteriores[0].competencia)} entram só na comparação." if anteriores else "")))
     if len(publicos) < 2:
         st.warning("Só foi enviada a DDP de " + publicos[0] + ": o reforço abaixo não inclui a outra folha.")
 
-    st.markdown("**Conferência dos totais**")
     conf = conferencia(relatorios)
-    st.dataframe(tabela_conferencia(conf), hide_index=True, width="stretch", height="content")
+    st.html(cd.secao("Conferência dos totais", "Bruto − descontos = líquido = crédito bancário.")
+            + cd.grade(cartoes_conferencia(conf)))
 
     natureza = ddp_por_natureza(atuais)
     variacao = None
@@ -374,28 +409,32 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
             f"folha, o reforço a conta duas vezes — confira em “DDP × Liquidada no mês”."
         ))
 
-    colunas = st.columns(4)
-    colunas[0].metric(f"DDP líquida de {_mes(competencia)}", brl(total_ddp))
-    colunas[1].metric("Falta para pagar a folha do mês", brl(por_empenho["falta"].sum()))
-    colunas[2].metric("Reforço necessário para o mês", brl(por_empenho["reforco_mes"].sum()),
-                      help="Falta nos itens menos o que dá para cobrir anulando a sobra livre de outros itens da mesma NE.")
-    colunas[3].metric("Reforço necessário até dezembro", brl(por_empenho["reforco_ate_dezembro"].sum()),
-                      help="Por empenho: DDP do mês + projeção dos meses seguintes − saldo a liquidar, quando positivo.")
-
-    st.markdown("**Reforço por empenho**")
-    st.dataframe(tabela_por_empenho(por_empenho), hide_index=True, width="stretch", height="content")
-
     plano = plano_operacoes(itens)
-    st.markdown("**Anulação + reforço, item a item**")
-    st.caption(
-        "Em cada empenho, o item com maior falta recebe primeiro, da maior sobra livre; o que a sobra não cobre é "
-        "reforço novo. Nenhum item cede mais que a sobra livre, então todos mantêm a reserva dos meses seguintes. "
-        "Em linhas com dois empenhos (ex.: “NE000040 + NE000166”), escolha em qual deles reforçar."
-    )
+    mes, ano = _mes(competencia), competencia // 100
+    st.html(cd.kpis([
+        {"rotulo": f"DDP líquida de {mes}", "valor": brl(total_ddp), "sub": "servidor + pensionista", "tom": "cinza"},
+        {"rotulo": "Falta para pagar a folha do mês", "valor": brl(por_empenho["falta"].sum()), "sub": "soma dos itens com falta"},
+        {"rotulo": f"Reforço necessário para {mes}", "valor": brl(por_empenho["reforco_mes"].sum()), "tom": "laranja",
+         "sub": f"depois de remanejar {brl(por_empenho['compensa'].sum())} entre itens do mesmo empenho"},
+        {"rotulo": f"Reforço necessário até dez/{ano}", "valor": brl(por_empenho["reforco_ate_dezembro"].sum()), "tom": "vermelho",
+         "sub": "folha do mês + necessidade de nov e dez − saldo"},
+    ]))
+
+    cartoes = cartoes_empenhos(por_empenho, itens, mes, ano)
+    st.html(cd.secao("Reforço por empenho", "Cada nota de empenho da folha, dos que mais precisam de reforço para os que menos precisam. A barra mostra "
+                     "quanto da folha do mês o saldo do empenho cobre (verde) e o que falta (vermelho). Abra “Itens do empenho” para ver o detalhe."))
+    st.html(cd.grade(cartoes[:12]))
+    if len(cartoes) > 12:
+        with st.expander(f"Demais empenhos ({len(cartoes) - 12})"):
+            st.html(cd.grade(cartoes[12:]))
+
+    st.html(cd.secao("Anulação + reforço, item a item", "Em cada empenho, o item com maior falta recebe primeiro, do item com maior sobra; o que a sobra não "
+                     "cobre é reforço novo. Nenhum item cede mais que a sobra livre, então todos mantêm a necessidade de nov e dez. "
+                     "Em empenhos agrupados (ex.: “NE000040 + NE000166”), escolha em qual deles reforçar."))
     if plano.empty:
         st.info("Nenhum item precisa de anulação ou reforço para esta folha.")
     else:
-        st.dataframe(tabela_plano(plano, itens), hide_index=True, width="stretch", height="content")
+        st.html(cd.grade(cartoes_plano(plano, itens)))
 
     itens_rpps, por_empenho_rpps = quadro_sem_ddp(mensal, competencia, grade_linhas, GRUPO_RPPS)
     dotacao_rpps = None if dotacao_grupo is None else dotacao_grupo.get(GRUPO_RPPS)
@@ -430,14 +469,14 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         key="dp_ddp_excel",
     )
-    with st.expander("Detalhe por item (NE × natureza detalhada)"):
+    with st.expander("Tabelas completas para análise (Excel e conferência linha a linha)"):
+        st.markdown("**Reforço por empenho**")
+        st.dataframe(tabela_por_empenho(por_empenho), hide_index=True, width="stretch", height="content")
+        st.markdown("**Detalhe por item (nota de empenho × natureza)**")
         st.dataframe(tabela_itens(itens), hide_index=True, width="stretch", height="content")
-    with st.expander(f"DDP × Liquidada no mês ({_mes(competencia)})"):
-        st.markdown(
-            "Com a folha já liquidada, a diferença é o que a liquidação não reproduziu (em set/2026: reposição ao "
-            "erário nas pensões, cota-parte na creche, e diferenças ainda sem explicação em vencimentos, "
-            "gratificação e auxílio-alimentação). Antes da liquidação, a coluna da base mostra só o que já entrou."
-        )
+        st.markdown(f"**DDP × liquidado na base em {_mes(competencia)}**")
+        st.caption("Com a folha já liquidada, a diferença é o que a liquidação não reproduziu (em set/2026: reposição ao erário nas pensões, "
+                   "cota-parte na creche e diferenças ainda sem explicação). Antes da liquidação, a coluna da base mostra só o que já entrou.")
         st.dataframe(tabela_confronto(confronto), hide_index=True, width="stretch", height="content")
 
     st.caption(_md(
