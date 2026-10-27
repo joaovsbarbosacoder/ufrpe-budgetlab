@@ -10,7 +10,9 @@ set/2026 da Execução Mensal (diferença total de R$ 6.971,93 em R$ 54,87 mi):
 
 - a DDP do "MES/ANO SOLIC" X (paga no mês seguinte) é liquidada no próprio mês X;
 - o código "3.3190.11.01" da DDP é a natureza detalhada SIAFI "31901101";
-- valor da natureza = seção "DESPESAS CORRENTES ( 1 )" − seção "A ANULAR ( 2 )";
+- valor da natureza = seção "DESPESAS CORRENTES ( 1 )" − seção "A ANULAR ( 2 )" (líquido: bate com a
+  Liquidada, usado na variação, no confronto e no painel). **Para o reforço do empenho vale o
+  BRUTO** (só a seção 1): as despesas a anular não reduzem a necessidade (regra do usuário, 28/10/2026);
 - conferência: BRUTO − DESCONTO = LÍQUIDO = total do Crédito Bancário; o DESCONTO é a
   seção (2) inteira (passivo + naturezas) mais o total de "CONSIGNACOES/DESCONTOS ( 3 )".
 
@@ -365,7 +367,7 @@ def quadro_reforco(ddp_natureza: pd.DataFrame, mensal_df: pd.DataFrame, ano_mes_
                    reserva_por_natureza: dict[str, float], somente_folha: bool = True) -> tuple[pd.DataFrame, pd.DataFrame]:
     """(itens, por_empenho). `itens`: uma linha por (empenho, natureza detalhada) dos
     empenhos da folha que têm alguma natureza da DDP, com `empenhada`, `liquidada`, `saldo`,
-    `ddp` (líquido do mês), `falta` = máx(0, ddp − saldo), `reserva`, `sobra_livre` =
+    `ddp` (valor BRUTO do mês — seção 1 da DDP, sem abater as despesas a anular), `falta` = máx(0, ddp − saldo), `reserva`, `sobra_livre` =
     máx(0, saldo − ddp − reserva), `saldo_apos_ano` = saldo − ddp − reserva e os critérios
     usados. `por_empenho`: soma por empenho, `compensa` = mín(falta, sobra livre),
     `reforco_mes` = falta − compensa e `reforco_ate_dezembro` = máx(0, −saldo_apos_ano). Ver as
@@ -374,7 +376,9 @@ def quadro_reforco(ddp_natureza: pd.DataFrame, mensal_df: pd.DataFrame, ano_mes_
     ano, mes = divmod(ano_mes_ddp, 100)
     meses_restantes = 12 - mes
     itens = itens_de_empenho(mensal_df, ano, ano_mes_ddp)
-    ddp = ddp_natureza.groupby("natureza_detalhada")["liquido"].sum()
+    # valor BRUTO (seção 1, despesas correntes): as despesas a anular (seção 2) não reduzem a
+    # necessidade de reforço do empenho — regra do usuário, 28/10/2026
+    ddp = ddp_natureza.groupby("natureza_detalhada")["despesa"].sum()
     descricoes = ddp_natureza.groupby("natureza_detalhada")["descricao"].first()
 
     folha = itens.loc[itens["folha"]] if somente_folha else itens
@@ -466,8 +470,8 @@ def quadro_sem_ddp(mensal_df: pd.DataFrame, ano_mes: int, grade_linhas: pd.DataF
     linhas = grade_linhas.loc[grade_linhas["grupo"] == grupo]
     previsto = pd.DataFrame([{
         "natureza_detalhada": str(l.natureza_detalhada_cod), "publico": "projeção", "descricao": l.natureza_detalhada_desc,
-        "liquido": float(l.meses[mes - 1]) if l.meses[mes - 1] is not None and not pd.isna(l.meses[mes - 1]) else 0.0,
-    } for l in linhas.itertuples(index=False)], columns=["natureza_detalhada", "publico", "descricao", "liquido"])
+        "despesa": float(l.meses[mes - 1]) if l.meses[mes - 1] is not None and not pd.isna(l.meses[mes - 1]) else 0.0,
+    } for l in linhas.itertuples(index=False)], columns=["natureza_detalhada", "publico", "descricao", "despesa"])
     return quadro_reforco(previsto, mensal_df, ano_mes, reserva_projetada(linhas, mes), somente_folha=False)
 
 
