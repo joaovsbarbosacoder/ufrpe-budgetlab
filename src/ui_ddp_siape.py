@@ -17,12 +17,45 @@ from src.ddp_siape import (
     ler_relatorio, plano_operacoes, quadro_reforco, quadro_sem_ddp, reforco_por_acao_po, reserva_projetada,
     separar_competencias, validar_conjunto, variacao_por_natureza,
 )
+from src.ddp_siape_arquivos import (
+    ArquivoGuardadoInvalido, carregar as carregar_guardada, competencias_com_ddp, competencias_guardadas, guardar,
+    historico, manifesto_atual,
+)
 from src.despesas_pessoal import ACOES_ESCOPO, GRUPO_RPPS, MESES_NOMES, dotacao_atualizada_por_acao_e_po
 from src.ui_despesas_pessoal_abas import _md, brl
 
 
 def _mes(ano_mes: int | None) -> str:
     return "—" if ano_mes is None else f"{MESES_NOMES[ano_mes % 100 - 1].lower()}/{ano_mes // 100}"
+
+
+mes_ano = _mes
+
+
+def aviso_ddp_aplicada(resultado, erro: str | None, ano_mes_referencia: int) -> tuple[str, str] | None:
+    """(nível do `st.*`, texto) do aviso do painel sobre a DDP guardada; `None` se não há o que dizer."""
+    if erro:
+        return "error", f"A DDP guardada não pôde ser lida ({erro}) e não foi usada no painel."
+    if resultado.competencia is None:
+        return None
+    mes = _mes(resultado.competencia)
+    if not resultado.aplicada:
+        return "info", f"DDP de {mes} guardada: {resultado.motivo}"
+    if ano_mes_referencia != resultado.competencia:
+        return None
+    texto = (
+        f"{mes} está com os valores da DDP do SIAPE ({brl(resultado.total_no_painel)}), ainda não liquidados; novembro "
+        f"em diante é projetado a partir dela. Naturezas que a DDP não traz (RPPS patronal e outras) seguem pela "
+        f"projeção. Assim que a liquidação de {mes} fechar na Execução Mensal, ela passa a valer no lugar da DDP."
+    )
+    if resultado.liquidado_parcial_substituido:
+        texto += (f" Liquidação parcial já lançada no mês e substituída por esses valores: "
+                  f"{brl(resultado.liquidado_parcial_substituido)}.")
+    if resultado.sem_destino:
+        texto += " Sem linha de empenho para distribuir, não entraram no painel: " + "; ".join(
+            f"{n} ({brl(v)})" for n, v in resultado.sem_destino) + "."
+        return "warning", _md(texto)
+    return "info", _md(texto)
 
 
 def _situacao(linha) -> str:
@@ -239,6 +272,31 @@ def planilha_excel(competencia: int, conf: pd.DataFrame, plano: pd.DataFrame, po
     return arquivo.getvalue()
 
 
+def tabela_guardadas(competencias: list[int], diretorio_manifestos=None) -> pd.DataFrame:
+    """Uma linha por PDF da versão atual de cada competência guardada, mais a contagem de versões."""
+    linhas = []
+    for c in reversed(competencias):
+        manifesto = manifesto_atual(c, diretorio_manifestos)
+        versoes = len(historico(c, diretorio_manifestos))
+        for a in manifesto["arquivos"]:
+            linhas.append({
+                "Competência": _mes(c), "Tipo": a["tipo"], "Público": a["publico"].title(), "Gerado em": a["data_geracao"] or "—",
+                "Arquivo enviado": a["nome_original"], "Hash": a["sha256"][:8], "Guardado em": manifesto["gravado_em"][:16].replace("T", " "),
+                "Versões da competência": versoes,
+            })
+    return pd.DataFrame(linhas)
+
+
+def render_guardadas(competencias: list[int]) -> None:
+    with st.expander(f"DDPs guardadas ({', '.join(_mes(c) for c in reversed(competencias))})"):
+        st.dataframe(tabela_guardadas(competencias), hide_index=True, width="stretch", height="content")
+        st.caption(
+            "Reenviar um PDF diferente para o mesmo tipo, público e competência cria uma versão nova; o PDF e o "
+            "manifesto anteriores ficam preservados. Os arquivos estão em `data/raw/ddp_siape/` e os manifestos em "
+            "`data/manifestos/`."
+        )
+
+
 def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int, procedencia: str,
                dotacao_grupo: pd.Series | None = None, dotacao_df: pd.DataFrame | None = None,
                ano_dotacao: int | None = None) -> None:
@@ -247,30 +305,55 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
     mês do RPPS patronal. `dotacao_grupo`: dotação por grupo, para fechar o RPPS com o painel.
     `dotacao_df`/`ano_dotacao`: Dotação Anual e exercício do painel, para o quadro por Ação/PO."""
     st.markdown(
-        "Envie os PDFs do SIAPE do mês: **DDP** e **Crédito Bancário**, de servidor e de pensionista. "
-        "A aba confere os totais e calcula, por empenho, quanto falta para liquidar a folha. Os arquivos "
-        "ficam só nesta sessão e não são gravados."
+        "Envie os PDFs do SIAPE do mês: **DDP** e **Crédito Bancário**, de servidor e de pensionista. Eles ficam "
+        "**guardados** (cópia sem alteração em `data/raw/ddp_siape/`, fora do git, com manifesto versionado): não é "
+        "preciso enviar de novo. O painel usa a DDP do mês até a liquidação aparecer na Execução Mensal; a aba confere "
+        "os totais e calcula, por empenho, quanto falta para liquidar a folha."
     )
     arquivos = st.file_uploader("PDFs do SIAPE", type="pdf", accept_multiple_files=True, key="dp_ddp_pdfs",
                                 label_visibility="collapsed")
-    if not arquivos:
+    if arquivos:
+        recebidos = []
+        for arquivo in arquivos:
+            conteudo = arquivo.getvalue()
+            try:
+                recebidos.append((ler_relatorio(conteudo, arquivo.name), conteudo))
+            except ValueError as erro:
+                st.error(str(erro))
+        erros = validar_conjunto([r for r, _ in recebidos], competencias_com_ddp=competencias_com_ddp()) if recebidos else []
+        for erro in erros:
+            st.error(erro)
+        if recebidos and not erros:
+            guarda = guardar(recebidos)
+            if guarda.versoes_novas:
+                st.session_state["dp_ddp_msg"] = ("Guardado: " + ", ".join(_mes(c) for c in guarda.versoes_novas)
+                                                  + ". O painel já usa a DDP guardada.")
+                st.rerun()  # o painel (montado antes desta aba) precisa reler a DDP guardada
+            elif guarda.sem_mudanca:
+                st.caption("Estes PDFs já estavam guardados, sem alteração: " + ", ".join(_mes(c) for c in guarda.sem_mudanca) + ".")
+    mensagem = st.session_state.pop("dp_ddp_msg", None)
+    if mensagem:
+        st.success(mensagem)
+
+    guardadas = competencias_guardadas()
+    if not guardadas:
+        st.info("Nenhuma DDP guardada ainda. Envie os PDFs acima.")
         return
-    relatorios = []
-    for arquivo in arquivos:
-        try:
-            relatorios.append(ler_relatorio(arquivo.getvalue(), arquivo.name))
-        except ValueError as erro:
-            st.error(str(erro))
-    if not relatorios:
-        return
-    erros = validar_conjunto(relatorios)
-    for erro in erros:
-        st.error(erro)
-    if erros:
+    render_guardadas(guardadas)
+    escolhida = guardadas[-1] if len(guardadas) == 1 else st.selectbox(
+        "Competência analisada", list(reversed(guardadas)), format_func=_mes, key="dp_ddp_competencia")
+    anterior_guardada = max((c for c in guardadas if c < escolhida), default=None)
+    try:
+        relatorios = carregar_guardada(escolhida) + (carregar_guardada(anterior_guardada) if anterior_guardada else [])
+    except ArquivoGuardadoInvalido as erro:
+        st.error(f"Não foi possível ler a DDP guardada: {erro}")
         return
 
     atuais, anteriores = separar_competencias(relatorios)
-    ddp = next(r for r in atuais if r.tipo == TIPO_DDP)
+    ddp = next((r for r in atuais if r.tipo == TIPO_DDP), None)
+    if ddp is None:
+        st.warning(f"A competência {_mes(escolhida)} tem só o Crédito Bancário guardado; envie a DDP para analisar.")
+        return
     competencia = ddp.competencia
     publicos = sorted({r.publico.lower() for r in atuais if r.tipo == TIPO_DDP})
     st.subheader(f"Folha de {_mes(competencia)}")

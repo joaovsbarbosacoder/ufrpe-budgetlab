@@ -203,10 +203,12 @@ def _competencia(ano_mes: int) -> str:
     return f"{ano_mes % 100:02d}/{ano_mes // 100}"
 
 
-def validar_conjunto(relatorios: list[RelatorioSiape]) -> list[str]:
+def validar_conjunto(relatorios: list[RelatorioSiape], competencias_com_ddp=()) -> list[str]:
     """Erros que impedem o confronto: mais de duas competências (a mais recente é a do
     reforço; a anterior, só comparação — 27/10/2026), relatório repetido para a mesma
-    competência/tipo/público/folha, ou nenhuma DDP em alguma competência."""
+    competência/tipo/público/folha, ou nenhuma DDP em alguma competência.
+    `competencias_com_ddp`: competências que já têm DDP guardada — um envio só com Crédito
+    Bancário delas não é erro."""
     erros = []
     competencias = sorted({r.competencia for r in relatorios})
     if len(competencias) > 2:
@@ -220,7 +222,7 @@ def validar_conjunto(relatorios: list[RelatorioSiape]) -> list[str]:
                          f"enviado duas vezes: {vistos[chave]} e {r.nome}.")
         vistos[chave] = r.nome
     for c in competencias:
-        if not any(r.tipo == TIPO_DDP and r.competencia == c for r in relatorios):
+        if c not in competencias_com_ddp and not any(r.tipo == TIPO_DDP and r.competencia == c for r in relatorios):
             erros.append(f"Nenhuma DDP de {_competencia(c)} entre os PDFs enviados (só Crédito Bancário).")
     return erros
 
