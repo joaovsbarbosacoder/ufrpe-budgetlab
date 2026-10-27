@@ -449,7 +449,7 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
         return
 
     itens, por_empenho = quadro_reforco(natureza, mensal, competencia, reserva_projetada(grade_linhas, competencia % 100))
-    total_ddp = float(natureza["liquido"].sum())
+    total_ddp = float(natureza["despesa"].sum())  # bruto: as despesas a anular não entram na necessidade de reforço
     ja_liquidado = float(confronto["liquidado_no_mes"].sum())
     if ja_liquidado > 0.004:
         st.warning(_md(
@@ -461,7 +461,7 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
     plano = plano_operacoes(itens)
     mes, ano = _mes(competencia), competencia // 100
     st.html(cd.kpis([
-        {"rotulo": f"DDP líquida de {mes}", "valor": brl(total_ddp), "sub": "servidor + pensionista", "tom": "cinza"},
+        {"rotulo": f"DDP bruta de {mes}", "valor": brl(total_ddp), "sub": "servidor + pensionista, sem abater as despesas a anular", "tom": "cinza"},
         {"rotulo": "Falta para pagar a folha do mês", "valor": brl(por_empenho["falta"].sum()), "sub": "soma dos itens com falta"},
         {"rotulo": f"Reforço necessário para {mes}", "valor": brl(por_empenho["reforco_mes"].sum()), "tom": "laranja",
          "sub": f"depois de remanejar {brl(por_empenho['compensa'].sum())} entre itens do mesmo empenho"},

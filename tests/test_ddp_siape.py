@@ -276,6 +276,15 @@ class TestQuadroReforco(unittest.TestCase):
         # (300 − 500 − 1000) + (5000 − 0 − 3000) = 800 ⇒ nada a reforçar até dezembro
         self.assertEqual((ne["saldo_apos_ano"], ne["reforco_ate_dezembro"]), (800.0, 0.0))
 
+    def test_despesas_a_anular_nao_reduzem_o_reforco_vale_o_bruto(self):
+        """28/10/2026: a necessidade usa a seção 1 (bruto); a seção 2 (a anular) não abate."""
+        ddp = _ddp_sintetica()
+        ddp.loc[ddp["natureza_detalhada"] == "31901101", ["anular", "liquido"]] = [120.0, 380.0]  # bruto 500, líquido 380
+        itens, _ = quadro_reforco(ddp, _base_sintetica(), 202610, RESERVA)
+        linha = itens.set_index(["empenho", "natureza_detalhada"]).loc[("NE000001", "31901101")]
+        self.assertEqual(linha["ddp"], 500.0)   # não 380
+        self.assertEqual(linha["falta"], 200.0)  # igual ao caso sem "a anular": saldo 300 < 500
+
     def test_per_capita_repartido_e_reserva_pela_ddp_quando_ha_empenho_fora_da_folha(self):
         b, c = self.item.loc[("NE000002", "33909308")], self.item.loc[("NE000003", "33909308")]
         self.assertEqual((b["ddp"], c["ddp"]), (300.0, 100.0))  # 400 × 0,75 e × 0,25
