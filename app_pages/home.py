@@ -2,7 +2,9 @@
 
 Resume apenas estados observáveis no ambiente local: disponibilidade das bases
 cadastradas e prazos orçamentários. Não calcula totais financeiros nem presume
-regras entre bases diferentes.
+regras entre bases diferentes. Layout repaginado em 28/10/2026 (indicadores em
+cartões, lista de prazos, estado de cada base e atalhos por área); os dados e as
+regras são os mesmos de antes.
 """
 
 from datetime import datetime
@@ -10,6 +12,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from src import ui_home as hm
 from src.atualizar_planilhas import ESPECIFICACOES
 from src.importacao_dotacao import Manifesto as ManifestoDotacao
 from src.importacao_execucao import Manifesto as ManifestoExecucao
@@ -20,11 +23,14 @@ from src.prazos_orcamentarios import (
     carregar_prazos,
     prazos_com_criticidade,
 )
-from src.ui_theme import render_metric_grid, render_page_header
+from src.ui_theme import render_page_header
+
+#: prazos listados no painel da página inicial (os mais urgentes; o resto fica em Gerenciamento de Prazos).
+PRAZOS_NA_LISTA = 5
 
 
-def _resumo_bases() -> tuple[int, int, list[str], datetime | None]:
-    """Disponibilidade e atualização das bases, sem abrir as planilhas."""
+def _estado_bases() -> list[tuple[str, bool, datetime | None]]:
+    """Disponibilidade e atualização de cada base, sem abrir as planilhas."""
 
     estados: list[tuple[str, bool, datetime | None]] = []
     for nome, manifesto in (
@@ -48,24 +54,30 @@ def _resumo_bases() -> tuple[int, int, list[str], datetime | None]:
             else None
         )
         estados.append((especificacao.nome, caminho.exists(), atualizado_em))
+    return estados
 
+
+def _resumo_bases(estados) -> tuple[int, int, list[str], datetime | None]:
     ausentes = [nome for nome, disponivel, _ in estados if not disponivel]
     datas = [data for _, disponivel, data in estados if disponivel and data is not None]
     return len(estados) - len(ausentes), len(estados), ausentes, max(datas, default=None)
 
 
-def _resumo_prazos() -> tuple[int, int, int]:
+def _prazos():
+    """(pendentes, atrasados, vencendo, lista dos mais urgentes) — a ordenação vem de `prazos_com_criticidade`."""
     prazos = prazos_com_criticidade(carregar_prazos())
     if prazos.empty:
-        return 0, 0, 0
+        return 0, 0, 0, []
     pendentes = prazos[~prazos["concluido"]]
     atrasados = int((pendentes["criticidade"] == CRITICIDADE_ATRASADO).sum())
     vencendo = int((pendentes["criticidade"] == CRITICIDADE_VENCENDO).sum())
-    return len(pendentes), atrasados, vencendo
+    lista = pendentes.head(PRAZOS_NA_LISTA).to_dict("records")
+    return len(pendentes), atrasados, vencendo, lista
 
 
-bases_disponiveis, bases_cadastradas, bases_ausentes, ultima_atualizacao = _resumo_bases()
-prazos_pendentes, prazos_atrasados, prazos_vencendo = _resumo_prazos()
+estados_bases = _estado_bases()
+bases_disponiveis, bases_cadastradas, bases_ausentes, ultima_atualizacao = _resumo_bases(estados_bases)
+prazos_pendentes, prazos_atrasados, prazos_vencendo, proximos_prazos = _prazos()
 
 render_page_header(
     "Visão geral",
@@ -73,124 +85,78 @@ render_page_header(
     "Gestão orçamentária",
 )
 
+chips = []
 if ultima_atualizacao is not None:
-    st.caption(f"Atualização mais recente entre as bases: {ultima_atualizacao:%d/%m/%Y às %H:%M}")
+    chips.append(hm.chip(f"Atualização mais recente entre as bases: {ultima_atualizacao:%d/%m/%Y às %H:%M}", "azul"))
 else:
-    st.caption("Nenhuma base local disponível para identificar a última atualização.")
-
-render_metric_grid(
-    [
-        {
-            "label": ":material/database: Bases disponíveis",
-            "value": f"{bases_disponiveis} de {bases_cadastradas}",
-            "help": "Bases versionadas com manifesto e planilhas de trabalho encontradas localmente.",
-        },
-        {
-            "label": ":material/event_note: Prazos pendentes",
-            "value": prazos_pendentes,
-            "help": "Prazos cadastrados que ainda não foram concluídos.",
-        },
-        {
-            "label": ":material/error: Atrasados",
-            "value": prazos_atrasados,
-            "help": "Prazos pendentes cuja data já passou.",
-        },
-        {
-            "label": ":material/schedule: Vencendo",
-            "value": prazos_vencendo,
-            "help": "Prazos dentro da antecedência configurada em cada cadastro.",
-        },
-    ]
-)
-
+    chips.append(hm.chip("Nenhuma base local disponível para identificar a última atualização", "cinza"))
 if bases_ausentes:
-    st.warning(
-        "Bases ainda não disponíveis: " + ", ".join(bases_ausentes) + ".",
-        icon=":material/database_off:",
-    )
+    chips.append(hm.chip("Bases ainda não disponíveis: " + ", ".join(bases_ausentes), "laranja"))
 else:
-    st.success(
-        "Todas as bases cadastradas estão disponíveis localmente.",
-        icon=":material/check_circle:",
-    )
-
+    chips.append(hm.chip("Todas as bases cadastradas estão disponíveis localmente", "verde"))
 if prazos_atrasados:
-    st.error(
-        f"{prazos_atrasados} prazo(s) orçamentário(s) atrasado(s) requer(em) atenção.",
-        icon=":material/error:",
-    )
+    chips.append(hm.chip(f"{prazos_atrasados} prazo(s) orçamentário(s) atrasado(s) requer(em) atenção", "vermelho"))
 elif prazos_vencendo:
-    st.warning(
-        f"{prazos_vencendo} prazo(s) entrou(aram) na antecedência de alerta configurada.",
-        icon=":material/schedule:",
-    )
+    chips.append(hm.chip(f"{prazos_vencendo} prazo(s) na antecedência de alerta configurada", "laranja"))
 elif prazos_pendentes:
-    st.success(
-        "Nenhum prazo pendente está em situação de alerta.",
-        icon=":material/check_circle:",
-    )
+    chips.append(hm.chip("Nenhum prazo pendente está em situação de alerta", "verde"))
 else:
-    st.info("Nenhum prazo orçamentário pendente cadastrado.", icon=":material/info:")
+    chips.append(hm.chip("Nenhum prazo orçamentário pendente cadastrado", "cinza"))
+st.html(hm.CSS + hm.faixa(chips))
 
-st.subheader("Acessos rápidos")
-st.caption(
-    "Abra diretamente as áreas mais utilizadas. Cada módulo mantém sua "
-    "própria fonte e rastreabilidade."
-)
+st.html(hm.kpis([
+    {"rotulo": "Bases disponíveis", "valor": bases_disponiveis, "complemento": f"de {bases_cadastradas}",
+     "sub": "Bases versionadas com manifesto e planilhas de trabalho encontradas localmente.",
+     "tom": "verde" if not bases_ausentes else "laranja"},
+    {"rotulo": "Prazos pendentes", "valor": prazos_pendentes,
+     "sub": "Prazos cadastrados que ainda não foram concluídos.", "tom": "azul"},
+    {"rotulo": "Atrasados", "valor": prazos_atrasados,
+     "sub": "Prazos pendentes cuja data já passou.", "tom": "vermelho" if prazos_atrasados else "verde"},
+    {"rotulo": "Vencendo", "valor": prazos_vencendo,
+     "sub": "Prazos dentro da antecedência configurada em cada cadastro.", "tom": "laranja" if prazos_vencendo else "verde"},
+]))
 
-col_planejamento, col_operacao, col_gestao = st.columns(3, vertical_alignment="top")
+st.html(hm.paineis(hm.painel_prazos(proximos_prazos, prazos_pendentes), hm.painel_bases(estados_bases)))
+st.page_link("app_pages/painel_prazos.py", label="Abrir Gerenciamento de Prazos", icon=":material/event_upcoming:")
 
-with col_planejamento.container(border=True, height="stretch"):
-    st.markdown("#### Planejamento e execução")
-    st.caption("Acompanhamento por ação e limite de empenho.")
-    st.page_link(
-        "app_pages/painel_acoes.py",
-        label="Painel por ação",
-        icon=":material/dashboard:",
-    )
-    st.page_link(
-        "app_pages/limite_empenho.py",
-        label="Limite de empenho",
-        icon=":material/rule:",
-    )
+st.html(hm.secao(
+    "Acessos rápidos",
+    "Abra diretamente as áreas mais utilizadas. Cada módulo mantém sua própria fonte e rastreabilidade.",
+))
 
-with col_operacao.container(border=True, height="stretch"):
-    st.markdown("#### Operação")
-    st.caption("Consultas detalhadas e acompanhamento das despesas recorrentes.")
-    st.page_link(
-        "app_pages/consulta_empenhos.py",
-        label="Consulta de empenhos",
-        icon=":material/receipt_long:",
-    )
-    st.page_link(
-        "app_pages/bolsas_auxilios.py",
-        label="Bolsas e auxílios",
-        icon=":material/school:",
-    )
-    st.page_link(
-        "app_pages/despesas_pessoal.py",
-        label="Despesas de pessoal",
-        icon=":material/groups:",
-    )
+#: (ícone, título, descrição, tom, [(página, rótulo, ícone do link)])
+GRUPOS = [
+    ("▦", "Planejamento e execução", "Acompanhamento por ação e limite de empenho.", "azul", [
+        ("app_pages/painel_acoes.py", "Painel por ação", ":material/dashboard:"),
+        ("app_pages/limite_empenho.py", "Limite de empenho", ":material/rule:"),
+        ("app_pages/resultado_orcamentario.py", "Resultado orçamentário", ":material/balance:"),
+    ]),
+    ("☰", "Operação", "Consultas detalhadas e despesas recorrentes.", "verde", [
+        ("app_pages/consulta_empenhos.py", "Consulta de empenhos", ":material/receipt_long:"),
+        ("app_pages/empenhos_execucao_retardada.py", "Empenhos com execução retardada", ":material/schedule:"),
+        ("app_pages/bolsas_auxilios.py", "Bolsas e auxílios", ":material/school:"),
+        ("app_pages/despesas_pessoal.py", "Despesas de pessoal", ":material/groups:"),
+    ]),
+    ("◎", "Gestão e controle", "Alertas, prazos, Diário Oficial e emendas.", "laranja", [
+        ("app_pages/alertas_gerenciais.py", "Alertas gerenciais", ":material/notifications:"),
+        ("app_pages/painel_prazos.py", "Gerenciamento de prazos", ":material/event_upcoming:"),
+        ("app_pages/diario_oficial.py", "Diário Oficial (DOU)", ":material/newspaper:"),
+        ("app_pages/emendas_parlamentares.py", "Emendas parlamentares", ":material/account_balance:"),
+    ]),
+    ("✎", "Contratos, TEDs e dados", "Contratos, acompanhamento de TEDs e atualização das fontes.", "cinza", [
+        ("app_pages/contratos.py", "Contratos", ":material/description:"),
+        ("app_pages/contratos_continuos.py", "Contratos contínuos", ":material/handshake:"),
+        ("app_pages/teds_visao_geral.py", "TEDs — visão geral", ":material/home:"),
+        ("app_pages/atualizar_planilhas.py", "Atualizar planilhas", ":material/upload_file:"),
+    ]),
+]
 
-with col_gestao.container(border=True, height="stretch"):
-    st.markdown("#### Gestão e controle")
-    st.caption("Alertas, prazos e atualização controlada das fontes.")
-    st.page_link(
-        "app_pages/alertas_gerenciais.py",
-        label="Alertas gerenciais",
-        icon=":material/notifications:",
-    )
-    st.page_link(
-        "app_pages/painel_prazos.py",
-        label="Gerenciamento de prazos",
-        icon=":material/event_upcoming:",
-    )
-    st.page_link(
-        "app_pages/atualizar_planilhas.py",
-        label="Atualizar planilhas",
-        icon=":material/upload_file:",
-    )
+colunas = st.columns(len(GRUPOS), vertical_alignment="top")
+for coluna, (icone, titulo, descricao, tom, links) in zip(colunas, GRUPOS):
+    with coluna.container(border=True, height="stretch"):
+        st.html(hm.cabecalho_grupo(icone, titulo, descricao, tom))
+        for pagina, rotulo, icone_link in links:
+            st.page_link(pagina, label=rotulo, icon=icone_link)
 
 st.caption(
     "Os indicadores desta página representam disponibilidade local e prazos cadastrados; "

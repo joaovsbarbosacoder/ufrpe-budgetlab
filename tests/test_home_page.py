@@ -24,14 +24,22 @@ class HomePageTests(unittest.TestCase):
 
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(app.title[0].value, "Visão geral")
-        self.assertEqual(len(app.metric), 4)
-        self.assertTrue(any("Bases disponíveis" in metric.label for metric in app.metric))
-        self.assertTrue(any(str(metric.value).endswith("de 7") for metric in app.metric))
+        html = "".join(h.proto.body for h in app.get("html"))
+        # indicadores em cartões (28/10/2026): bases, prazos pendentes, atrasados e vencendo
+        self.assertEqual(html.count('class="hm-kpi"'), 4)
+        for rotulo in ("Bases disponíveis", "Prazos pendentes", "Atrasados", "Vencendo"):
+            self.assertIn(rotulo, html)
+        self.assertIn("de 7</small>", html)
+        # painéis de prazos e de bases (uma linha por base cadastrada)
+        self.assertIn("Prazos que pedem atenção", html)
+        self.assertIn("Bases de dados", html)
+        self.assertGreaterEqual(html.count('class="hm-linha"'), 7)
 
         links = [link.label for link in app.get("page_link")]
         self.assertIn("Consulta de empenhos", links)
         self.assertIn("Gerenciamento de prazos", links)
         self.assertIn("Atualizar planilhas", links)
+        self.assertIn("Despesas de pessoal", links)
 
     def test_explains_that_financial_values_are_not_combined(self) -> None:
         app = self._open_page()
