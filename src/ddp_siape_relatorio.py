@@ -202,7 +202,7 @@ def _resumo(wb: Workbook, d: DadosRelatorio, mes: str, ano: int) -> None:
     linha = _tabela(ws, linha, [("Indicador", "indicador", 58), ("Somente reforço (sem anular agora)", "somente", 22),
                                 ("Anulação + reforço", "misto", 22)], cenarios, filtro=False)
     gerais = pd.DataFrame([
-        ("Folha do mês pela DDP (servidor + pensionista, líquida)", float(d.natureza["liquido"].sum())),
+        ("Folha do mês pela DDP (servidor + pensionista, bruta: sem abater as despesas a anular)", float(d.natureza["despesa"].sum())),
         ("Sobra que pode ser anulada sem faltar em nov e dez (aba Sugestões de anulação)", float(d.itens["sobra_livre"].sum())),
     ], columns=["indicador", "valor"])
     linha = _tabela(ws, linha, [("Outros totais", "indicador", 58), ("Valor (R$)", "valor", 22)], gerais, filtro=False)
@@ -226,7 +226,8 @@ def _resumo(wb: Workbook, d: DadosRelatorio, mes: str, ano: int) -> None:
         "Anulação + reforço); o que a sobra não cobre é reforço novo. Quando a anulação for feita, a necessidade cai do "
         "primeiro cenário para este.",
         "Saldo do empenho = empenhado − liquidado no exercício, por item (nota de empenho × natureza). O RPPS patronal não "
-        "está na DDP: o valor do mês vem da projeção do painel. Os valores da DDP são líquidos (bruto − descontos).",
+        "está na DDP: o valor do mês vem da projeção do painel. O valor da folha usado no reforço é o BRUTO da DDP "
+        "(seção de despesas correntes): as despesas a anular não reduzem a necessidade de reforço do empenho.",
     ], colunas=3)
 
 
