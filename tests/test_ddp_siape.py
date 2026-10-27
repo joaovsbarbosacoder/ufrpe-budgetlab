@@ -525,20 +525,14 @@ class TestTabelasDaAba(unittest.TestCase):
         self.assertEqual(tabela_conferencia(divergente).loc[1, "Situação"],
                          "Diferença — crédito bancário ≠ líquido: −R$ 10,00")
 
-    def test_plano_e_planilha(self):
-        from io import BytesIO
-        from src.ui_ddp_siape import planilha_excel, tabela_plano
+    def test_tabela_do_plano(self):
+        from src.ui_ddp_siape import tabela_plano
 
-        itens, por_empenho = quadro_reforco(_ddp_sintetica(), _base_sintetica(), 202610, RESERVA)
-        plano = plano_operacoes(itens)
-        tabela = tabela_plano(plano, itens).set_index("Empenho")
+        itens, _ = quadro_reforco(_ddp_sintetica(), _base_sintetica(), 202610, RESERVA)
+        tabela = tabela_plano(plano_operacoes(itens), itens).set_index("Empenho")
         self.assertEqual(tabela.loc["NE000001", "Anular do item"], "31901143 X")  # fora da DDP: descrição da base
         self.assertEqual(tabela.loc["NE000001", "Reforçar o item"], "31901101 DESC 31901101")
         self.assertEqual(tabela.loc["NE000002", "Anular do item"], "—")
-        conteudo = planilha_excel(202610, conferencia(_relatorios_set()), plano, por_empenho, itens)
-        abas = pd.read_excel(BytesIO(conteudo), sheet_name=None)
-        self.assertEqual(list(abas), ["Plano por item", "Por empenho", "Itens", "Conferência", "Referência"])
-        self.assertEqual(round(abas["Plano por item"]["valor"].sum(), 2), 446.0)  # 200 remanejados + 246 novos
 
 
 if __name__ == "__main__":

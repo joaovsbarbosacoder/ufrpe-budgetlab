@@ -7,8 +7,6 @@ cálculo financeiro mora aqui: tudo vem de `src.ddp_siape`.
 """
 from __future__ import annotations
 
-from io import BytesIO
-
 import pandas as pd
 import streamlit as st
 
@@ -17,6 +15,7 @@ from src.ddp_siape import (
     ler_relatorio, plano_operacoes, quadro_reforco, quadro_sem_ddp, reforco_por_acao_po, reserva_projetada,
     separar_competencias, validar_conjunto, variacao_por_natureza,
 )
+from src.ddp_siape_relatorio import DadosRelatorio, relatorio_excel
 from src.ddp_siape_arquivos import (
     ArquivoGuardadoInvalido, carregar as carregar_guardada, competencias_com_ddp, competencias_guardadas, guardar,
     historico, manifesto_atual,
@@ -251,27 +250,6 @@ def render_conciliacao(conc: pd.DataFrame) -> None:
     ))
 
 
-def planilha_excel(competencia: int, conf: pd.DataFrame, plano: pd.DataFrame, por_empenho: pd.DataFrame,
-                   itens: pd.DataFrame, itens_rpps: pd.DataFrame | None = None,
-                   acao_po: pd.DataFrame | None = None, conciliacao: pd.DataFrame | None = None) -> bytes:
-    """Planilha para download (gerada em memória, nada é gravado no servidor), com os valores numéricos."""
-    arquivo = BytesIO()
-    with pd.ExcelWriter(arquivo, engine="openpyxl") as escritor:
-        plano.to_excel(escritor, sheet_name="Plano por item", index=False)
-        por_empenho.to_excel(escritor, sheet_name="Por empenho", index=False)
-        itens.drop(columns=["nes"]).to_excel(escritor, sheet_name="Itens", index=False)
-        if itens_rpps is not None and not itens_rpps.empty:
-            itens_rpps.drop(columns=["nes"]).rename(columns={"ddp": "projecao_mes"}).to_excel(
-                escritor, sheet_name="RPPS (projeção)", index=False)
-        if acao_po is not None and not acao_po.empty:
-            acao_po.to_excel(escritor, sheet_name="Por ação e PO", index=False)
-        if conciliacao is not None and not conciliacao.empty:
-            conciliacao.to_excel(escritor, sheet_name="Painel × quadro", index=False)
-        conf.to_excel(escritor, sheet_name="Conferência", index=False)
-        pd.DataFrame({"competencia": [competencia]}).to_excel(escritor, sheet_name="Referência", index=False)
-    return arquivo.getvalue()
-
-
 def tabela_guardadas(competencias: list[int], diretorio_manifestos=None) -> pd.DataFrame:
     """Uma linha por PDF da versão atual de cada competência guardada, mais a contagem de versões."""
     linhas = []
@@ -371,9 +349,10 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
     st.dataframe(tabela_conferencia(conf), hide_index=True, width="stretch", height="content")
 
     natureza = ddp_por_natureza(atuais)
+    variacao = None
     if anteriores:
-        render_variacao(variacao_por_natureza(natureza, ddp_por_natureza(anteriores)),
-                        anteriores[0].competencia, competencia)
+        variacao = variacao_por_natureza(natureza, ddp_por_natureza(anteriores))
+        render_variacao(variacao, anteriores[0].competencia, competencia)
     confronto = confronto_liquidado(natureza, mensal, competencia)
     if competencia // 100 != ano_grade:
         st.warning(
@@ -432,9 +411,15 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
         conciliacao = conciliacao_por_acao(quadros, mensal, competencia, grade_linhas, dotacao_acao_po)
         render_conciliacao(conciliacao)
 
+    dados_relatorio = DadosRelatorio(
+        competencia=competencia, procedencia=procedencia, conferencia=conf, natureza=natureza, por_empenho=por_empenho,
+        itens=itens, plano=plano, confronto=confronto, rpps_itens=itens_rpps, rpps_por_empenho=por_empenho_rpps,
+        acao_po=acao_po, conciliacao=conciliacao, ano_dotacao=ano_dotacao, variacao=variacao,
+        competencia_anterior=anteriores[0].competencia if anteriores else None,
+    )
     st.download_button(
-        "Baixar em Excel (plano, por empenho, itens, RPPS, ação/PO, painel × quadro e conferência)",
-        planilha_excel(competencia, conf, plano, por_empenho, itens, itens_rpps, acao_po, conciliacao),
+        "Baixar relatório em Excel",
+        relatorio_excel(dados_relatorio),
         file_name=f"reforco_folha_{competencia}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         key="dp_ddp_excel",
