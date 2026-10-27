@@ -15,7 +15,8 @@ from src.ddp_siape import (
     ler_relatorio, plano_operacoes, quadro_reforco, quadro_sem_ddp, reforco_por_acao_po, reserva_projetada,
     separar_competencias, validar_conjunto, variacao_por_natureza,
 )
-from src.ddp_siape_relatorio import DadosRelatorio, relatorio_excel
+from src.ddp_siape import por_empenho_somente_reforco
+from src.ddp_siape_relatorio import CRITERIOS, OPERACOES, DadosRelatorio, relatorio_excel
 from src.ddp_siape_arquivos import (
     ArquivoGuardadoInvalido, carregar as carregar_guardada, competencias_com_ddp, competencias_guardadas, guardar,
     historico, manifesto_atual,
@@ -84,28 +85,28 @@ def tabela_conferencia(conf: pd.DataFrame) -> pd.DataFrame:
 def tabela_por_empenho(por_empenho: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({
         "Empenho": por_empenho["empenho"], "Ação": por_empenho["acao_cod"].fillna("—"),
-        "Saldo a liquidar": por_empenho["saldo"].map(brl), "DDP do mês": por_empenho["ddp"].map(brl),
-        "Falta nos itens": por_empenho["falta"].map(brl), "Sobra livre nos itens": por_empenho["sobra_livre"].map(brl),
-        "Compensa na própria NE": por_empenho["compensa"].map(brl), "Reforço do mês": por_empenho["reforco_mes"].map(brl),
-        "Reforço até dezembro": por_empenho["reforco_ate_dezembro"].map(brl),
+        "Saldo do empenho (empenhado − liquidado)": por_empenho["saldo"].map(brl), "Folha do mês (DDP)": por_empenho["ddp"].map(brl),
+        "Falta para pagar a folha do mês": por_empenho["falta"].map(brl), "Sobra que pode ser anulada": por_empenho["sobra_livre"].map(brl),
+        "Coberto por remanejamento dentro do empenho": por_empenho["compensa"].map(brl), "Reforço necessário para o mês": por_empenho["reforco_mes"].map(brl),
+        "Reforço necessário até dezembro": por_empenho["reforco_ate_dezembro"].map(brl),
     })
 
 
 def tabela_itens(itens: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({
         "Empenho": itens["empenho"], "Natureza": itens["natureza_detalhada"], "Descrição": itens["descricao"].fillna("—"),
-        "Saldo a liquidar": itens["saldo"].map(brl), "DDP do mês": itens["ddp"].map(brl), "Falta": itens["falta"].map(brl),
-        "Reserva dos meses seguintes": itens["reserva"].map(brl), "Sobra livre": itens["sobra_livre"].map(brl),
-        "Saldo depois de dezembro": itens["saldo_apos_ano"].map(brl), "Critério": itens["criterio"],
-        "Reserva por": itens["tipo_reserva"], "Já liquidado no mês": itens["liquidado_no_mes"].map(brl),
+        "Saldo do empenho (empenhado − liquidado)": itens["saldo"].map(brl), "Folha do mês (DDP)": itens["ddp"].map(brl), "Falta para pagar a folha do mês": itens["falta"].map(brl),
+        "Necessidade de nov e dez (projeção)": itens["reserva"].map(brl), "Sobra que pode ser anulada": itens["sobra_livre"].map(brl),
+        "Sobra (+) ou falta (−) em dezembro": itens["saldo_apos_ano"].map(brl), "Como a folha foi atribuída ao empenho": itens["criterio"].map(lambda c: CRITERIOS.get(c, c)),
+        "Base da necessidade de nov e dez": itens["tipo_reserva"], "Já liquidado no mês": itens["liquidado_no_mes"].map(brl),
     })
 
 
 def tabela_confronto(confronto: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({
         "Natureza": confronto["natureza_detalhada"], "Descrição na DDP": confronto["descricao"],
-        "DDP líquida": confronto["ddp"].map(brl), "Liquidada na base": confronto["liquidado_no_mes"].map(brl),
-        "Diferença (base − DDP)": confronto["diferenca"].map(brl),
+        "DDP líquida": confronto["ddp"].map(brl), "Liquidado na base": confronto["liquidado_no_mes"].map(brl),
+        "Diferença (liquidado − DDP)": confronto["diferenca"].map(brl),
     })
 
 
@@ -113,8 +114,8 @@ def tabela_plano(plano: pd.DataFrame, itens: pd.DataFrame) -> pd.DataFrame:
     descricao = itens.dropna(subset=["descricao"]).drop_duplicates("natureza_detalhada").set_index("natureza_detalhada")["descricao"]
     rotulo = lambda n: "—" if n is None or pd.isna(n) else f"{n} {descricao.get(n, '')}".strip()
     return pd.DataFrame({
-        "Empenho": plano["empenho"], "Operação": plano["operacao"].str.capitalize(),
-        "Anular do item": plano["item_origem"].map(rotulo), "Reforçar o item": plano["item_destino"].map(rotulo),
+        "Empenho": plano["empenho"], "Operação": plano["operacao"].map(OPERACOES),
+        "Item que cede (anular)": plano["item_origem"].map(rotulo), "Item que recebe (reforçar)": plano["item_destino"].map(rotulo),
         "Valor": plano["valor"].map(brl),
     })
 
@@ -162,10 +163,10 @@ def render_rpps(itens: pd.DataFrame, por_empenho: pd.DataFrame, conciliacao: dic
         return
     colunas = st.columns(4)
     colunas[0].metric(f"Projeção de {_mes(competencia)}", brl(itens["ddp"].sum()))
-    colunas[1].metric("Saldo a liquidar", brl(itens["saldo"].sum()))
+    colunas[1].metric("Saldo do empenho", brl(itens["saldo"].sum()))
     colunas[2].metric("Reforço do mês", brl(por_empenho["reforco_mes"].sum()))
     colunas[3].metric("Reforço até dezembro", brl(por_empenho["reforco_ate_dezembro"].sum()))
-    st.dataframe(tabela_itens(itens).drop(columns=["Já liquidado no mês"]).rename(columns={"DDP do mês": "Projeção do mês"}),
+    st.dataframe(tabela_itens(itens).drop(columns=["Já liquidado no mês"]).rename(columns={"Folha do mês (DDP)": "Projeção do mês"}),
                  hide_index=True, width="stretch", height="content")
     c = conciliacao
     if c["dotacao"] is not None:
@@ -190,10 +191,10 @@ def tabela_acao_po(tabela: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({
         "Ação": tabela["acao_cod"], "PO": tabela["po_cod"].replace("", "—"),
         "Dotação atualizada": tabela["dotacao"].map(brl), "Empenhado": tabela["empenhado"].map(brl),
-        "Disponível para empenhar": tabela["disponivel"].map(brl), "Reforço do mês": tabela["reforco_mes"].map(brl),
-        "Reforço até dezembro": tabela["reforco_ate_dezembro"].map(brl),
-        "Disponível − reforço": tabela["saldo_apos_reforco"].map(brl), "Situação": tabela["saldo_apos_reforco"].map(situacao),
-        "Sobra nos empenhos do quadro": tabela["sobra_empenhos"].map(brl), "Empenhos com reforço": tabela["empenhos"],
+        "Dotação ainda não empenhada": tabela["disponivel"].map(brl), "Reforço necessário para o mês": tabela["reforco_mes"].map(brl),
+        "Reforço necessário até dezembro": tabela["reforco_ate_dezembro"].map(brl),
+        "Sobra (+) ou falta (−) de dotação após o reforço": tabela["saldo_apos_reforco"].map(brl), "Situação": tabela["saldo_apos_reforco"].map(situacao),
+        "Sobra prevista em dezembro nos empenhos": tabela["sobra_empenhos"].map(brl), "Notas de empenho que precisam de reforço": tabela["empenhos"],
     })
 
 
@@ -221,19 +222,19 @@ _NOMES_GRUPO = {"ativo": "Ativo", "inativo": "Inativo", "rpps": "RPPS", "outros_
 def tabela_conciliacao(conc: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({
         "Ação": conc["acao_cod"], "Grupo": conc["grupo"].map(_NOMES_GRUPO),
-        "Saldo no painel": conc["saldo_painel"].map(brl),
-        "+ Projeção do painel fora do quadro": conc["projecao_fora"].map(brl),
-        "+ Executado do painel fora dos empenhos do quadro": conc["executado_fora"].map(brl),
-        "− Empenhado fora dos quadros": conc["empenhado_fora"].map(brl),
-        "− Sobra nos empenhos do quadro": conc["sobras"].map(brl),
-        "= Saldo no quadro (disponível − reforço)": conc["saldo_quadro"].map(brl),
-        "Diferença não explicada": conc["diferenca"].map(brl),
+        "Saldo da dotação pela projeção do painel": conc["saldo_painel"].map(brl),
+        "+ Despesa projetada fora dos empenhos da folha": conc["projecao_fora"].map(brl),
+        "+ Já liquidado por outras notas da ação": conc["executado_fora"].map(brl),
+        "− Empenhado em outras notas da ação": conc["empenhado_fora"].map(brl),
+        "− Sobra prevista nos empenhos da folha": conc["sobras"].map(brl),
+        "= Saldo da dotação após os reforços": conc["saldo_quadro"].map(brl),
+        "Diferença (deve ser zero)": conc["diferenca"].map(brl),
     })
 
 
 def render_conciliacao(conc: pd.DataFrame) -> None:
     """Ponte entre o saldo do quadro por ação e o saldo do painel (27/10/2026)."""
-    st.markdown("**Do saldo do painel ao saldo do quadro, por ação**")
+    st.markdown("**Conciliação com o painel, por ação**")
     st.dataframe(tabela_conciliacao(conc), hide_index=True, width="stretch", height="content")
     fora = conc["diferenca"].dropna().abs().max() if conc["diferenca"].notna().any() else 0.0
     if fora >= 0.005:
@@ -375,17 +376,17 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
 
     colunas = st.columns(4)
     colunas[0].metric(f"DDP líquida de {_mes(competencia)}", brl(total_ddp))
-    colunas[1].metric("Falta nos itens", brl(por_empenho["falta"].sum()))
-    colunas[2].metric("Reforço do mês", brl(por_empenho["reforco_mes"].sum()),
+    colunas[1].metric("Falta para pagar a folha do mês", brl(por_empenho["falta"].sum()))
+    colunas[2].metric("Reforço necessário para o mês", brl(por_empenho["reforco_mes"].sum()),
                       help="Falta nos itens menos o que dá para cobrir anulando a sobra livre de outros itens da mesma NE.")
-    colunas[3].metric("Reforço até dezembro", brl(por_empenho["reforco_ate_dezembro"].sum()),
+    colunas[3].metric("Reforço necessário até dezembro", brl(por_empenho["reforco_ate_dezembro"].sum()),
                       help="Por empenho: DDP do mês + projeção dos meses seguintes − saldo a liquidar, quando positivo.")
 
     st.markdown("**Reforço por empenho**")
     st.dataframe(tabela_por_empenho(por_empenho), hide_index=True, width="stretch", height="content")
 
     plano = plano_operacoes(itens)
-    st.markdown("**Plano de anulação e reforço por item**")
+    st.markdown("**Anulação + reforço, item a item**")
     st.caption(
         "Em cada empenho, o item com maior falta recebe primeiro, da maior sobra livre; o que a sobra não cobre é "
         "reforço novo. Nenhum item cede mais que a sobra livre, então todos mantêm a reserva dos meses seguintes. "
@@ -401,12 +402,16 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
     render_rpps(itens_rpps, por_empenho_rpps,
                 conciliacao_sem_ddp(itens_rpps, grade_linhas, GRUPO_RPPS, competencia, dotacao_rpps), competencia)
 
-    acao_po = conciliacao = None
+    acao_po = acao_po_somente = conciliacao = None
     if dotacao_df is not None and ano_dotacao is not None:
         quadros = [(itens, por_empenho), (itens_rpps, por_empenho_rpps)]
         acoes = acoes_dos_quadros(quadros, mensal, competencia // 100) | set(ACOES_ESCOPO)
         dotacao_acao_po = dotacao_atualizada_por_acao_e_po(dotacao_df, ano_dotacao, acoes)
         acao_po = reforco_por_acao_po(quadros, mensal, competencia // 100, dotacao_acao_po)
+        # cenário sem anulação agora (relatório em Excel): a sobra dos itens com folga continua empenhada
+        acao_po_somente = reforco_por_acao_po(
+            [(itens, por_empenho_somente_reforco(itens)), (itens_rpps, por_empenho_somente_reforco(itens_rpps))],
+            mensal, competencia // 100, dotacao_acao_po)
         render_acao_po(acao_po, ano_dotacao)
         conciliacao = conciliacao_por_acao(quadros, mensal, competencia, grade_linhas, dotacao_acao_po)
         render_conciliacao(conciliacao)
@@ -414,7 +419,8 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
     dados_relatorio = DadosRelatorio(
         competencia=competencia, procedencia=procedencia, conferencia=conf, natureza=natureza, por_empenho=por_empenho,
         itens=itens, plano=plano, confronto=confronto, rpps_itens=itens_rpps, rpps_por_empenho=por_empenho_rpps,
-        acao_po=acao_po, conciliacao=conciliacao, ano_dotacao=ano_dotacao, variacao=variacao,
+        acao_po=acao_po, acao_po_somente_reforco=acao_po_somente, conciliacao=conciliacao, ano_dotacao=ano_dotacao,
+        variacao=variacao,
         competencia_anterior=anteriores[0].competencia if anteriores else None,
     )
     st.download_button(
