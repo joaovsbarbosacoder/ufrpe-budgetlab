@@ -13,7 +13,7 @@ from pathlib import Path
 from src.ddp_siape import ler_relatorio, validar_conjunto
 from src.ddp_siape_arquivos import (
     ArquivoGuardadoInvalido, carregar, chave_cache, competencias_com_ddp, competencias_guardadas, guardar, historico,
-    manifesto_atual, ultima_ddp_completa,
+    manifesto_atual, ultima_ddp_completa, validar_troca,
 )
 from tests.test_ddp_siape import ARQUIVOS_SET, FIXTURES, _ddp_pdf
 
@@ -90,6 +90,22 @@ class TestDdpGuardada(unittest.TestCase):
         self.assertEqual(antigo_serv["sha256"], sha_serv_antigo)
         serv = next(r for r in carregar(202610, **self.kw) if r.publico == "SERVIDOR")
         self.assertEqual(serv.totais["liquido"], 120.0)
+
+    def test_validar_troca_exige_mesmo_tipo_publico_folha_competencia_e_arquivo_diferente(self):
+        serv, pens = _outubro("SERVIDOR", 100.0, "serv.pdf"), _outubro("PENSIONISTA", 10.0, "pens.pdf")
+        guardar([serv, pens], agora=AGORA, **self.kw)
+        entrada = next(a for a in manifesto_atual(202610, self.raiz / "manifestos")["arquivos"] if a["publico"] == "SERVIDOR")
+        novo = _outubro("SERVIDOR", 120.0, "serv_v2.pdf")
+        self.assertEqual(validar_troca(entrada, novo[0], novo[1]), [])
+        self.assertIn("idêntico", validar_troca(entrada, serv[0], serv[1])[0])
+        erro = validar_troca(entrada, pens[0], pens[1])
+        self.assertEqual(len(erro), 1)
+        self.assertIn("pensionista", erro[0])
+        setembro = _setembro()[0]
+        self.assertEqual(len(validar_troca(entrada, setembro[0], setembro[1])), 1)  # outra competência
+        # trocar e guardar: nova versão, o antigo preservado
+        guardar([novo], agora=AGORA, **self.kw)
+        self.assertEqual(len(historico(202610, self.raiz / "manifestos")), 2)
 
     def test_competencias_e_ultima_ddp_completa(self):
         guardar(_setembro(), agora=AGORA, **self.kw)
