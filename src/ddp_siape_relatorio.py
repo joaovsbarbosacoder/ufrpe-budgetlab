@@ -226,7 +226,7 @@ def _resumo(wb: Workbook, d: DadosRelatorio, mes: str, ano: int) -> None:
         "Anulação + reforço); o que a sobra não cobre é reforço novo. Quando a anulação for feita, a necessidade cai do "
         "primeiro cenário para este.",
         "Saldo do empenho = empenhado − liquidado no exercício, por item (nota de empenho × natureza). O RPPS patronal não "
-        "é natureza da DDP: o valor do mês vem das rubricas de PSS da DDP de servidores × 2 (ou da projeção do painel, sem elas). O valor da folha usado no reforço é o BRUTO da DDP "
+        "é natureza da DDP: o valor do mês vem das rubricas de PSS da DDP (servidores e pensionistas) × 2 (ou da projeção do painel, sem elas). O valor da folha usado no reforço é o BRUTO da DDP "
         "(seção de despesas correntes): as despesas a anular não reduzem a necessidade de reforço do empenho.",
     ], colunas=3)
 

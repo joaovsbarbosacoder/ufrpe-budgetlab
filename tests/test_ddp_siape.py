@@ -178,17 +178,23 @@ class TestPatronalPorPss(unittest.TestCase):
         r = self._serv([("98002", "CONT. PLANO SEGURIDADE SOCIAL", 3537621.28), ("98015", "CONT P.SEGURIDADE SOCIAL AP", 809951.07),
                         ("98018", "PREVIDENCIA SOCIAL CDT PESSOAL", 30695.55), ("98044", "PSS-EXERC.ANTERIOR - RRA AT", 126320.96),
                         ("98045", "PSS-EXERC.ANTERIOR - RRA AP", 4436.07), ("97531", "DECISAO JUDICIAL", 2404.47)])
-        pss = patronal_por_pss([r])
-        self.assertEqual(pss["codigo"].tolist(), ["98002", "98015", "98044", "98045"])  # sem 98018, sem 98004 (ausente), sem 97531
-        self.assertEqual(dict(zip(pss["codigo"], pss["parte"])), {"98002": "Ativo", "98015": "Inativo", "98044": "Ativo", "98045": "Ativo"})
-        self.assertEqual(round(pss["valor"].sum() * FATOR_PATRONAL_PSS, 2), 8956658.76)  # DDP de out/2026: ((3.668.378,31 + 809.951,07) × 2)
+        pens = ler_relatorio(_ddp_pdf("OUT", "PENSIONISTA", [("3.3190.03.01", "PENSOES", 5.0)],
+                                      rubricas=[("98020", "CONT.PLANO SEG.SOCIAL- PENSION", 124751.35),
+                                                ("98046", "PSS-EXERC.ANTERIOR - RRA PENS", 1247.44), ("34014", "CONTRIB PREV ABERTA", 9.0)]), "pens.pdf")
+        pss = patronal_por_pss([r, pens])
+        self.assertEqual(pss["codigo"].tolist(), ["98002", "98015", "98020", "98044", "98045", "98046"])  # sem 98018, sem 98034 (ausente), sem 97531/34014
+        self.assertEqual(dict(zip(pss["codigo"], pss["parte"])), {"98002": "Ativo", "98015": "Inativo", "98020": "Pensionista",
+                                                                  "98044": "Ativo", "98045": "Ativo", "98046": "Pensionista"})
+        self.assertEqual(round(pss["valor"].sum() * FATOR_PATRONAL_PSS, 2), 9208656.34)  # DDP de out/2026 (servidores + pensionistas) × 2
+        # só a DDP de servidores: sem as rubricas dos pensionistas
+        self.assertEqual(round(patronal_por_pss([r])["valor"].sum() * FATOR_PATRONAL_PSS, 2), 8956658.76)
 
     def test_sem_98002_ou_sem_ddp_de_servidor_nao_ha_base_para_a_regra(self):
         self.assertIsNone(patronal_por_pss([self._serv(None)]))
         self.assertIsNone(patronal_por_pss([self._serv([("98015", "CONT P.SEGURIDADE SOCIAL AP", 10.0)])]))
         pens = ler_relatorio(_ddp_pdf("OUT", "PENSIONISTA", [("3.3190.03.01", "PENSOES", 5.0)],
                                       rubricas=[("98002", "CONT. PLANO SEGURIDADE SOCIAL", 10.0)]), "pens.pdf")
-        self.assertIsNone(patronal_por_pss([pens]))  # PSS só vale na DDP de servidores
+        self.assertIsNone(patronal_por_pss([pens]))  # sem a DDP de servidores com a 98002, não há base para a regra
 
 
 class TestVariacaoEntreCompetencias(unittest.TestCase):

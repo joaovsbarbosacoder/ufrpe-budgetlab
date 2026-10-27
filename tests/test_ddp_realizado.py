@@ -144,6 +144,7 @@ class TestPrioridadeLiquidacaoDdpProjecao(unittest.TestCase):
 class TestPatronalPelaDdp(unittest.TestCase):
     """28/10/2026: o patronal do RPPS no mês da DDP é (PSS dos servidores) × 2, e a razão dos meses seguintes se calibra por ele."""
     RUBRICAS = [("98002", "CONT. PLANO SEGURIDADE SOCIAL", 100.0), ("98015", "CONT P.SEGURIDADE SOCIAL AP", 30.0)]
+    PENS = [("98020", "CONT.PLANO SEG.SOCIAL- PENSION", 5.0)]
 
     def test_patronal_do_mes_vem_do_pss_e_nao_entra_nos_totais_da_ddp(self):
         res = aplicar_ddp(_base(), ANUAL_VAZIA, _ddp(rubricas=self.RUBRICAS))
@@ -160,6 +161,13 @@ class TestPatronalPelaDdp(unittest.TestCase):
         self.assertTrue(g.patronal_pela_ddp)
         self.assertEqual(g.mes_razao_patronal_rpps, 10)
         self.assertAlmostEqual(g.razao_patronal_rpps, 260.0 / 1100.0)  # patronal ÷ base do Ativo (31901101) do mês
+
+    def test_rubricas_da_ddp_de_pensionistas_entram_na_soma(self):
+        servidor, pens = _ddp(rubricas=self.RUBRICAS)
+        pens = ler_relatorio(_ddp_pdf("OUT", "PENSIONISTA", [("3.3190.03.01", "PENSOES CIVIS", 55.0)], rubricas=self.PENS), "pens.pdf")
+        res = aplicar_ddp(_base(), ANUAL_VAZIA, [servidor, pens])
+        self.assertEqual(_total(res.mensal, "31911303"), 270.0)  # (100 + 30 + 5) × 2
+        self.assertEqual(set(res.patronal_pss["parte"]), {"Ativo", "Inativo", "Pensionista"})
 
     def test_sem_rubricas_o_patronal_segue_a_projecao(self):
         res = aplicar_ddp(_base(), ANUAL_VAZIA, _ddp())
