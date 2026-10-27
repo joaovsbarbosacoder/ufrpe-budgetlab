@@ -155,6 +155,34 @@ def guardar(itens: list[tuple[RelatorioSiape, bytes]], diretorio_dados_brutos=No
     return ResultadoGuarda(versoes_novas=novas, sem_mudanca=iguais)
 
 
+def remover(competencia: int, tipo: str, publico: str, folha: str, diretorio_manifestos=None,
+            agora: datetime | None = None) -> bool:
+    """Retira um PDF da versão atual da competência (28/10/2026). É uma remoção de vínculo, não de
+    dado: grava uma versão nova do manifesto sem o arquivo; o PDF e os manifestos anteriores ficam
+    em disco (rastreabilidade) e a versão anterior continua no histórico. Sem PDFs restantes, a
+    competência deixa de constar como guardada (o ponteiro "atual" é retirado). `False` se o
+    arquivo não está na versão atual."""
+    manifestos = _manifestos(diretorio_manifestos)
+    atual = manifesto_atual(competencia, manifestos)
+    if atual is None:
+        return False
+    restantes = [a for a in atual["arquivos"] if _chave(a) != (tipo, publico, folha)]
+    if len(restantes) == len(atual["arquivos"]):
+        return False
+    agora = agora or datetime.now(timezone.utc)
+    versao = hashlib.sha256("|".join(a["sha256"] for a in restantes).encode()).hexdigest()[:8]
+    manifesto = {"base": BASE, "competencia": competencia, "versao": versao, "gravado_em": agora.isoformat(),
+                 "arquivos": restantes, "removido": {"tipo": tipo, "publico": publico, "folha": folha}}
+    conteudo_json = json.dumps(manifesto, ensure_ascii=False, indent=2).encode("utf-8")
+    _gravar_atomico(manifestos / f"{BASE}_{competencia}_{agora.strftime('%Y-%m-%d')}_{versao}_sem-{tipo.lower()}-{publico.lower()}-{folha.lower().replace(' ', '-')}.json", conteudo_json)
+    ponteiro = manifestos / f"{BASE}_{competencia}_atual.json"
+    if restantes:
+        _gravar_atomico(ponteiro, conteudo_json)
+    else:
+        ponteiro.unlink()
+    return True
+
+
 def validar_troca(entrada: dict, relatorio: RelatorioSiape, conteudo: bytes) -> list[str]:
     """Erros que impedem trocar o PDF guardado `entrada` (item do manifesto) pelo `relatorio` enviado:
     o novo precisa ser da mesma competência, tipo, público e folha — a troca nunca muda o que o
