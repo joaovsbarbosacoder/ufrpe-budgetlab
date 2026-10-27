@@ -440,7 +440,7 @@ def render_projecao_com_executado(mensal: pd.DataFrame, anual: pd.DataFrame, ano
         st.info("Não há rubricas de pessoal para projetar nesta referência.")
         return
     resumo = resumo_projecao_com_executado(comparacao)
-    st.html(cd.grade([cd.cartao_comparacao(NOMES_GRUPOS.get(r.grupo, "TOTAL"), r.meses, r.projetado, r.executado, r.diferenca, _pct(r.diferenca_pct),
+    st.html(cd.CSS + cd.grade([cd.cartao_comparacao(NOMES_GRUPOS.get(r.grupo, "TOTAL"), r.meses, r.projetado, r.executado, r.diferenca, _pct(r.diferenca_pct),
                                            COR_GRUPO.get(r.grupo, "cinza")) for r in resumo.itertuples()]))
     with st.expander("Mês a mês por grupo"):
         st.dataframe(pd.DataFrame({
@@ -486,7 +486,13 @@ def render_desvio_por_mes_de_partida(mensal: pd.DataFrame, anual: pd.DataFrame, 
         "Sinal constante em várias linhas indica desvio sistemático da fórmula; um valor isolado "
         "muito alto costuma indicar um mês de partida atípico (a projeção repete aquele mês)."
     )
-    st.dataframe(tabela_desvio_por_mes_de_partida(desvio), hide_index=True, width="stretch", height="content")
+    meses = sorted(desvio["mes_referencia"].unique())
+    grupos = [g for g in NOMES_GRUPOS if g in set(desvio["grupo"])] + ["total"]
+    valores = [[desvio.loc[(desvio["grupo"] == g) & (desvio["mes_referencia"] == m), "diferenca_pct"].head(1).pipe(
+        lambda s: None if s.empty or pd.isna(s.iloc[0]) else float(s.iloc[0])) for g in grupos] for m in meses]
+    st.html(cd.CSS + cd.mapa_calor([MESES_NOMES[m - 1] for m in meses], [NOMES_GRUPOS.get(g, "TOTAL") for g in grupos], valores, "Mês de partida"))
+    with st.expander("Tabela do desvio por mês de partida"):
+        st.dataframe(tabela_desvio_por_mes_de_partida(desvio), hide_index=True, width="stretch", height="content")
 
 
 def render_beneficios_por_plano(mensal: pd.DataFrame, anual: pd.DataFrame, ano: int, mes_ref: int,
@@ -506,6 +512,18 @@ def render_beneficios_por_plano(mensal: pd.DataFrame, anual: pd.DataFrame, ano: 
         "Mesma referência e mesmas fórmulas da tabela acima, só para Outros Benefícios; ordenado pela "
         "maior diferença absoluta. Diferença % fica “—” quando o projetado é zero ou negativo."
     )
+    st.html(cd.CSS + cd.grade([
+        cd.cartao_comparacao(
+            "TOTAL" if r.plano == "total" else f"Ação {rotulos['acao_cod'].get(r.plano, '')} · PO {rotulos['po_cod'].get(r.plano, '')}",
+            r.meses, r.projetado, r.executado, r.diferenca, _pct(r.diferenca_pct), "cinza" if r.plano == "total" else "azul",
+            None if r.plano == "total" else rotulos["po_desc"].get(r.plano, ""))
+        for r in ordenado.itertuples()]))
+    with st.expander("Tabela por Plano Orçamentário"):
+        _tabela_beneficios_por_plano(ordenado, rotulos)
+    _avisa_soma_planos(resumo, projetado_grupo)
+
+
+def _tabela_beneficios_por_plano(ordenado: pd.DataFrame, rotulos: pd.DataFrame) -> None:
     st.dataframe(pd.DataFrame({
         "Ação": ordenado["plano"].map(lambda k: rotulos["acao_cod"].get(k, "TOTAL")),
         "PO": ordenado["plano"].map(lambda k: rotulos["po_cod"].get(k, "")),
@@ -520,6 +538,9 @@ def render_beneficios_por_plano(mensal: pd.DataFrame, anual: pd.DataFrame, ano: 
         "Meses comparados": st.column_config.NumberColumn("Meses", width=60),
         "Descrição": st.column_config.TextColumn(width="medium"),
     })
+
+
+def _avisa_soma_planos(resumo: pd.DataFrame, projetado_grupo) -> None:
     total_po = resumo.set_index("plano").loc["total", "projetado"]
     if not (pd.isna(total_po) and pd.isna(projetado_grupo)) and (
         pd.isna(total_po) or pd.isna(projetado_grupo) or round(float(total_po), 2) != round(float(projetado_grupo), 2)

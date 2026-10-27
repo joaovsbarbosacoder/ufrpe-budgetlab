@@ -130,6 +130,23 @@ class TestOutrosCartoes(unittest.TestCase):
         sem = cd.cartao_faixa("RPPS", 100.0, None, None, None, None, None, "—", "sem exercício completo")
         self.assertIn("Sem faixa histórica", sem)
 
+    def test_mapa_de_calor_nulo_zero_negativo_e_escape(self):
+        html = cd.mapa_calor(["Jan", "Fev", "Mar"], ["Ativo", "<b>x</b>"], [[0.10, None], [-0.05, 0.0], [0.05, -0.02]], "Mês")
+        self.assertIn("+10,0%", html)
+        self.assertIn("−5,0%", html)
+        self.assertIn("+0,0%", html)                       # zero é zero, não vazio
+        self.assertEqual(html.count("cd-hm-c vazio"), 1)   # nulo vira "—", nunca zero
+        self.assertIn("&lt;b&gt;", html)
+        self.assertNotIn("<b>x", html)
+        forte = "color-mix(in srgb,#" if "color-mix(in srgb,#" in html else "color-mix"
+        self.assertIn(forte, html)
+        self.assertIn("55%", html)                         # maior módulo da coluna = intensidade máxima
+
+    def test_comparacao_com_detalhe_escapado(self):
+        html = cd.cartao_comparacao("Ação 2004 · PO 0001", 3, 1.0, 2.0, 1.0, "+100,0%", detalhe="<i>x</i>")
+        self.assertIn("&lt;i&gt;x", html)
+        self.assertNotIn("<i>x", html)
+
     def test_execucao_por_grupo(self):
         html = cd.cartao_grupo_execucao("Ativo", 1000.0, 900.0, 750.0, 700.0)
         self.assertIn("75.0%", html)

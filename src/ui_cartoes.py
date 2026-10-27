@@ -98,6 +98,12 @@ CSS = f"""<style>
 .cd-faixa .banda {{ position:absolute; top:11px; height:12px; border-radius:6px; background:{t.WARNING_SOFT}; border:1px solid {t.WARNING}; }}
 .cd-faixa .marca {{ position:absolute; top:4px; width:3px; height:26px; border-radius:2px; transform:translateX(-1px); }}
 .cd-faixa .marca small {{ position:absolute; top:-14px; left:50%; transform:translateX(-50%); font-size:9.5px; white-space:nowrap; color:{t.TEXT_MUTED}; }}
+.cd-hm {{ display:grid; gap:3px; margin-top:8px; font-size:12px; font-variant-numeric:tabular-nums; }}
+.cd-hm-h {{ font-size:11px; color:{t.TEXT_MUTED}; text-align:center; padding:2px 0 4px; }}
+.cd-hm-h:first-child {{ text-align:left; }}
+.cd-hm-l {{ color:{t.TEXT}; display:flex; align-items:center; font-weight:600; }}
+.cd-hm-c {{ text-align:center; padding:8px 4px; border-radius:{t.RADIUS_SM}; background:{t.SURFACE_ALT}; color:{t.TEXT}; }}
+.cd-hm-c.vazio {{ color:{t.TEXT_FAINT}; background:transparent; border:1px dashed {t.BORDER}; }}
 .cd-legenda {{ font-size:11px; color:{t.TEXT_MUTED}; display:flex; gap:14px; flex-wrap:wrap; margin-top:4px; }}
 .cd-legenda i {{ display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px; }}
 </style>"""
@@ -275,7 +281,39 @@ def cartao_serie_mensal(nome: str, meses: list, total, rotulos: list[str], cor: 
             f'<div class="cd-meses">{colunas}</div></div>')
 
 
-def cartao_comparacao(nome: str, meses: int, projetado, executado, diferenca, pct: str, cor: str = "azul") -> str:
+def _pct(valor) -> str:
+    if valor is None or valor != valor:
+        return "—"
+    p = round(float(valor) * 100, 1) + 0.0
+    return f"{p:+.1f}%".replace(".", ",").replace("-", "−")
+
+
+def mapa_calor(linhas: list[str], colunas: list[str], valores: list[list], titulo_linha: str = "") -> str:
+    """Mapa de calor de percentuais (fração: 0,05 = 5%): linhas × colunas. Intensidade proporcional ao maior
+    módulo da própria coluna; positivo laranja, negativo verde, zero neutro e nulo "—" cinza (nunca zero)."""
+    maximos = []
+    for j in range(len(colunas)):
+        mods = [abs(v[j]) for v in valores if v[j] is not None and v[j] == v[j]]
+        maximos.append(max(mods) if mods else 0.0)
+    cab = f'<div class="cd-hm-h">{_e(titulo_linha)}</div>' + "".join(f'<div class="cd-hm-h">{_e(c)}</div>' for c in colunas)
+    corpo = ""
+    for nome, linha in zip(linhas, valores):
+        corpo += f'<div class="cd-hm-l">{_e(nome)}</div>'
+        for j, v in enumerate(linha):
+            if v is None or v != v:
+                corpo += '<div class="cd-hm-c vazio">—</div>'
+                continue
+            forca = abs(v) / maximos[j] * 55 if maximos[j] else 0.0
+            cor = t.WARNING if v > 0 else t.POSITIVE
+            estilo = f' style="background:color-mix(in srgb,{cor} {forca:.0f}%,transparent)"' if v != 0 else ""
+            corpo += f'<div class="cd-hm-c"{estilo}>{_e(_pct(v))}</div>'
+    return (f'<div class="cd-hm" style="grid-template-columns:minmax(90px,1fr) repeat({len(colunas)},minmax(0,1fr))">{cab}{corpo}</div>'
+            f'<div class="cd-legenda"><span><i style="background:{t.WARNING}"></i>executado acima do projetado</span>'
+            f'<span><i style="background:{t.POSITIVE}"></i>executado abaixo do projetado</span>'
+            f'<span>cor mais forte = maior desvio da coluna; “—” = sem comparação</span></div>')
+
+
+def cartao_comparacao(nome: str, meses: int, projetado, executado, diferenca, pct: str, cor: str = "azul", detalhe: str | None = None) -> str:
     """Projeção reconstruída × executado de um grupo (diferença = executado − projetado)."""
     maior = max(abs(projetado or 0), abs(executado or 0)) or 1.0
     linha = lambda rot, v, tom: (f'<div class="cd-vs"><span>{rot}</span><div class="trilho"><i style="width:{max(0.0, abs(v or 0) / maior * 100):.1f}%;'
@@ -285,7 +323,7 @@ def cartao_comparacao(nome: str, meses: int, projetado, executado, diferenca, pc
     else:
         selo = pill(f"{'+' if diferenca > 0 else ''}{brl(diferenca)} ({pct})", "laranja" if diferenca > 0 else "verde")
     return (f'<div class="cd-card" style="--c:{TONS[cor]}"><div class="cd-top"><div><h4>{_e(nome)}</h4>'
-            f'<div class="cd-meta">{meses} mês(es) comparado(s)</div></div>{selo}</div>'
+            f'<div class="cd-meta">{meses} mês(es) comparado(s)' + (f' · {_e(detalhe)}' if detalhe else "") + f'</div></div>{selo}</div>'
             f'{linha("Projetado", projetado, t.ACCENT)}{linha("Executado", executado, t.TEXT_FAINT)}</div>')
 
 
