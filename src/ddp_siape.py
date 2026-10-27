@@ -81,6 +81,7 @@ _MES_SOLIC = re.compile(r"MES/ANO SOLIC:\s*([A-Z]{3})(\d{4})")
 _MES_PAGAMENTO = re.compile(r"MES PAGAMENTO\s*:\s*([A-Z]{3})(\d{4})")
 _DATA = re.compile(r"DATA:\s*(\d{2})([A-Z]{3})(\d{4})")
 _FOLHA = re.compile(r"\*\*\*\s*(?:DDP\s+)?(FOLHA\s+\w+)\s+-\s+NIVEL UNIDADE PAGADORA\s+-\s+(SERVIDOR|PENSIONISTA)\s*\*\*\*")
+_RUBRICA = re.compile(r"^\s*(\d{5})\s+(.*?)\s+" + _VALOR + r"\s*$")
 _TOTAIS_DDP = {"99997": "bruto", "99998": "desconto", "99999": "liquido"}
 
 
@@ -115,6 +116,8 @@ class RelatorioSiape:
     data_geracao: date | None
     totais: dict[str, float]
     naturezas: pd.DataFrame = field(default_factory=pd.DataFrame)
+    #: rubricas da seção (3) CONSIGNACOES/DESCONTOS (colunas `codigo`, `descricao`, `valor`), só na DDP.
+    rubricas: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 def _linhas_por_pagina(conteudo: bytes) -> list[list[str]]:
@@ -156,6 +159,7 @@ def ler_relatorio(conteudo: bytes, nome: str = "") -> RelatorioSiape:
 
     totais: dict[str, float] = {}
     naturezas = []
+    rubricas = []
     if tipo == TIPO_CREDITO:
         for linha in linhas:
             if m := _TOTAL_CREDITO.match(linha):
@@ -190,6 +194,8 @@ def ler_relatorio(conteudo: bytes, nome: str = "") -> RelatorioSiape:
                     totais[chave] = totais.get(chave, 0.0) + _valor(m.group(2))
             elif secao == "consignacoes" and (m := _CONSIGNACOES.match(linha)):
                 totais["consignacoes"] = totais.get("consignacoes", 0.0) + _valor(m.group(1))
+            elif secao == "consignacoes" and (m := _RUBRICA.match(linha)):
+                rubricas.append({"codigo": m.group(1), "descricao": m.group(2).strip(), "valor": _valor(m.group(3))})
             elif secao == "totais" and (m := _TOTAL_DDP.match(linha)):
                 totais[_TOTAIS_DDP[m.group(1)]] = _valor(m.group(2))
         faltando = [chave for chave in ("bruto", "desconto", "liquido") if chave not in totais]
@@ -199,7 +205,8 @@ def ler_relatorio(conteudo: bytes, nome: str = "") -> RelatorioSiape:
             raise ValueError(f"{nome or 'Arquivo'}: DDP sem nenhuma linha de natureza detalhada.")
     return RelatorioSiape(nome=nome, tipo=tipo, publico=publico, folha=folha, competencia=competencia,
                           mes_pagamento=mes_pagamento, data_geracao=data_geracao, totais=totais,
-                          naturezas=pd.DataFrame(naturezas))
+                          naturezas=pd.DataFrame(naturezas),
+                          rubricas=pd.DataFrame(rubricas, columns=["codigo", "descricao", "valor"]))
 
 
 def _competencia(ano_mes: int) -> str:
@@ -290,6 +297,33 @@ def conferencia(relatorios: list[RelatorioSiape]) -> pd.DataFrame:
             "dif_credito": None if credito is None else round(credito.totais["credito"] - t["liquido"], 2),
         })
     return pd.DataFrame(linhas)
+
+
+#: Patronal do RPPS (31911303) = (contribuição PSS dos servidores) × 2, regra informada pelo usuário
+#: em 28/10/2026 e validada com a Liquidada de mai-set/2026 (erro entre +0,17% e +0,59%): Ativo
+#: (98002, 98004, 98044 e 98045) + Inativo (98015, "CONT P.SEGURIDADE SOCIAL AP"), pois a natureza
+#: junta os dois. Só da DDP de servidores (a de pensionistas não traz PSS); a 98018 fica de fora
+#: (piora o ajuste). Rubrica ausente na DDP não é zero: não entra na soma e não é listada.
+RUBRICAS_PSS_ATIVO = ("98002", "98004", "98044", "98045")
+RUBRICAS_PSS_INATIVO = ("98015",)
+FATOR_PATRONAL_PSS = 2
+
+
+def patronal_por_pss(relatorios: list[RelatorioSiape]) -> pd.DataFrame | None:
+    """Rubricas de PSS da DDP de servidores usadas no patronal (colunas `codigo`, `descricao`,
+    `parte` — Ativo/Inativo —, `valor`), ou `None` se não há DDP de servidores com a 98002 (sem
+    base para a regra: o patronal segue pela projeção). O patronal é `valor.sum() × FATOR_PATRONAL_PSS`."""
+    partes = [r.rubricas for r in relatorios if r.tipo == TIPO_DDP and r.publico == PUBLICO_SERVIDOR and len(r.rubricas)]
+    if not partes:
+        return None
+    rubricas = pd.concat(partes, ignore_index=True)
+    rubricas = rubricas.loc[rubricas["codigo"].isin(RUBRICAS_PSS_ATIVO + RUBRICAS_PSS_INATIVO)]
+    if "98002" not in set(rubricas["codigo"]):
+        return None
+    tabela = rubricas.groupby("codigo", as_index=False).agg(descricao=("descricao", "first"), valor=("valor", "sum"))
+    tabela["parte"] = tabela["codigo"].map(lambda c: "Ativo" if c in RUBRICAS_PSS_ATIVO else "Inativo")
+    tabela["valor"] = tabela["valor"].round(2)
+    return tabela[["codigo", "descricao", "parte", "valor"]]
 
 
 def ddp_por_natureza(relatorios: list[RelatorioSiape]) -> pd.DataFrame:

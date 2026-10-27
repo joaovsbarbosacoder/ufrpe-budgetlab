@@ -220,7 +220,8 @@ with aba_painel:
         if resultado_ddp.aplicada and ano_mes_referencia == resultado_ddp.competencia else ""
     ) + (
         f" Patronal do RPPS projetado a {bruta.razao_patronal_rpps:.2%} da base do Ativo (vencimentos + gratificação), "
-        .replace(".", ",") + (f"razão observada em {MESES_NOMES[bruta.mes_razao_patronal_rpps - 1].lower()}."
+        .replace(".", ",") + ((f"razão do patronal da DDP de {MESES_NOMES[bruta.mes_razao_patronal_rpps - 1].lower()} (rubricas de PSS × 2)."
+                               if bruta.patronal_pela_ddp else f"razão observada em {MESES_NOMES[bruta.mes_razao_patronal_rpps - 1].lower()}.")
                               if bruta.mes_razao_patronal_rpps else "razão informada.")
         if bruta.razao_patronal_rpps else ""
     )

@@ -51,10 +51,10 @@ def _base(outubro: dict[str, float] | None = None, setembro_fator: float = 1.0) 
     return pd.DataFrame(linhas)
 
 
-def _ddp(servidor_so=False):
+def _ddp(servidor_so=False, rubricas=None):
     serv = ler_relatorio(_ddp_pdf("OUT", "SERVIDOR", [
         ("3.3190.11.01", "VENCIMENTO E SALARIOS", 1100.0), ("3.3190.01.01", "PROVENTOS", 600.0),
-        ("3.3190.92.11", "EXERC ANTERIOR ATIVO", 70.0)]), "serv.pdf")
+        ("3.3190.92.11", "EXERC ANTERIOR ATIVO", 70.0)], rubricas=rubricas), "serv.pdf")
     pens = ler_relatorio(_ddp_pdf("OUT", "PENSIONISTA", [("3.3190.03.01", "PENSOES CIVIS", 55.0)]), "pens.pdf")
     return [serv] if servidor_so else [serv, pens]
 
@@ -139,6 +139,33 @@ class TestPrioridadeLiquidacaoDdpProjecao(unittest.TestCase):
         folha = res.mensal.loc[(res.mensal["natureza_detalhada_cod"] == "31900101") & (res.mensal["ano_mes"] == 202610)
                                & (res.mensal["ne_favorecido"] == UG), "liquidada"].sum()
         self.assertEqual(round(float(folha), 2), 600.0)
+
+
+class TestPatronalPelaDdp(unittest.TestCase):
+    """28/10/2026: o patronal do RPPS no mês da DDP é (PSS dos servidores) × 2, e a razão dos meses seguintes se calibra por ele."""
+    RUBRICAS = [("98002", "CONT. PLANO SEGURIDADE SOCIAL", 100.0), ("98015", "CONT P.SEGURIDADE SOCIAL AP", 30.0)]
+
+    def test_patronal_do_mes_vem_do_pss_e_nao_entra_nos_totais_da_ddp(self):
+        res = aplicar_ddp(_base(), ANUAL_VAZIA, _ddp(rubricas=self.RUBRICAS))
+        self.assertEqual(_total(res.mensal, "31911303"), 260.0)  # (100 + 30) × 2, e não a projeção (270)
+        self.assertEqual(set(res.detalhe.loc[res.detalhe["natureza_detalhada"] == "31911303", "origem"]), {ORIGEM_DDP})
+        self.assertEqual(res.patronal_pss["valor"].sum(), 130.0)
+        self.assertEqual((res.total_ddp, res.total_no_painel), (1825.0, 1755.0))  # o patronal não é natureza da DDP
+
+    def test_painel_no_mes_da_ddp_nao_reescala_o_patronal_e_calibra_a_razao(self):
+        res = aplicar_ddp(_base(), ANUAL_VAZIA, _ddp(rubricas=self.RUBRICAS))
+        g = grade_mensal(res.mensal, ANUAL_VAZIA, 2026, 202610)
+        patronal = g.linhas.set_index("natureza_detalhada_cod").loc["31911303", "meses"]
+        self.assertEqual(patronal[9], 260.0)
+        self.assertTrue(g.patronal_pela_ddp)
+        self.assertEqual(g.mes_razao_patronal_rpps, 10)
+        self.assertAlmostEqual(g.razao_patronal_rpps, 260.0 / 1100.0)  # patronal ÷ base do Ativo (31901101) do mês
+
+    def test_sem_rubricas_o_patronal_segue_a_projecao(self):
+        res = aplicar_ddp(_base(), ANUAL_VAZIA, _ddp())
+        self.assertEqual(_total(res.mensal, "31911303"), 270.0)
+        self.assertIsNone(res.patronal_pss)
+        self.assertFalse(grade_mensal(res.mensal, ANUAL_VAZIA, 2026, 202610).patronal_pela_ddp)
 
 
 class TestAvisoNoPainel(unittest.TestCase):

@@ -731,7 +731,7 @@ liquidação na Execução Mensal, depois a DDP guardada, depois a projeção (`
 A DDP só vale enquanto o mês não fechou pela liquidação (mesmo critério de `ultimo_mes_fechado`) e
 se o mês anterior já fechou; com a liquidação fechada, a DDP não é somada. Naturezas que a DDP não
 traz (RPPS patronal e outras) ficam pela projeção; natureza da DDP sem linha de empenho para
-distribuir é listada na tela e não entra no painel. A DDP é líquida, não a liquidação do SIAFI.
+distribuir é listada na tela e não entra no painel. A DDP bruta (seção 1, sem abater as despesas a anular) não é a liquidação do SIAFI.
 
 **Patronal do RPPS acompanha a folha do Ativo (decisão 15, 27/10/2026).** Nos meses projetados e
 no mês da DDP ainda não liquidado, o patronal (31911303, ação 09HB) passa a ser a razão
@@ -740,6 +740,17 @@ Ativo de cada mês, mantendo o mês do extra do 13º da regra da rubrica. A raz�
 liquidação real das duas (em 2026, entre 26,7% e 27,4%) ou a informada na aba Fórmulas de projeção,
 onde a regra também pode ser desligada; a procedência do painel declara a razão usada. Com a base
 igual à do mês de referência, o valor não muda.
+
+**Patronal do mês da DDP pelas rubricas de PSS (decisão 16, 28/10/2026).** Quando a DDP de
+servidores traz as rubricas de contribuição previdenciária (seção de consignações), o patronal do
+mês da DDP é **(98002 + 98004 + 98044 + 98045 + 98015) × 2**: Ativo (98002, 98004, 98044, 98045) e
+Inativo (98015), porque a natureza 31911303 junta os dois; a 98018 fica de fora e rubrica ausente
+não conta como zero. Validado com a Liquidada de mai–set/2026 (a fórmula fica entre +0,17% e
++0,59% do liquidado; só com o Ativo ficaria cerca de 18% abaixo). Nesse mês o patronal não é
+reescalado pela razão; a razão dos meses seguintes passa a ser patronal ÷ base do Ativo do próprio
+mês da DDP (a procedência do painel e a aba Folha (DDP) declaram a origem, com as rubricas lidas).
+Sem as rubricas, vale a decisão 15. A DDP de pensionistas não tem PSS. Em out/2026: R$ 8.956.658,76
+(painel antes: R$ 8.706.344,66).
 
 A página tem quatro abas. **Acompanhamento** é o painel acima. **Folha (DDP)**
 recebe os PDFs do SIAPE do mês (DDP e Crédito Bancário, de servidor e de
