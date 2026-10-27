@@ -108,7 +108,7 @@ def tabela_itens(itens: pd.DataFrame) -> pd.DataFrame:
 def tabela_confronto(confronto: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({
         "Natureza": confronto["natureza_detalhada"], "Descrição na DDP": confronto["descricao"],
-        "DDP líquida": confronto["ddp"].map(brl), "Liquidado na base": confronto["liquidado_no_mes"].map(brl),
+        "DDP bruta": confronto["ddp"].map(brl), "Liquidado na base": confronto["liquidado_no_mes"].map(brl),
         "Diferença (liquidado − DDP)": confronto["diferenca"].map(brl),
     })
 
@@ -163,10 +163,10 @@ def render_variacao(variacao: pd.DataFrame, anterior: int, atual: int) -> None:
     """O que mudou na DDP entre as duas competências enviadas (27/10/2026)."""
     total_anterior, total_atual = variacao["anterior"].sum(), variacao["atual"].sum()
     delta = total_atual - total_anterior
-    st.html(cd.secao(f"O que mudou de {_mes(anterior)} para {_mes(atual)}", "Maiores variações da DDP líquida por natureza (servidor + pensionista). "
+    st.html(cd.secao(f"O que mudou de {_mes(anterior)} para {_mes(atual)}", "Maiores variações da DDP bruta por natureza (servidor + pensionista). "
                      "Barra para a direita: a folha subiu; para a esquerda: caiu.") + cd.kpis([
-        {"rotulo": f"DDP líquida de {_mes(anterior)}", "valor": brl(total_anterior), "tom": "cinza"},
-        {"rotulo": f"DDP líquida de {_mes(atual)}", "valor": brl(total_atual)},
+        {"rotulo": f"DDP bruta de {_mes(anterior)}", "valor": brl(total_anterior), "tom": "cinza"},
+        {"rotulo": f"DDP bruta de {_mes(atual)}", "valor": brl(total_atual)},
         {"rotulo": "Variação", "valor": brl(delta), "tom": "vermelho" if delta > 0 else "verde",
          "sub": f"{(total_atual / total_anterior - 1):+.1%}".replace(".", ",") if total_anterior else None},
     ]))

@@ -11,8 +11,9 @@ set/2026 da Execução Mensal (diferença total de R$ 6.971,93 em R$ 54,87 mi):
 - a DDP do "MES/ANO SOLIC" X (paga no mês seguinte) é liquidada no próprio mês X;
 - o código "3.3190.11.01" da DDP é a natureza detalhada SIAFI "31901101";
 - valor da natureza = seção "DESPESAS CORRENTES ( 1 )" − seção "A ANULAR ( 2 )" (líquido: bate com a
-  Liquidada, usado na variação, no confronto e no painel). **Para o reforço do empenho vale o
-  BRUTO** (só a seção 1): as despesas a anular não reduzem a necessidade (regra do usuário, 28/10/2026);
+  Liquidada em set/2026). **Em todo o sistema vale o BRUTO** (só a seção 1) — reforço, variação,
+  confronto e painel —: as despesas a anular não reduzem o valor da folha (regra do usuário,
+  28/10/2026). O líquido só aparece na conferência dos totais (bruto − descontos = líquido);
 - conferência: BRUTO − DESCONTO = LÍQUIDO = total do Crédito Bancário; o DESCONTO é a
   seção (2) inteira (passivo + naturezas) mais o total de "CONSIGNACOES/DESCONTOS ( 3 )".
 
@@ -239,13 +240,13 @@ def separar_competencias(relatorios: list[RelatorioSiape]) -> tuple[list[Relator
 
 
 def variacao_por_natureza(atual: pd.DataFrame, anterior: pd.DataFrame) -> pd.DataFrame:
-    """DDP líquida por natureza detalhada (servidor + pensionista) em duas competências, a
+    """DDP bruta (seção 1, sem abater as despesas a anular) por natureza detalhada (servidor + pensionista) em duas competências, a
     partir de `ddp_por_natureza` de cada uma: `anterior`, `atual` (nulo quando a natureza não
     aparece naquela DDP — não é zero), `variacao` = atual − anterior (ausência conta como zero
     só aqui) e `situacao`: "nova", "saiu", "alta", "queda" ou "sem variação". Ordenada pelo
     tamanho da variação."""
     def por_natureza(tabela):
-        soma = tabela.groupby("natureza_detalhada").agg(descricao=("descricao", "first"), valor=("liquido", "sum"))
+        soma = tabela.groupby("natureza_detalhada").agg(descricao=("descricao", "first"), valor=("despesa", "sum"))
         return soma.assign(valor=soma["valor"].round(2))  # servidor + pensionista, em centavos
 
     a, b = por_natureza(anterior), por_natureza(atual)
@@ -732,14 +733,14 @@ def sugestoes_anulacao(itens: pd.DataFrame, plano: pd.DataFrame) -> pd.DataFrame
 
 
 def confronto_liquidado(ddp_natureza: pd.DataFrame, mensal_df: pd.DataFrame, ano_mes: int) -> pd.DataFrame:
-    """DDP líquida × Liquidada da base no mês da DDP, por natureza detalhada, só nos
+    """DDP bruta × Liquidada da base no mês da DDP, por natureza detalhada, só nos
     empenhos da folha. Com a folha já liquidada, as diferenças são o que a liquidação não
     reproduziu (ex.: reposição ao erário nas pensões, cota-parte na creche); antes dela,
     a coluna da base mostra só o que já entrou no mês."""
     ano = ano_mes // 100
     itens = itens_de_empenho(mensal_df, ano, ano_mes)
     liquidado = itens.loc[itens["folha"]].groupby("natureza_detalhada_cod")["liquidado_no_mes"].sum()
-    ddp = ddp_natureza.groupby("natureza_detalhada").agg(descricao=("descricao", "first"), ddp=("liquido", "sum"))
+    ddp = ddp_natureza.groupby("natureza_detalhada").agg(descricao=("descricao", "first"), ddp=("despesa", "sum"))
     # só as naturezas da DDP: os empenhos com a UG como favorecida incluem também diárias, bolsas etc.
     tabela = ddp.join(liquidado.rename("liquidado_no_mes"), how="left").fillna({"liquidado_no_mes": 0.0})
     tabela.index.name = "natureza_detalhada"

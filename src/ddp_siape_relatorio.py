@@ -391,7 +391,7 @@ def _conferencia(wb: Workbook, d: DadosRelatorio, mes: str) -> None:
             (f"DDP de {mes}", "atual", 18), ("Variação", "variacao", 18), ("Situação", "situacao_txt", 18),
         ], d.variacao.assign(situacao_txt=d.variacao["situacao"].map(situacoes)), {"anterior", "atual", "variacao"}, filtro=False)
     linha = _secao_titulo(ws, linha, f"DDP × liquidado na base em {mes}")
-    _tabela(ws, linha, [("Natureza", "natureza_detalhada", 12), ("Descrição", "descricao", 40), ("DDP líquida", "ddp", 18),
+    _tabela(ws, linha, [("Natureza", "natureza_detalhada", 12), ("Descrição", "descricao", 40), ("DDP bruta", "ddp", 18),
                         ("Liquidado na base", "liquidado_no_mes", 18), ("Diferença (liquidado − DDP)", "diferenca", 18)],
             d.confronto, {"ddp", "liquidado_no_mes", "diferenca"}, filtro=False)
 
