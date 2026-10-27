@@ -189,6 +189,26 @@ export default function(component) {
   </section>`;
   root.querySelectorAll('.ap-wrap').forEach((el,i) => { el.scrollLeft = scrolls[i] || 0; });
 
+  // Barra de rolagem horizontal também no topo das tabelas largas (27/10/2026), sincronizada com a de baixo;
+  // fica fixa no alto da tela ao descer a página e some quando a tabela cabe na largura.
+  root.querySelectorAll('.ap-wrap').forEach(wrap => {
+    const topo = document.createElement('div');
+    topo.className = 'ap-scroll-top';
+    topo.setAttribute('aria-hidden', 'true');
+    const largura = document.createElement('div');
+    topo.appendChild(largura);
+    wrap.before(topo);
+    const ajustar = () => {
+      largura.style.width = `${wrap.scrollWidth}px`;
+      topo.hidden = wrap.scrollWidth <= wrap.clientWidth + 1;
+      topo.scrollLeft = wrap.scrollLeft;
+    };
+    topo.addEventListener('scroll', () => { if (wrap.scrollLeft !== topo.scrollLeft) wrap.scrollLeft = topo.scrollLeft; });
+    wrap.addEventListener('scroll', () => { if (topo.scrollLeft !== wrap.scrollLeft) topo.scrollLeft = wrap.scrollLeft; });
+    new ResizeObserver(ajustar).observe(wrap);
+    ajustar();
+  });
+
   // Hover do saldo remanescente: guia vertical, ponto e dica com o valor exato do mês.
   root.querySelectorAll('.ap-mini-plot').forEach(plot => {
     const cross = plot.querySelector('.ap-svg-cross'), dot = plot.querySelector('.ap-svg-dot'), tip = plot.querySelector('.ap-tip');

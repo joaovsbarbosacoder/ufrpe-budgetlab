@@ -99,6 +99,9 @@ button, input, select { font: inherit; }
 .ap-dot-proj { background: var(--strong); }
 .ap-reconciliation { margin-left: auto; }
 .ap-wrap { overflow-x: auto; }
+.ap-scroll-top { overflow-x: auto; overflow-y: hidden; height: 12px; position: sticky; top: 0; z-index: 5; background: var(--surface); }
+.ap-scroll-top > div { height: 1px; }
+.ap-scroll-top::-webkit-scrollbar { height: 10px; }
 .ap-main-wrap { padding: 12px 32px 0; }
 .ap-tbl { border-collapse: collapse; font-size: 12px; white-space: nowrap; }
 .ap-tbl th, .ap-tbl td { padding: 7px 10px; border-bottom: 1px solid var(--divider); text-align: right; font-variant-numeric: tabular-nums; }
