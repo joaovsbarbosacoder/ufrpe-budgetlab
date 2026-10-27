@@ -29,6 +29,11 @@ cadastradas estão disponíveis localmente, a atualização mais recente entre
 elas e a situação dos prazos orçamentários cadastrados. Esses indicadores não
 combinam valores financeiros de extrações diferentes. A página também oferece
 acessos diretos aos principais módulos de planejamento, operação e controle.
+Repaginada em 28/10/2026 (`app_pages/home.py`, blocos em `src/ui_home.py`): faixa de estado
+logo abaixo do título, quatro indicadores em cartões, lista dos prazos pendentes mais urgentes
+(com o tempo até a data e a situação de cada um), estado e data de atualização de cada base
+cadastrada e acessos rápidos agrupados por área (planejamento, operação, gestão e controle, contratos/TEDs/dados).
+Os dados e as regras são os mesmos de antes.
 
 ### Gerenciamento de Prazos
 
