@@ -135,6 +135,7 @@ except ArquivoGuardadoInvalido as erro:
     ddp_guardada, erro_ddp_guardada = None, str(erro)
 resultado_ddp = aplicar_ddp(mensal, anual, ddp_guardada, parametros)
 mensal_painel = resultado_ddp.mensal
+meses_disponiveis = sorted(mensal_painel["ano_mes"].dropna().unique().tolist())  # inclui o mês da DDP aplicada
 
 mes_padrao = (resultado_ddp.competencia if resultado_ddp.aplicada
               else ultimo_mes_fechado(mensal, parametros)) or meses_disponiveis[-1]

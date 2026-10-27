@@ -349,6 +349,31 @@ class TestAbasFormulasEHistorico(unittest.TestCase):
         # R_mãe = 100 − 10 (31901101 + 31901131); metade na parcela final de novembro.
         self.assertEqual(self._decimo_terceiro(montagens[-1])["meses"][10], 45)
 
+    def test_ddp_guardada_vira_realizado_do_mes_seguinte_e_e_avisada(self):
+        # 27/10/2026: base só com ago/2026 (fechado); DDP de set/2026 guardada ⇒ painel em set/2026 pela DDP
+        from tests.test_ddp_siape import _ddp_pdf
+        from src.ddp_siape import ler_relatorio
+        ddp = [ler_relatorio(_ddp_pdf("SET", "SERVIDOR", [("3.3190.11.01", "VENCIMENTO E SALARIOS", 150.0)]), "serv.pdf"),
+               ler_relatorio(_ddp_pdf("SET", "PENSIONISTA", [("3.3190.03.01", "PENSOES CIVIS", 20.0)]), "pens.pdf")]
+        with patch("src.ddp_siape_arquivos.ultima_ddp_completa", return_value=ddp):
+            at, montagens = self._rodar()
+        self.assertEqual(len(at.exception), 0)
+        self.assertEqual(montagens[-1]["referencia"], 202609)
+        self.assertIn("set/2026 com valores da DDP do SIAPE (ainda não liquidados)", montagens[-1]["procedencia"])
+        avisos = " ".join(a.value for a in list(at.warning) + list(at.info))
+        self.assertIn("set/2026 está com os valores da DDP", avisos)
+        self.assertIn("31900301", avisos)  # pensões sem linha de empenho para distribuir: listada, não descartada
+        # setembro do Ativo: DDP 150 no lugar da projeção de 100 (as demais naturezas seguem a mesma projeção)
+        import streamlit as st
+        st.cache_data.clear()  # a chave do cache é (competência, versão): vazia nos dois casos deste teste
+        _, sem_ddp = self._rodar()
+        self.assertEqual(montagens[-1]["grupos"][0]["meses"][8] - sem_ddp[-1]["grupos"][0]["meses"][8], 50.0)
+
+    def test_sem_ddp_guardada_o_painel_nao_muda(self):
+        at, montagens = self._rodar()
+        self.assertEqual(montagens[-1]["referencia"], 202608)
+        self.assertNotIn("DDP do SIAPE", montagens[-1]["procedencia"])
+
     def test_coleta_lixo_no_inicio_e_no_fim_da_pagina(self):
         # cópias das bases devolvidas pelo st.cache_data ficavam presas em ciclos (~0,25 GB por interação)
         with patch("gc.collect", return_value=0) as coleta:

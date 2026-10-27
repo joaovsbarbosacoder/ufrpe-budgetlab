@@ -62,6 +62,8 @@ def _competencia_anterior(ano_mes: int) -> int | None:
 
 
 def _mascara_folha(linhas: pd.DataFrame) -> pd.Series:
+    if "ne_favorecido" not in linhas or "ug_executora_desc" not in linhas:
+        return pd.Series(True, index=linhas.index)  # base sem favorecido: todas as linhas contam como folha
     favorecido = linhas["ne_favorecido"].astype("string").str.strip()
     executora = linhas["ug_executora_desc"].astype("string").str.strip()
     return (favorecido == executora).fillna(False).astype(bool)
@@ -112,8 +114,9 @@ def aplicar_ddp(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, relatorios: lis
             chave = str(linha.natureza_detalhada_cod)
             projetado[chave] = projetado.get(chave, 0.0) + float(valor)
 
-    itens = mensal_df.loc[(mensal_df["ano"] == ano) & (mensal_df["tipo_linha"] == "item_execucao")]
-    empenhos = mensal_df.loc[(mensal_df["ano"] == ano) & (mensal_df["tipo_linha"] == "empenho")]
+    do_ano = mensal_df["ano_mes"] // 100 == ano
+    itens = mensal_df.loc[do_ano & (mensal_df["tipo_linha"] == "item_execucao")]
+    empenhos = mensal_df.loc[do_ano & (mensal_df["tipo_linha"] == "empenho")]
     por_natureza = {str(n): g for n, g in itens.groupby(itens["natureza_detalhada_cod"].astype(str))}
     empenho_por_natureza = {str(n): g for n, g in empenhos.groupby(empenhos["natureza_detalhada_cod"].astype(str))}
 
