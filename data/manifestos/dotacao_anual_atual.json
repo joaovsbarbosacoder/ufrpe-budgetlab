@@ -1,9 +1,9 @@
 {
   "base": "dotacao_anual",
-  "arquivo": "BI CPOC - DOTAÇÃO - Por Ano (10).xlsx",
-  "sha256": "d39ea2d79d2df1c3b2d4c0953f7d50717463af96b4686a2dfc85918a447be0f8",
-  "data_extracao": "2026-10-19T10:07:52",
-  "importado_em": "2026-10-19T10:07:53-03:00",
+  "arquivo": "BI CPOC - DOTAÇÃO - Por Ano (9)__d2bafb59.xlsx",
+  "sha256": "d2bafb59a17d90123e5d711947fb4d11714428b7495f35fda19bac5f63b28470",
+  "data_extracao": "2026-10-23T11:18:34",
+  "importado_em": "2026-10-23T11:18:36-03:00",
   "anos": [
     2020,
     2021,
@@ -16,8 +16,8 @@
   "totais": {
     "dotacao_inicial": 5035354458.0,
     "dotacao_suplementar": 707431189.0,
-    "dotacao_atualizada": 5220297164.0,
-    "dotacao_cancelada_remanejada": -522495483.0
+    "dotacao_atualizada": 5217908553.0,
+    "dotacao_cancelada_remanejada": -524884094.0
   },
   "totais_por_ano": {
     "2020": {
@@ -59,8 +59,8 @@
     "2026": {
       "dotacao_inicial": 908319687.0,
       "dotacao_suplementar": 15768302.0,
-      "dotacao_atualizada": 914585732.0,
-      "dotacao_cancelada_remanejada": -9502257.0
+      "dotacao_atualizada": 912197121.0,
+      "dotacao_cancelada_remanejada": -11890868.0
     }
   },
   "contagens": {
