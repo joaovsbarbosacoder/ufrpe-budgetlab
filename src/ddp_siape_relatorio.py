@@ -202,7 +202,7 @@ def _resumo(wb: Workbook, d: DadosRelatorio, mes: str, ano: int) -> None:
     linha = _tabela(ws, linha, [("Indicador", "indicador", 58), ("Somente reforço (sem anular agora)", "somente", 22),
                                 ("Anulação + reforço", "misto", 22)], cenarios, filtro=False)
     gerais = pd.DataFrame([
-        ("Folha do mês pela DDP (servidor + pensionista, líquida)", float(d.natureza["liquido"].sum())),
+        ("Folha do mês pela DDP (servidor + pensionista, bruta: sem abater as despesas a anular)", float(d.natureza["despesa"].sum())),
         ("Sobra que pode ser anulada sem faltar em nov e dez (aba Sugestões de anulação)", float(d.itens["sobra_livre"].sum())),
     ], columns=["indicador", "valor"])
     linha = _tabela(ws, linha, [("Outros totais", "indicador", 58), ("Valor (R$)", "valor", 22)], gerais, filtro=False)
@@ -226,7 +226,8 @@ def _resumo(wb: Workbook, d: DadosRelatorio, mes: str, ano: int) -> None:
         "Anulação + reforço); o que a sobra não cobre é reforço novo. Quando a anulação for feita, a necessidade cai do "
         "primeiro cenário para este.",
         "Saldo do empenho = empenhado − liquidado no exercício, por item (nota de empenho × natureza). O RPPS patronal não "
-        "está na DDP: o valor do mês vem da projeção do painel. Os valores da DDP são líquidos (bruto − descontos).",
+        "está na DDP: o valor do mês vem da projeção do painel. O valor da folha usado no reforço é o BRUTO da DDP "
+        "(seção de despesas correntes): as despesas a anular não reduzem a necessidade de reforço do empenho.",
     ], colunas=3)
 
 
@@ -390,7 +391,7 @@ def _conferencia(wb: Workbook, d: DadosRelatorio, mes: str) -> None:
             (f"DDP de {mes}", "atual", 18), ("Variação", "variacao", 18), ("Situação", "situacao_txt", 18),
         ], d.variacao.assign(situacao_txt=d.variacao["situacao"].map(situacoes)), {"anterior", "atual", "variacao"}, filtro=False)
     linha = _secao_titulo(ws, linha, f"DDP × liquidado na base em {mes}")
-    _tabela(ws, linha, [("Natureza", "natureza_detalhada", 12), ("Descrição", "descricao", 40), ("DDP líquida", "ddp", 18),
+    _tabela(ws, linha, [("Natureza", "natureza_detalhada", 12), ("Descrição", "descricao", 40), ("DDP bruta", "ddp", 18),
                         ("Liquidado na base", "liquidado_no_mes", 18), ("Diferença (liquidado − DDP)", "diferenca", 18)],
             d.confronto, {"ddp", "liquidado_no_mes", "diferenca"}, filtro=False)
 

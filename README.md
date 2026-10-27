@@ -745,7 +745,9 @@ A página tem quatro abas. **Acompanhamento** é o painel acima. **Folha (DDP)**
 recebe os PDFs do SIAPE do mês (DDP e Crédito Bancário, de servidor e de
 pensionista), que ficam só na memória da sessão, e mostra: a conferência dos
 totais (bruto − descontos = líquido = crédito bancário); por empenho, o saldo a
-liquidar, a DDP do mês, a falta nos itens, o que dá para compensar anulando a sobra
+liquidar, a DDP **bruta** do mês (28/10/2026: as despesas a anular da seção 2 da DDP não
+abatem a folha em lugar nenhum — reforço, variação, confronto com a Liquidada e painel; o
+líquido só aparece na conferência dos totais), a falta nos itens, o que dá para compensar anulando a sobra
 livre de outro item da mesma NE (saldo − DDP − projeção dos meses seguintes), o
 reforço do mês e o reforço até dezembro; o plano de anulação e reforço por item (de
 qual item anular, para qual item levar e o reforço novo que sobra, com download em

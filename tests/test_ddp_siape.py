@@ -179,19 +179,19 @@ class TestVariacaoEntreCompetencias(unittest.TestCase):
         variacao = variacao_por_natureza(ddp_por_natureza(self.outubro), ddp_por_natureza(self.setembro))
         v = variacao.set_index("natureza_detalhada")
         self.assertEqual((v.loc["31901101", "anterior"], v.loc["31901101", "atual"], v.loc["31901101", "variacao"]),
-                         (16753889.62, 16800000.00, 46110.38))
+                         (16768025.55, 16800000.00, 31974.45))  # bruto: 16.753.889,62 líquido + 14.135,93 a anular
         self.assertEqual(v.loc["31901101", "situacao"], "alta")
-        self.assertEqual((v.loc["31901131", "variacao"], v.loc["31901131", "situacao"]), (-162405.86, "queda"))
+        self.assertEqual((v.loc["31901131", "variacao"], v.loc["31901131", "situacao"]), (-163221.57, "queda"))
         self.assertTrue(pd.isna(v.loc["31900306", "anterior"]))  # nova: anterior nulo, não zero
         self.assertEqual((v.loc["31900306", "variacao"], v.loc["31900306", "situacao"]), (19150.48, "nova"))
         self.assertTrue(pd.isna(v.loc["31900301", "atual"]))
-        self.assertEqual((v.loc["31900301", "variacao"], v.loc["31900301", "situacao"]), (-4628906.71, "saiu"))
+        self.assertEqual((v.loc["31900301", "variacao"], v.loc["31900301", "situacao"]), (-4635589.70, "saiu"))
         # a soma das variações fecha com a diferença dos totais; maior variação primeiro
         self.assertEqual(round(variacao["variacao"].sum(), 2),
                          round(variacao["atual"].sum() - variacao["anterior"].sum(), 2))
         self.assertEqual(variacao["natureza_detalhada"].iloc[0], "31900101")  # proventos (~R$ 11 mi) não vieram
         # servidor + pensionista somados na mesma natureza (per capita de set/2026)
-        self.assertEqual(v.loc["33909308", "anterior"], 333893.66)
+        self.assertEqual(v.loc["33909308", "anterior"], 335916.57)
 
     def test_conferencia_traz_as_duas_competencias(self):
         conf = conferencia(self.setembro + self.outubro)
@@ -275,6 +275,15 @@ class TestQuadroReforco(unittest.TestCase):
         self.assertEqual((ne["falta"], ne["compensa"], ne["reforco_mes"]), (200.0, 200.0, 0.0))
         # (300 − 500 − 1000) + (5000 − 0 − 3000) = 800 ⇒ nada a reforçar até dezembro
         self.assertEqual((ne["saldo_apos_ano"], ne["reforco_ate_dezembro"]), (800.0, 0.0))
+
+    def test_despesas_a_anular_nao_reduzem_o_reforco_vale_o_bruto(self):
+        """28/10/2026: a necessidade usa a seção 1 (bruto); a seção 2 (a anular) não abate."""
+        ddp = _ddp_sintetica()
+        ddp.loc[ddp["natureza_detalhada"] == "31901101", ["anular", "liquido"]] = [120.0, 380.0]  # bruto 500, líquido 380
+        itens, _ = quadro_reforco(ddp, _base_sintetica(), 202610, RESERVA)
+        linha = itens.set_index(["empenho", "natureza_detalhada"]).loc[("NE000001", "31901101")]
+        self.assertEqual(linha["ddp"], 500.0)   # não 380
+        self.assertEqual(linha["falta"], 200.0)  # igual ao caso sem "a anular": saldo 300 < 500
 
     def test_per_capita_repartido_e_reserva_pela_ddp_quando_ha_empenho_fora_da_folha(self):
         b, c = self.item.loc[("NE000002", "33909308")], self.item.loc[("NE000003", "33909308")]
@@ -543,6 +552,13 @@ class TestReservaEConfronto(unittest.TestCase):
         self.assertNotIn("33901414", tabela.index)
         self.assertEqual(tabela.loc["31901101", "diferenca"], -20.0)
         self.assertEqual(tabela.loc["33909308", "liquidado_no_mes"], 0.0)  # a operadora não conta
+
+    def test_confronto_usa_o_bruto_sem_abater_o_a_anular(self):
+        ddp = _ddp_sintetica()
+        ddp.loc[ddp["natureza_detalhada"] == "31901101", ["anular", "liquido"]] = [120.0, 380.0]  # bruto 500
+        base = pd.concat([_base_sintetica(), pd.DataFrame([_linha(1, "31901101", "item_execucao", 202610, liquidada=480.0)])])
+        linha = confronto_liquidado(ddp, base, 202610).set_index("natureza_detalhada").loc["31901101"]
+        self.assertEqual((linha["ddp"], linha["diferenca"]), (500.0, -20.0))  # não 380
 
 
 class TestTabelasDaAba(unittest.TestCase):

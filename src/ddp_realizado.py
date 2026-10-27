@@ -11,7 +11,7 @@ Regras (todas visíveis na tela e no `ResultadoDdp`):
   (`ultimo_mes_fechado`, o mesmo critério do painel, com os parâmetros da sessão). Com o mês da
   DDP já fechado pela liquidação, a liquidação prevalece e a DDP não é usada — nunca soma as duas.
 - A DDP precisa ter servidor e pensionista (senão usaria só metade da folha).
-- Natureza da DDP: valor do mês = DDP líquida (servidor + pensionista), distribuída pelas linhas
+- Natureza da DDP: valor do mês = DDP bruta (seção 1, servidor + pensionista; 28/10/2026), distribuída pelas linhas
   (NE, PO, Iduso...) da folha do mês anterior, na proporção do que cada uma liquidou; sem o mês
   anterior, pelo mês mais recente em que a natureza teve linha; sem nenhum, pelos empenhos
   (partes iguais). Sem nenhuma linha-modelo, a natureza NÃO entra no painel e fica listada em
@@ -22,7 +22,7 @@ Regras (todas visíveis na tela e no `ResultadoDdp`):
   repetem o mês anterior.
 - A liquidação parcial já lançada no mês, nas naturezas tratadas aqui, é substituída pela DDP ou
   pela projeção; o valor aparece em `liquidado_parcial_substituido`.
-- A DDP é líquida (bruto − descontos), não a liquidação do SIAFI: em set/2026 a diferença foi de
+- A DDP bruta não é a liquidação do SIAFI (em set/2026 o líquido, bruto − descontos, ficou perto dela): em set/2026 a diferença foi de
   R$ 6.971,93 em R$ 54,87 mi (reposição ao erário, cota-parte da creche e diferenças ainda sem
   explicação). Quando a liquidação chegar, ela prevalece.
 - Pagamento único (ex.: exercícios anteriores) fica só no mês da DDP: a projeção de nov/dez usa as
@@ -103,7 +103,7 @@ def aplicar_ddp(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, relatorios: lis
         return nao("O mês anterior ainda não fechou na Execução Mensal; a DDP não foi usada no painel.")
 
     ano, mes = divmod(competencia, 100)
-    ddp = ddp_por_natureza(atuais).groupby("natureza_detalhada")["liquido"].sum().round(2)
+    ddp = ddp_por_natureza(atuais).groupby("natureza_detalhada")["despesa"].sum().round(2)
 
     # projeção que o painel faria para o mês da DDP, com referência no mês anterior
     grade1 = grade_mensal(mensal_df, anual_df, ano, anterior, parametros).linhas
