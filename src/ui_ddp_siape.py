@@ -13,7 +13,7 @@ import pandas as pd
 import streamlit as st
 
 from src.ddp_siape import (
-    OPERACAO_REMANEJAR, SEM_ACAO, TIPO_DDP, acoes_dos_quadros, conciliacao_por_acao, conciliacao_sem_ddp, conferencia, confronto_liquidado, ddp_por_natureza,
+    FATOR_PATRONAL_PSS, OPERACAO_REMANEJAR, patronal_por_pss, SEM_ACAO, TIPO_DDP, acoes_dos_quadros, conciliacao_por_acao, conciliacao_sem_ddp, conferencia, confronto_liquidado, ddp_por_natureza,
     ler_relatorio, plano_operacoes, quadro_reforco, quadro_sem_ddp, reforco_por_acao_po, reserva_projetada,
     separar_competencias, validar_conjunto, variacao_por_natureza,
 )
@@ -48,8 +48,8 @@ def aviso_ddp_aplicada(resultado, erro: str | None, ano_mes_referencia: int) -> 
         return None
     texto = (
         f"{mes} está com os valores da DDP do SIAPE ({brl(resultado.total_no_painel)}), ainda não liquidados; novembro "
-        f"em diante é projetado a partir dela. Naturezas que a DDP não traz (RPPS patronal e outras) seguem pela "
-        f"projeção. Assim que a liquidação de {mes} fechar na Execução Mensal, ela passa a valer no lugar da DDP."
+        f"em diante é projetado a partir dela. Naturezas que a DDP não traz seguem pela projeção; o RPPS patronal vem das "
+        f"rubricas de PSS da DDP × 2. Assim que a liquidação de {mes} fechar na Execução Mensal, ela passa a valer no lugar da DDP."
     )
     if resultado.liquidado_parcial_substituido:
         texto += (f" Liquidação parcial já lançada no mês e substituída por esses valores: "
@@ -201,20 +201,33 @@ def cartoes_empenhos(por_empenho: pd.DataFrame, itens: pd.DataFrame, mes: str, a
             for r in por_empenho.itertuples()]
 
 
-def render_rpps(itens: pd.DataFrame, por_empenho: pd.DataFrame, conciliacao: dict, competencia: int) -> None:
-    """Contribuição patronal ao RPPS (27/10/2026): não está na DDP; o mês vem da projeção do painel."""
+def render_rpps(itens: pd.DataFrame, por_empenho: pd.DataFrame, conciliacao: dict, competencia: int,
+                pss: pd.DataFrame | None = None) -> None:
+    """Contribuição patronal ao RPPS: não é natureza da DDP. O mês vem das rubricas de PSS da DDP (servidores e pensionistas) × 2
+    (28/10/2026) quando o painel está nesse mês; senão, da projeção do painel."""
     mes, ano = _mes(competencia), competencia // 100
-    st.html(cd.secao("RPPS patronal — pela projeção do painel, sem DDP",
-                     "A contribuição patronal não vem na DDP: o valor do mês e a necessidade de nov e dez são a projeção do painel "
-                     "(acompanhando vencimentos + gratificação do Ativo), sem as edições manuais."))
+    pelo_pss = pss is not None and not itens.empty and abs(float(itens["ddp"].sum()) - float(pss["valor"].sum()) * FATOR_PATRONAL_PSS) < 0.01
+    if pelo_pss:
+        st.html(cd.secao("RPPS patronal — rubricas de PSS da DDP × 2",
+                         f"A contribuição patronal do mês é a soma das rubricas de PSS da DDP (servidores e pensionistas) × {FATOR_PATRONAL_PSS}; a necessidade de "
+                         "nov e dez é a projeção do painel, calibrada por ela (13º de novembro incluído), sem as edições manuais."))
+        with st.expander("Rubricas de PSS usadas no patronal"):
+            tabela = pss.assign(valor=pss["valor"].map(brl)).rename(columns={"codigo": "Rubrica", "descricao": "Descrição", "parte": "Parte", "valor": "Valor"})
+            st.dataframe(tabela, hide_index=True, width="stretch", height="content")
+            st.caption(_md(f"Soma {brl(pss['valor'].sum())} × {FATOR_PATRONAL_PSS} = **{brl(pss['valor'].sum() * FATOR_PATRONAL_PSS)}**. Rubrica que não aparece "
+                           "na DDP do mês não entra (não é zero)."))
+    else:
+        st.html(cd.secao("RPPS patronal — pela projeção do painel",
+                         "A DDP não trouxe as rubricas de PSS (ou o painel não está no mês da DDP): o valor do mês e a necessidade de nov e dez são a "
+                         "projeção do painel (acompanhando vencimentos + gratificação do Ativo), sem as edições manuais."))
     if itens.empty:
         st.info("A projeção do painel não tem o grupo RPPS neste exercício.")
         return
     st.html(cd.kpis([
-        {"rotulo": f"Projeção de {mes}", "valor": brl(itens["ddp"].sum())}, {"rotulo": "Saldo do empenho", "valor": brl(itens["saldo"].sum()), "tom": "cinza"},
+        {"rotulo": f"Patronal de {mes}" if pelo_pss else f"Projeção de {mes}", "valor": brl(itens["ddp"].sum())}, {"rotulo": "Saldo do empenho", "valor": brl(itens["saldo"].sum()), "tom": "cinza"},
         {"rotulo": "Reforço necessário para o mês", "valor": brl(por_empenho["reforco_mes"].sum()), "tom": "laranja"},
         {"rotulo": "Reforço necessário até dezembro", "valor": brl(por_empenho["reforco_ate_dezembro"].sum()), "tom": "vermelho"},
-    ]) + cd.grade(cartoes_empenhos(por_empenho, itens, mes, ano, f"RPPS patronal — folha de {mes} pela projeção")))
+    ]) + cd.grade(cartoes_empenhos(por_empenho, itens, mes, ano, f"RPPS patronal — folha de {mes}")))
     c = conciliacao
     if c["dotacao"] is not None:
         st.caption(_md(
@@ -488,7 +501,7 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
     itens_rpps, por_empenho_rpps = quadro_sem_ddp(mensal, competencia, grade_linhas, GRUPO_RPPS)
     dotacao_rpps = None if dotacao_grupo is None else dotacao_grupo.get(GRUPO_RPPS)
     render_rpps(itens_rpps, por_empenho_rpps,
-                conciliacao_sem_ddp(itens_rpps, grade_linhas, GRUPO_RPPS, competencia, dotacao_rpps), competencia)
+                conciliacao_sem_ddp(itens_rpps, grade_linhas, GRUPO_RPPS, competencia, dotacao_rpps), competencia, patronal_por_pss(atuais))
 
     acao_po = acao_po_somente = conciliacao = None
     if dotacao_df is not None and ano_dotacao is not None:
@@ -536,5 +549,5 @@ def render_ddp(mensal: pd.DataFrame, grade_linhas: pd.DataFrame, ano_grade: int,
         "restantes). A falta de um item é compensada pela sobra livre de outro item da mesma NE — prática informada, "
         "não confirmada no SIAFI. Natureza em mais de um empenho: repartida pelo Liquidado do mês anterior; sem ele, "
         "os empenhos são somados. A DDP de servidor não separa ativo × aposentado no per capita. A contribuição "
-        "patronal ao RPPS não está na DDP: tem quadro próprio, pela projeção, fora dos totais da DDP. " + procedencia
+        "patronal ao RPPS não é natureza da DDP: tem quadro próprio (rubricas de PSS × 2 no mês da DDP), fora dos totais da DDP. " + procedencia
     ))

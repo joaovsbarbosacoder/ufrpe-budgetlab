@@ -36,11 +36,13 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from src.ddp_siape import ddp_por_natureza, separar_competencias
+from src.ddp_siape import FATOR_PATRONAL_PSS, ddp_por_natureza, patronal_por_pss, separar_competencias
 from src.ddp_siape_arquivos import tem_ddp_completa
-from src.despesas_pessoal import PARAMETROS_PADRAO, ParametrosProjecao, grade_mensal, ultimo_mes_fechado
+from src.despesas_pessoal import (
+    NATUREZA_PATRONAL_RPPS, ORIGEM_DDP_PROVISORIO, PARAMETROS_PADRAO, ParametrosProjecao, grade_mensal, ultimo_mes_fechado,
+)
 
-ORIGEM_DDP = "DDP SIAPE (provisório)"
+ORIGEM_DDP = ORIGEM_DDP_PROVISORIO
 ORIGEM_PROJECAO = "Projeção do painel (DDP aplicada ao mês)"
 
 
@@ -55,6 +57,8 @@ class ResultadoDdp:
     liquidado_parcial_substituido: float = 0.0
     sem_destino: list[tuple[str, float]] = field(default_factory=list)
     detalhe: pd.DataFrame = field(default_factory=pd.DataFrame)
+    #: rubricas de PSS que compõem o patronal do mês (`patronal_por_pss`); `None` se o patronal seguiu a projeção.
+    patronal_pss: pd.DataFrame | None = None
 
 
 def _competencia_anterior(ano_mes: int) -> int | None:
@@ -147,6 +151,8 @@ def aplicar_ddp(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, relatorios: lis
     detalhe: list[dict] = []
     sem_destino: list[tuple[str, float]] = []
     tratadas = set(ddp.index) | set(projetado)
+    pss = patronal_por_pss(atuais)
+    patronal_ddp = None if pss is None else round(float(pss["valor"].sum()) * FATOR_PATRONAL_PSS, 2)
 
     def adicionar(linhas: pd.DataFrame, valores: pd.Series, origem: str, natureza: str) -> None:
         nova = linhas.copy()
@@ -176,14 +182,16 @@ def aplicar_ddp(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, relatorios: lis
                     adicionar(fora, fora["liquidada"].fillna(0.0).reset_index(drop=True).set_axis(fora.index),
                               ORIGEM_PROJECAO, natureza)
         else:
-            alvo = projetado[natureza]
+            # patronal do RPPS: rubricas de PSS da DDP × 2 (no lugar da projeção), se a DDP as traz
+            pelo_pss = natureza == NATUREZA_PATRONAL_RPPS and patronal_ddp is not None
+            alvo = patronal_ddp if pelo_pss else projetado[natureza]
             linhas = modelo(natureza, so_folha=False)
             if linhas is None:
                 if abs(alvo) >= 0.005:
                     sem_destino.append((natureza, alvo))
                 continue
             adicionar(linhas, _parcelas_em_centavos(alvo, linhas["liquidada"].reset_index(drop=True)).set_axis(linhas.index),
-                      ORIGEM_PROJECAO, natureza)
+                      ORIGEM_DDP if pelo_pss else ORIGEM_PROJECAO, natureza)
 
     do_mes = (mensal_df["ano_mes"] == competencia) & (mensal_df["tipo_linha"] == "item_execucao")
     substituidas = do_mes & mensal_df["natureza_detalhada_cod"].astype(str).isin(tratadas)
@@ -192,10 +200,11 @@ def aplicar_ddp(mensal_df: pd.DataFrame, anual_df: pd.DataFrame, relatorios: lis
 
     detalhe_df = pd.DataFrame(detalhe, columns=["natureza_detalhada", "origem", "valor", "linhas"])
     total_ddp = float(ddp.sum())
-    alocado = float(detalhe_df.loc[detalhe_df["origem"] == ORIGEM_DDP, "valor"].sum())
+    alocado = float(detalhe_df.loc[(detalhe_df["origem"] == ORIGEM_DDP) & detalhe_df["natureza_detalhada"].isin(ddp.index), "valor"].sum())  # sem o patronal (PSS × 2), que não é natureza da DDP
     return ResultadoDdp(
         mensal=final, aplicada=True, competencia=competencia,
         motivo="Liquidação do mês ainda não fechou; valores da DDP (naturezas fora da DDP, pela projeção).",
         total_ddp=total_ddp, total_no_painel=alocado, liquidado_parcial_substituido=round(parcial, 2),
         sem_destino=sem_destino, detalhe=detalhe_df,
+        patronal_pss=pss if patronal_ddp is not None and NATUREZA_PATRONAL_RPPS in projetado else None,
     )

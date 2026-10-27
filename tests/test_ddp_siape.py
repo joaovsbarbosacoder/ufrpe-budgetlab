@@ -22,7 +22,7 @@ import pandas as pd
 import pymupdf
 
 from src.ddp_siape import (
-    CRITERIO_ELEMENTO, CRITERIO_REPARTIDO, CRITERIO_SEM_EMPENHO, CRITERIO_SOMADO, CRITERIO_UNICO,
+    FATOR_PATRONAL_PSS, patronal_por_pss, CRITERIO_ELEMENTO, CRITERIO_REPARTIDO, CRITERIO_SEM_EMPENHO, CRITERIO_SOMADO, CRITERIO_UNICO,
     OPERACAO_REFORCO, OPERACAO_REMANEJAR, RESERVA_DDP, RESERVA_PROJECAO, SEM_EMPENHO, TIPO_CREDITO, TIPO_DDP,
     SEM_ACAO, acoes_dos_quadros, conciliacao_por_acao, conciliacao_sem_ddp, conferencia, confronto_liquidado, ddp_por_natureza, ler_relatorio,
     plano_operacoes, por_empenho_somente_reforco, quadro_reforco, quadro_sem_ddp, reforco_por_acao_po, reserva_projetada,
@@ -137,8 +137,10 @@ class TestValidacoesDaLeitura(unittest.TestCase):
                          ["Nenhuma DDP de 10/2026 entre os PDFs enviados (só Crédito Bancário)."])
 
 
-def _ddp_pdf(mes: str, publico: str, naturezas: list[tuple[str, str, float]], anular: float = 0.0) -> bytes:
-    """DDP mínima no layout do SIAPE; `naturezas` = (código x.xxxx.xx.xx, descrição, valor) da seção (1)."""
+def _ddp_pdf(mes: str, publico: str, naturezas: list[tuple[str, str, float]], anular: float = 0.0,
+             rubricas: list[tuple[str, str, float]] | None = None) -> bytes:
+    """DDP mínima no layout do SIAPE; `naturezas` = (código x.xxxx.xx.xx, descrição, valor) da seção (1);
+    `rubricas` = (código de 5 dígitos, descrição, valor) da seção (3) de consignações."""
     bruto = sum(v for _, _, v in naturezas)
     fmt = lambda v: f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     linhas = [
@@ -148,13 +150,51 @@ def _ddp_pdf(mes: str, publico: str, naturezas: list[tuple[str, str, float]], an
         f"       *** DDP FOLHA NORMAL - NIVEL UNIDADE PAGADORA - {publico} ***",
         "                       *** DESPESAS CORRENTES ( 1 ) ***",
         f" 3.3000       DESPESAS CORRENTES                    {fmt(bruto):>20}",
-    ] + [f" {c} {d:<40} {fmt(v):>14}" for c, d, v in naturezas] + [
+    ] + [f" {c} {d:<40} {fmt(v):>14}" for c, d, v in naturezas] + ([
+        "                     *** CONSIGNACOES/DESCONTOS ( 3 ) ***",
+        f" ******       CONSIGNACOES/DESCONTOS                  {fmt(sum(v for _, _, v in rubricas)):>14}",
+    ] + [f"              {c} {d:<40} {fmt(v):>14}" for c, d, v in rubricas] if rubricas else []) + [
         "                             *** TOTAIS ( 5 ) ***",
         f"              99997 BRUTO                         {fmt(bruto):>20}",
         f"              99998 DESCONTO                      {fmt(anular):>20}",
         f"              99999 LIQUIDO                       {fmt(bruto - anular):>20}",
     ]
     return _pdf(linhas)
+
+
+class TestPatronalPorPss(unittest.TestCase):
+    """28/10/2026: patronal do RPPS = (PSS dos servidores) × 2, validado com a Liquidada de mai–set/2026."""
+
+    def _serv(self, rubricas):
+        return ler_relatorio(_ddp_pdf("OUT", "SERVIDOR", [("3.3190.11.01", "VENCIMENTO E SALARIOS", 100.0)], rubricas=rubricas), "serv.pdf")
+
+    def test_le_as_rubricas_da_secao_de_consignacoes(self):
+        r = self._serv([("98002", "CONT. PLANO SEGURIDADE SOCIAL", 3537621.28), ("98015", "CONT P.SEGURIDADE SOCIAL AP", 809951.07)])
+        self.assertEqual(r.rubricas["codigo"].tolist(), ["98002", "98015"])
+        self.assertEqual(r.rubricas["valor"].tolist(), [3537621.28, 809951.07])
+        self.assertEqual(len(self._serv(None).rubricas), 0)
+
+    def test_soma_ativo_mais_inativo_sem_a_98018_e_rubrica_ausente_nao_e_zero(self):
+        r = self._serv([("98002", "CONT. PLANO SEGURIDADE SOCIAL", 3537621.28), ("98015", "CONT P.SEGURIDADE SOCIAL AP", 809951.07),
+                        ("98018", "PREVIDENCIA SOCIAL CDT PESSOAL", 30695.55), ("98044", "PSS-EXERC.ANTERIOR - RRA AT", 126320.96),
+                        ("98045", "PSS-EXERC.ANTERIOR - RRA AP", 4436.07), ("97531", "DECISAO JUDICIAL", 2404.47)])
+        pens = ler_relatorio(_ddp_pdf("OUT", "PENSIONISTA", [("3.3190.03.01", "PENSOES", 5.0)],
+                                      rubricas=[("98020", "CONT.PLANO SEG.SOCIAL- PENSION", 124751.35),
+                                                ("98046", "PSS-EXERC.ANTERIOR - RRA PENS", 1247.44), ("34014", "CONTRIB PREV ABERTA", 9.0)]), "pens.pdf")
+        pss = patronal_por_pss([r, pens])
+        self.assertEqual(pss["codigo"].tolist(), ["98002", "98015", "98020", "98044", "98045", "98046"])  # sem 98018, sem 98034 (ausente), sem 97531/34014
+        self.assertEqual(dict(zip(pss["codigo"], pss["parte"])), {"98002": "Ativo", "98015": "Inativo", "98020": "Pensionista",
+                                                                  "98044": "Ativo", "98045": "Ativo", "98046": "Pensionista"})
+        self.assertEqual(round(pss["valor"].sum() * FATOR_PATRONAL_PSS, 2), 9208656.34)  # DDP de out/2026 (servidores + pensionistas) × 2
+        # só a DDP de servidores: sem as rubricas dos pensionistas
+        self.assertEqual(round(patronal_por_pss([r])["valor"].sum() * FATOR_PATRONAL_PSS, 2), 8956658.76)
+
+    def test_sem_98002_ou_sem_ddp_de_servidor_nao_ha_base_para_a_regra(self):
+        self.assertIsNone(patronal_por_pss([self._serv(None)]))
+        self.assertIsNone(patronal_por_pss([self._serv([("98015", "CONT P.SEGURIDADE SOCIAL AP", 10.0)])]))
+        pens = ler_relatorio(_ddp_pdf("OUT", "PENSIONISTA", [("3.3190.03.01", "PENSOES", 5.0)],
+                                      rubricas=[("98002", "CONT. PLANO SEGURIDADE SOCIAL", 10.0)]), "pens.pdf")
+        self.assertIsNone(patronal_por_pss([pens]))  # sem a DDP de servidores com a 98002, não há base para a regra
 
 
 class TestVariacaoEntreCompetencias(unittest.TestCase):

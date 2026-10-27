@@ -81,6 +81,7 @@ _MES_SOLIC = re.compile(r"MES/ANO SOLIC:\s*([A-Z]{3})(\d{4})")
 _MES_PAGAMENTO = re.compile(r"MES PAGAMENTO\s*:\s*([A-Z]{3})(\d{4})")
 _DATA = re.compile(r"DATA:\s*(\d{2})([A-Z]{3})(\d{4})")
 _FOLHA = re.compile(r"\*\*\*\s*(?:DDP\s+)?(FOLHA\s+\w+)\s+-\s+NIVEL UNIDADE PAGADORA\s+-\s+(SERVIDOR|PENSIONISTA)\s*\*\*\*")
+_RUBRICA = re.compile(r"^\s*(\d{5})\s+(.*?)\s+" + _VALOR + r"\s*$")
 _TOTAIS_DDP = {"99997": "bruto", "99998": "desconto", "99999": "liquido"}
 
 
@@ -115,6 +116,8 @@ class RelatorioSiape:
     data_geracao: date | None
     totais: dict[str, float]
     naturezas: pd.DataFrame = field(default_factory=pd.DataFrame)
+    #: rubricas da seção (3) CONSIGNACOES/DESCONTOS (colunas `codigo`, `descricao`, `valor`), só na DDP.
+    rubricas: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 def _linhas_por_pagina(conteudo: bytes) -> list[list[str]]:
@@ -156,6 +159,7 @@ def ler_relatorio(conteudo: bytes, nome: str = "") -> RelatorioSiape:
 
     totais: dict[str, float] = {}
     naturezas = []
+    rubricas = []
     if tipo == TIPO_CREDITO:
         for linha in linhas:
             if m := _TOTAL_CREDITO.match(linha):
@@ -190,6 +194,8 @@ def ler_relatorio(conteudo: bytes, nome: str = "") -> RelatorioSiape:
                     totais[chave] = totais.get(chave, 0.0) + _valor(m.group(2))
             elif secao == "consignacoes" and (m := _CONSIGNACOES.match(linha)):
                 totais["consignacoes"] = totais.get("consignacoes", 0.0) + _valor(m.group(1))
+            elif secao == "consignacoes" and (m := _RUBRICA.match(linha)):
+                rubricas.append({"codigo": m.group(1), "descricao": m.group(2).strip(), "valor": _valor(m.group(3))})
             elif secao == "totais" and (m := _TOTAL_DDP.match(linha)):
                 totais[_TOTAIS_DDP[m.group(1)]] = _valor(m.group(2))
         faltando = [chave for chave in ("bruto", "desconto", "liquido") if chave not in totais]
@@ -199,7 +205,8 @@ def ler_relatorio(conteudo: bytes, nome: str = "") -> RelatorioSiape:
             raise ValueError(f"{nome or 'Arquivo'}: DDP sem nenhuma linha de natureza detalhada.")
     return RelatorioSiape(nome=nome, tipo=tipo, publico=publico, folha=folha, competencia=competencia,
                           mes_pagamento=mes_pagamento, data_geracao=data_geracao, totais=totais,
-                          naturezas=pd.DataFrame(naturezas))
+                          naturezas=pd.DataFrame(naturezas),
+                          rubricas=pd.DataFrame(rubricas, columns=["codigo", "descricao", "valor"]))
 
 
 def _competencia(ano_mes: int) -> str:
@@ -290,6 +297,42 @@ def conferencia(relatorios: list[RelatorioSiape]) -> pd.DataFrame:
             "dif_credito": None if credito is None else round(credito.totais["credito"] - t["liquido"], 2),
         })
     return pd.DataFrame(linhas)
+
+
+#: Patronal do RPPS (31911303) = (consignações de PSS) × 2, regra informada e confirmada pelo usuário em
+#: 28/10/2026: "Consignações códigos: 98002, 98015, 98020, 98034, 98044, 98045 e 98046 = 2x". Servidor:
+#: Ativo (98002, 98034, 98044, 98045) e Inativo (98015, "CONT P.SEGURIDADE SOCIAL AP"); pensionista:
+#: 98020 e 98046 (DDP de pensionistas). Conferido com a Liquidada de mai–set/2026: a fórmula só dos
+#: servidores (98015 incluída) fica entre +0,17% e +0,59% do liquidado; com os pensionistas, entre
+#: +3,2% e +3,7% (o usuário confirmou que esta é a regra). Rubrica ausente na DDP não é zero: não
+#: entra na soma e não é listada (98034 nunca apareceu nas DDPs de mai–out/2026).
+RUBRICAS_PSS = {
+    PUBLICO_SERVIDOR: {"98002": "Ativo", "98034": "Ativo", "98044": "Ativo", "98045": "Ativo", "98015": "Inativo"},
+    PUBLICO_PENSIONISTA: {"98020": "Pensionista", "98046": "Pensionista"},
+}
+FATOR_PATRONAL_PSS = 2
+
+
+def patronal_por_pss(relatorios: list[RelatorioSiape]) -> pd.DataFrame | None:
+    """Rubricas de PSS da DDP (servidores e pensionistas) usadas no patronal (colunas `codigo`,
+    `descricao`, `parte` — Ativo/Inativo/Pensionista —, `valor`), ou `None` se não há DDP de
+    servidores com a 98002 (sem base para a regra: o patronal segue pela projeção). O patronal é
+    `valor.sum() × FATOR_PATRONAL_PSS`."""
+    partes = []
+    for r in relatorios:
+        if r.tipo != TIPO_DDP or not len(r.rubricas) or r.publico not in RUBRICAS_PSS:
+            continue
+        validas = r.rubricas.loc[r.rubricas["codigo"].isin(RUBRICAS_PSS[r.publico])]
+        partes.append(validas.assign(parte=validas["codigo"].map(RUBRICAS_PSS[r.publico])))
+    if not partes:
+        return None
+    rubricas = pd.concat(partes, ignore_index=True)
+    servidor = {r.publico for r in relatorios if r.tipo == TIPO_DDP and r.publico == PUBLICO_SERVIDOR and len(r.rubricas)}
+    if "98002" not in set(rubricas["codigo"]) or not servidor:
+        return None
+    tabela = rubricas.groupby("codigo", as_index=False).agg(descricao=("descricao", "first"), parte=("parte", "first"), valor=("valor", "sum"))
+    tabela["valor"] = tabela["valor"].round(2)
+    return tabela[["codigo", "descricao", "parte", "valor"]]
 
 
 def ddp_por_natureza(relatorios: list[RelatorioSiape]) -> pd.DataFrame:

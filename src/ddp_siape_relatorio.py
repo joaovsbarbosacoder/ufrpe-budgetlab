@@ -226,7 +226,7 @@ def _resumo(wb: Workbook, d: DadosRelatorio, mes: str, ano: int) -> None:
         "Anulação + reforço); o que a sobra não cobre é reforço novo. Quando a anulação for feita, a necessidade cai do "
         "primeiro cenário para este.",
         "Saldo do empenho = empenhado − liquidado no exercício, por item (nota de empenho × natureza). O RPPS patronal não "
-        "está na DDP: o valor do mês vem da projeção do painel. O valor da folha usado no reforço é o BRUTO da DDP "
+        "é natureza da DDP: o valor do mês vem das rubricas de PSS da DDP (servidores e pensionistas) × 2 (ou da projeção do painel, sem elas). O valor da folha usado no reforço é o BRUTO da DDP "
         "(seção de despesas correntes): as despesas a anular não reduzem a necessidade de reforço do empenho.",
     ], colunas=3)
 
@@ -320,7 +320,7 @@ def _por_empenho(wb: Workbook, d: DadosRelatorio, mes: str, ano: int) -> None:
     notas = _notas_por_empenho(d.itens)
     linha = _tabela(ws, linha, colunas, d.por_empenho.assign(nota=d.por_empenho["empenho"].map(notas)), soma, filtro=False)
     if d.rpps_por_empenho is not None and len(d.rpps_por_empenho):
-        linha = _secao_titulo(ws, linha, f"RPPS patronal — a folha de {mes} é a projeção do painel (não vem na DDP)")
+        linha = _secao_titulo(ws, linha, f"RPPS patronal — a folha de {mes} vem das rubricas de PSS da DDP × 2 (ou da projeção do painel, sem elas)")
         notas_rpps = _notas_por_empenho(d.rpps_itens)
         _tabela(ws, linha, colunas, d.rpps_por_empenho.assign(nota=d.rpps_por_empenho["empenho"].map(notas_rpps)), soma, filtro=False)
     ws.freeze_panes = ws.cell(row=LINHA_CABECALHO + 1, column=2)
