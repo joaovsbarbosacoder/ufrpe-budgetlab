@@ -203,13 +203,13 @@ def cartoes_empenhos(por_empenho: pd.DataFrame, itens: pd.DataFrame, mes: str, a
 
 def render_rpps(itens: pd.DataFrame, por_empenho: pd.DataFrame, conciliacao: dict, competencia: int,
                 pss: pd.DataFrame | None = None) -> None:
-    """Contribuição patronal ao RPPS: não é natureza da DDP. O mês vem das rubricas de PSS da DDP (servidores e pensionistas) × 2
+    """Contribuição patronal ao RPPS: não é natureza da DDP. O mês vem das rubricas de PSS da DDP de servidores × 2
     (28/10/2026) quando o painel está nesse mês; senão, da projeção do painel."""
     mes, ano = _mes(competencia), competencia // 100
     pelo_pss = pss is not None and not itens.empty and abs(float(itens["ddp"].sum()) - float(pss["valor"].sum()) * FATOR_PATRONAL_PSS) < 0.01
     if pelo_pss:
         st.html(cd.secao("RPPS patronal — rubricas de PSS da DDP × 2",
-                         f"A contribuição patronal do mês é a soma das rubricas de PSS da DDP (servidores e pensionistas) × {FATOR_PATRONAL_PSS}; a necessidade de "
+                         f"A contribuição patronal do mês é a soma das rubricas de PSS da DDP de servidores × {FATOR_PATRONAL_PSS}; a necessidade de "
                          "nov e dez é a projeção do painel, calibrada por ela (13º de novembro incluído), sem as edições manuais."))
         with st.expander("Rubricas de PSS usadas no patronal"):
             tabela = pss.assign(valor=pss["valor"].map(brl)).rename(columns={"codigo": "Rubrica", "descricao": "Descrição", "parte": "Parte", "valor": "Valor"})
