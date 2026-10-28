@@ -1120,6 +1120,50 @@ class TestParametrosProjecao(unittest.TestCase):
         self.assertAlmostEqual(self._meses(resultado, "31901143")[11], 0.0)  # regra do 13º: só jun/nov
         self.assertAlmostEqual(self._meses(resultado, "31901145")[11], 20.0)
 
+    def _mensal_com_2025(self, nov_2025=1_000.0, dez_2025=900.0):
+        extras = [_linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202511, liquidada=nov_2025, paga=0.0),
+                  _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202512, liquidada=dez_2025, paga=0.0)]
+        return pd.concat([self._mensal_13_e_ferias(), pd.DataFrame(extras)], ignore_index=True)
+
+    def test_dezembro_pela_razao_historica_multiplica_o_ativo_e_preserva_a_composicao(self):
+        # Decisão 17: 2025 liquidou dez = 90% de nov (Ativo) ⇒ dezembro de 2026 = novembro × 0,9 em todas as rubricas
+        mensal = self._mensal_com_2025()
+        padrao = grade_mensal(mensal, self._anual_vazio(), 2026, 202608)
+        ligada = grade_mensal(mensal, self._anual_vazio(), 2026, 202608, ParametrosProjecao(dezembro_ativo_razao_historica=True))
+        self.assertAlmostEqual(ligada.razao_dezembro_ativo, 0.9)
+        self.assertAlmostEqual(self._total_mes(ligada, 11), self._total_mes(ligada, 10) * 0.9)
+        for natureza in ("31901101", "31901143", "31901145"):
+            self.assertAlmostEqual(self._meses(ligada, natureza)[11], self._meses(padrao, natureza)[11] * 0.9)
+            self.assertAlmostEqual(self._meses(ligada, natureza)[10], self._meses(padrao, natureza)[10])  # novembro não muda
+        self.assertEqual(ligada.alertas, [])
+
+    def test_dezembro_pela_razao_historica_vem_desligado_e_so_vale_com_a_decisao_10(self):
+        mensal = self._mensal_com_2025()
+        padrao = grade_mensal(mensal, self._anual_vazio(), 2026, 202608)
+        self.assertIsNone(padrao.razao_dezembro_ativo)
+        self.assertAlmostEqual(self._total_mes(padrao, 11), self._total_mes(padrao, 10))
+        sem_repeticao = grade_mensal(mensal, self._anual_vazio(), 2026, 202608,
+                                     ParametrosProjecao(dezembro_ativo_repete_novembro=False, dezembro_ativo_razao_historica=True))
+        self.assertIsNone(sem_repeticao.razao_dezembro_ativo)
+
+    def test_dezembro_pela_razao_historica_sem_dados_do_ano_anterior_mantem_e_avisa(self):
+        resultado = grade_mensal(self._mensal_13_e_ferias(), self._anual_vazio(), 2026, 202608,
+                                 ParametrosProjecao(dezembro_ativo_razao_historica=True))
+        self.assertIsNone(resultado.razao_dezembro_ativo)
+        self.assertAlmostEqual(self._total_mes(resultado, 11), self._total_mes(resultado, 10))  # nada some
+        self.assertTrue(any("razão histórica" in a and "2025" in a for a in resultado.alertas))
+
+    def test_dezembro_pela_razao_historica_nao_altera_o_patronal_do_rpps(self):
+        mensal = pd.concat([self._mensal_com_2025(), pd.DataFrame([
+            _linha_execucao(ACAO_RPPS, "319113", "31911303", tipo_linha="item_execucao", ano_mes=202608, liquidada=270.0, paga=0.0)])], ignore_index=True)
+        padrao = grade_mensal(mensal, self._anual_vazio(), 2026, 202608)
+        ligada = grade_mensal(mensal, self._anual_vazio(), 2026, 202608, ParametrosProjecao(dezembro_ativo_razao_historica=True))
+        self.assertAlmostEqual(self._meses(ligada, "31911303")[11], self._meses(padrao, "31911303")[11])
+
+    def test_razao_historica_de_dezembro_declarada_quando_ligada(self):
+        self.assertEqual(diferencas_do_padrao(ParametrosProjecao(dezembro_ativo_razao_historica=True)),
+                         ["dezembro do Ativo = novembro × razão dez/nov do exercício anterior"])
+
     def test_fracao_do_13_em_dezembro_declarada_quando_ajustada(self):
         self.assertEqual(diferencas_do_padrao(ParametrosProjecao(fracao_13_dezembro_ativo=0.5)),
                          ["13º mantido em dezembro do Ativo: 50% de novembro"])

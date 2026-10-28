@@ -127,6 +127,13 @@ nunca presumir:
       (padrão 0,35) × o seu novembro, e a diferença vai para o 1/3 de férias — o
       total do grupo em dezembro continua igual a novembro (decisão 10 intacta). Ver
       `_redistribuir_dezembro_ativo`.
+  17. (28/10/2026) Opção (desligada por padrão), aprovada pelo usuário: dezembro do Ativo =
+      novembro × a razão dezembro ÷ novembro do Ativo no exercício anterior (`dezembro_ativo_razao_historica`).
+      Na Liquidada real, dezembro do Ativo foi 0,9588 de novembro em 2024 e 0,9614 em 2025 (o 13º cai mais do que o
+      1/3 de férias sobe, e abono de permanência, Funpresp patronal e 13º de temporários não se repetem), enquanto a
+      decisão 10 (+13) mantém dezembro = novembro. Com a opção ligada, TODAS as rubricas do Ativo em dezembro são
+      multiplicadas pela razão (a composição da decisão 13 é preservada); sem as duas liquidações do ano anterior, nada
+      muda e um alerta avisa. Ver `_razao_dezembro_ativo`.
   14. (26/10/2026) Diagnóstico da sub-projeção do RPPS (319113, ação 09HB) — o backtest
       partindo de set ficou ~1% abaixo do realizado em 2024 (+R$0,28 mi) e 2025 (+R$0,32
       mi). DECIDIDO pelo usuário: MANTER x13, sem ajuste. Motivo: as causas foram
@@ -439,6 +446,8 @@ class ParametrosProjecao:
     #: decisão 13 — fração do 13º de novembro (31901143) que fica no 13º de dezembro
     #: do Ativo; o restante vai para o 1/3 de férias (31901145). Só com a decisão 10.
     fracao_13_dezembro_ativo: float = 0.35
+    #: decisão 17 — dezembro do Ativo = novembro × (dezembro ÷ novembro do Ativo no exercício anterior). Só com a decisão 10.
+    dezembro_ativo_razao_historica: bool = False
     #: decisão 9 — critério de "mês fechado" (data-base padrão).
     janela_meses_fechamento: int = 3
     fracao_minima_fechamento: float = 0.5
@@ -527,6 +536,8 @@ def diferencas_do_padrao(parametros: ParametrosProjecao | None) -> list[str]:
         diferencas.append("dezembro do Ativo " + ("repete novembro" if parametros.dezembro_ativo_repete_novembro else "segue a regra da rubrica"))
     if not math.isclose(parametros.fracao_13_dezembro_ativo, padrao.fracao_13_dezembro_ativo):
         diferencas.append(f"13º mantido em dezembro do Ativo: {parametros.fracao_13_dezembro_ativo:.0%} de novembro")
+    if parametros.dezembro_ativo_razao_historica != padrao.dezembro_ativo_razao_historica:
+        diferencas.append("dezembro do Ativo = novembro × razão dez/nov do exercício anterior")
     if parametros.janela_meses_fechamento != padrao.janela_meses_fechamento:
         diferencas.append(f"janela de fechamento: {parametros.janela_meses_fechamento} meses")
     if not math.isclose(parametros.fracao_minima_fechamento, padrao.fracao_minima_fechamento):
@@ -1019,6 +1030,8 @@ class ResultadoGradeMensal:
     mes_razao_patronal_rpps: int | None = None
     #: patronal do mês da DDP vem das rubricas de PSS × 2 (e a razão foi calibrada por ele).
     patronal_pela_ddp: bool = False
+    #: decisão 17 — razão dezembro ÷ novembro do exercício anterior aplicada ao Ativo (`None` = opção desligada ou sem dado).
+    razao_dezembro_ativo: float | None = None
     alertas: list[str] = field(default_factory=list)
 
     @property
@@ -1203,9 +1216,21 @@ def grade_mensal(
     if parametros.patronal_rpps_acompanha_base:
         razao, mes_razao, pela_ddp = _patronal_acompanha_base(do_ano, valor_ref, linhas, ano_mes_referencia, meses_futuros, parametros)
 
+    # decisão 17: depois do patronal do RPPS, que segue a base do Ativo ANTES deste ajuste (o 09HB não é afetado)
+    razao_dezembro = None
+    if parametros.dezembro_ativo_razao_historica and parametros.dezembro_ativo_repete_novembro and 12 in meses_futuros:
+        razao_dezembro, alerta = _razao_dezembro_ativo(escopo_mensal, ano)
+        if razao_dezembro is None:
+            alertas.append(alerta)
+        else:
+            for linha in linhas:
+                if linha["grupo"] == GRUPO_ATIVO and linha["meses"][11] is not None:
+                    linha["meses"][11] = float(linha["meses"][11]) * razao_dezembro
+
     return ResultadoGradeMensal(
         linhas=pd.DataFrame(linhas), ano=ano, ano_mes_referencia=ano_mes_referencia, erros=erros, alertas=alertas,
         razao_patronal_rpps=razao, mes_razao_patronal_rpps=mes_razao, patronal_pela_ddp=pela_ddp,
+        razao_dezembro_ativo=razao_dezembro,
     )
 
 
@@ -1287,6 +1312,20 @@ def _patronal_acompanha_base(
 #: decisão 13 — origem (13º do Ativo) e destino (1/3 de férias) da redistribuição de dezembro.
 NATUREZA_DETALHADA_13_ATIVO = "31901143"
 NATUREZA_DETALHADA_FERIAS_ATIVO = "31901145"
+
+
+def _razao_dezembro_ativo(escopo_mensal: pd.DataFrame, ano: int) -> tuple[float | None, str | None]:
+    """Decisão 17: razão dezembro ÷ novembro da Liquidada do Ativo no exercício anterior (`ano - 1`), das duas
+    liquidações reais. `(None, alerta)` se faltar uma delas (ou novembro for zero): a projeção fica como está."""
+
+    anterior = escopo_mensal.loc[(escopo_mensal["ano_mes"] // 100 == ano - 1) & (escopo_mensal["tipo_linha"] == "item_execucao")
+                                 & (escopo_mensal["grupo"] == GRUPO_ATIVO)]
+    por_mes = anterior.groupby(anterior["ano_mes"] % 100)["liquidada"].sum(min_count=1)
+    novembro, dezembro = por_mes.get(11), por_mes.get(12)
+    if novembro is None or dezembro is None or pd.isna(novembro) or pd.isna(dezembro) or float(novembro) <= 0:
+        return None, (f"Dezembro do Ativo pela razão histórica: faltam novembro e dezembro de {ano - 1} liquidados "
+                      f"no Ativo — dezembro mantido igual a novembro (decisão 10).")
+    return float(dezembro) / float(novembro), None
 
 
 def _redistribuir_dezembro_ativo(linhas: list[dict], parametros: ParametrosProjecao) -> str | None:

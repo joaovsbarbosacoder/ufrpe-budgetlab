@@ -758,6 +758,14 @@ razão dos meses seguintes passa a ser patronal ÷ base do Ativo do próprio mê
 do painel e a aba Folha (DDP) declaram a origem, com as rubricas lidas). Sem as rubricas (ou sem a
 98002), vale a decisão 15. Com a liquidação do mês já na Execução Mensal, vale o liquidado.
 
+**Dezembro do Ativo pela razão histórica (decisão 17, 28/10/2026).** Opção da aba Fórmulas de projeção,
+desligada por padrão (vale a decisão 10: dezembro = novembro). Ligada, todas as rubricas do Ativo em
+dezembro são multiplicadas pela razão dezembro ÷ novembro do Ativo liquidado no exercício anterior (2025:
+0,9614; 2024: 0,9588), preservando a composição da decisão 13; sem as duas liquidações do ano anterior,
+nada muda e um alerta avisa. O patronal do RPPS (09HB) não é afetado. Com a Execução Mensal de 28/10/2026:
+20TP em dezembro de R$ 52.586.234,73 para R$ 50.557.884,37 e saldo de −R$ 3.593.174,20 para
+−R$ 1.564.823,84; a procedência do painel declara a razão usada.
+
 A página tem quatro abas. **Acompanhamento** é o painel acima. **Folha (DDP)**
 recebe os PDFs do SIAPE do mês (DDP e Crédito Bancário, de servidor e de
 pensionista), que ficam só na memória da sessão, e mostra: a conferência dos

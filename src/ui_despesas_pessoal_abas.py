@@ -158,6 +158,12 @@ def render_formulas() -> tuple[ParametrosProjecao, str | None]:
         value=p0.fracao_13_dezembro_ativo, step=0.05, format="%.2f", key=PREFIXO + "fracao_13_dezembro",
         disabled=not dezembro,
     )
+    razao_historica = st.checkbox(
+        "Dezembro do Ativo = novembro × razão dezembro ÷ novembro do exercício anterior (em 2025: 96,14%; em 2024: 95,88%)",
+        value=p0.dezembro_ativo_razao_historica, key=PREFIXO + "dezembro_razao_historica", disabled=not dezembro,
+        help="Segue o comportamento histórico da Liquidada do Ativo (o 13º cai mais do que o 1/3 de férias sobe, e abono de "
+             "permanência, Funpresp e 13º de temporários não se repetem). Desligado: dezembro igual a novembro (decisão 10).",
+    )
 
     st.markdown("##### 4. Mês fechado (data-base padrão)")
     st.markdown(
@@ -209,7 +215,7 @@ def render_formulas() -> tuple[ParametrosProjecao, str | None]:
             indenizacao_demais=indenizacao_demais, multiplicador_sem_regra_beneficios=sem_regra,
             mes_antecipacao_13=int(mes_antecipacao), mes_parcela_13=int(mes_parcela),
             fracao_antecipacao_13=float(fracao_antecipacao), dezembro_ativo_repete_novembro=bool(dezembro),
-            fracao_13_dezembro_ativo=float(fracao_13_dezembro),
+            fracao_13_dezembro_ativo=float(fracao_13_dezembro), dezembro_ativo_razao_historica=bool(razao_historica and dezembro),
             janela_meses_fechamento=int(janela), fracao_minima_fechamento=float(fracao_fechamento),
             patronal_rpps_acompanha_base=bool(patronal_base), razao_patronal_rpps=float(razao_patronal),
         )
