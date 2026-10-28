@@ -224,6 +224,9 @@ with aba_painel:
                                if bruta.patronal_pela_ddp else f"razão observada em {MESES_NOMES[bruta.mes_razao_patronal_rpps - 1].lower()}.")
                               if bruta.mes_razao_patronal_rpps else "razão informada.")
         if bruta.razao_patronal_rpps else ""
+    ) + (
+        f" Dezembro do Ativo a {bruta.razao_dezembro_ativo:.2%} de novembro (razão dezembro ÷ novembro do exercício anterior).".replace(".", ",")
+        if bruta.razao_dezembro_ativo else ""
     )
     dados = montar_painel(grade, mensal_painel, anual, dotacao_grupo, ano_dotacao,
                           meses_disponiveis=meses_disponiveis, anos_dotacao=anos_dotacao,
