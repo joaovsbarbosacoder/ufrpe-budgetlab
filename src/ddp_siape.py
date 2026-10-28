@@ -299,38 +299,31 @@ def conferencia(relatorios: list[RelatorioSiape]) -> pd.DataFrame:
     return pd.DataFrame(linhas)
 
 
-#: Patronal do RPPS (31911303) = (consignações de PSS) × 2, regra informada e confirmada pelo usuário em
-#: 28/10/2026: "Consignações códigos: 98002, 98015, 98020, 98034, 98044, 98045 e 98046 = 2x". Servidor:
-#: Ativo (98002, 98034, 98044, 98045) e Inativo (98015, "CONT P.SEGURIDADE SOCIAL AP"); pensionista:
-#: 98020 e 98046 (DDP de pensionistas). Conferido com a Liquidada de mai–set/2026: a fórmula só dos
-#: servidores (98015 incluída) fica entre +0,17% e +0,59% do liquidado; com os pensionistas, entre
-#: +3,2% e +3,7% (o usuário confirmou que esta é a regra). Rubrica ausente na DDP não é zero: não
-#: entra na soma e não é listada (98034 nunca apareceu nas DDPs de mai–out/2026).
-RUBRICAS_PSS = {
-    PUBLICO_SERVIDOR: {"98002": "Ativo", "98034": "Ativo", "98044": "Ativo", "98045": "Ativo", "98015": "Inativo"},
-    PUBLICO_PENSIONISTA: {"98020": "Pensionista", "98046": "Pensionista"},
-}
+#: Patronal do RPPS (31911303) = (consignações de PSS dos servidores) × 2. Regra do usuário (28/10/2026), ajustada
+#: pela liquidação real de out/2026: o patronal liquidado (R$ 8.956.658,76) é reproduzido ao centavo por
+#: (98002 + 98015 + 98044 + 98045) × 2, da DDP de SERVIDORES; incluir as rubricas dos pensionistas (98020 e 98046,
+#: que o usuário listou) passa R$ 251.997,58 (+2,81%) do liquidado, então elas NÃO entram (aprovado em 28/10/2026).
+#: Ativo: 98002, 98034, 98044, 98045; Inativo: 98015 ("CONT P.SEGURIDADE SOCIAL AP"). Em mai–set/2026, com as DDPs
+#: definitivas, a fórmula ficou entre +0,17% e +0,59% do liquidado. A 98018 não entra. Rubrica ausente na DDP não é
+#: zero: não entra na soma e não é listada (a 98034 nunca apareceu nas DDPs de mai–out/2026).
+RUBRICAS_PSS = {"98002": "Ativo", "98034": "Ativo", "98044": "Ativo", "98045": "Ativo", "98015": "Inativo"}
 FATOR_PATRONAL_PSS = 2
 
 
 def patronal_por_pss(relatorios: list[RelatorioSiape]) -> pd.DataFrame | None:
-    """Rubricas de PSS da DDP (servidores e pensionistas) usadas no patronal (colunas `codigo`,
-    `descricao`, `parte` — Ativo/Inativo/Pensionista —, `valor`), ou `None` se não há DDP de
-    servidores com a 98002 (sem base para a regra: o patronal segue pela projeção). O patronal é
-    `valor.sum() × FATOR_PATRONAL_PSS`."""
-    partes = []
-    for r in relatorios:
-        if r.tipo != TIPO_DDP or not len(r.rubricas) or r.publico not in RUBRICAS_PSS:
-            continue
-        validas = r.rubricas.loc[r.rubricas["codigo"].isin(RUBRICAS_PSS[r.publico])]
-        partes.append(validas.assign(parte=validas["codigo"].map(RUBRICAS_PSS[r.publico])))
+    """Rubricas de PSS da DDP de servidores usadas no patronal (colunas `codigo`, `descricao`, `parte` —
+    Ativo/Inativo —, `valor`), ou `None` se não há DDP de servidores com a 98002 (sem base para a regra: o
+    patronal segue pela projeção). O patronal é `valor.sum() × FATOR_PATRONAL_PSS`. A DDP de pensionistas
+    não entra (ver `RUBRICAS_PSS`)."""
+    partes = [r.rubricas for r in relatorios if r.tipo == TIPO_DDP and r.publico == PUBLICO_SERVIDOR and len(r.rubricas)]
     if not partes:
         return None
     rubricas = pd.concat(partes, ignore_index=True)
-    servidor = {r.publico for r in relatorios if r.tipo == TIPO_DDP and r.publico == PUBLICO_SERVIDOR and len(r.rubricas)}
-    if "98002" not in set(rubricas["codigo"]) or not servidor:
+    rubricas = rubricas.loc[rubricas["codigo"].isin(RUBRICAS_PSS)]
+    if "98002" not in set(rubricas["codigo"]):
         return None
-    tabela = rubricas.groupby("codigo", as_index=False).agg(descricao=("descricao", "first"), parte=("parte", "first"), valor=("valor", "sum"))
+    tabela = rubricas.groupby("codigo", as_index=False).agg(descricao=("descricao", "first"), valor=("valor", "sum"))
+    tabela["parte"] = tabela["codigo"].map(RUBRICAS_PSS)
     tabela["valor"] = tabela["valor"].round(2)
     return tabela[["codigo", "descricao", "parte", "valor"]]
 

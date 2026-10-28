@@ -746,17 +746,17 @@ liquidação real das duas (em 2026, entre 26,7% e 27,4%) ou a informada na aba 
 onde a regra também pode ser desligada; a procedência do painel declara a razão usada. Com a base
 igual à do mês de referência, o valor não muda.
 
-**Patronal do mês da DDP pelas rubricas de PSS (decisão 16, 28/10/2026).** Quando a DDP traz as
-rubricas de contribuição previdenciária (seção de consignações), o patronal do mês da DDP é a
-soma de **98002, 98015, 98020, 98034, 98044, 98045 e 98046 × 2**, regra confirmada pelo usuário:
-Ativo (98002, 98034, 98044, 98045) e Inativo (98015) vêm da DDP de servidores; Pensionista (98020,
-98046), da DDP de pensionistas. A 98018 não entra; rubrica ausente não conta como zero (a 98034 não
-apareceu nas DDPs de mai–out/2026). Conferido com a Liquidada de mai–set/2026: só com os servidores
-a fórmula fica entre +0,17% e +0,59% do liquidado; com os pensionistas, entre +3,2% e +3,7% — a
-regra do usuário é a que vale. Nesse mês o patronal não é reescalado pela razão; a razão dos meses
-seguintes passa a ser patronal ÷ base do Ativo do próprio mês da DDP (a procedência do painel e a
-aba Folha (DDP) declaram a origem, com as rubricas lidas). Sem as rubricas (ou sem a 98002), vale
-a decisão 15. Em out/2026: R$ 9.208.656,34 (painel antes: R$ 8.706.344,66).
+**Patronal do mês da DDP pelas rubricas de PSS (decisão 16, 28/10/2026).** Quando a DDP de servidores
+traz as rubricas de contribuição previdenciária (seção de consignações), o patronal do mês da DDP é a
+soma de **98002, 98015, 98034, 98044 e 98045 × 2**: Ativo (98002, 98034, 98044, 98045) e Inativo
+(98015). As rubricas dos pensionistas (98020 e 98046) NÃO entram: a liquidação real de out/2026
+(R$ 8.956.658,76) é reproduzida ao centavo por (98002 + 98015 + 98044 + 98045) × 2, e com os
+pensionistas a fórmula passaria R$ 251.997,58 (+2,81%). A 98018 não entra; rubrica ausente não conta
+como zero (a 98034 não apareceu nas DDPs de mai–out/2026). Em mai–set/2026, com as DDPs definitivas, a
+fórmula ficou entre +0,17% e +0,59% do liquidado. Nesse mês o patronal não é reescalado pela razão; a
+razão dos meses seguintes passa a ser patronal ÷ base do Ativo do próprio mês da DDP (a procedência
+do painel e a aba Folha (DDP) declaram a origem, com as rubricas lidas). Sem as rubricas (ou sem a
+98002), vale a decisão 15. Com a liquidação do mês já na Execução Mensal, vale o liquidado.
 
 A página tem quatro abas. **Acompanhamento** é o painel acima. **Folha (DDP)**
 recebe os PDFs do SIAPE do mês (DDP e Crédito Bancário, de servidor e de
