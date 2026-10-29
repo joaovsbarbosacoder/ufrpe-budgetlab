@@ -127,13 +127,15 @@ nunca presumir:
       (padrão 0,35) × o seu novembro, e a diferença vai para o 1/3 de férias — o
       total do grupo em dezembro continua igual a novembro (decisão 10 intacta). Ver
       `_redistribuir_dezembro_ativo`.
-  17. (28/10/2026) Opção (desligada por padrão), aprovada pelo usuário: dezembro do Ativo =
-      novembro × a razão dezembro ÷ novembro do Ativo no exercício anterior (`dezembro_ativo_razao_historica`).
+  17. (28/10/2026; padrão alterado em 29/10/2026) Dezembro do Ativo abaixo de novembro: dezembro = novembro ×
+      `razao_dezembro_ativo` (`dezembro_ativo_reduzido`). PADRÃO, a pedido do usuário "por enquanto": razão
+      0,985 (dezembro 1,5% abaixo de novembro), o critério da projeção da CDOR/MEC (relatório de 28/10/2026).
+      Razão 0 = a razão dezembro ÷ novembro do Ativo liquidado no exercício anterior (2025: 0,9614).
       Na Liquidada real, dezembro do Ativo foi 0,9588 de novembro em 2024 e 0,9614 em 2025 (o 13º cai mais do que o
       1/3 de férias sobe, e abono de permanência, Funpresp patronal e 13º de temporários não se repetem), enquanto a
-      decisão 10 (+13) mantém dezembro = novembro. Com a opção ligada, TODAS as rubricas do Ativo em dezembro são
-      multiplicadas pela razão (a composição da decisão 13 é preservada); sem as duas liquidações do ano anterior, nada
-      muda e um alerta avisa. Ver `_razao_dezembro_ativo`.
+      decisão 10 (+13) mantinha dezembro = novembro. TODAS as rubricas do Ativo em dezembro são multiplicadas pela
+      razão (a composição da decisão 13 é preservada); com razão 0 e sem as duas liquidações do ano anterior, nada
+      muda e um alerta avisa. O patronal do RPPS não é afetado. Ver `_razao_dezembro_ativo`.
   14. (26/10/2026) Diagnóstico da sub-projeção do RPPS (319113, ação 09HB) — o backtest
       partindo de set ficou ~1% abaixo do realizado em 2024 (+R$0,28 mi) e 2025 (+R$0,32
       mi). DECIDIDO pelo usuário: MANTER x13, sem ajuste. Motivo: as causas foram
@@ -446,8 +448,10 @@ class ParametrosProjecao:
     #: decisão 13 — fração do 13º de novembro (31901143) que fica no 13º de dezembro
     #: do Ativo; o restante vai para o 1/3 de férias (31901145). Só com a decisão 10.
     fracao_13_dezembro_ativo: float = 0.35
-    #: decisão 17 — dezembro do Ativo = novembro × (dezembro ÷ novembro do Ativo no exercício anterior). Só com a decisão 10.
-    dezembro_ativo_razao_historica: bool = False
+    #: decisão 17 — dezembro do Ativo = novembro × `razao_dezembro_ativo` (padrão 0,985: critério da CDOR/MEC, 29/10/2026);
+    #: razão 0 = dezembro ÷ novembro do Ativo no exercício anterior. Só com a decisão 10.
+    dezembro_ativo_reduzido: bool = True
+    razao_dezembro_ativo: float = 0.985
     #: decisão 9 — critério de "mês fechado" (data-base padrão).
     janela_meses_fechamento: int = 3
     fracao_minima_fechamento: float = 0.5
@@ -491,6 +495,9 @@ class ParametrosProjecao:
         razao = self.razao_patronal_rpps
         if isinstance(razao, bool) or not isinstance(razao, (int, float)) or not math.isfinite(razao) or not 0 <= razao < 1:
             raise ValueError(f"Razão do patronal do RPPS: informe 0 (observada) ou um valor entre 0 e 1 (recebido {razao!r}).")
+        dez = self.razao_dezembro_ativo
+        if isinstance(dez, bool) or not isinstance(dez, (int, float)) or not math.isfinite(dez) or not 0 <= dez <= 2:
+            raise ValueError(f"Razão de dezembro do Ativo: informe 0 (a do exercício anterior) ou um valor entre 0 e 2 (recebido {dez!r}).")
 
 
 PARAMETROS_PADRAO = ParametrosProjecao()
@@ -536,8 +543,11 @@ def diferencas_do_padrao(parametros: ParametrosProjecao | None) -> list[str]:
         diferencas.append("dezembro do Ativo " + ("repete novembro" if parametros.dezembro_ativo_repete_novembro else "segue a regra da rubrica"))
     if not math.isclose(parametros.fracao_13_dezembro_ativo, padrao.fracao_13_dezembro_ativo):
         diferencas.append(f"13º mantido em dezembro do Ativo: {parametros.fracao_13_dezembro_ativo:.0%} de novembro")
-    if parametros.dezembro_ativo_razao_historica != padrao.dezembro_ativo_razao_historica:
-        diferencas.append("dezembro do Ativo = novembro × razão dez/nov do exercício anterior")
+    if parametros.dezembro_ativo_reduzido != padrao.dezembro_ativo_reduzido:
+        diferencas.append("dezembro do Ativo " + ("abaixo de novembro" if parametros.dezembro_ativo_reduzido else "sem redução sobre novembro"))
+    if parametros.dezembro_ativo_reduzido and not math.isclose(parametros.razao_dezembro_ativo, padrao.razao_dezembro_ativo):
+        diferencas.append("razão de dezembro do Ativo: " + (f"{parametros.razao_dezembro_ativo:.4f}".replace(".", ",")
+                                                              if parametros.razao_dezembro_ativo else "a do exercício anterior"))
     if parametros.janela_meses_fechamento != padrao.janela_meses_fechamento:
         diferencas.append(f"janela de fechamento: {parametros.janela_meses_fechamento} meses")
     if not math.isclose(parametros.fracao_minima_fechamento, padrao.fracao_minima_fechamento):
@@ -1032,6 +1042,8 @@ class ResultadoGradeMensal:
     patronal_pela_ddp: bool = False
     #: decisão 17 — razão dezembro ÷ novembro do exercício anterior aplicada ao Ativo (`None` = opção desligada ou sem dado).
     razao_dezembro_ativo: float | None = None
+    #: de onde veio a razão de dezembro: "informada" (parâmetro) ou "histórica" (exercício anterior).
+    origem_razao_dezembro: str | None = None
     alertas: list[str] = field(default_factory=list)
 
     @property
@@ -1218,8 +1230,13 @@ def grade_mensal(
 
     # decisão 17: depois do patronal do RPPS, que segue a base do Ativo ANTES deste ajuste (o 09HB não é afetado)
     razao_dezembro = None
-    if parametros.dezembro_ativo_razao_historica and parametros.dezembro_ativo_repete_novembro and 12 in meses_futuros:
-        razao_dezembro, alerta = _razao_dezembro_ativo(escopo_mensal, ano)
+    origem_dezembro = None
+    if parametros.dezembro_ativo_reduzido and parametros.dezembro_ativo_repete_novembro and 12 in meses_futuros:
+        if parametros.razao_dezembro_ativo > 0:
+            razao_dezembro, alerta, origem_dezembro = float(parametros.razao_dezembro_ativo), None, "informada"
+        else:
+            razao_dezembro, alerta = _razao_dezembro_ativo(escopo_mensal, ano)
+            origem_dezembro = "histórica" if razao_dezembro is not None else None
         if razao_dezembro is None:
             alertas.append(alerta)
         else:
@@ -1230,7 +1247,7 @@ def grade_mensal(
     return ResultadoGradeMensal(
         linhas=pd.DataFrame(linhas), ano=ano, ano_mes_referencia=ano_mes_referencia, erros=erros, alertas=alertas,
         razao_patronal_rpps=razao, mes_razao_patronal_rpps=mes_razao, patronal_pela_ddp=pela_ddp,
-        razao_dezembro_ativo=razao_dezembro,
+        razao_dezembro_ativo=razao_dezembro, origem_razao_dezembro=origem_dezembro,
     )
 
 

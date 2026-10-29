@@ -590,10 +590,13 @@ class TestGradeMensal(unittest.TestCase):
             _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202601 + i, liquidada=50_000.0 + i, paga=0.0)
             for i in range(11)  # 202601..202611, incluindo novembro real
         ])
-        resultado = grade_mensal(mensal, self._anual_vazio(), 2026, 202611)
+        resultado = grade_mensal(mensal, self._anual_vazio(), 2026, 202611, ParametrosProjecao(dezembro_ativo_reduzido=False))
         linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319011"].iloc[0]
         self.assertAlmostEqual(linha["meses"][10], 50_010.0)  # Nov: real
         self.assertAlmostEqual(linha["meses"][11], 50_010.0)  # Dez: repete o real de nov
+        # padrão (decisão 17): dezembro = novembro real × 0,985
+        padrao = grade_mensal(mensal, self._anual_vazio(), 2026, 202611).linhas
+        self.assertAlmostEqual(padrao[padrao["natureza_despesa_cod"] == "319011"].iloc[0]["meses"][11], 50_010.0 * 0.985)
 
     def test_dezembro_nao_repete_novembro_fora_do_ativo(self):
         # Decisão 10 é exclusiva do grupo Ativo — Inativo/RPPS/Outros Benefícios
@@ -1056,7 +1059,7 @@ class TestParametrosProjecao(unittest.TestCase):
         mensal = pd.DataFrame([
             _linha_execucao(ACAO_ATIVO, "319004", "31900401", tipo_linha="item_execucao", ano_mes=202608, liquidada=9_000.0, paga=0.0),
         ])
-        padrao = grade_mensal(mensal, self._anual_vazio(), 2026, 202608).linhas.iloc[0]["meses"]
+        padrao = grade_mensal(mensal, self._anual_vazio(), 2026, 202608, ParametrosProjecao(dezembro_ativo_reduzido=False)).linhas.iloc[0]["meses"]
         self.assertAlmostEqual(padrao[11], padrao[10])
         ajustada = grade_mensal(mensal, self._anual_vazio(), 2026, 202608,
                                 ParametrosProjecao(dezembro_ativo_repete_novembro=False)).linhas.iloc[0]["meses"]
@@ -1082,7 +1085,7 @@ class TestParametrosProjecao(unittest.TestCase):
     def test_dezembro_do_ativo_move_parte_do_13_para_o_terco_de_ferias(self):
         # Decisão 13: R_mãe = 1.000 → 13º de nov = 500; dez fica com 35% (175) e os 325
         # restantes vão para o 1/3 de férias (20 + 325). Total de dezembro = total de novembro.
-        resultado = grade_mensal(self._mensal_13_e_ferias(), self._anual_vazio(), 2026, 202608)
+        resultado = grade_mensal(self._mensal_13_e_ferias(), self._anual_vazio(), 2026, 202608, ParametrosProjecao(dezembro_ativo_reduzido=False))
         decimo, ferias = self._meses(resultado, "31901143"), self._meses(resultado, "31901145")
         self.assertAlmostEqual(decimo[10], 500.0)
         self.assertAlmostEqual(decimo[11], 175.0)
@@ -1094,22 +1097,22 @@ class TestParametrosProjecao(unittest.TestCase):
 
     def test_fracao_do_13_em_dezembro_editavel_e_um_mantem_a_copia_integral(self):
         resultado = grade_mensal(self._mensal_13_e_ferias(), self._anual_vazio(), 2026, 202608,
-                                 ParametrosProjecao(fracao_13_dezembro_ativo=1.0))
+                                 ParametrosProjecao(fracao_13_dezembro_ativo=1.0, dezembro_ativo_reduzido=False))
         self.assertAlmostEqual(self._meses(resultado, "31901143")[11], 500.0)
         self.assertAlmostEqual(self._meses(resultado, "31901145")[11], 20.0)
         resultado = grade_mensal(self._mensal_13_e_ferias(), self._anual_vazio(), 2026, 202608,
-                                 ParametrosProjecao(fracao_13_dezembro_ativo=0.0))
+                                 ParametrosProjecao(fracao_13_dezembro_ativo=0.0, dezembro_ativo_reduzido=False))
         self.assertAlmostEqual(self._meses(resultado, "31901143")[11], 0.0)
         self.assertAlmostEqual(self._meses(resultado, "31901145")[11], 520.0)
 
     def test_dezembro_do_ativo_sem_terco_de_ferias_mantem_13_e_avisa(self):
-        resultado = grade_mensal(self._mensal_13_e_ferias(com_ferias=False), self._anual_vazio(), 2026, 202608)
+        resultado = grade_mensal(self._mensal_13_e_ferias(com_ferias=False), self._anual_vazio(), 2026, 202608, ParametrosProjecao(dezembro_ativo_reduzido=False))
         self.assertAlmostEqual(self._meses(resultado, "31901143")[11], 500.0)  # nada some
         self.assertTrue(any("31901145" in a and "decisão 13" in a for a in resultado.alertas))
 
     def test_redistribuicao_de_dezembro_usa_13_real_de_novembro(self):
         resultado = grade_mensal(self._mensal_13_e_ferias(ano_mes=202611, decimo_terceiro_real=800.0),
-                                 self._anual_vazio(), 2026, 202611)
+                                 self._anual_vazio(), 2026, 202611, ParametrosProjecao(dezembro_ativo_reduzido=False))
         self.assertAlmostEqual(self._meses(resultado, "31901143")[10], 800.0)  # Nov real
         self.assertAlmostEqual(self._meses(resultado, "31901143")[11], 280.0)  # 35% de 800
         self.assertAlmostEqual(self._meses(resultado, "31901145")[11], 20.0 + 520.0)
@@ -1125,44 +1128,55 @@ class TestParametrosProjecao(unittest.TestCase):
                   _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202512, liquidada=dez_2025, paga=0.0)]
         return pd.concat([self._mensal_13_e_ferias(), pd.DataFrame(extras)], ignore_index=True)
 
-    def test_dezembro_pela_razao_historica_multiplica_o_ativo_e_preserva_a_composicao(self):
-        # Decisão 17: 2025 liquidou dez = 90% de nov (Ativo) ⇒ dezembro de 2026 = novembro × 0,9 em todas as rubricas
+    def test_dezembro_reduzido_por_padrao_multiplica_o_ativo_e_preserva_a_composicao(self):
+        # Decisão 17 (padrão 29/10/2026): dezembro = novembro × 0,985 em todas as rubricas do Ativo
         mensal = self._mensal_com_2025()
+        sem = grade_mensal(mensal, self._anual_vazio(), 2026, 202608, ParametrosProjecao(dezembro_ativo_reduzido=False))
         padrao = grade_mensal(mensal, self._anual_vazio(), 2026, 202608)
-        ligada = grade_mensal(mensal, self._anual_vazio(), 2026, 202608, ParametrosProjecao(dezembro_ativo_razao_historica=True))
-        self.assertAlmostEqual(ligada.razao_dezembro_ativo, 0.9)
-        self.assertAlmostEqual(self._total_mes(ligada, 11), self._total_mes(ligada, 10) * 0.9)
+        self.assertAlmostEqual(padrao.razao_dezembro_ativo, 0.985)
+        self.assertEqual(padrao.origem_razao_dezembro, "informada")
+        self.assertAlmostEqual(self._total_mes(padrao, 11), self._total_mes(padrao, 10) * 0.985)
         for natureza in ("31901101", "31901143", "31901145"):
-            self.assertAlmostEqual(self._meses(ligada, natureza)[11], self._meses(padrao, natureza)[11] * 0.9)
-            self.assertAlmostEqual(self._meses(ligada, natureza)[10], self._meses(padrao, natureza)[10])  # novembro não muda
-        self.assertEqual(ligada.alertas, [])
+            self.assertAlmostEqual(self._meses(padrao, natureza)[11], self._meses(sem, natureza)[11] * 0.985)
+            self.assertAlmostEqual(self._meses(padrao, natureza)[10], self._meses(sem, natureza)[10])  # novembro não muda
+        self.assertEqual(padrao.alertas, [])
 
-    def test_dezembro_pela_razao_historica_vem_desligado_e_so_vale_com_a_decisao_10(self):
+    def test_razao_zero_usa_a_do_exercicio_anterior(self):
+        # 2025 liquidou dez = 90% de nov (Ativo)
+        resultado = grade_mensal(self._mensal_com_2025(), self._anual_vazio(), 2026, 202608, ParametrosProjecao(razao_dezembro_ativo=0.0))
+        self.assertAlmostEqual(resultado.razao_dezembro_ativo, 0.9)
+        self.assertEqual(resultado.origem_razao_dezembro, "histórica")
+        self.assertAlmostEqual(self._total_mes(resultado, 11), self._total_mes(resultado, 10) * 0.9)
+
+    def test_reducao_de_dezembro_desligada_ou_sem_a_decisao_10_nao_muda_nada(self):
         mensal = self._mensal_com_2025()
-        padrao = grade_mensal(mensal, self._anual_vazio(), 2026, 202608)
-        self.assertIsNone(padrao.razao_dezembro_ativo)
-        self.assertAlmostEqual(self._total_mes(padrao, 11), self._total_mes(padrao, 10))
-        sem_repeticao = grade_mensal(mensal, self._anual_vazio(), 2026, 202608,
-                                     ParametrosProjecao(dezembro_ativo_repete_novembro=False, dezembro_ativo_razao_historica=True))
-        self.assertIsNone(sem_repeticao.razao_dezembro_ativo)
+        for parametros in (ParametrosProjecao(dezembro_ativo_reduzido=False), ParametrosProjecao(dezembro_ativo_repete_novembro=False)):
+            with self.subTest(parametros=parametros):
+                self.assertIsNone(grade_mensal(mensal, self._anual_vazio(), 2026, 202608, parametros).razao_dezembro_ativo)
+        sem = grade_mensal(mensal, self._anual_vazio(), 2026, 202608, ParametrosProjecao(dezembro_ativo_reduzido=False))
+        self.assertAlmostEqual(self._total_mes(sem, 11), self._total_mes(sem, 10))
 
-    def test_dezembro_pela_razao_historica_sem_dados_do_ano_anterior_mantem_e_avisa(self):
+    def test_razao_historica_sem_dados_do_ano_anterior_mantem_e_avisa(self):
         resultado = grade_mensal(self._mensal_13_e_ferias(), self._anual_vazio(), 2026, 202608,
-                                 ParametrosProjecao(dezembro_ativo_razao_historica=True))
+                                 ParametrosProjecao(razao_dezembro_ativo=0.0))
         self.assertIsNone(resultado.razao_dezembro_ativo)
         self.assertAlmostEqual(self._total_mes(resultado, 11), self._total_mes(resultado, 10))  # nada some
         self.assertTrue(any("razão histórica" in a and "2025" in a for a in resultado.alertas))
 
-    def test_dezembro_pela_razao_historica_nao_altera_o_patronal_do_rpps(self):
+    def test_reducao_de_dezembro_nao_altera_o_patronal_do_rpps(self):
         mensal = pd.concat([self._mensal_com_2025(), pd.DataFrame([
             _linha_execucao(ACAO_RPPS, "319113", "31911303", tipo_linha="item_execucao", ano_mes=202608, liquidada=270.0, paga=0.0)])], ignore_index=True)
+        sem = grade_mensal(mensal, self._anual_vazio(), 2026, 202608, ParametrosProjecao(dezembro_ativo_reduzido=False))
         padrao = grade_mensal(mensal, self._anual_vazio(), 2026, 202608)
-        ligada = grade_mensal(mensal, self._anual_vazio(), 2026, 202608, ParametrosProjecao(dezembro_ativo_razao_historica=True))
-        self.assertAlmostEqual(self._meses(ligada, "31911303")[11], self._meses(padrao, "31911303")[11])
+        self.assertAlmostEqual(self._meses(padrao, "31911303")[11], self._meses(sem, "31911303")[11])
 
-    def test_razao_historica_de_dezembro_declarada_quando_ligada(self):
-        self.assertEqual(diferencas_do_padrao(ParametrosProjecao(dezembro_ativo_razao_historica=True)),
-                         ["dezembro do Ativo = novembro × razão dez/nov do exercício anterior"])
+    def test_razao_de_dezembro_declarada_quando_ajustada_e_validada(self):
+        self.assertEqual(diferencas_do_padrao(ParametrosProjecao(dezembro_ativo_reduzido=False)), ["dezembro do Ativo sem redução sobre novembro"])
+        self.assertEqual(diferencas_do_padrao(ParametrosProjecao(razao_dezembro_ativo=0.97)), ["razão de dezembro do Ativo: 0,9700"])
+        self.assertEqual(diferencas_do_padrao(ParametrosProjecao(razao_dezembro_ativo=0.0)), ["razão de dezembro do Ativo: a do exercício anterior"])
+        for invalida in (-0.1, 2.5, float("nan"), True):
+            with self.subTest(invalida=invalida), self.assertRaises(ValueError):
+                ParametrosProjecao(razao_dezembro_ativo=invalida)
 
     def test_fracao_do_13_em_dezembro_declarada_quando_ajustada(self):
         self.assertEqual(diferencas_do_padrao(ParametrosProjecao(fracao_13_dezembro_ativo=0.5)),
@@ -1335,11 +1349,13 @@ class TestProjecaoReconstruidaComExecutado(unittest.TestCase):
     def test_mes_a_mes_compara_projecao_com_liquidada(self):
         comparacao = comparar_projecao_com_executado(self._mensal(), self._anual_vazio(), 2025, 8)
         ativo = comparacao[comparacao["grupo"] == GRUPO_ATIVO]
-        # projeção a partir de Ago = 100 em Set-Dez (Dez repete Nov = 100).
+        # projeção a partir de Ago = 100 em Set-Nov; Dez = Nov × 0,985 (decisão 17) = 98,5.
         self.assertEqual(ativo["mes"].tolist(), [9, 10, 11, 12])
-        self.assertEqual(ativo["projetado"].tolist(), [100.0] * 4)
+        for obtido, esperado in zip(ativo["projetado"], [100.0, 100.0, 100.0, 98.5]):
+            self.assertAlmostEqual(obtido, esperado)
         self.assertEqual(ativo["executado"].tolist(), [110.0, 120.0, 130.0, 140.0])
-        self.assertEqual(ativo["diferenca"].tolist(), [10.0, 20.0, 30.0, 40.0])
+        for obtido, esperado in zip(ativo["diferenca"], [10.0, 20.0, 30.0, 41.5]):
+            self.assertAlmostEqual(obtido, esperado)
         inativo = comparacao[comparacao["grupo"] == GRUPO_INATIVO]
         self.assertEqual(inativo["executado"].iloc[0], 50.0)
         self.assertEqual(inativo["diferenca"].iloc[0], 0.0)
@@ -1351,18 +1367,18 @@ class TestProjecaoReconstruidaComExecutado(unittest.TestCase):
             comparar_projecao_com_executado(self._mensal(), self._anual_vazio(), 2025, 8)
         ).set_index("grupo")
         self.assertEqual(resumo.loc[GRUPO_ATIVO, "meses"], 4)
-        self.assertEqual(resumo.loc[GRUPO_ATIVO, "projetado"], 400.0)
+        self.assertAlmostEqual(resumo.loc[GRUPO_ATIVO, "projetado"], 398.5)  # 100 + 100 + 100 + 98,5
         self.assertEqual(resumo.loc[GRUPO_ATIVO, "executado"], 500.0)
-        self.assertEqual(resumo.loc[GRUPO_ATIVO, "diferenca"], 100.0)
-        self.assertAlmostEqual(resumo.loc[GRUPO_ATIVO, "diferenca_pct"], 0.25)
+        self.assertAlmostEqual(resumo.loc[GRUPO_ATIVO, "diferenca"], 101.5)
+        self.assertAlmostEqual(resumo.loc[GRUPO_ATIVO, "diferenca_pct"], 101.5 / 398.5)
         # Inativo: só Set tem executado — Out-Dez projetados (150) ficam fora da soma.
         self.assertEqual(resumo.loc[GRUPO_INATIVO, "meses"], 1)
         self.assertEqual(resumo.loc[GRUPO_INATIVO, "projetado"], 50.0)
         self.assertEqual(resumo.loc[GRUPO_INATIVO, "diferenca_pct"], 0.0)
         self.assertEqual(resumo.loc["total", "meses"], 4)
-        self.assertEqual(resumo.loc["total", "projetado"], 450.0)
+        self.assertAlmostEqual(resumo.loc["total", "projetado"], 448.5)
         self.assertEqual(resumo.loc["total", "executado"], 550.0)
-        self.assertAlmostEqual(resumo.loc["total", "diferenca_pct"], 100.0 / 450.0)
+        self.assertAlmostEqual(resumo.loc["total", "diferenca_pct"], 101.5 / 448.5)
 
     def test_usa_os_parametros_em_uso(self):
         # Sem repetir Nov em Dez, o Ativo continua liso (100) — mesmo resultado aqui;
@@ -1391,16 +1407,16 @@ class TestDesvioPorMesDePartida(unittest.TestCase):
         desvio = desvio_por_mes_de_partida(self._mensal(), self._anual_vazio(), 2025)
         self.assertEqual(sorted(desvio["mes_referencia"].unique()), list(range(1, 12)))
         por = desvio.set_index(["mes_referencia", "grupo"])
-        # Partida Out: Ativo projeta 120 em Nov e Dez; executado 130 + 140 → diferença 30 / 240.
-        self.assertEqual(por.loc[(10, GRUPO_ATIVO), "projetado"], 240.0)
-        self.assertEqual(por.loc[(10, GRUPO_ATIVO), "diferenca"], 30.0)
-        self.assertAlmostEqual(por.loc[(10, GRUPO_ATIVO), "diferenca_pct"], 0.125)
+        # Partida Out: Ativo projeta 120 em Nov e 118,2 em Dez (× 0,985); executado 130 + 140 → diferença 31,8 / 238,2.
+        self.assertAlmostEqual(por.loc[(10, GRUPO_ATIVO), "projetado"], 238.2)
+        self.assertAlmostEqual(por.loc[(10, GRUPO_ATIVO), "diferenca"], 31.8)
+        self.assertAlmostEqual(por.loc[(10, GRUPO_ATIVO), "diferenca_pct"], 31.8 / 238.2)
         # Inativo sem Liquidada em Out: não há projeção nem executado comparáveis (nulo, não 0).
         self.assertEqual(por.loc[(10, GRUPO_INATIVO), "meses"], 0)
         self.assertTrue(pd.isna(por.loc[(10, GRUPO_INATIVO), "diferenca_pct"]))
-        self.assertAlmostEqual(por.loc[(10, "total"), "diferenca_pct"], 0.125)
-        # Partida Set: Ativo projeta 110 × 3 = 330; executado 120 + 130 + 140 = 390.
-        self.assertAlmostEqual(por.loc[(9, GRUPO_ATIVO), "diferenca_pct"], 60.0 / 330.0)
+        self.assertAlmostEqual(por.loc[(10, "total"), "diferenca_pct"], 31.8 / 238.2)
+        # Partida Set: Ativo projeta 110 + 110 + 108,35 = 328,35; executado 120 + 130 + 140 = 390.
+        self.assertAlmostEqual(por.loc[(9, GRUPO_ATIVO), "diferenca_pct"], 61.65 / 328.35)
 
     def test_bate_com_a_comparacao_individual_de_cada_mes(self):
         desvio = desvio_por_mes_de_partida(self._mensal(), self._anual_vazio(), 2025)
