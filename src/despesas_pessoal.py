@@ -136,6 +136,13 @@ nunca presumir:
       decisão 10 (+13) mantinha dezembro = novembro. TODAS as rubricas do Ativo em dezembro são multiplicadas pela
       razão (a composição da decisão 13 é preservada); com razão 0 e sem as duas liquidações do ano anterior, nada
       muda e um alerta avisa. O patronal do RPPS não é afetado. Ver `_razao_dezembro_ativo`.
+  18. (29/10/2026; aprovado pelo usuário após a comparação da folha com 2024 e 2025) Contratação por Tempo Determinado
+      (319004, 339004, 319104): novembro projetado saía em 2,0× setembro (histórico: 1,5× e 1,6×), porque o ×13,3333 era
+      aplicado em CADA rubrica (salário, patronal, auxílios) e o 13º (31900413) e as férias (31900412/31900414) já têm rubrica
+      própria — o 13º entrava duas vezes. Passa a ×12 nas três naturezas, e o 13º dos temporários (31900413) não se repete em
+      dezembro (real: R$ 4-20 mil, contra R$ 121-143 mil em novembro; a decisão 10 o copiava cheio). Nas demais rubricas e
+      grupos a folha já batia com o histórico (Out-Dez ÷ Jan-Set: 0,41 e 0,42 em 2024 e 2025, 0,42 projetado). Ver
+      `NATUREZAS_DETALHADAS_13_SEM_DEZEMBRO` e a nota de 319104 sobre o patronal de dezembro.
   14. (26/10/2026) Diagnóstico da sub-projeção do RPPS (319113, ação 09HB) — o backtest
       partindo de set ficou ~1% abaixo do realizado em 2024 (+R$0,28 mi) e 2025 (+R$0,32
       mi). DECIDIDO pelo usuário: MANTER x13, sem ajuste. Motivo: as causas foram
@@ -304,14 +311,22 @@ def _regra(
 #: núcleo correspondente — mesma regra da rubrica, independente de qual ação a
 #: financia).
 TABELA_REGRAS: dict[str, RegraRubrica] = {
-    # --- grupo ×13,3333 (12 meses + 13º + 1/3 férias) ---
-    "319004": _regra("319004", "Contratação por Tempo Determinado", REGRA_MULTIPLICADOR, MULTIPLICADOR_13_3333),
-    "339004": _regra("339004", "Contratação por Tempo Determinado", REGRA_MULTIPLICADOR, MULTIPLICADOR_13_3333),
+    # --- contratação temporária: ×12 (decisão 18, 29/10/2026) ---
+    # O 13º (31900413) e as férias (31900412/31900414) dos temporários TÊM rubrica própria, já projetada à parte; o ×13,3333
+    # aplicado em cada rubrica (salário, patronal, auxílios) somava o 13º e o 1/3 de férias uma segunda vez.
+    "319004": _regra(
+        "319004", "Contratação por Tempo Determinado", REGRA_MULTIPLICADOR, MULTIPLICADOR_12,
+        origem="Decisão 18 (29/10/2026): o 13º e as férias dos temporários têm rubrica própria; ×13,3333 duplicava o extra.",
+    ),
+    "339004": _regra(
+        "339004", "Contratação por Tempo Determinado", REGRA_MULTIPLICADOR, MULTIPLICADOR_12,
+        origem="Decisão 18 (29/10/2026): mesma razão de 319004 (auxílios dos temporários são lineares no real).",
+    ),
     "319104": _regra(
-        "319104", "Contratação por Tempo Determinado (Operações Intra-Orçamentárias)", REGRA_MULTIPLICADOR, MULTIPLICADOR_13_3333,
-        origem="NÃO confirmado explicitamente pelo usuário — inferido por analogia direta com o par 319013/319113 "
-        "(RGPS/RPPS: mesma rubrica, variante intra-orçamentária, mesmo multiplicador). Achado ao validar contra "
-        "dados reais de 2026 (natureza presente, sem regra até então). Revisar se questionado.",
+        "319104", "Contratação por Tempo Determinado (Operações Intra-Orçamentárias)", REGRA_MULTIPLICADOR, MULTIPLICADOR_12,
+        origem="Decisão 18 (29/10/2026): mesma razão de 319004. Antes ×13,3333 por analogia com 319013/319113, NÃO confirmado "
+        "explicitamente pelo usuário. O patronal sobre o 13º dos temporários cai em dezembro no real (2024: R$ 111 mil; 2025: "
+        "R$ 129 mil, contra ~R$ 56-63 mil nos demais meses); este ×12 não o antecipa — diferença pequena, anotada para revisão.",
     ),
     "319007": _regra("319007", "Contribuição a Entidade Fechada de Previdência", REGRA_MULTIPLICADOR, MULTIPLICADOR_13_3333),
     "319096": _regra(
@@ -376,6 +391,10 @@ NATUREZAS_DETALHADAS_DECIMO_TERCEIRO: dict[str, str] = {
     "31900303": "13 SALARIO - PENSOES CIVIS",
     "31900413": "13º SALARIO - CONTRATO TEMPORARIO",
 }
+
+#: decisão 18 (29/10/2026): o 13º dos temporários é pago em jun/nov; em dezembro o real é residual (2024: R$ 20 mil, 2025: R$ 4 mil,
+#: contra R$ 121-143 mil em novembro). A decisão 10 (dezembro do Ativo = novembro) o repetia cheio; aqui dezembro projetado = zero.
+NATUREZAS_DETALHADAS_13_SEM_DEZEMBRO: frozenset[str] = frozenset({"31900413"})
 
 #: item 3 do briefing: sem padrão mensal estável — projeta mantendo a MESMA proporção
 #: que o item representou sobre os Vencimentos (319011) na execução do ano anterior.
@@ -1208,6 +1227,9 @@ def grade_mensal(
             # novembro (real ou projetado, o que já estiver em meses_valores[10]) — ver
             # decisão 10 no cabeçalho do módulo para a evidência histórica.
             meses_valores[11] = meses_valores[10]
+        if 12 in meses_futuros and str(chave.natureza_detalhada_cod) in NATUREZAS_DETALHADAS_13_SEM_DEZEMBRO:
+            # Decisão 18: o 13º dos temporários não se repete em dezembro (nem pela decisão 10, nem pela razão da decisão 17).
+            meses_valores[11] = 0.0 if meses_valores[11] is not None else None
 
         linhas.append({
             "grupo": chave.grupo,

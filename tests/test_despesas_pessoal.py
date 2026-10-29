@@ -80,16 +80,19 @@ class TestClassificarGrupo(unittest.TestCase):
 
 
 class TestRegraParaNatureza(unittest.TestCase):
-    def test_contratacao_temporaria_e_13_3333(self):
+    def test_contratacao_temporaria_13o_tem_regra_propria(self):
         regra = regra_para_natureza("319004", "31900413")
         # 31900413 é o 13º da contratação temporária — a EXCEÇÃO (decimo_terceiro)
-        # vence a regra "mãe" (x13,3333) da natureza 319004.
+        # vence a regra "mãe" da natureza 319004.
         self.assertEqual(regra.tipo, REGRA_DECIMO_TERCEIRO)
 
-    def test_contratacao_temporaria_regular_e_13_3333(self):
-        regra = regra_para_natureza("319004", "31900401")
-        self.assertEqual(regra.tipo, REGRA_MULTIPLICADOR)
-        self.assertEqual(regra.multiplicador, MULTIPLICADOR_13_3333)
+    def test_contratacao_temporaria_regular_e_12_decisao_18(self):
+        # Decisão 18 (29/10/2026): o 13º e as férias dos temporários têm rubrica própria; ×13,3333 em cada rubrica
+        # duplicava o extra (novembro saía em 2,0× setembro, contra 1,5-1,6× no histórico).
+        for natureza, detalhada in (("319004", "31900401"), ("339004", "33900421"), ("319104", "31910415")):
+            regra = regra_para_natureza(natureza, detalhada)
+            self.assertEqual(regra.tipo, REGRA_MULTIPLICADOR, natureza)
+            self.assertEqual(regra.multiplicador, MULTIPLICADOR_12, natureza)
 
     def test_obrigacoes_patronais_rgps_e_13(self):
         regra = regra_para_natureza("319013", "31901301")
@@ -150,7 +153,7 @@ class TestMultiplicadorEfetivo(unittest.TestCase):
         self.assertEqual(multiplicador_efetivo(regra, GRUPO_INATIVO), MULTIPLICADOR_13)
 
     def test_multiplicador_direto_ignora_grupo(self):
-        regra = regra_para_natureza("319004", "x")
+        regra = regra_para_natureza("319007", "x")  # ×13,3333 (a contratação temporária passou a ×12, decisão 18)
         self.assertEqual(multiplicador_efetivo(regra, GRUPO_RPPS), MULTIPLICADOR_13_3333)
 
     def test_indenizacao_ativo_e_12(self):
@@ -517,9 +520,12 @@ class TestGradeMensal(unittest.TestCase):
             _linha_execucao(ACAO_ATIVO, "319011", "31901101", tipo_linha="item_execucao", ano_mes=202601 + i, liquidada=50_000.0 + i, paga=0.0)
             for i in range(8)  # 202601..202608
         ]
-        # Ativo, contratação temporária (x13,3333) — mesmo recorte, só p/ conferir a
-        # parcela extra concentrada em jun/nov nos meses futuros.
+        # Ativo, contribuição a entidade fechada de previdência (x13,3333) — mesmo recorte, só p/ conferir a
+        # parcela extra concentrada em jun/nov nos meses futuros. (A contratação temporária passou a x12, decisão 18.)
+        linhas.append(_linha_execucao(ACAO_ATIVO, "319007", "31900706", tipo_linha="item_execucao", ano_mes=202608, liquidada=9_000.0, paga=0.0))
+        # Ativo, contratação temporária: salário (x12), 13º (rubrica própria) — decisão 18.
         linhas.append(_linha_execucao(ACAO_ATIVO, "319004", "31900401", tipo_linha="item_execucao", ano_mes=202608, liquidada=9_000.0, paga=0.0))
+        linhas.append(_linha_execucao(ACAO_ATIVO, "319004", "31900413", tipo_linha="item_execucao", ano_mes=202608, liquidada=500.0, paga=0.0))
         return pd.DataFrame(linhas)
 
     def _anual_vazio(self):
@@ -544,7 +550,7 @@ class TestGradeMensal(unittest.TestCase):
 
     def test_mes_futuro_x13_3333_concentra_extra_em_novembro_e_dezembro_repete_no_ativo(self):
         resultado = grade_mensal(self._mensal(), self._anual_vazio(), 2026, 202608)
-        linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319004"].iloc[0]
+        linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319007"].iloc[0]
         valor_ref = 9_000.0
         extra_total = valor_ref * (MULTIPLICADOR_13_3333 - 12.0)
         metade_extra = extra_total / 2
@@ -552,6 +558,23 @@ class TestGradeMensal(unittest.TestCase):
         # de junho pra testar o bump diretamente aqui; novembro é o único mês de
         # parcela ainda futuro, recebendo o extra.
         self.assertAlmostEqual(linha["meses"][MES_PARCELA_DECIMO_TERCEIRO - 1], valor_ref + metade_extra)
+
+    def test_contratacao_temporaria_nao_leva_o_extra_do_13o_no_salario_decisao_18(self):
+        resultado = grade_mensal(self._mensal(), self._anual_vazio(), 2026, 202608)
+        salario = resultado.linhas[resultado.linhas["natureza_detalhada_cod"] == "31900401"].iloc[0]
+        # o salário dos temporários é liso: novembro = o mês de referência (o 13º tem rubrica própria)
+        self.assertAlmostEqual(salario["meses"][MES_PARCELA_DECIMO_TERCEIRO - 1], 9_000.0)
+        self.assertAlmostEqual(salario["meses"][8], 9_000.0)
+
+    def test_13o_dos_temporarios_nao_se_repete_em_dezembro_decisao_18(self):
+        resultado = grade_mensal(self._mensal(), self._anual_vazio(), 2026, 202608)
+        decimo = resultado.linhas[resultado.linhas["natureza_detalhada_cod"] == "31900413"].iloc[0]
+        self.assertGreater(decimo["meses"][MES_PARCELA_DECIMO_TERCEIRO - 1], 0.0)  # novembro paga a parcela final
+        self.assertEqual(decimo["meses"][11], 0.0)  # dezembro: zero (a decisão 10 o repetiria cheio)
+        # o 13º do Ativo (31901143) NÃO é afetado: continua repetindo novembro pela decisão 10
+        # (aqui o recorte não traz 31901143; basta que o salário comum do Ativo siga a decisão 10)
+        ativo = resultado.linhas[resultado.linhas["natureza_detalhada_cod"] == "31901101"].iloc[0]
+        self.assertAlmostEqual(ativo["meses"][11], ativo["meses"][10] * PARAMETROS_PADRAO.razao_dezembro_ativo)
 
     def test_obrigacoes_patronais_concentram_extra_inteiro_em_novembro(self):
         # Decisão 11 (22/09/2026): a antecipação de junho do 13º não gera desconto
@@ -1024,16 +1047,16 @@ class TestParametrosProjecao(unittest.TestCase):
         self.assertEqual(diferencas_do_padrao(None), [])
 
     def test_multiplicador_por_natureza_muda_so_a_rubrica(self):
-        parametros = ParametrosProjecao(multiplicadores_natureza={"319004": 14.0})
-        self.assertEqual(regra_para_natureza("319004", "31900401", parametros).multiplicador, 14.0)
-        self.assertEqual(regra_para_natureza("319004", "31900401").multiplicador, MULTIPLICADOR_13_3333)
+        parametros = ParametrosProjecao(multiplicadores_natureza={"319007": 14.0})
+        self.assertEqual(regra_para_natureza("319007", "31900706", parametros).multiplicador, 14.0)
+        self.assertEqual(regra_para_natureza("319007", "31900706").multiplicador, MULTIPLICADOR_13_3333)
         # a tabela global nunca é modificada
-        self.assertEqual(TABELA_REGRAS["319004"].multiplicador, MULTIPLICADOR_13_3333)
+        self.assertEqual(TABELA_REGRAS["319007"].multiplicador, MULTIPLICADOR_13_3333)
         resultado = grade_mensal(self._mensal(), self._anual_vazio(), 2026, 202608, parametros)
-        linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319004"].iloc[0]
+        linha = resultado.linhas[resultado.linhas["natureza_despesa_cod"] == "319007"].iloc[0]
         # Nov = R + metade de (14 − 12) × R
         self.assertAlmostEqual(linha["meses"][MES_PARCELA_DECIMO_TERCEIRO - 1], 9_000.0 + 9_000.0)
-        self.assertEqual(diferencas_do_padrao(parametros), ["natureza 319004: x13,3333 → x14"])
+        self.assertEqual(diferencas_do_padrao(parametros), ["natureza 319007: x13,3333 → x14"])
 
     def test_multiplicador_por_grupo_de_sentenca_e_indenizacao(self):
         parametros = ParametrosProjecao(sentenca_inativo=14.0, indenizacao_demais=13.0)

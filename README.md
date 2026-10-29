@@ -788,6 +788,16 @@ em dezembro são multiplicadas pela razão, preservando a composição da decis�
 não é afetado. Com a Execução Mensal de 28/10/2026: 20TP em dezembro de R$ 52.586.234,73 para
 R$ 51.797.441,21 e saldo de −R$ 3.593.174,20 para −R$ 2.804.380,68; a procedência do painel declara a razão.
 
+**Contratação por Tempo Determinado sem o 13º dobrado (decisão 18, 29/10/2026).** Comparando a folha inteira com 2024 e
+2025 (Out–Dez ÷ Jan–Set: 0,41 e 0,42 no real, 0,42 projetado), só os temporários destoavam: novembro saía em 2,0×
+setembro (histórico: 1,5× e 1,6×), porque o ×13,3333 era aplicado em cada rubrica (salário, patronal, auxílios) e o
+13º (31900413) e as férias já têm rubrica própria — o 13º entrava duas vezes. As naturezas 319004, 339004 e 319104 passam a ×12,
+e o 13º dos temporários não se repete em dezembro (real: R$ 4–20 mil, contra R$ 121–143 mil em novembro). Com a base de
+setembro/2026: novembro de R$ 933 mil para R$ 625 mil (faixa histórica: R$ 535–694 mil) e Out–Dez do total da folha
++1,2% para +0,9% sobre o esperado pelo histórico. Ficou anotado, sem alterar: o patronal dos temporários cai em
+dezembro no real e a projeção não o antecipa (diferença pequena), o 1/3 de férias do Ativo projeta ~R$ 3 mi acima do
+esperado e Outros Benefícios ficam ~R$ 1,1 mi abaixo.
+
 A página tem quatro abas. **Acompanhamento** é o painel acima. **Folha (DDP)**
 recebe os PDFs do SIAPE do mês (DDP e Crédito Bancário, de servidor e de
 pensionista), que ficam só na memória da sessão, e mostra: a conferência dos
