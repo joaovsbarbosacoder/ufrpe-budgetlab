@@ -561,15 +561,17 @@ Ação e Plano, com a fonte de cada plano de mais de uma fonte e o total conferi
 extrações (decisão do usuário). O gerador é `src/resultado_orcamentario_relatorio.py` (apresentação pura; não recalcula regra) e o
 protótipo aprovado está em `docs/superpowers/specs/2026-10-22-resultado-orcamentario-relatorio-mockup.html`.
 
-**Discricionário (RP2) por Plano Orçamentário (29/10/2026).** Logo abaixo do Detalhamento, a seção "Discricionário (RP2) por
-Plano Orçamentário" mostra um quadro por Plano Orçamentário das Ações com Resultado Primário 2, agrupados por Ação (maior dotação
+**Discricionário (RP2) por Plano Orçamentário (29/10/2026).** A página **Discricionário por Plano** (menu, logo depois de "Resultado
+Orçamentário"; antes era uma seção do Resultado, movida a pedido em 29/10/2026) mostra um quadro por Plano Orçamentário das Ações com Resultado Primário 2, agrupados por Ação (maior dotação
 primeiro), no desenho dos quadros de Despesas de Pessoal: pílula de folga ou déficit, executado, projetado até dezembro, dotação,
 barra (executado sólido, projetado hachurado, vermelho acima da dotação) e, quando o plano tem mais de uma fonte, o saldo de cada
 fonte (a 1050 da 20RK já limitada pela arrecadação própria, com a nota só quando o valor informado ultrapassa a dotação). Considera
 **todas** as células do RP2, marcadas ou não, com a mesma conta do resultado (a repartição por célula é a do Detalhamento por GND e
 Ação, agrupada por Ação e Plano). O que não tem Plano fica em duas linhas à parte, para o total fechar com o resultado: "Fora do
 discricionário" e "Sem célula". Faixa histórica e pior caso, de Despesas de Pessoal, não se aplicam. Regra em
-`src/resultado_orcamentario_planos.py`; HTML em `src/ui_resultado_planos.py`; protótipo em
+`src/resultado_orcamentario_planos.py`; HTML em `src/ui_resultado_planos.py`; página em `app_pages/resultado_discricionario.py`
+(as leituras com cache e a montagem da necessidade são compartilhadas com o Resultado em `src/ui_resultado_dados.py`; a seção 6 do
+relatório do Resultado continua trazendo os planos); protótipo em
 `docs/superpowers/specs/2026-10-29-resultado-orcamentario-acoes-discricionarias-mockup.html`. A regra fica em `src/resultado_orcamentario.py` (`RECEITA_ACAO`, `RECEITA_GND`, `RECEITA_FONTE`).
 
 O sinal dá o rótulo: positivo é **Superávit**, negativo é **Déficit**.
