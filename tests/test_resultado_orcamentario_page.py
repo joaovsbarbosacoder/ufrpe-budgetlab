@@ -218,14 +218,14 @@ def test_pagina_oferece_o_relatorio_para_baixar(diretorio: Path) -> None:
     assert "ro_baixar_relatorio" in str(app.main)
 
 
-def test_pagina_mostra_os_quadros_do_discricionario_por_plano_e_fecha_com_o_resultado(diretorio: Path) -> None:
+def test_quadros_do_discricionario_foram_para_pagina_propria_e_o_relatorio_segue_com_eles(diretorio: Path) -> None:
     app = _abrir()
     assert not app.exception, [e.value for e in app.exception]
-    assert any("Discricionário (RP2) por Plano Orçamentário" in s.value for s in app.subheader)
-    html = "".join(str(e.proto.body) for e in app.get("html"))
-    assert 'class="rp"' in html and html.count('<article class="card"') >= 1
-    assert "A soma dos quadros confere com o resultado do discricionário" in html
-    assert "Fonte 1050000000" in html or "PO 0000" in html  # a 20RK/PO 0000 existe na base real
+    # a seção saiu desta página (29/10/2026): os quadros ficam em "Discricionário por Plano"
+    assert not any("Discricionário (RP2)" in s.value for s in app.subheader)
+    assert 'class="rp"' not in "".join(str(e.proto.body) for e in app.get("html"))
+    # o botão do relatório continua aqui e ainda recebe os quadros (seção 6 do relatório)
+    assert "ro_baixar_relatorio" in str(app.main)
 
 
 def test_menu_tem_pagina(diretorio: Path) -> None:

@@ -85,7 +85,14 @@ from src.sobra_empenho import (
 )
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_cadastro import formatar_brl
-from src.ui_resultado_planos import html_planos_discricionarios
+from src.ui_resultado_dados import (
+    CAMINHO_LIQUIDACAO_COMPETENCIA,
+    cached_celulas_por_exercicio as _cached_celulas_por_exercicio,
+    cached_execucao as _cached_execucao,
+    cached_lancamento as _cached_lancamento,
+    cached_liquidacao_competencia as _cached_liquidacao_competencia,
+    necessidade_origem as _necessidade,
+)
 from src.ui_resultado_orcamentario import (
     AGRUPAR_ACAO,
     AGRUPAR_GND,
@@ -147,7 +154,6 @@ def _sem_latex(texto: str) -> str:
 
 
 #: mesmo arquivo de `app_pages/contratos_continuos.py` e `app_pages/bolsas_auxilios.py`.
-CAMINHO_LIQUIDACAO_COMPETENCIA = Path("data/raw") / "Liquidação por Competência.xlsx"
 
 _CHAVE_FLASH = "ro_mensagem"
 
@@ -162,57 +168,6 @@ _COLUNAS_CELULA = {
     "Fonte detalhada": "fonte_recursos_detalhada_codigo",
     "Descrição da ação": "acao_descricao",
 }
-
-
-# ------------------------------------------------------------------- leituras (cache)
-@st.cache_data(show_spinner="Lendo a base de Dotação Anual...")
-def _cached_celulas_por_exercicio(caminho_ponteiro: str, mtime_ponteiro: float) -> dict[int, pd.DataFrame]:
-    """Células (`celulas_da_dotacao`) de cada exercício presente na Dotação Anual. Guarda só o
-    derivado, não a base inteira (memória: ver o comentário de `gc.collect()` no fim da página).
-    `caminho_ponteiro`/`mtime_ponteiro` só participam da chave de cache."""
-
-    dotacao = carregar_dotacao_atual()
-    anos = sorted(int(ano) for ano in dotacao["ano_lancamento"].dropna().unique())
-    return {ano: celulas_da_dotacao(dotacao, ano) for ano in anos}
-
-
-@st.cache_data(show_spinner="Lendo a base de Execução Mensal...")
-def _cached_execucao(
-    caminho_ponteiro: str, mtime_ponteiro: float, exercicio: int,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
-    """`(empenhado por NE e célula no exercício, saldo por NE, mês do primeiro empenho por NE)` — uma
-    só leitura da Execução Mensal. Saldo e primeiro empenho são as mesmas entradas que as páginas de
-    Contratos e Bolsas montam (`saldo_por_ne(agregar_por_ne(...))`, `primeiro_mes_com_empenho_por_ne`)."""
-
-    execucao = carregar_execucao_mensal_atual()
-    empenhado = empenhado_por_ne_e_celula(execucao, exercicio)
-    por_ne_execucao = saldo_por_ne(agregar_por_ne(execucao))
-    tempo = linha_do_tempo_por_ne(execucao)
-    tempo["ne_curta"] = tempo["ne_ccor"].apply(_ne_curta_execucao)
-    return empenhado, por_ne_execucao, primeiro_mes_com_empenho_por_ne(tempo)
-
-
-@st.cache_data(show_spinner="Lendo a liquidação por mês de lançamento...")
-def _cached_lancamento(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFrame:
-    """Liquidado por (NE, mês de LANÇAMENTO) da Execução Mensal, com `ne_curta` — usado só para medir pelo consumo
-    do orçamento as NEs com competência em exercício posterior (`src/liquidacao_consumo.py`)."""
-
-    tempo = linha_do_tempo_por_ne(carregar_execucao_mensal_atual())
-    tempo["ne_curta"] = tempo["ne_ccor"].apply(_ne_curta_execucao)
-    return tempo
-
-
-@st.cache_data(show_spinner="Lendo a Liquidação por Competência...")
-def _cached_liquidacao_competencia(caminho: str, mtime: float) -> tuple[pd.Series, pd.DataFrame]:
-    """`(total liquidado por NE curta, liquidado por NE e mês com ne_curta)` — as duas leituras que
-    `app_pages/contratos_continuos.py` faz em separado, aqui numa só. `mtime` só participa da chave."""
-
-    base = ler_liquidacao_competencia(caminho)
-    totais = liquidado_por_ne(base)
-    indice = pd.Series(totais.to_numpy(), index=[_ne_curta_execucao(ne) for ne in totais.index])
-    por_mes = liquidado_por_ne_e_mes(base)
-    por_mes["ne_curta"] = por_mes["ne_ccor"].apply(_ne_curta_execucao)
-    return indice, por_mes
 
 
 # ------------------------------------------------------------------- formatação
@@ -266,65 +221,6 @@ def _avisos_com_ok(avisos: list[str], escopo: str, exercicio: int) -> None:
 
 def _mensagem(texto: str) -> None:
     st.session_state[_CHAVE_FLASH] = texto
-
-
-# ------------------------------------------------------------------- necessidade
-def _necessidade(
-    origem: str,
-    exercicio: int,
-    por_ne_execucao: pd.DataFrame,
-    sugestao_inicio: pd.Series,
-    indice_competencia: pd.Series | None,
-    competencia: pd.DataFrame | None,
-    mes_referencia: int,
-    lancamento: pd.DataFrame | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame | None, pd.DataFrame, str | None, list[str], RelatorioProjecaoExecucao | None]:
-    """`(cadastro com colunas derivadas, linhas da projeção ou None, sem_ne, motivo da indisponibilidade,
-    avisos do relatório de projeção, relatório de projeção ou None)` — o relatório inteiro alimenta "Sobra prevista de
-    empenho" (`src/sobra_empenho.py`).
-
-    Exercício sem cadastro ou Liquidação por Competência indisponível: linhas `None` (necessidade
-    indisponível, não zero) e um motivo para o aviso."""
-
-    vazio = pd.DataFrame(columns=["ne_curta"])
-    modulo = cadastro_contratos if origem == ORIGEM_CONTRATOS else cadastro_bolsas
-    if exercicio not in modulo.anos_disponiveis():
-        return vazio, None, vazio, f"não há cadastro de {origem} para o exercício {exercicio}", [], None
-    if origem == ORIGEM_CONTRATOS:
-        dados = cadastro_contratos.como_dataframe(cadastro_contratos.carregar_contratos(exercicio), exercicio)
-        tabela = tabela_contratos(dados, por_ne_execucao, indice_competencia, sugestao_inicio)
-    else:
-        dados = cadastro_bolsas.como_dataframe(cadastro_bolsas.carregar_programas(exercicio))
-        tabela = tabela_bolsas(dados, por_ne_execucao, sugestao_inicio)
-    if competencia is None:
-        return tabela, None, vazio, "a Liquidação por Competência não está disponível", [], None
-    if origem == ORIGEM_CONTRATOS:
-        # Sem `antecessores` de propósito (spec §10a): NE sem histórico = fator 1, valor mensal cheio.
-        # Mesma troca da página de Contratos (13/10/2026): competência futura vale pelo mês do lançamento.
-        pelo_consumo = competencia_pelo_consumo(competencia, lancamento, exercicio)
-        # Ajustes manuais do esperado (14/10/2026): log ilegível → metodologia, avisado, e nada é gravado por cima.
-        avisos_ajustes: list[str] = []
-        try:
-            ajustes = ajustes_vigentes(exercicio)
-        except ErroAjuste as erro:
-            ajustes = {}
-            avisos_ajustes.append(f"Ajustes da projeção ilegíveis — usada a metodologia: {erro}")
-        relatorio, sem_ne = projecao_contratos(
-            tabela, pelo_consumo.dados, exercicio, mes_referencia, nes_pelo_lancamento=pelo_consumo.nes_trocadas,
-            ajustes=ajustes,
-        )
-        return tabela, relatorio.linhas, sem_ne, None, [*avisos_ajustes, *pelo_consumo.avisos(), *relatorio.avisos], relatorio
-    else:
-        # Ajustes manuais de Bolsas (15/10/2026; pasta própria): log ilegível → metodologia, avisado, nada é gravado.
-        avisos_ajustes_bolsas: list[str] = []
-        try:
-            ajustes_b = ajustes_vigentes(exercicio, projecao_ajustes.DIRETORIO_AJUSTES_BOLSAS)
-        except ErroAjuste as erro:
-            ajustes_b = {}
-            avisos_ajustes_bolsas.append(f"Ajustes da projeção de Bolsas ilegíveis — usada a metodologia: {erro}")
-        relatorio, sem_ne = projecao_bolsas(tabela, competencia, exercicio, mes_referencia, ajustes=ajustes_b)
-        return tabela, relatorio.linhas, sem_ne, None, [*avisos_ajustes_bolsas, *relatorio.avisos], relatorio
-    return tabela, relatorio.linhas, sem_ne, None, relatorio.avisos, relatorio
 
 
 # ------------------------------------------------------------------- diálogos
@@ -730,13 +626,6 @@ st.caption(
     "Clique em um grupo para abrir."
 )
 area_detalhe = st.container()
-st.subheader("Discricionário (RP2) por Plano Orçamentário")
-st.caption(
-    "Um quadro por Plano Orçamentário das Ações com Resultado Primário 2, agrupados por Ação. Considera todas as células do "
-    "discricionário, marcadas ou não, com a mesma conta do resultado (executado, projetado a realizar e a fonte 1050 da 20RK "
-    "limitada pela arrecadação própria)."
-)
-area_planos = st.container()
 
 # --------------------------------------------------------------- Células
 # Layout do protótipo aprovado em 08/10/2026 (`docs/superpowers/specs/2026-10-08-resultado-orcamentario-celulas-mockup.html`):
@@ -1150,19 +1039,15 @@ with area_detalhe:
     )
     _avisos_com_ok(detalhe_gnd_acao.avisos, "detalhe", exercicio)
 
-# Quadros do discricionário por Plano Orçamentário (29/10/2026): seleção própria (todo o RP2), independente das células marcadas.
+# Quadros do discricionário por Plano Orçamentário (29/10/2026): exibidos na página "Discricionário por Plano" (menu). Aqui só são
+# calculados para a seção 6 do relatório. Seleção própria (todo o RP2), independente das células marcadas.
 _planos = None
-with area_planos:
-    if not (despesas_legiveis and receitas_legiveis):
-        st.warning("Quadros indisponíveis: o cadastro de despesas previstas ou de receitas próprias não pôde ser lido.")
-    else:
-        _resultado_rp2 = calcular_resultado(
-            celulas, empenhado, selecao_discricionaria(celulas), tabela_contratos_df, tabela_bolsas_df,
-            linhas_contratos, linhas_bolsas, sem_ne_contratos, sem_ne_bolsas, despesas, receitas,
-        )
-        _planos = planos_discricionarios(_resultado_rp2, celulas, empenhado, despesas, ativos_sem_ne)
-        st.html(html_planos_discricionarios(_planos))
-        _avisos_com_ok(_planos.avisos, "planos", exercicio)
+if despesas_legiveis and receitas_legiveis:
+    _resultado_rp2 = calcular_resultado(
+        celulas, empenhado, selecao_discricionaria(celulas), tabela_contratos_df, tabela_bolsas_df,
+        linhas_contratos, linhas_bolsas, sem_ne_contratos, sem_ne_bolsas, despesas, receitas,
+    )
+    _planos = planos_discricionarios(_resultado_rp2, celulas, empenhado, despesas, ativos_sem_ne)
 
 # Relatório (22/10/2026): HTML de uma folha A4 com os mesmos números da tela (cartões, composição, detalhamento, receitas e
 # outras despesas), para imprimir ou salvar em PDF. Fica junto dos cartões.

@@ -65,6 +65,11 @@ page = st.navigation(
                 icon="⚖️",
             ),
             st.Page(
+                "app_pages/resultado_discricionario.py",
+                title="Discricionário por Plano",
+                icon="📊",
+            ),
+            st.Page(
                 "app_pages/consulta_empenhos.py",
                 title="Consulta de Empenhos",
                 icon="📋",
