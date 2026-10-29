@@ -1150,22 +1150,8 @@ with area_detalhe:
     )
     _avisos_com_ok(detalhe_gnd_acao.avisos, "detalhe", exercicio)
 
-# Relatório (22/10/2026): HTML de uma folha A4 com os mesmos números da tela (cartões, composição, detalhamento, receitas e
-# outras despesas), para imprimir ou salvar em PDF. Fica junto dos cartões.
-_emitido_em = datetime.now()
-with area_cartoes:
-    st.download_button(
-        "Baixar relatório (HTML para imprimir ou salvar em PDF)",
-        data=html_relatorio(
-            resultado, detalhe_gnd_acao, despesas, receitas, exercicio, len(marcadas), len(celulas), _emitido_em,
-            nota_dotacao=_nota_limite_receita(resultado),
-        ).encode("utf-8"),
-        file_name=f"resultado_orcamentario_{exercicio}_{_emitido_em:%Y-%m-%d}.html",
-        mime="text/html",
-        key="ro_baixar_relatorio",
-    )
-
 # Quadros do discricionário por Plano Orçamentário (29/10/2026): seleção própria (todo o RP2), independente das células marcadas.
+_planos = None
 with area_planos:
     if not (despesas_legiveis and receitas_legiveis):
         st.warning("Quadros indisponíveis: o cadastro de despesas previstas ou de receitas próprias não pôde ser lido.")
@@ -1177,6 +1163,21 @@ with area_planos:
         _planos = planos_discricionarios(_resultado_rp2, celulas, empenhado, despesas, ativos_sem_ne)
         st.html(html_planos_discricionarios(_planos))
         _avisos_com_ok(_planos.avisos, "planos", exercicio)
+
+# Relatório (22/10/2026): HTML de uma folha A4 com os mesmos números da tela (cartões, composição, detalhamento, receitas e
+# outras despesas), para imprimir ou salvar em PDF. Fica junto dos cartões.
+_emitido_em = datetime.now()
+with area_cartoes:
+    st.download_button(
+        "Baixar relatório (HTML para imprimir ou salvar em PDF)",
+        data=html_relatorio(
+            resultado, detalhe_gnd_acao, despesas, receitas, exercicio, len(marcadas), len(celulas), _emitido_em,
+            nota_dotacao=_nota_limite_receita(resultado), planos=_planos,
+        ).encode("utf-8"),
+        file_name=f"resultado_orcamentario_{exercicio}_{_emitido_em:%Y-%m-%d}.html",
+        mime="text/html",
+        key="ro_baixar_relatorio",
+    )
 
 # --------------------------------------------------------------- Avisos
 st.subheader("6. Avisos")
