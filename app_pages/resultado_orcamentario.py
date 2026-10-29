@@ -71,6 +71,7 @@ from src.resultado_orcamentario import (
     soma_ou_nulo,
 )
 from src.resultado_orcamentario_detalhe import detalhar_por_gnd_acao
+from src.resultado_orcamentario_planos import planos_discricionarios, selecao_discricionaria
 from src.resultado_orcamentario_relatorio import html_relatorio
 from src.resultado_orcamentario_cadastro import ArquivoCorrompido, CelulaChave, DespesaManual, ReceitaPropria
 from src import resultado_orcamentario_historico as historico_ro
@@ -84,6 +85,7 @@ from src.sobra_empenho import (
 )
 from src.tesouro_execucao_mensal import agregar_por_ne, linha_do_tempo_por_ne, primeiro_mes_com_empenho_por_ne
 from src.ui_cadastro import formatar_brl
+from src.ui_resultado_planos import html_planos_discricionarios
 from src.ui_resultado_orcamentario import (
     AGRUPAR_ACAO,
     AGRUPAR_GND,
@@ -728,6 +730,13 @@ st.caption(
     "Clique em um grupo para abrir."
 )
 area_detalhe = st.container()
+st.subheader("Discricionário (RP2) por Plano Orçamentário")
+st.caption(
+    "Um quadro por Plano Orçamentário das Ações com Resultado Primário 2, agrupados por Ação. Considera todas as células do "
+    "discricionário, marcadas ou não, com a mesma conta do resultado (executado, projetado a realizar e a fonte 1050 da 20RK "
+    "limitada pela arrecadação própria)."
+)
+area_planos = st.container()
 
 # --------------------------------------------------------------- Células
 # Layout do protótipo aprovado em 08/10/2026 (`docs/superpowers/specs/2026-10-08-resultado-orcamentario-celulas-mockup.html`):
@@ -1155,6 +1164,19 @@ with area_cartoes:
         mime="text/html",
         key="ro_baixar_relatorio",
     )
+
+# Quadros do discricionário por Plano Orçamentário (29/10/2026): seleção própria (todo o RP2), independente das células marcadas.
+with area_planos:
+    if not (despesas_legiveis and receitas_legiveis):
+        st.warning("Quadros indisponíveis: o cadastro de despesas previstas ou de receitas próprias não pôde ser lido.")
+    else:
+        _resultado_rp2 = calcular_resultado(
+            celulas, empenhado, selecao_discricionaria(celulas), tabela_contratos_df, tabela_bolsas_df,
+            linhas_contratos, linhas_bolsas, sem_ne_contratos, sem_ne_bolsas, despesas, receitas,
+        )
+        _planos = planos_discricionarios(_resultado_rp2, celulas, empenhado, despesas, ativos_sem_ne)
+        st.html(html_planos_discricionarios(_planos))
+        _avisos_com_ok(_planos.avisos, "planos", exercicio)
 
 # --------------------------------------------------------------- Avisos
 st.subheader("6. Avisos")

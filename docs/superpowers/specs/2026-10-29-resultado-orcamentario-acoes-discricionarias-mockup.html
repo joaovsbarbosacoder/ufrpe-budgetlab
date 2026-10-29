@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quadros por Ação do discricionário — protótipo</title>
+<style>
+:root{--bg:#F5F8FC;--surface:#fff;--alt:#F0F5FA;--divider:#D3DFEC;--text:#07133D;--muted:#526584;--accent:#0969DA;--red:#D20A16;--green:#0A8F3D;--warn:#C96A00}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:"Inter","Segoe UI",system-ui,sans-serif;font-size:14px;padding:22px 16px 48px}
+main{max-width:1240px;margin:0 auto}
+h1{font-size:20px;margin:0 0 4px} .lead{color:var(--muted);margin:0 0 12px;font-size:13px}
+.proto{background:rgba(201,106,0,.11);border:1px solid rgba(201,106,0,.35);border-radius:10px;padding:9px 14px;font-size:12.5px;margin:12px 0 16px}
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.kpi{background:var(--surface);border:1px solid var(--divider);border-radius:14px;padding:12px 16px;min-width:0}
+.kpi .l{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.kpi .v{font-size:20px;font-weight:650;margin-top:3px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.kpi .s{font-size:12px;color:var(--muted);margin-top:2px}
+.sec{font-size:12px;letter-spacing:.14em;text-transform:uppercase;font-weight:650;margin:18px 0 4px}
+.cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.card{background:var(--surface);border:1px solid var(--divider);border-top:4px solid var(--c);border-radius:14px;padding:14px 18px;min-width:0}
+.card header{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.card h3{margin:0;font-size:14.5px;line-height:1.3} .cod{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--c);margin-right:8px}
+.pill{font-size:12px;font-weight:650;padding:4px 10px;border-radius:999px;white-space:nowrap}
+.pill.neg{color:var(--red);background:rgba(210,10,22,.12)} .pill.pos{color:var(--green);background:rgba(10,143,61,.12)} .pill.info{color:var(--muted);background:var(--alt)}
+.figs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:12px 0 22px;font-size:11.5px;color:var(--muted)}
+.figs b{display:block;color:var(--text);font-size:14.5px;font-variant-numeric:tabular-nums;margin-top:2px;white-space:nowrap}
+.bar{position:relative;height:16px;border-radius:999px;background:var(--alt)}
+.b-exec,.b-proj,.b-over{position:absolute;top:0;bottom:0}
+.b-exec{left:0;background:var(--c);border-radius:999px 0 0 999px}
+.b-proj{background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--c) 55%,white) 0 5px,color-mix(in srgb,var(--c) 28%,white) 5px 10px)}
+.b-over{min-width:6px;border-radius:0 999px 999px 0;background:repeating-linear-gradient(135deg,var(--red) 0 4px,color-mix(in srgb,var(--red) 40%,white) 4px 8px)}
+.b-dot{position:absolute;top:-5px;bottom:-5px;width:2px;background:var(--text)}
+.b-dot::after{content:"Dotação";position:absolute;top:-16px;left:50%;transform:translateX(-50%);font-size:10px;color:var(--muted);white-space:nowrap}
+.foot{display:flex;flex-wrap:wrap;gap:4px 16px;font-size:11.5px;color:var(--muted);margin-top:10px} .foot b{color:var(--text)}
+.sub{margin-top:10px;border-top:1px dashed var(--divider);padding-top:8px;display:grid;gap:4px}
+.sub div{display:flex;justify-content:space-between;gap:10px;font-size:12.5px} .sub span{color:var(--muted)}
+.neg{color:var(--red)} .pos{color:var(--green)}
+.legenda{margin-top:18px;background:var(--surface);border:1px solid var(--divider);border-radius:14px;padding:14px 18px;font-size:13px;color:var(--muted);display:grid;gap:6px}
+.legenda b{color:var(--text)}
+@media(max-width:900px){.cards{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.kpis{grid-template-columns:1fr}.figs{grid-template-columns:1fr 1fr}}
+</style></head><body><main>
+<h1>Por Ação do discricionário</h1>
+<p class="lead">Protótipo da nova seção do Resultado Orçamentário · exercício 2026 · uma Ação por quadro, da maior para a menor dotação.</p>
+<div class="proto"><b>Protótipo.</b> As dotações são as reais de 2026 (resultado primário 2, 13 Ações). O <b>executado</b> e o <b>projetado</b> são ilustrativos, só para mostrar a estrutura; no sistema viriam das mesmas regras do Resultado Orçamentário.</div>
+<div class="kpis">
+  <div class="kpi"><div class="l">Dotação discricionária</div><div class="v">R$ 83.616.713,00</div><div class="s">13 Ações · 40 células</div></div>
+  <div class="kpi"><div class="l">Executado jan–out</div><div class="v">R$ 57.834.772,76</div><div class="s">69% da dotação</div></div>
+  <div class="kpi"><div class="l">Projetado até dez</div><div class="v">R$ 23.675.541,75</div><div class="s">28% da dotação</div></div>
+  <div class="kpi"><div class="l">Saldo</div><div class="v pos">+R$ 2.106.398,49</div><div class="s">3 Ação(ões) em déficit</div></div>
+</div>
+<div class="sec">Por Ação</div>
+<p class="lead">Barra = dotação consumida (executado sólido, projetado hachurado, vermelho acima da dotação); traço preto = dotação.</p>
+<div class="cards">
+<article class="card" style="--c:#0969DA">
+  <header><h3><span class="cod">20RK</span>Funcionamento de Instituições Federais de Ensino Superior</h3><span class="pill pos">Folga R$ 2.254.838,93</span></header>
+  <div class="figs"><div>Executado jan–out<b>R$ 40.130.247,32</b></div><div>Projetado até dez<b>R$ 18.108.741,75</b></div><div>Dotação<b>R$ 60.493.828,00</b></div></div>
+  <div class="bar" role="img" aria-label="20RK: R$ 58.238.989,07 de R$ 60.493.828,00">
+    <div class="b-exec" style="width:63.786%"></div>
+    <div class="b-proj" style="left:63.786%;width:28.784%"></div>
+    
+    <div class="b-dot" style="left:96.154%"></div>
+  </div>
+  <div class="foot"><span>Total do ano <b>R$ 58.238.989,07</b></span><span>Consumo da dotação <b>96%</b></span></div>
+  <div class="sub"><div><span>Fonte 1000000000</span><b class="pos">+R$ 1.839.437,13</b></div><div><span>Fonte 1050000000 · limitada pela arrecadação</span><b class="pos">+R$ 415.401,80</b></div></div>
+</article>
+<article class="card" style="--c:#6F42C1">
+  <header><h3><span class="cod">4002</span>Assistência ao Estudante de Ensino Superior</h3><span class="pill neg">Déficit R$ 627.314,00</span></header>
+  <div class="figs"><div>Executado jan–out<b>R$ 12.900.000,00</b></div><div>Projetado até dez<b>R$ 3.600.000,00</b></div><div>Dotação<b>R$ 15.872.686,00</b></div></div>
+  <div class="bar" role="img" aria-label="4002: R$ 16.500.000,00 de R$ 15.872.686,00">
+    <div class="b-exec" style="width:75.175%"></div>
+    <div class="b-proj" style="left:75.175%;width:17.323%"></div>
+    <div class="b-over" style="left:92.498%;width:3.656%"></div>
+    <div class="b-dot" style="left:92.498%"></div>
+  </div>
+  <div class="foot"><span>Total do ano <b>R$ 16.500.000,00</b></span><span>Consumo da dotação <b>104%</b></span></div>
+  
+</article>
+<article class="card" style="--c:#0F8B84">
+  <header><h3><span class="cod">20GK</span>Fomento às Ações de Graduação, Pós-Graduação, Ensino, Pesquisa e Extensão</h3><span class="pill pos">Folga R$ 195.593,00</span></header>
+  <div class="figs"><div>Executado jan–out<b>R$ 2.800.000,00</b></div><div>Projetado até dez<b>R$ 1.100.000,00</b></div><div>Dotação<b>R$ 4.095.593,00</b></div></div>
+  <div class="bar" role="img" aria-label="20GK: R$ 3.900.000,00 de R$ 4.095.593,00">
+    <div class="b-exec" style="width:65.737%"></div>
+    <div class="b-proj" style="left:65.737%;width:25.825%"></div>
+    
+    <div class="b-dot" style="left:96.154%"></div>
+  </div>
+  <div class="foot"><span>Total do ano <b>R$ 3.900.000,00</b></span><span>Consumo da dotação <b>95%</b></span></div>
+  
+</article>
+<article class="card" style="--c:#C96A00">
+  <header><h3><span class="cod">20RL</span>Funcionamento das Instituições da Rede Federal de Educação Profissional</h3><span class="pill pos">Folga R$ 157.030,00</span></header>
+  <div class="figs"><div>Executado jan–out<b>R$ 1.200.000,00</b></div><div>Projetado até dez<b>R$ 500.000,00</b></div><div>Dotação<b>R$ 1.857.030,00</b></div></div>
+  <div class="bar" role="img" aria-label="20RL: R$ 1.700.000,00 de R$ 1.857.030,00">
+    <div class="b-exec" style="width:62.134%"></div>
+    <div class="b-proj" style="left:62.134%;width:25.889%"></div>
+    
+    <div class="b-dot" style="left:96.154%"></div>
+  </div>
+  <div class="foot"><span>Total do ano <b>R$ 1.700.000,00</b></span><span>Consumo da dotação <b>92%</b></span></div>
+  
+</article>
+<article class="card" style="--c:#0A8F3D">
+  <header><h3><span class="cod">2994</span>Assistência aos Estudantes da Rede Federal de Educação Profissional</h3><span class="pill neg">Déficit R$ 53.148,00</span></header>
+  <div class="figs"><div>Executado jan–out<b>R$ 600.000,00</b></div><div>Projetado até dez<b>R$ 300.000,00</b></div><div>Dotação<b>R$ 846.852,00</b></div></div>
+  <div class="bar" role="img" aria-label="2994: R$ 900.000,00 de R$ 846.852,00">
+    <div class="b-exec" style="width:64.103%"></div>
+    <div class="b-proj" style="left:64.103%;width:26.373%"></div>
+    <div class="b-over" style="left:90.476%;width:5.678%"></div>
+    <div class="b-dot" style="left:90.476%"></div>
+  </div>
+  <div class="foot"><span>Total do ano <b>R$ 900.000,00</b></span><span>Consumo da dotação <b>106%</b></span></div>
+  
+</article>
+<article class="card" style="--c:#B83280">
+  <header><h3><span class="cod">21D7</span>Apoio à Educação a Distância</h3><span class="pill pos">Folga R$ 58.109,00</span></header>
+  <div class="figs"><div>Executado jan–out<b>R$ 90.000,00</b></div><div>Projetado até dez<b>R$ 40.000,00</b></div><div>Dotação<b>R$ 188.109,00</b></div></div>
+  <div class="bar" role="img" aria-label="21D7: R$ 130.000,00 de R$ 188.109,00">
+    <div class="b-exec" style="width:46.004%"></div>
+    <div class="b-proj" style="left:46.004%;width:20.446%"></div>
+    
+    <div class="b-dot" style="left:96.154%"></div>
+  </div>
+  <div class="foot"><span>Total do ano <b>R$ 130.000,00</b></span><span>Consumo da dotação <b>69%</b></span></div>
+  
+</article>
+<article class="card" style="--c:#2F6FDE">
+  <header><h3><span class="cod">00PW</span>Contribuições Regulares a Entidades ou Organismos Nacionais</h3><span class="pill pos">Folga R$ 8.183,00</span></header>
+  <div class="figs"><div>Executado jan–out<b>R$ 60.000,00</b></div><div>Projetado até dez<b>R$ 10.000,00</b></div><div>Dotação<b>R$ 78.183,00</b></div></div>
+  <div class="bar" role="img" aria-label="00PW: R$ 70.000,00 de R$ 78.183,00">
+    <div class="b-exec" style="width:73.791%"></div>
+    <div class="b-proj" style="left:73.791%;width:12.299%"></div>
+    
+    <div class="b-dot" style="left:96.154%"></div>
+  </div>
+  <div class="foot"><span>Total do ano <b>R$ 70.000,00</b></span><span>Consumo da dotação <b>90%</b></span></div>
+  
+</article>
+<article class="card" style="--c:#8A5A00">
+  <header><h3><span class="cod">8282</span>Reestruturação e Modernização das Instituições Federais de Ensino</h3><span class="pill pos">Folga R$ 76.653,00</span></header>
+  <div class="figs"><div>Executado jan–out<b>R$ 0,00</b></div><div>Projetado até dez<b>R$ 0,00</b></div><div>Dotação<b>R$ 76.653,00</b></div></div>
+  <div class="bar" role="img" aria-label="8282: R$ 0,00 de R$ 76.653,00">
+    <div class="b-exec" style="width:0.000%"></div>
+    <div class="b-proj" style="left:0.000%;width:0.000%"></div>
+    
+    <div class="b-dot" style="left:96.154%"></div>
+  </div>
+  <div class="foot"><span>Total do ano <b>R$ 0,00</b></span><span>Consumo da dotação <b>0%</b></span></div>
+  
+</article>
+<article class="card" style="--c:#1E7F6B">
+  <header><h3><span class="cod">21GS</span>Internacionalização da Educação Superior</h3><span class="pill neg">Déficit R$ 5.436,00</span></header>
+  <div class="figs"><div>Executado jan–out<b>R$ 38.500,00</b></div><div>Projetado até dez<b>R$ 16.800,00</b></div><div>Dotação<b>R$ 49.864,00</b></div></div>
+  <div class="bar" role="img" aria-label="21GS: R$ 55.300,00 de R$ 49.864,00">
+    <div class="b-exec" style="width:66.943%"></div>
+    <div class="b-proj" style="left:66.943%;width:19.759%"></div>
+    <div class="b-over" style="left:86.702%;width:9.452%"></div>
+    <div class="b-dot" style="left:86.702%"></div>
+  </div>
+  <div class="foot"><span>Total do ano <b>R$ 55.300,00</b></span><span>Consumo da dotação <b>111%</b></span></div>
+  
+</article>
+<article class="card" style="--c:#7A3FD1">
+  <header><h3><span class="cod">216H</span>Ajuda de Custo para Moradia ou Auxílio-Moradia a Agentes Públicos</h3><span class="pill pos">Folga R$ 21.600,00</span></header>
+  <div class="figs"><div>Executado jan–out<b>R$ 0,00</b></div><div>Projetado até dez<b>R$ 0,00</b></div><div>Dotação<b>R$ 21.600,00</b></div></div>
+  <div class="bar" role="img" aria-label="216H: R$ 0,00 de R$ 21.600,00">
+    <div class="b-exec" style="width:0.000%"></div>
+    <div class="b-proj" style="left:0.000%;width:0.000%"></div>
+    
+    <div class="b-dot" style="left:96.154%"></div>
+  </div>
+  <div class="foot"><span>Total do ano <b>R$ 0,00</b></span><span>Consumo da dotação <b>0%</b></span></div>
+  
+</article>
+<article class="card" style="--c:#C2410C">
+  <header><h3><span class="cod">4572</span>Capacitação de Servidores Públicos Federais em Processo de Qualificação</h3><span class="pill pos">Folga R$ 10.289,56</span></header>
+  <div class="figs"><div>Executado jan–out<b>R$ 11.082,44</b></div><div>Projetado até dez<b>R$ 0,00</b></div><div>Dotação<b>R$ 21.372,00</b></div></div>
+  <div class="bar" role="img" aria-label="4572: R$ 11.082,44 de R$ 21.372,00">
+    <div class="b-exec" style="width:49.861%"></div>
+    <div class="b-proj" style="left:49.861%;width:0.000%"></div>
+    
+    <div class="b-dot" style="left:96.154%"></div>
+  </div>
+  <div class="foot"><span>Total do ano <b>R$ 11.082,44</b></span><span>Consumo da dotação <b>52%</b></span></div>
+  
+</article>
+<article class="card" style="--c:#0E7490">
+  <header><h3><span class="cod">21IH</span>Assistência para Atendimento a Pessoas com Deficiência</h3><span class="pill pos">Folga R$ 10.000,00</span></header>
+  <div class="figs"><div>Executado jan–out<b>R$ 0,00</b></div><div>Projetado até dez<b>R$ 0,00</b></div><div>Dotação<b>R$ 10.000,00</b></div></div>
+  <div class="bar" role="img" aria-label="21IH: R$ 0,00 de R$ 10.000,00">
+    <div class="b-exec" style="width:0.000%"></div>
+    <div class="b-proj" style="left:0.000%;width:0.000%"></div>
+    
+    <div class="b-dot" style="left:96.154%"></div>
+  </div>
+  <div class="foot"><span>Total do ano <b>R$ 0,00</b></span><span>Consumo da dotação <b>0%</b></span></div>
+  
+</article>
+<article class="card" style="--c:#5B6B82">
+  <header><h3><span class="cod">00UU</span>Contribuições Regulares a Organismos Internacionais de Direitos</h3><span class="pill info">Dotação integral</span></header>
+  <div class="figs"><div>Executado jan–out<b>R$ 4.943,00</b></div><div>Projetado até dez<b>R$ 0,00</b></div><div>Dotação<b>R$ 4.943,00</b></div></div>
+  <div class="bar" role="img" aria-label="00UU: R$ 4.943,00 de R$ 4.943,00">
+    <div class="b-exec" style="width:96.154%"></div>
+    <div class="b-proj" style="left:96.154%;width:0.000%"></div>
+    
+    <div class="b-dot" style="left:96.154%"></div>
+  </div>
+  <div class="foot"><span>Total do ano <b>R$ 4.943,00</b></span><span>Consumo da dotação <b>100%</b></span></div>
+  
+</article>
+</div>
+<div class="legenda">
+  <div><b>Escopo:</b> todas as Ações com Resultado Primário 2 (discricionário), independentemente das células marcadas na página.</div>
+  <div><b>Fonte 1050 dentro da 20RK:</b> o quadro lista as fontes que compõem a Ação, com a 1050 já limitada pela arrecadação própria informada.</div>
+  <div><b>Não incluído nesta versão:</b> “faixa histórica” e “pior caso” (existem em Despesas de Pessoal; para o discricionário não há série definida).</div>
+</div>
+</main></body></html>

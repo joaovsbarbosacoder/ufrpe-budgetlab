@@ -23,6 +23,7 @@ Nulo continua nulo: um valor indisponível deixa nulo o grupo que ele alimenta (
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -116,17 +117,19 @@ def _pesos_da_ne(emp_da_ne: pd.DataFrame) -> dict[CelulaChave, float | None]:
     return pesos
 
 
-def detalhar_por_gnd_acao(
+def _acumular(
     res: ResultadoOrcamentario,
     celulas: pd.DataFrame,
     empenhado: pd.DataFrame,
     selecao: list[CelulaChave],
     despesas_manuais: list[DespesaManual],
-    ativos_sem_ne: pd.DataFrame | None = None,
-) -> DetalheGndAcao:
-    """Ver a docstring do módulo. `res` é o resultado já calculado (o detalhamento não recalcula a regra); os
-    demais argumentos são os mesmos usados por `calcular_resultado`. `ativos_sem_ne`: contratos ATIVOS sem NE
-    (`separar_ativos_sem_ne`), com a coluna `necessidade`."""
+    ativos_sem_ne: pd.DataFrame | None,
+    chave_grupo: Callable[[CelulaChave], tuple],
+) -> tuple[dict[tuple, _Balde], list[str], bool]:
+    """Motor da repartição: devolve `(baldes, avisos, indisponivel)`. Cada célula marcada vai para o balde
+    `(TIPO_CELULA, *chave_grupo(célula))`; o que não cabe em célula marcada vai para `(TIPO_FORA,)` e o que não tem célula, para
+    `(TIPO_SEM_CELULA,)`. `chave_grupo` escolhe o agrupamento (GND/Ação/Fonte no detalhamento; Ação/Plano no quadro do
+    discricionário), sem mudar nenhuma regra de repartição."""
 
     avisos: list[str] = []
     marcadas = {tuple(c) for c in selecao if c[-1] is not None}
@@ -136,7 +139,7 @@ def detalhar_por_gnd_acao(
         return baldes.setdefault(chave_balde, _Balde())
 
     def balde_da_celula(chave: CelulaChave) -> _Balde:
-        return balde((TIPO_CELULA, *_chave_grupo(chave))) if chave in marcadas else balde((TIPO_FORA,))
+        return balde((TIPO_CELULA, *chave_grupo(chave))) if chave in marcadas else balde((TIPO_FORA,))
 
     sem_celula = (TIPO_SEM_CELULA,)
 
@@ -145,12 +148,12 @@ def detalhar_por_gnd_acao(
         for chave, dotacao in zip(celulas["chave"], celulas["dotacao_atualizada"]):
             if chave in marcadas:
                 valor = None if pd.isna(dotacao) else dotacao_pela_receita(chave, float(dotacao), res.receita_limite)
-                alvo = balde((TIPO_CELULA, *_chave_grupo(chave)))
+                alvo = balde((TIPO_CELULA, *chave_grupo(chave)))
                 alvo.somar("dotacao", valor)
                 if valor is not None and res.receita_limite is not None and e_celula_da_receita(chave):
                     alvo.receita_limite, alvo.receita_excedente = res.receita_limite, res.receita_excedente
     for chave in marcadas:  # célula marcada sem Dotação na base: o grupo existe e fica sem dotação
-        balde((TIPO_CELULA, *_chave_grupo(chave)))
+        balde((TIPO_CELULA, *chave_grupo(chave)))
 
     # --- Empenho por NE e célula --------------------------------------------------------------
     emp = empenhado.copy() if empenhado is not None else pd.DataFrame()
@@ -235,6 +238,23 @@ def detalhar_por_gnd_acao(
                 continue
             destino = balde(sem_celula) if despesa.celula is None else balde_da_celula(tuple(despesa.celula))
             destino.somar("projetado", despesa.valor)
+
+    return baldes, avisos, indisponivel
+
+
+def detalhar_por_gnd_acao(
+    res: ResultadoOrcamentario,
+    celulas: pd.DataFrame,
+    empenhado: pd.DataFrame,
+    selecao: list[CelulaChave],
+    despesas_manuais: list[DespesaManual],
+    ativos_sem_ne: pd.DataFrame | None = None,
+) -> DetalheGndAcao:
+    """Ver a docstring do módulo. `res` é o resultado já calculado (o detalhamento não recalcula a regra); os
+    demais argumentos são os mesmos usados por `calcular_resultado`. `ativos_sem_ne`: contratos ATIVOS sem NE
+    (`separar_ativos_sem_ne`), com a coluna `necessidade`."""
+
+    baldes, avisos, indisponivel = _acumular(res, celulas, empenhado, selecao, despesas_manuais, ativos_sem_ne, _chave_grupo)
 
     # --- Linhas e totais ----------------------------------------------------------------------------
     nome_gnd = _descricoes(celulas, "grupo_despesa_codigo", "grupo_despesa_descricao")

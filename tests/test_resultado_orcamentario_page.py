@@ -218,6 +218,16 @@ def test_pagina_oferece_o_relatorio_para_baixar(diretorio: Path) -> None:
     assert "ro_baixar_relatorio" in str(app.main)
 
 
+def test_pagina_mostra_os_quadros_do_discricionario_por_plano_e_fecha_com_o_resultado(diretorio: Path) -> None:
+    app = _abrir()
+    assert not app.exception, [e.value for e in app.exception]
+    assert any("Discricionário (RP2) por Plano Orçamentário" in s.value for s in app.subheader)
+    html = "".join(str(e.proto.body) for e in app.get("html"))
+    assert 'class="rp"' in html and html.count('<article class="card"') >= 1
+    assert "A soma dos quadros confere com o resultado do discricionário" in html
+    assert "Fonte 1050000000" in html or "PO 0000" in html  # a 20RK/PO 0000 existe na base real
+
+
 def test_menu_tem_pagina(diretorio: Path) -> None:
     texto = (PROJECT_ROOT / "app.py").read_text(encoding="utf-8")
     assert '"app_pages/resultado_orcamentario.py"' in texto
