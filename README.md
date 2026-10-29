@@ -397,7 +397,14 @@ deixa de ser o valor anual cheio do cadastro (valor mensal × 12) e passa a ser,
 execução", **já liquidado + projetado a realizar** (as mesmas medidas do Resultado Orçamentário). Bolsa sem NE, sem linha no
 relatório ou com valor nulo segue pelo valor anual cadastrado, e a tela informa quantas ficaram assim; NE compartilhada é repartida
 pelo peso do valor anual. Exemplo: PEC-G/Promisaes (PTRES 230404) cai de R$ 44.784 para R$ 36.076. Regra em
-`src/bolsas_despesa_estimada.py`; Contratos Contínuos não mudou.
+`src/bolsas_despesa_estimada.py`.
+
+**Despesa estimada na Cobertura Orçamentária por PTRES de Contratos Contínuos (29/10/2026).** Na base "projeção pela execução" do
+seletor da página, a despesa do contrato passa a ser **já liquidado + projetado a realizar** (mesmo critério de Bolsas); na base
+contratual nada muda. Seguem pela despesa anual contratual, e a tela informa quantos: contratos suspensos (já valem pelo empenhado),
+com aditivo previsto (a projeção não conhece o aditivo), com NE compartilhada (nenhum rateio é presumido; detectada na tabela completa,
+não na filtrada pela busca), sem NE ou com valor nulo. Com os dados de 29/10/2026 o total vai de R$ 73,84 mi para R$ 49,94 mi.
+Regra em `src/contratos_despesa_estimada.py`.
 
 Limites conhecidos: contrato prorrogado com a data de fim desatualizada no cadastro aparece sem
 projeção até a data ser corrigida no card; a competência dos últimos meses costuma estar
