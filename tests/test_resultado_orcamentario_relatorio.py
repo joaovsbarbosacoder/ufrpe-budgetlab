@@ -119,3 +119,41 @@ def test_resultado_incompleto_mostra_traco_e_nao_zero():
     det = detalhar_por_gnd_acao(res, celulas, _empenhos_padrao(), [A, B], [_manual()])
     html = html_relatorio(res, det, [_manual()], [], 2026, 2, 57, EMITIDO)
     assert res.resultado is None and "Incompleto" in html and "—" in html
+
+
+def _com_planos(**kw):
+    from src.resultado_orcamentario_planos import planos_discricionarios, selecao_discricionaria
+    from tests.test_resultado_orcamentario_planos import _celulas as _celulas_planos, _gerar as _gerar_planos
+
+    celulas = _celulas_planos()
+    res, planos = _gerar_planos(celulas=celulas, **kw)
+    det = detalhar_por_gnd_acao(res, celulas, _empenhos_padrao(), selecao_discricionaria(celulas), [])
+    html = html_relatorio(res, det, [], [], 2026, 4, 5, EMITIDO, planos=planos)
+    return planos, html
+
+
+def test_sem_planos_o_relatorio_continua_com_cinco_secoes():
+    _, _, html = _gerar()
+    assert "Discricionário (RP2)" not in html
+
+
+def test_com_planos_entra_a_secao_6_com_acoes_planos_e_total_que_fecha():
+    planos, html = _com_planos()
+    titulos = re.findall(r'<h2[^>]*><span class="n">(\d)</span>([^<]+)', html)
+    assert [n for n, _ in titulos][-1] == "6" and titulos[-1][1] == "Discricionário (RP2) por Plano Orçamentário"
+    assert "ACAO 20Y0" in html and "PO 0001" in html and "PLANO UM" in html and "PO 0002" in html
+    assert "Total do discricionário" in html and "A soma confere com o resultado do discricionário" in html
+    assert planos.fecha
+
+
+def test_planos_com_mais_de_uma_fonte_trazem_o_saldo_de_cada_fonte_no_relatorio():
+    _, html = _com_planos()
+    assert "Fonte 1000000000" in html and "Fonte 3050000000" in html
+
+
+def test_secao_6_e_escapada_e_sem_planos_avisa():
+    from src.resultado_orcamentario_planos import PlanosDiscricionarios, LinhaAvulsa
+
+    vazio = PlanosDiscricionarios([], LinhaAvulsa(0.0, 0.0), LinhaAvulsa(0.0, 0.0), 0.0, 0.0, 0.0, 0.0, 0.0)
+    res, det, _ = _gerar()
+    assert "Nenhuma célula do discricionário" in html_relatorio(res, det, [], [], 2026, 3, 57, EMITIDO, planos=vazio)

@@ -1,7 +1,8 @@
 """Relatório do Resultado Orçamentário (pedido do usuário, 22/10/2026): um HTML de uma folha A4, pronto para imprimir ou salvar em PDF.
 
 Protótipo aprovado: `docs/superpowers/specs/2026-10-22-resultado-orcamentario-relatorio-mockup.html`. Seções: 1 Resumo, 2 Composição,
-3 Detalhamento por GND, Ação e Fonte, 4 Receitas próprias arrecadadas, 5 Outras despesas previstas. Avisos, lista de células e
+3 Detalhamento por GND, Ação e Fonte, 4 Receitas próprias arrecadadas, 5 Outras despesas previstas e, quando informada, 6 Discricionário
+(RP2) por Plano Orçamentário (29/10/2026). Avisos, lista de células e
 rastreabilidade das extrações ficaram de fora por decisão do usuário.
 
 Camada: apresentação pura. Recebe o `ResultadoOrcamentario`, o `DetalheGndAcao` e os cadastros já carregados; não lê arquivo, não
@@ -25,6 +26,7 @@ from src.resultado_orcamentario import (
 )
 from src.resultado_orcamentario_cadastro import CHAVE_CELULA, DespesaManual, ReceitaPropria
 from src.resultado_orcamentario_detalhe import TIPO_CELULA, TIPO_FORA, TIPO_SEM_CELULA, DetalheGndAcao
+from src.resultado_orcamentario_planos import LinhaAvulsa, PlanosDiscricionarios, QuadroPlano
 from src.ui_resultado_orcamentario import _txt, brl, percentual, situacao_resultado
 
 _IDX_ACAO = CHAVE_CELULA.index("acao_codigo")
@@ -324,6 +326,92 @@ def _secao_outras_despesas(res: ResultadoOrcamentario, despesas: list[DespesaMan
     )
 
 
+def _soma_ou_nulo(valores: list[float | None]) -> float | None:
+    return None if any(v is None for v in valores) else float(sum(valores))
+
+
+def _nota_fontes(p: QuadroPlano) -> str:
+    """Fontes do plano quando ele tem mais de uma (ou quando a 1050 foi limitada pela arrecadação), com o saldo de cada uma; a nota
+    da arrecadação só aparece quando o valor informado ultrapassa a dotação da célula."""
+
+    if len(p.fontes) <= 1 and not any(f.receita_limite is not None for f in p.fontes):
+        return ""
+    linhas = []
+    for f in p.fontes:
+        e1050 = f.fonte is not None and str(f.fonte).startswith("1050")
+        rotulo = f"Fonte {f.fonte}" + (f" · {f.fonte_descricao}" if e1050 and f.fonte_descricao else "")
+        sinal = "" if f.saldo is None else ("+" if f.saldo >= 0 else "−")
+        saldo = "—" if f.saldo is None else sinal + brl(abs(f.saldo))
+        extra = ""
+        if f.receita_limite is not None and f.receita_excedente > _TOLERANCIA_EXCEDENTE:
+            extra = (
+                f" — limitada pela arrecadação própria: informado {brl(f.receita_limite)} · {brl(f.receita_excedente)} acima da "
+                "dotação ficam fora"
+            )
+        linhas.append(f"{_txt(rotulo)}: {saldo}{extra}")
+    return '<span class="rec">' + "<br>".join(linhas) + "</span>"
+
+
+def _linha_avulsa_plano(rotulo: str, linha: LinhaAvulsa) -> str:
+    if linha.vazia:
+        return ""
+    saldo = None if linha.executado is None or linha.projetado is None else -(linha.executado + linha.projetado)
+    return (
+        f'<tr class="extra"><td>{_txt(rotulo)}</td>{_celula(0.0)}{_celula(linha.executado)}{_celula(linha.projetado)}'
+        f"{_resultado_celula(saldo)}<td>—</td></tr>"
+    )
+
+
+def _secao_planos(planos: PlanosDiscricionarios) -> str:
+    cabecalho = (
+        '<h2 class="quebra"><span class="n">6</span>Discricionário (RP2) por Plano Orçamentário</h2>'
+        '<p class="nota">Todas as células do Resultado Primário 2, marcadas ou não, com a mesma conta do resultado. Ações da maior '
+        "para a menor dotação; planos com mais de uma fonte trazem o saldo de cada uma.</p>"
+    )
+    if not planos.planos:
+        return cabecalho + '<p class="nota">Nenhuma célula do discricionário neste exercício.</p>'
+    acoes: dict[str, list[QuadroPlano]] = {}
+    for p in planos.planos:
+        acoes.setdefault(p.acao, []).append(p)
+    corpo: list[str] = []
+    for acao, itens in acoes.items():
+        dot = _soma_ou_nulo([p.dotacao for p in itens])
+        exe = _soma_ou_nulo([p.executado for p in itens])
+        prj = _soma_ou_nulo([p.projetado for p in itens])
+        saldo = None if None in (dot, exe, prj) else dot - exe - prj
+        descricao = next((p.acao_descricao for p in itens if p.acao_descricao), "")
+        corpo.append(
+            f'<tr class="grupo"><td><span class="cod">{_txt(acao)}</span>{_txt(descricao)}</td>{_celula(dot)}{_celula(exe)}'
+            f"{_celula(prj)}{_resultado_celula(saldo)}{_consumo(exe, prj, dot)}</tr>"
+        )
+        for p in itens:
+            destaque = " alvo" if any(f.receita_limite is not None for f in p.fontes) else ""
+            corpo.append(
+                f'<tr class="sub{destaque}"><td><span class="cod">PO {_txt(p.po)}</span>{_txt(p.po_descricao or "")}'
+                f"{_nota_fontes(p)}</td>{_celula(p.dotacao)}{_celula(p.executado)}{_celula(p.projetado)}"
+                f"{_resultado_celula(p.saldo)}{_consumo(p.executado, p.projetado, p.dotacao)}</tr>"
+            )
+    corpo.append(_linha_avulsa_plano("Fora do discricionário (parte de NE com empenho em célula que não é RP2)", planos.fora))
+    corpo.append(_linha_avulsa_plano("Sem célula (outras despesas previstas e contratos ativos sem NE)", planos.sem_celula))
+    corpo.append(
+        f'<tr class="tot"><td>Total do discricionário</td>{_celula(planos.dotacao)}{_celula(planos.executado)}'
+        f"{_celula(planos.projetado)}{_resultado_celula(planos.saldo)}{_consumo(planos.executado, planos.projetado, planos.dotacao)}</tr>"
+    )
+    diferenca = brl(round(planos.diferenca_conferencia, 2) + 0.0)
+    conferencia = (
+        f'<div class="ok">✓ A soma confere com o resultado do discricionário · diferença {diferenca}</div>' if planos.fecha
+        else f'<div class="erro">✗ A soma não fecha com o resultado do discricionário · diferença {diferenca}</div>'
+    )
+    return (
+        cabecalho
+        + '<table class="det"><colgroup><col style="width:34%"><col style="width:15%"><col style="width:14%"><col style="width:14%">'
+        '<col style="width:14%"><col style="width:9%"></colgroup>'
+        '<thead><tr><th>Ação / Plano Orçamentário</th><th class="n">Dotação atualizada</th><th class="n">Executado</th>'
+        '<th class="n">Projetado</th><th class="n">Saldo</th><th>Consumo</th></tr></thead><tbody>'
+        + "".join(corpo) + "</tbody></table>" + conferencia
+    )
+
+
 def html_relatorio(
     res: ResultadoOrcamentario,
     detalhe: DetalheGndAcao,
@@ -334,9 +422,11 @@ def html_relatorio(
     qtd_celulas: int,
     emitido_em: datetime,
     nota_dotacao: str = "",
+    planos: PlanosDiscricionarios | None = None,
 ) -> str:
     """Documento HTML completo (com botão "Imprimir / PDF" que some na impressão). `nota_dotacao`: complemento do rodapé do
-    cartão de dotação (ex.: fonte 1050 limitada), igual ao da tela."""
+    cartão de dotação (ex.: fonte 1050 limitada), igual ao da tela. `planos`: quadros do discricionário por Plano Orçamentário; quando
+    informado, entra a seção 6 (sem ele o relatório fica com as 5 seções)."""
 
     cabecalho = (
         '<header class="rel"><div><h1>Resultado Orçamentário — ' + _txt(exercicio) + '</h1><div class="sub">A dotação das '
@@ -357,6 +447,7 @@ def html_relatorio(
         + _secao_detalhamento(detalhe)
         + _secao_receitas(res, receitas)
         + _secao_outras_despesas(res, despesas)
+        + (_secao_planos(planos) if planos is not None else "")
         + f'<footer class="rel"><span>UFRPE BudgetLab · Resultado Orçamentário {_txt(exercicio)}</span>'
         "<span>valores em R$</span></footer></div></body></html>"
     )
