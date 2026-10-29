@@ -549,7 +549,8 @@ nota "limitada pela arrecadação própria" só aparece nessa linha quando o val
 
 **Relatório (22/10/2026).** O botão "Baixar relatório" (logo abaixo dos cartões) gera um HTML de uma folha A4, com os mesmos
 números da tela, para imprimir ou salvar em PDF pelo navegador: 1 Resumo, 2 Composição, 3 Detalhamento por GND, Ação e Fonte,
-4 Receitas próprias arrecadadas e 5 Outras despesas previstas. Não inclui avisos, lista de células nem rastreabilidade das
+4 Receitas próprias arrecadadas, 5 Outras despesas previstas e 6 Discricionário (RP2) por Plano Orçamentário (tabela compacta por
+Ação e Plano, com a fonte de cada plano de mais de uma fonte e o total conferido com o resultado do RP2; seção em página nova). Não inclui avisos, lista de células nem rastreabilidade das
 extrações (decisão do usuário). O gerador é `src/resultado_orcamentario_relatorio.py` (apresentação pura; não recalcula regra) e o
 protótipo aprovado está em `docs/superpowers/specs/2026-10-22-resultado-orcamentario-relatorio-mockup.html`.
 
