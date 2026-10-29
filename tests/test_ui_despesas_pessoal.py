@@ -139,16 +139,16 @@ class TestPainelPessoal(unittest.TestCase):
         self.assertEqual(serie["meses"], [None] * 12)
 
     def test_saldo_do_cartao_com_todos_os_meses(self):
-        # À mão: 31901101 = 100 em Jan–Ago (executado 800); Set–Dez projetam 100 (x12; dez repete nov)
-        # → total 1.200; dotação 5.000 → saldo 3.800.
+        # À mão: 31901101 = 100 em Jan–Ago (executado 800); Set–Nov projetam 100 (x12) e Dez = Nov × 0,985
+        # (decisão 17) = 98,5 → projetado 398,5, total 1.198,5; dotação 5.000 → saldo 3.801,5.
         mensal = pd.DataFrame([dict(self.mensal.iloc[0]) | {"ano_mes": 202600 + m} for m in range(1, 9)])
         grade = consolidar_por_elemento(grade_mensal(mensal, self.anual, 2026, 202608))
         d = montar_painel(grade, mensal, self.anual, pd.Series({"ativo": 5000}), 2026,
                           meses_disponiveis=[202608], anos_dotacao=[2026])
         cartao = next(c for c in d["cartoes"] if c["key"] == "ativo")
-        self.assertEqual((cartao["executado"], cartao["projetado"], cartao["total"]), (800, 400, 1200))
-        self.assertEqual(cartao["saldo"], 3800)
-        self.assertEqual(next(s for s in d["serieSaldo"] if s["key"] == "ativo")["meses"][11], 3800)
+        self.assertEqual((cartao["executado"], cartao["projetado"], cartao["total"]), (800, 398.5, 1198.5))
+        self.assertEqual(cartao["saldo"], 3801.5)
+        self.assertEqual(next(s for s in d["serieSaldo"] if s["key"] == "ativo")["meses"][11], 3801.5)
 
     def test_serie_de_saldo_termina_no_saldo_do_cartao(self):
         d = self.painel()
@@ -424,14 +424,15 @@ class TestAbasFormulasEHistorico(unittest.TestCase):
         cartoes = [h.proto.body for h in at.get("html") if "mês(es) comparado(s)" in h.proto.body]
         self.assertTrue(cartoes)
         total = next(c for c in cartoes[0].split('<div class="cd-card"') if "<h4>TOTAL</h4>" in c)
-        self.assertIn("R$ 400,00", total)
+        self.assertIn("R$ 398,50", total)  # 100 + 100 + 100 + 98,5 (dez = nov × 0,985)
         self.assertIn("R$ 440,00", total)
-        self.assertIn("+R$ 40,00 (+10,0%)", total)
+        self.assertIn("+R$ 41,50 (+10,4%)", total)
 
     def test_todos_os_meses_de_partida_sob_demanda(self):
         # 2025: 31901101 = 100 em Jan-Ago e 110 em Set-Dez.
-        # Partida Jan: projeta 100 × 11 = 1.100; executado 7 × 100 + 4 × 110 = 1.140 → +3,6%.
-        # Partida Ago: 400 × 440 → +10,0%. Partida Set: 3 × 110 = 330 = executado → +0,0%.
+        # Dez projetado = Nov × 0,985 (decisão 17).
+        # Partida Jan: projeta 100 × 10 + 98,5 = 1.098,5; executado 7 × 100 + 4 × 110 = 1.140 → +3,8%.
+        # Partida Ago: 398,5 × 440 → +10,4%. Partida Set: 110 + 110 + 108,35 = 328,35 × 330 → +0,5%.
         linhas = [dict(self.mensal.iloc[0]) | dict(ano_mes=202500 + m, liquidada=100.0 if m <= 8 else 110.0)
                   for m in range(1, 13)]
         self.mensal = pd.concat([self.mensal, pd.DataFrame(linhas)], ignore_index=True)
@@ -441,9 +442,9 @@ class TestAbasFormulasEHistorico(unittest.TestCase):
         self.assertEqual(len(at.exception), 0)
         tabela = next(t.value for t in at.dataframe if "Mês de partida" in t.value.columns).set_index("Mês de partida")
         self.assertEqual(list(tabela.index), MESES_NOMES[:11])
-        self.assertEqual(tabela.loc["Jan", "TOTAL"], "+3,6%")
-        self.assertEqual(tabela.loc["Ago", "TOTAL"], "+10,0%")
-        self.assertEqual(tabela.loc["Set", "TOTAL"], "+0,0%")
+        self.assertEqual(tabela.loc["Jan", "TOTAL"], "+3,8%")
+        self.assertEqual(tabela.loc["Ago", "TOTAL"], "+10,4%")
+        self.assertEqual(tabela.loc["Set", "TOTAL"], "+0,5%")
 
     def test_pct_sem_sinal_negativo_em_zero(self):
         from src.ui_despesas_pessoal_abas import _pct

@@ -225,7 +225,9 @@ with aba_painel:
                               if bruta.mes_razao_patronal_rpps else "razão informada.")
         if bruta.razao_patronal_rpps else ""
     ) + (
-        f" Dezembro do Ativo a {bruta.razao_dezembro_ativo:.2%} de novembro (razão dezembro ÷ novembro do exercício anterior).".replace(".", ",")
+        (f" Dezembro do Ativo a {bruta.razao_dezembro_ativo:.2%} de novembro ".replace(".", ",")
+         + ("(razão dezembro ÷ novembro do exercício anterior)." if bruta.origem_razao_dezembro == "histórica"
+            else "(razão informada; padrão: critério da CDOR/MEC)."))
         if bruta.razao_dezembro_ativo else ""
     )
     dados = montar_painel(grade, mensal_painel, anual, dotacao_grupo, ano_dotacao,
