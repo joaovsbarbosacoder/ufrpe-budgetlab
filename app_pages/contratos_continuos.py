@@ -166,6 +166,7 @@ from src.contratos_aditivos import (
     vigencia_efetiva,
 )
 from src.contratos_cadastro import contratos_com_faturas, montar_contratos, montar_empenhos, montar_faturas, montar_termos
+from src.contratos_despesa_estimada import despesa_estimada_por_ptres
 from src.contratos_continuos import (
     SITUACAO_NECESSITA_REFORCO,
     SITUACAO_VIGENCIA_ENCERRADA,
@@ -1897,15 +1898,23 @@ def _render_card_dotacao(codigo: object, nome: object, grupo: pd.DataFrame) -> N
     st.markdown(cartao_cobertura_ptres(codigo, nome, grupo), unsafe_allow_html=True)
 
 
-def _render_quadro_dotacao(filtrado: pd.DataFrame, dotacao_dimensoes: pd.DataFrame, ano_exercicio: int) -> None:
+def _render_quadro_dotacao(
+    filtrado: pd.DataFrame, dotacao_dimensoes: pd.DataFrame, ano_exercicio: int,
+    relatorio_projecao: RelatorioProjecaoExecucao | None = None, tabela_completa: pd.DataFrame | None = None,
+) -> None:
     """Um cartão por Ação de Governo, com uma subdivisão por Plano Orçamentário/PTRES dentro
     — cruza, para cada PTRES cadastrado nos contratos (referencial comum entre a Dotação
     Anual e o cadastro de cada contrato), a Dotação Atualizada disponível contra a despesa
-    anual estimada (`despesa_anual`) dos contratos daquele PTRES. Mesmo padrão de
-    `app_pages/bolsas_auxilios.py::_render_quadro_dotacao`."""
+    anual estimada dos contratos daquele PTRES. Mesmo padrão de `app_pages/bolsas_auxilios.py::_render_quadro_dotacao`.
 
-    despesa_por_ptres = filtrado.groupby("ptres")["despesa_anual"].sum(min_count=1).fillna(0.0)
-    despesa_por_ptres.index.name = "ptres_codigo"
+    Despesa estimada (29/10/2026): na base "projeção pela execução" (`relatorio_projecao` informado), `executado + projetado a
+    realizar` do contrato; suspensos, com aditivo previsto, NE compartilhada, sem NE ou com valor nulo seguem pela `despesa_anual`
+    (ver `src/contratos_despesa_estimada.py`). Na base contratual (`relatorio_projecao=None`) tudo segue pela `despesa_anual`."""
+
+    estimada = despesa_estimada_por_ptres(
+        filtrado, None if relatorio_projecao is None else relatorio_projecao.linhas, tabela_completa
+    )
+    despesa_por_ptres = estimada.despesa
 
     cruzado = dotacao_dimensoes.set_index("ptres_codigo").join(
         despesa_por_ptres.rename("despesa_estimada"), how="right"
@@ -1918,6 +1927,15 @@ def _render_quadro_dotacao(filtrado: pd.DataFrame, dotacao_dimensoes: pd.DataFra
         f"{cruzado['acao_codigo'].nunique(dropna=True)} ações · {len(cruzado)} PTRES · exercício {ano_exercicio}"
         + (f" · {sem_dotacao} sem dotação encontrada" if sem_dotacao else "")
     )
+    if relatorio_projecao is not None:
+        st.caption(
+            f"Despesa estimada = já liquidado + projetado a realizar pela execução ({estimada.pela_execucao} contrato(s))"
+            + (
+                f"; {estimada.pelo_cadastro} seguem pelo valor contratual (suspensos, com aditivo previsto, NE compartilhada, "
+                "sem NE ou sem projeção)" if estimada.pelo_cadastro else ""
+            )
+            + f". Total {formatar_brl(estimada.total_estimado)} contra {formatar_brl(estimada.total_cadastro)} pelo valor contratual."
+        )
 
     ordem = (
         cruzado.groupby(["acao_codigo", "acao_descricao"], dropna=False)["saldo"]
@@ -2247,6 +2265,7 @@ _render_resumo_consolidado(
 # neste bloco — em modo execução não se repete o mesmo relatório logo abaixo.
 for _aviso_consumo in (competencia_consumo.avisos() if competencia_consumo is not None else []):
     st.caption(_aviso_consumo.replace("$", r"\$"))
+relatorio_projecao = None  # só existe na base "projeção pela execução"
 if _modo_execucao:
     st.caption(
         "Base: projeção pela execução — o relatório abaixo (PDF/Excel) é o da Projeção pela execução, com a necessidade "
@@ -2299,7 +2318,7 @@ if dotacao_dimensoes is not None:
     st.markdown('<div class="cad-secao-titulo">Cobertura orçamentária por PTRES</div>', unsafe_allow_html=True)
     if filtrado["tem_aditivo_previsto"].any():
         st.caption("A despesa estimada por PTRES inclui aditivos previstos (valores estimados, ainda não assinados).")
-    _render_quadro_dotacao(filtrado, dotacao_dimensoes, ano_exercicio_dotacao)
+    _render_quadro_dotacao(filtrado, dotacao_dimensoes, ano_exercicio_dotacao, relatorio_projecao, dataframe)
 else:
     st.info(
         "Nenhuma base de Dotação Anual foi importada ainda — o quadro de cobertura "
