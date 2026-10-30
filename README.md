@@ -116,6 +116,33 @@ relatório" permite gerar tudo "Somente por data de liquidação", para comparar
 exercícios no mesmo critério quando a base de competência não cobre os anos
 anteriores; o modo aparece no título, nos parâmetros e no nome do arquivo.
 
+### Empenhos com Execução Retardada — agrupamentos, indicações de anulação e modelos de relatório (30/10/2026)
+
+**Agrupar por** ganhou, além de unidade orçamentária, credor e ação: exercício, fonte, GND,
+natureza e elemento de despesa, categoria econômica, PI, PTRES, UGR, UG executora, Iduso,
+resultado primário (só dimensões com um valor por NE; Natureza Detalhada/Subitem ficam de fora
+porque uma NE pode ter várias) e agrupamentos calculados: faixas de idade do saldo (até 2, 3–5,
+6–8, 9+ meses), de valor do saldo (negativo, zero, até R$ 1 mil, 1–10 mil, 10–100 mil, acima)
+e de % do saldo (negativo, zero, quartis, acima de 100%), destaque pelo corte e indicação de
+anulação. Faixas seguem a própria ordem; os demais grupos, o saldo somado. Valor nulo fica em
+"—"; zero e negativo são comparados no centavo (o resíduo de ponto flutuante de empenhado −
+liquidado, como −1e-14, é zero).
+
+**Indicações para análise de anulação** (`src/candidatos_anulacao.py`) — informativas, não
+recomendam anular: *Saldo negativo (conferir)*; *Nunca liquidada* (nada liquidado e empenho há
+≥ N meses); *Sem liquidação recente* (última liquidação há ≥ N meses); *Saldo residual* (já
+liquidado e saldo ≤ R$ X ou ≤ Y% do empenhado). As duas primeiras por tempo só valem no exercício
+da extração (mesma ressalva da idade do saldo). Limites padrão propostos — 3 meses, 3 meses,
+R$ 1.000 e 5% — ajustáveis na tela e impressos no relatório. Uma NE pode ter várias; a principal
+segue essa ordem. Ainda fora: sobra pela projeção de Contratos/Bolsas e saldo de anos anteriores.
+
+**Modelos de relatório**: *Lista de empenhos* (colunas do PDF escolhidas na tela, padrão as 10
+de antes; o Excel continua com todas, mais as colunas de indicação e uma aba "Resumo" quando
+agrupado); *Resumo por grupo* (só subtotais: empenhos, empenhado, liquidado, saldo, % liquidado
+e % do saldo); *Análise de anulação* (por padrão só as NEs com indicação, com "Decisão" —
+lista Manter/Anular/Reforçar no Excel — e "Justificativa" em branco). Todos partem da mesma
+lista exibida na tela.
+
 ### Contratos Contínuos
 
 A página **Contratos Contínuos** trabalha sobre um cadastro nativo, multi-exercício, em

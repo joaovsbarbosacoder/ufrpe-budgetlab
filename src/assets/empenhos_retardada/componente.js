@@ -130,6 +130,42 @@ function htmlCortes(d) {
   </section>`;
 }
 
+// Indicações de candidatos a anulação (src/candidatos_anulacao.py): legenda com contagem no escopo e
+// limites ajustáveis. Informativo — não muda o destaque nem a lista.
+function htmlAnulacao(d) {
+  const a = d.anulacao;
+  if (!a) return "";
+  const p = a.parametros;
+  const contagem = Object.fromEntries((a.contagem || []).map((c) => [c.nome, c]));
+  const regras = a.regras
+    .map(([nome, regra]) => {
+      const c = contagem[nome] || { n: 0, saldo: "—" };
+      const qtd = c.n ? `${c.n} ${c.n === 1 ? "empenho" : "empenhos"} · ${esc(c.saldo)}` : "nenhum empenho";
+      return `<li><span class="pilula ind">${esc(nome)}</span><span class="regra">${esc(regra)}</span><span class="qtd num">${qtd}</span></li>`;
+    })
+    .join("");
+  const num = (chave, valor, rotulo, attrs) =>
+    `<label class="param">${rotulo} <input type="number" data-anul="${chave}" value="${esc(valor)}" ${attrs} aria-label="${esc(rotulo)}"></label>`;
+  return `<section class="card anulacao" aria-label="Candidatos a anulação">
+    <div class="topo-anul">
+      <span class="titulo">Indicações para análise de anulação</span>
+      <span class="aviso-anul">Informativo: aponta o que vale analisar, não é recomendação de anular.</span>
+      ${d.grupo === "Indicação de anulação" ? "" : '<button type="button" class="link" data-acao="agrupar-indicacao">Agrupar por indicação</button>'}
+    </div>
+    <ul class="regras">${regras}</ul>
+    <div class="params">
+      ${num("anul_nunca_meses", p.anul_nunca_meses, "Nunca liquidada: meses", 'min="0" max="120" step="1"')}
+      ${num("anul_sem_liq_meses", p.anul_sem_liq_meses, "Sem liquidação: meses", 'min="0" max="120" step="1"')}
+      ${num("anul_residual_rs", p.anul_residual_rs, "Residual: até R$", 'min="0" step="100"')}
+      ${num("anul_residual_pct", p.anul_residual_pct, "ou até %", 'min="0" max="100" step="1"')}
+    </div>
+  </section>`;
+}
+
+function htmlIndicacoes(lista) {
+  return (lista || []).map((i) => `<span class="pilula ind">${esc(i)}</span>`).join(" ");
+}
+
 function htmlPaginacao(l) {
   if (!l || l.total_paginas <= 1) return "";
   return `<div class="paginacao">
@@ -154,7 +190,7 @@ function htmlTabela(d) {
       return `<th class="${numericas.has(col) ? "dir" : ""}${ativa ? " ativa" : ""}" aria-sort="${sort}"><button type="button" data-acao="ordenar" data-coluna="${esc(col)}" title="Ordenar por ${esc(col)}">${esc(col)} ${seta}</button></th>`;
     })
     .join("");
-  const colunas = d.colunas.length + (l.mostra_corte ? 1 : 0) + 1;
+  const colunas = d.colunas.length + (l.mostra_corte ? 1 : 0) + 2;
   let grupoAtual = null;
   const corpo = l.linhas
     .map((r) => {
@@ -176,6 +212,7 @@ function htmlTabela(d) {
         <td class="dir num"><div class="saldo"><span class="${r.saldo_negativo ? "neg" : ""}">${esc(r.saldo)}</span>${barra}</div></td>
         <td class="dir num">${esc(r.pct)}</td>
         <td class="dir num">${esc(r.idade)}</td>
+        <td class="ind">${htmlIndicacoes(r.indicacoes)}</td>
         ${corte}
         <td class="dir"><button type="button" class="btn peq" data-acao="detalhe" data-ne="${esc(r.ne_ccor)}">Ver</button></td>
       </tr>`;
@@ -184,7 +221,7 @@ function htmlTabela(d) {
   const thCorte = l.mostra_corte ? '<th><span class="th">Corte</span></th>' : "";
   return `<div class="card tabela">
     <div class="rolagem"><table>
-      <thead><tr>${cab}${thCorte}<th><span class="th"></span></th></tr></thead>
+      <thead><tr>${cab}<th><span class="th">Indicação</span></th>${thCorte}<th><span class="th"></span></th></tr></thead>
       <tbody>${corpo}</tbody>
     </table></div>
     <div class="rodape"><span>Exibindo ${l.inicio}–${l.fim} de ${l.total} empenhos.</span><span>${esc(l.abaixo || "")}</span>${htmlPaginacao(l)}</div>
@@ -228,6 +265,7 @@ function htmlDetalhe(det) {
     </div>
     ${det.descricao ? `<p class="desc">${esc(det.descricao)}</p>` : ""}
     <div class="metricas">${metricas}</div>
+    ${det.indicacoes && det.indicacoes.length ? `<p class="desc">Indicação para análise: ${htmlIndicacoes(det.indicacoes)}</p>` : ""}
     ${secoes}
     <div class="secao"><h4>Linhas de origem (rastreabilidade)</h4>
       <div class="origem"><table><thead><tr><th>Linha</th><th>Tipo</th><th>Ano</th><th class="dir">Empenhada</th><th class="dir">Liquidada</th><th class="dir">Paga</th></tr></thead><tbody>${origem}</tbody></table></div>
@@ -242,7 +280,7 @@ function desenhar(raiz, d, ui) {
   if (d.aviso) {
     partes.push(`<div class="alerta">${esc(d.aviso)}</div>`);
   } else {
-    partes.push(htmlResumo(d.resumo), htmlCortes(d), htmlLista(d));
+    partes.push(htmlResumo(d.resumo), htmlCortes(d), htmlAnulacao(d), htmlLista(d));
   }
   if (d.detalhe && !ui.detalheFechado) partes.push(htmlDetalhe(d.detalhe));
   raiz.innerHTML = partes.join("");
@@ -307,6 +345,7 @@ function ligarEventos(raiz, ui) {
     }
     if (acao === "limpar") return ui.enviar({ tipo: "limpar" });
     if (acao === "ligar-idade") return ui.enviar({ tipo: "usar_idade", valor: true });
+    if (acao === "agrupar-indicacao") return ui.enviar({ tipo: "agrupar", valor: "Indicação de anulação" });
     if (acao === "busca-limpar") return ui.enviar({ tipo: "busca", valor: "" });
     if (acao === "modo" || acao === "visao") return ui.enviar({ tipo: acao, valor: alvo.dataset.valor });
     if (acao === "ordenar") return ui.enviar({ tipo: "ordenar", coluna: alvo.dataset.coluna });
@@ -332,6 +371,10 @@ function ligarEventos(raiz, ui) {
     if (alvo.matches("input[data-corte]")) {
       if (alvo.value === "" || Number.isNaN(Number(alvo.value))) return;
       return ui.enviar({ tipo: alvo.dataset.corte, valor: Number(alvo.value) });
+    }
+    if (alvo.matches("input[data-anul]")) {
+      if (alvo.value === "" || Number.isNaN(Number(alvo.value))) return;
+      return ui.enviar({ tipo: alvo.dataset.anul, valor: Number(alvo.value) });
     }
     if (alvo.matches("select[data-acao=agrupar]")) return ui.enviar({ tipo: "agrupar", valor: alvo.value });
   });

@@ -15,14 +15,20 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.candidatos_anulacao import INDICACOES
 from src.empenhos_retardada_tela import (
     AVISO_BUSCA_VAZIA,
     AVISO_FILTROS_VAZIOS,
     AVISO_NADA_PASSA,
     AVISO_SEM_CORTE,
+    FAIXAS_IDADE,
+    FAIXAS_SALDO,
+    OPCOES_AGRUPAMENTO,
+    ORDEM_DOS_GRUPOS,
     TAMANHO_PAGINA,
     aplicar_acao,
     calcular_destaque,
+    com_faixas,
     com_idade,
     com_percentual,
     cortes_no_padrao,
@@ -33,6 +39,7 @@ from src.empenhos_retardada_tela import (
     idade_por_ne,
     montar_tela,
     resolver_filtros,
+    rotular_faixas,
 )
 from src.execucao_ne_utils import saldo_por_ne
 from src.tesouro_execucao_mensal import agregar_por_ne, ler_execucao_mensal
@@ -242,6 +249,51 @@ class IdadeDoSaldoTests(unittest.TestCase):
         self.assertIsNotNone(dados["lista"])
 
 
+def _valores(serie: pd.Series) -> list:
+    return [None if pd.isna(v) else v for v in serie]
+
+
+class FaixasTests(unittest.TestCase):
+    """Faixas de agrupamento (30/10/2026): nulo fica sem faixa; zero e negativo têm faixa própria,
+    comparados no centavo; limites superiores inclusivos."""
+
+    def test_saldo(self) -> None:
+        saldos = pd.Series([None, -50.0, -1e-14, 0.0, 0.01, 1_000.0, 1_000.01, 10_000.0, 100_000.0, 100_000.01])
+        self.assertEqual(
+            _valores(rotular_faixas(saldos, FAIXAS_SALDO, com_sinal=True)),
+            [None, "saldo negativo", "saldo zero", "saldo zero", "até R$ 1 mil", "até R$ 1 mil",
+             "de R$ 1 mil a R$ 10 mil", "de R$ 1 mil a R$ 10 mil", "de R$ 10 mil a R$ 100 mil", "acima de R$ 100 mil"],
+        )
+
+    def test_idade(self) -> None:
+        idades = pd.Series([None, 0, 2, 3, 5, 6, 8, 9], dtype="Int64")
+        self.assertEqual(
+            _valores(rotular_faixas(idades, FAIXAS_IDADE, com_sinal=False)),
+            [None, "até 2 meses", "até 2 meses", "3 a 5 meses", "3 a 5 meses", "6 a 8 meses", "6 a 8 meses", "9 meses ou mais"],
+        )
+
+    def test_percentual_segue_o_sinal_do_saldo_e_situacao_no_corte(self) -> None:
+        visivel = pd.DataFrame({
+            "saldo": [0.004, 500.0, -10.0, 0.0],
+            "percentual_saldo": [0.00004, 50.0, -1.0, None],
+            "idade_meses": pd.Series([None, 1, 2, None], dtype="Int64"),
+        })
+        com = com_faixas(visivel, pd.Series([False, True, False, False]), cortes_ligados=True)
+        self.assertEqual(_valores(com["faixa_pct_saldo"]), ["saldo zero", "de 25% a 50%", "saldo negativo", None])
+        self.assertEqual(com["situacao_corte"].tolist(), ["Abaixo do corte", "Em destaque (passa do corte)", "Abaixo do corte", "Abaixo do corte"])
+        sem_corte = com_faixas(visivel, pd.Series([False] * 4), cortes_ligados=False)
+        self.assertTrue(sem_corte["situacao_corte"].isna().all())  # sem corte ligado: nem passa nem fica abaixo
+        pd.testing.assert_series_equal(com["saldo"], visivel["saldo"])  # valores não mudam
+
+    def test_acoes_dos_limites_de_anulacao(self) -> None:
+        estado = estado_inicial(ANO)
+        self.assertEqual(aplicar_acao(estado, {"tipo": "anul_nunca_meses", "valor": 6}, NOMES)["anul_nunca_meses"], 6)
+        self.assertEqual(aplicar_acao(estado, {"tipo": "anul_residual_rs", "valor": 0}, NOMES)["anul_residual_rs"], 0.0)
+        for tipo, invalido in (("anul_sem_liq_meses", 2.5), ("anul_residual_pct", 101), ("anul_residual_rs", -1)):
+            self.assertEqual(aplicar_acao(estado, {"tipo": tipo, "valor": invalido}, NOMES)[tipo], estado[tipo])
+        self.assertEqual(aplicar_acao(estado, {"tipo": "agrupar", "valor": "Fonte de recursos"}, NOMES)["grupo"], "Fonte de recursos")
+
+
 class CascataFiltrosTests(unittest.TestCase):
     CAMPOS = (("cor", "Cor", "cor", None), ("tam", "Tamanho", "tam", "tam_desc"))
 
@@ -370,6 +422,33 @@ class MontarTelaFixtureTests(unittest.TestCase):
         self.assertIn("empenho há 6 meses ou mais com saldo", dados["resultado_corte"])
         self.assertTrue((lista["idade_meses"] >= 6).all())
         self.assertTrue((lista["saldo"] > 0).all())
+
+    def test_todos_os_agrupamentos_mantem_todos_os_empenhos_e_somam_o_saldo(self) -> None:
+        _dados, _estado, sem = self._tela(visao="Todos no escopo", filtros={})
+        for grupo in OPCOES_AGRUPAMENTO:
+            if OPCOES_AGRUPAMENTO[grupo] is None:
+                continue
+            dados, _estado, lista = self._tela(visao="Todos no escopo", filtros={}, grupo=grupo)
+            self.assertEqual(len(lista), len(sem), grupo)
+            self.assertEqual(sorted(lista["ne_ccor"]), sorted(sem["ne_ccor"]), grupo)
+            self.assertEqual(sum(s["n"] for s in dados["lista"]["subtotais"].values()), len(sem), grupo)
+            self.assertAlmostEqual(lista["saldo"].sum(), sem["saldo"].sum(), places=2, msg=grupo)
+            self.assertEqual(len(dict.fromkeys(lista["grupo_lista"])), len(dados["lista"]["subtotais"]), grupo)
+
+    def test_faixas_seguem_a_ordem_natural(self) -> None:
+        for grupo, ordem in ORDEM_DOS_GRUPOS.items():
+            _dados, _estado, lista = self._tela(visao="Todos no escopo", filtros={}, grupo=grupo)
+            presentes = [g for g in dict.fromkeys(lista["grupo_lista"]) if g != "—"]
+            self.assertEqual(presentes, [g for g in ordem if g in presentes], grupo)
+
+    def test_indicacoes_na_tela_e_no_detalhe(self) -> None:
+        dados, _estado, lista = self._tela(visao="Todos no escopo", filtros={}, grupo="Indicação de anulação")
+        self.assertEqual([c["nome"] for c in dados["anulacao"]["contagem"]], list(INDICACOES))
+        com = lista[lista["indicacoes_anulacao"].notna()]
+        self.assertGreater(len(com), 0)
+        ne = str(com["ne_ccor"].iloc[0])
+        dados, _estado, _lista = self._tela(visao="Todos no escopo", filtros={}, ne_aberta=ne)
+        self.assertEqual(dados["detalhe"]["indicacoes"], str(com["indicacoes_anulacao"].iloc[0]).split("; "))
 
     def test_linhas_trazem_nulo_como_traco(self) -> None:
         dados, _estado, _lista = self._tela(visao="Todos no escopo", usar_rs=False)

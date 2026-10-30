@@ -24,7 +24,10 @@ presa ao HTML/JS do componente, tudo que decide O QUE aparece mora aqui e é tes
     nulo nunca passa do corte; nenhum corte ligado é estado válido (aviso, sem lista em destaque);
   * lista da tela = lista do relatório (`montar_lista_relatorio`), paginada em `TAMANHO_PAGINA`;
   * (17/10/2026, regra definida pelo usuário) idade do saldo em meses e um terceiro corte,
-    "empenho há N meses ou mais com saldo", desligado por padrão — ver `idade_por_ne`.
+    "empenho há N meses ou mais com saldo", desligado por padrão — ver `idade_por_ne`;
+  * (30/10/2026) mais agrupamentos — dimensões com um valor por NE, faixas de idade/valor/% do
+    saldo, situação no corte — e as indicações de candidatos a anulação
+    (`src/candidatos_anulacao.py`), com limites ajustáveis na tela.
 
 Valores nulos aparecem como "—", nunca como zero; negativos mantêm o sinal.
 """
@@ -35,6 +38,17 @@ from typing import Any, Sequence
 
 import pandas as pd
 
+from src.candidatos_anulacao import (
+    COLUNA_INDICACAO_PRINCIPAL,
+    COLUNA_INDICACOES,
+    COLUNA_MESES_SEM_LIQUIDACAO,
+    INDICACOES,
+    SEM_INDICACAO,
+    com_indicacoes,
+    contagem_por_indicacao,
+    descrever_parametros,
+    parametros_padrao,
+)
 from src.execucao_ne_utils import detalhar_nota_empenho, ne_curta, saldo_por_ne
 from src.relatorio_empenhos_retardada import COLUNA_GRUPO, COLUNA_PASSA_CORTE, montar_lista_relatorio
 from src.tesouro_execucao_mensal import agregar_por_ne
@@ -65,12 +79,64 @@ ORDENACAO_PADRAO = "Saldo"
 #: colunas de texto começam de A a Z; números começam do maior
 _COLUNAS_TEXTO = ("NE", "Favorecido")
 
-#: rótulo na tela -> coluna da lista por NE ("Credor" = favorecido da NE)
+COLUNA_FAIXA_IDADE = "faixa_idade"
+COLUNA_FAIXA_SALDO = "faixa_saldo"
+COLUNA_FAIXA_PCT = "faixa_pct_saldo"
+COLUNA_SITUACAO_CORTE = "situacao_corte"
+
+#: rótulo na tela -> coluna da lista por NE ("Credor" = favorecido da NE). Só dimensões com um valor
+#: por NE (`_DIMENSOES_CONSTANTES_POR_NE` da Execução Mensal) ou colunas calculadas por NE; Natureza
+#: Detalhada/Subitem ficam de fora de propósito (a NE pode ter várias — "N classificações").
+#: (30/10/2026, pedido explícito: mais opções de agrupamento.)
 OPCOES_AGRUPAMENTO: dict[str, str | None] = {
     "Sem agrupamento": None,
     "Unidade orçamentária": "unidade_orcamentaria_desc",
     "Credor": "ne_favorecido",
     "Ação de governo": "acao_desc",
+    "Exercício": "ano",
+    "Fonte de recursos": "fonte_desc",
+    "Grupo de despesa (GND)": "gnd_desc",
+    "Natureza de despesa": "natureza_despesa_desc",
+    "Elemento de despesa": "elemento_desc",
+    "Categoria econômica": "categoria_economica_desc",
+    "PI": "pi_desc",
+    "PTRES": "ptres",
+    "UGR": "ugr_desc",
+    "UG executora": "ug_executora_desc",
+    "Iduso": "iduso_desc",
+    "Resultado primário": "resultado_primario_desc",
+    "Faixa de idade do saldo": COLUNA_FAIXA_IDADE,
+    "Faixa de valor do saldo": COLUNA_FAIXA_SALDO,
+    "Faixa de % de saldo": COLUNA_FAIXA_PCT,
+    "Destaque pelo corte": COLUNA_SITUACAO_CORTE,
+    "Indicação de anulação": COLUNA_INDICACAO_PRINCIPAL,
+}
+
+#: faixas de valor positivo (rótulo, limite inferior exclusivo, limite superior inclusivo); nulo fica
+#: em "—" (sem grupo). Saldo e % têm, antes delas, as faixas próprias de negativo e de zero.
+FAIXA_NEGATIVO = "saldo negativo"
+FAIXA_ZERO = "saldo zero"
+FAIXAS_IDADE: list[tuple[str, float, float]] = [
+    ("até 2 meses", float("-inf"), 2), ("3 a 5 meses", 2, 5), ("6 a 8 meses", 5, 8), ("9 meses ou mais", 8, float("inf")),
+]
+FAIXAS_SALDO: list[tuple[str, float, float]] = [
+    ("até R$ 1 mil", 0, 1_000), ("de R$ 1 mil a R$ 10 mil", 1_000, 10_000),
+    ("de R$ 10 mil a R$ 100 mil", 10_000, 100_000), ("acima de R$ 100 mil", 100_000, float("inf")),
+]
+FAIXAS_PCT: list[tuple[str, float, float]] = [
+    ("até 25%", 0, 25), ("de 25% a 50%", 25, 50), ("de 50% a 75%", 50, 75), ("de 75% a 100%", 75, 100),
+    ("acima de 100%", 100, float("inf")),
+]
+PASSA_CORTE = "Em destaque (passa do corte)"
+ABAIXO_CORTE = "Abaixo do corte"
+
+#: agrupamentos com ordem natural dos grupos (a das faixas/prioridade), em vez do saldo somado.
+ORDEM_DOS_GRUPOS: dict[str, list[str]] = {
+    "Faixa de idade do saldo": [f[0] for f in FAIXAS_IDADE],
+    "Faixa de valor do saldo": [FAIXA_NEGATIVO, FAIXA_ZERO, *(f[0] for f in FAIXAS_SALDO)],
+    "Faixa de % de saldo": [FAIXA_NEGATIVO, FAIXA_ZERO, *(f[0] for f in FAIXAS_PCT)],
+    "Destaque pelo corte": [PASSA_CORTE, ABAIXO_CORTE],
+    "Indicação de anulação": [*INDICACOES, SEM_INDICACAO],
 }
 
 COLUNAS_BUSCA = [
@@ -124,6 +190,10 @@ def _texto(valor: object) -> str:
     return "—" if valor is None or pd.isna(valor) else str(valor)
 
 
+def _lista_indicacoes(valor: object) -> list[str]:
+    return [] if valor is None or pd.isna(valor) else str(valor).split("; ")
+
+
 def _numero(valor: object) -> float | None:
     return None if valor is None or pd.isna(valor) else float(valor)
 
@@ -149,6 +219,7 @@ def estado_inicial(ano_extracao: int) -> dict[str, Any]:
         "grupo": "Sem agrupamento",
         "pagina": 1,
         "ne_aberta": None,
+        **parametros_padrao(),
     }
 
 
@@ -197,6 +268,21 @@ def aplicar_acao(estado: dict[str, Any], acao: object, nomes_filtro: Sequence[st
         if numero is None or numero != int(numero):
             return novo
         novo["corte_idade"] = int(numero)
+    elif tipo in ("anul_nunca_meses", "anul_sem_liq_meses"):
+        numero = _numero_valido(acao.get("valor"), 0.0, 120.0)
+        if numero is None or numero != int(numero):
+            return novo
+        novo[tipo] = int(numero)
+    elif tipo == "anul_residual_rs":
+        numero = _numero_valido(acao.get("valor"), 0.0)
+        if numero is None:
+            return novo
+        novo[tipo] = numero
+    elif tipo == "anul_residual_pct":
+        numero = _numero_valido(acao.get("valor"), 0.0, 100.0)
+        if numero is None:
+            return novo
+        novo[tipo] = numero
     elif tipo == "corte_rs":
         numero = _numero_valido(acao.get("valor"), 0.0)
         if numero is None:
@@ -375,6 +461,48 @@ def com_idade(visivel: pd.DataFrame, filtrado: pd.DataFrame, ano_extracao: int, 
     return visivel.assign(**{COLUNA_IDADE: visivel["ne_ccor"].map(idades).astype("Int64")})
 
 
+def rotular_faixas(serie: pd.Series, faixas: list[tuple[str, float, float]], *, com_sinal: bool) -> pd.Series:
+    """Rótulo da faixa de cada valor; nulo continua nulo (vira "—" no agrupamento). Com `com_sinal`,
+    negativo e zero têm faixas próprias antes das demais (zero não é "até R$ 1 mil"), comparados no
+    centavo."""
+
+    numeros = pd.to_numeric(serie, errors="coerce").astype("float64")
+    if com_sinal:
+        numeros = numeros.round(2)  # resíduo de ponto flutuante (−1e-14) é zero, não negativo
+    rotulos = pd.Series(None, index=serie.index, dtype=object)
+    for rotulo, inferior, superior in faixas:
+        rotulos[(numeros > inferior) & (numeros <= superior)] = rotulo
+    if com_sinal:
+        rotulos[numeros < 0] = FAIXA_NEGATIVO
+        rotulos[numeros == 0] = FAIXA_ZERO
+    return rotulos
+
+
+def com_faixas(visivel: pd.DataFrame, mascara: pd.Series, cortes_ligados: bool) -> pd.DataFrame:
+    """Colunas derivadas só para agrupar (faixas e situação no corte); não mudam nenhum valor."""
+
+    situacao = (
+        mascara.map({True: PASSA_CORTE, False: ABAIXO_CORTE}).astype(object)
+        if cortes_ligados else pd.Series(None, index=visivel.index, dtype=object)
+    )
+    faixa_saldo = rotular_faixas(visivel["saldo"], FAIXAS_SALDO, com_sinal=True)
+    # o sinal do % segue o do saldo no centavo: % conhecido de saldo zero/negativo vai para a faixa dele
+    pct = visivel["percentual_saldo"]
+    faixa_pct = rotular_faixas(pct, FAIXAS_PCT, com_sinal=False)
+    sinal = faixa_saldo.isin([FAIXA_NEGATIVO, FAIXA_ZERO]) & pct.notna()
+    faixa_pct = faixa_pct.where(~sinal, faixa_saldo)
+    return visivel.assign(**{
+        COLUNA_FAIXA_IDADE: rotular_faixas(visivel[COLUNA_IDADE], FAIXAS_IDADE, com_sinal=False),
+        COLUNA_FAIXA_SALDO: faixa_saldo,
+        COLUNA_FAIXA_PCT: faixa_pct,
+        COLUNA_SITUACAO_CORTE: situacao,
+    })
+
+
+def parametros_anulacao(estado: dict[str, Any]) -> dict[str, Any]:
+    return {k: estado[k] for k in parametros_padrao()}
+
+
 def calcular_destaque(visivel: pd.DataFrame, estado: dict[str, Any]) -> tuple[pd.Series, str | None]:
     """(máscara de quem passa do corte, descrição do corte) — `None` quando nenhum corte está
     ligado. Nulo nunca passa (não dá para afirmar que passa sem saber o valor)."""
@@ -440,7 +568,9 @@ def montar_detalhe(filtrado: pd.DataFrame, linha: pd.Series) -> dict[str, Any]:
             ["Saldo", formatar_brl(linha["saldo"])],
             ["% do empenhado", formatar_pct(linha["percentual_saldo"])],
             ["Idade do saldo", formatar_idade(linha.get(COLUNA_IDADE))],
+            ["Sem liquidação há", formatar_idade(linha.get(COLUNA_MESES_SEM_LIQUIDACAO))],
         ],
+        "indicacoes": _lista_indicacoes(linha.get(COLUNA_INDICACOES)),
         "saldo_negativo": bool(_numero(linha["saldo"]) is not None and linha["saldo"] < 0),
         "secoes": [
             ["Classificação da despesa", [
@@ -507,6 +637,11 @@ def montar_tela(
         "ordem": estado["ordem"],
         "sentido": estado["sentido"],
         "colunas": list(COLUNAS_ORDENAVEIS),
+        "anulacao": {
+            "parametros": parametros_anulacao(estado),
+            "regras": [list(r) for r in descrever_parametros(parametros_anulacao(estado))],
+            "contagem": [],
+        },
         "aviso": None,
         "avisos_lista": [],
         "resumo": None,
@@ -541,6 +676,10 @@ def montar_tela(
         estado["ne_aberta"] = None
         return dados, estado, None
     visivel = com_idade(com_percentual(visivel), filtrado, ano_extracao, mes_extracao)
+    visivel = com_indicacoes(visivel, filtrado, ano_extracao, mes_extracao, parametros_anulacao(estado))
+    dados["anulacao"]["contagem"] = [
+        {"nome": c["nome"], "n": c["n"], "saldo": formatar_brl(c["saldo"])} for c in contagem_por_indicacao(visivel)
+    ]
 
     anos = visivel["ano"].dropna().astype(int).unique()
     if ano_extracao in anos:
@@ -569,6 +708,7 @@ def montar_tela(
     }
 
     mascara, descricao_corte = calcular_destaque(visivel, estado)
+    visivel = com_faixas(visivel, mascara, descricao_corte is not None)
     em_destaque = visivel[mascara]
     abaixo = visivel[~mascara]
     todos = estado["visao"] == VISAO_TODOS
@@ -588,6 +728,7 @@ def montar_tela(
         ordenar_por=COLUNAS_ORDENAVEIS.get(estado["ordem"], "saldo"),
         ascendente=estado["sentido"] == SENTIDO_ASC,
         agrupar_por=coluna_grupo,
+        ordem_grupos=ORDEM_DOS_GRUPOS.get(estado["grupo"]),
     )
     dados["descricao_corte"] = descricao_corte
 
@@ -625,6 +766,7 @@ def montar_tela(
             "pct_valor": _numero(linha["percentual_saldo"]),
             "idade": formatar_idade(linha.get(COLUNA_IDADE)),
             "corte": None if pd.isna(passa) else bool(passa),
+            "indicacoes": _lista_indicacoes(linha.get(COLUNA_INDICACOES)),
             "grupo": str(linha[COLUNA_GRUPO]) if coluna_grupo else None,
         })
 

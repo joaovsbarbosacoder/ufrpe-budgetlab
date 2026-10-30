@@ -32,7 +32,7 @@ from tests._apptest import TEMPO_LIMITE_APPTEST
 
 from src.empenhos_retardada_tela import AVISO_BUSCA_VAZIA, AVISO_SEM_CORTE, aplicar_acao
 from src.importacao_execucao_mensal import gerar_manifesto
-from src.relatorio_empenhos_retardada import ContextoRelatorio, gerar_xlsx
+from src.relatorio_empenhos_retardada import COLUNAS_PDF_PADRAO, ContextoRelatorio, gerar_xlsx
 from src.tesouro_execucao_mensal import ler_execucao_mensal
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -252,6 +252,43 @@ class EmpenhosExecucaoRetardadaPageTests(unittest.TestCase):
         saldos = [linha[cabecalho.index("Saldo")].value for linha in planilha.iter_rows(min_row=2)]
         self.assertEqual(len(saldos), total_tela)
         self.assertAlmostEqual(sum(v for v in saldos if v is not None), float(lista["saldo"].sum()), places=2)
+
+    def test_modelos_de_relatorio(self) -> None:
+        # 30/10/2026: lista (com escolha das colunas do PDF), resumo por grupo e análise de anulação
+        app = self._open_page()
+        sufixo = self.manifesto.sha256[:12]
+        colunas = app.multiselect(key=f"empenhos_retardada_colunas_pdf_{sufixo}")
+        self.assertEqual(colunas.value, COLUNAS_PDF_PADRAO)
+        total = self.dados["lista"]["total"]
+
+        app.session_state[f"empenhos_retardada_modelo_{sufixo}"] = "Resumo por grupo"
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(any("escolha um agrupamento" in c.value for c in app.caption))
+        self.assertEqual(len(app.multiselect), 0)  # escolha de colunas só no modelo de lista
+
+        app.session_state[f"empenhos_retardada_modelo_{sufixo}"] = "Análise de anulação"
+        app.run()
+        self.assertEqual(len(app.exception), 0)
+
+        def listados() -> int:
+            legenda = next(c.value for c in app.caption if "análise de anulação" in c.value)
+            return int(legenda.split("Relatório: ")[1].split(" ")[0])
+
+        # padrão: só as NEs com indicação; desligado: a lista inteira da tela
+        self.assertTrue(app.toggle(key=f"empenhos_retardada_so_indicadas_{sufixo}").value)
+        self.assertLess(listados(), total)
+        app.toggle(key=f"empenhos_retardada_so_indicadas_{sufixo}").set_value(False).run()
+        self.assertEqual(listados(), total)
+
+    def test_quadro_de_indicacoes_de_anulacao_e_limites(self) -> None:
+        app = self._open_page()
+        self.assertEqual(self.dados["anulacao"]["parametros"]["anul_residual_rs"], 1_000.0)
+        dados = self._agir(app, {"tipo": "anul_residual_rs", "valor": 5_000})
+        self.assertEqual(dados["anulacao"]["parametros"]["anul_residual_rs"], 5_000.0)
+        self.assertIn("R$ 5.000,00", dict(dados["anulacao"]["regras"])["Saldo residual"])
+        dados = self._agir(app, {"tipo": "agrupar", "valor": "Indicação de anulação"})
+        self.assertTrue(all(l["grupo"] for l in dados["lista"]["linhas"]))
 
     def test_ordenar_pelo_cabecalho_inverte_ao_clicar_de_novo(self) -> None:
         app = self._open_page()

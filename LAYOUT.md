@@ -144,18 +144,28 @@ Ordem vertical de renderização. "N cols" indica quantas colunas a linha usa. B
 - Cartão de cortes (quebra linha se faltar espaço): "Destacar empenhos com" [chave] saldo ≥ R$ …
   [E/OU só com dois ou mais ligados] [chave] saldo ≥ …% do empenhado [chave] empenho há pelo
   menos N meses, com saldo (desde 17/10/2026; desligado por padrão) · resultado à direita
+- Cartão "Indicações para análise de anulação" (desde 30/10/2026; `src/candidatos_anulacao.py`):
+  aviso de que é informativo, link "Agrupar por indicação", as 4 indicações (selo laranja claro +
+  regra com os limites + "N · R$ saldo" no escopo) em 2 colunas, e os 4 limites editáveis
+  (meses de "nunca liquidada", meses "sem liquidação", residual em R$ e em %)
 - Barra da lista: "Empenhos" · Exibir (Em destaque / Todos no escopo) · Agrupar por (sem,
-  unidade orçamentária, credor, ação de governo) · paginação à direita (100 por página)
+  unidade orçamentária, credor, ação de governo; desde 30/10/2026 também exercício, fonte, GND,
+  natureza, elemento, categoria econômica, PI, PTRES, UGR, UG executora, Iduso, resultado
+  primário, faixas de idade/valor/% do saldo, destaque pelo corte e indicação de anulação) ·
+  paginação à direita (100 por página)
 - Tabela (`<table>` com cabeçalho fixo e rolagem própria, máx. 680px): NE (+ ação abaixo),
   Favorecido, Empenhado, Liquidado, Saldo (+ barra do % do empenhado), % Saldo, Idade (meses
-  desde o primeiro empenho; "—" fora do exercício da extração), [Corte:
+  desde o primeiro empenho; "—" fora do exercício da extração), Indicação (selos), [Corte:
   selo Destaque/Abaixo, só em "Todos no escopo"], botão "Ver". Cabeçalho clicável ordena
   (▲/▼); linhas de grupo com contagem e saldo do grupo. Rodapé: "Exibindo a–b de N",
   "+ N abaixo do corte" e paginação
 - Painel lateral de detalhe (fixo à direita, 560px, fundo escurecido): métricas 2×2,
   classificação, programação, unidades e linhas de origem (rastreabilidade)
-- Abaixo do componente, nativos: linha "Relatório: N empenhos…" + `st.download_button` PDF |
-  Excel (`src/relatorio_empenhos_retardada.py`, geração só no clique) e caption de procedência
+- Abaixo do componente, nativos: linha de opções (desde 30/10/2026) com `st.segmented_control`
+  "Modelo do relatório" (Lista de empenhos / Resumo por grupo / Análise de anulação) +
+  `st.multiselect` "Colunas do PDF" (só no modelo de lista) ou `st.toggle` "Só empenhos com
+  indicação" (só no de análise); linha "Relatório: …" + `st.download_button` PDF | Excel
+  (`src/relatorio_empenhos_retardada.py`, geração só no clique) e caption de procedência
 
 ### 2.7 Bolsas e Auxílios (`bolsas_auxilios.py`)
 - Header em `st.columns([4, 1.4, 1])`: título | botão relatório | botão "+ Novo programa"

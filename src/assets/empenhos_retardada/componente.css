@@ -122,6 +122,26 @@ tbody tr.linha:hover td { background: var(--accent-soft); }
 .pilula { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 0.72rem; font-weight: 650; }
 .pilula.ok { background: var(--pos-soft); color: var(--pos); }
 .pilula.nao { background: var(--surface-alt); color: var(--faint); }
+.pilula.ind { background: var(--warn-soft); color: var(--text); border: 1px solid var(--warn-line); white-space: nowrap; }
+td.ind { max-width: 210px; }
+td.ind .pilula { margin: 1px 0; }
+
+/* indicações para análise de anulação */
+.anulacao { padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
+.anulacao .topo-anul { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
+.anulacao .titulo { font-weight: 600; }
+.anulacao .aviso-anul { color: var(--muted); font-size: 0.8rem; }
+.anulacao .topo-anul .link { margin-left: auto; }
+.anulacao .regras { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.anulacao .regras li { display: grid; grid-template-columns: 190px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; font-size: 0.82rem; }
+.anulacao .regras li .pilula { justify-self: start; }
+.anulacao .regra { color: var(--muted); }
+.anulacao .qtd { font-weight: 650; white-space: nowrap; text-align: right; }
+.anulacao .params { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.anulacao .param { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: var(--muted); background: var(--surface-alt); border: 1px solid var(--border); border-radius: 10px; padding: 5px 10px; }
+.anulacao .param input { width: 80px; border: 0; border-bottom: 1px dashed var(--border); background: transparent; text-align: right; outline: none; font-weight: 650; color: var(--text); }
+.anulacao .param input:focus { border-bottom-color: var(--accent); }
+@media (max-width: 720px) { .anulacao .regras li { grid-template-columns: 1fr auto; } .anulacao .regra { grid-column: 1 / -1; grid-row: 2; } .anulacao .topo-anul .link { margin-left: 0; } }
 tr.grupo td { background: var(--surface-alt); font-weight: 650; }
 tr.grupo td span { color: var(--muted); font-weight: 500; margin-left: 10px; font-size: 0.8rem; }
 .rodape { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; padding: 10px 14px; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.8rem; align-items: center; }

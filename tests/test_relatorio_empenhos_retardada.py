@@ -5,19 +5,31 @@ colunas que a página passa (`saldo_por_ne(agregar_por_ne(...))` + `percentual_s
 
 from __future__ import annotations
 
+import base64
+import re
 import unittest
+import zlib
 from io import BytesIO
 
 import pandas as pd
 from openpyxl import load_workbook
 
 from src.relatorio_empenhos_retardada import (
+    COLUNA_DECISAO,
     COLUNA_GRUPO,
+    COLUNA_JUSTIFICATIVA,
+    COLUNAS_PDF_PADRAO,
+    ROTULOS_COLUNAS_PDF,
     ContextoRelatorio,
     gerar_pdf,
+    gerar_pdf_analise,
+    gerar_pdf_resumo,
     gerar_xlsx,
+    gerar_xlsx_analise,
+    gerar_xlsx_resumo,
     montar_lista_relatorio,
     ordenar_lista,
+    resumo_por_grupo,
 )
 
 
@@ -52,6 +64,15 @@ def _lista() -> pd.DataFrame:
             "passa_corte": [True, True, False],
         }
     )
+
+
+def _texto_pdf(conteudo: bytes) -> bytes:
+    """Conteúdo das páginas do PDF já descomprimido (o ReportLab grava em ASCII85 + Flate)."""
+
+    partes = []
+    for trecho in re.findall(rb"stream\n(.*?)~>endstream", conteudo, flags=re.S):
+        partes.append(zlib.decompress(base64.a85decode(trecho)))
+    return b"".join(partes)
 
 
 def _contexto(**kwargs) -> ContextoRelatorio:
@@ -241,6 +262,66 @@ class RelatorioAgrupadoTests(unittest.TestCase):
         lista = ordenar_lista(_lista(), "saldo", agrupar_por="acao_desc")
         conteudo = gerar_pdf(lista, _contexto(agrupamento="Ação de governo"))
         self.assertTrue(conteudo.startswith(b"%PDF"))
+
+
+class ModelosDeRelatorioTests(unittest.TestCase):
+    """Modelos de 30/10/2026: escolha de colunas do PDF, resumo por grupo e análise de anulação."""
+
+    def setUp(self) -> None:
+        self.lista = ordenar_lista(
+            _lista().assign(indicacoes_anulacao=["Saldo residual", None, None], indicacao_principal=["Saldo residual", "Sem indicação", "Sem indicação"]),
+            "saldo",
+            agrupar_por="acao_desc",
+        )
+
+    def test_pdf_com_colunas_escolhidas(self) -> None:
+        conteudo = gerar_pdf(self.lista, _contexto(), ["ne", "fonte", "ptres", "saldo"])
+        self.assertTrue(conteudo.startswith(b"%PDF"))
+        self.assertIn(b"(FONTE)", _texto_pdf(conteudo))
+        self.assertIn(b"(012345)", _texto_pdf(conteudo))  # PTRES como texto, zero à esquerda
+        self.assertNotIn(b"FAVORECIDO", _texto_pdf(conteudo))
+        # chave desconhecida é ignorada; nenhuma válida volta ao padrão
+        self.assertIn(b"FAVORECIDO", _texto_pdf(gerar_pdf(self.lista, _contexto(), ["inexistente"])))
+        self.assertEqual(COLUNAS_PDF_PADRAO[:3], ["ne", "exercicio", "favorecido"])
+        self.assertTrue(set(COLUNAS_PDF_PADRAO) <= set(ROTULOS_COLUNAS_PDF))
+
+    def test_resumo_por_grupo_calculado_a_mao(self) -> None:
+        resumo = resumo_por_grupo(self.lista).set_index("Grupo")
+        # FUNCIONAMENTO: 2 NEs, empenhado 150.000, liquidado 40.000, saldo 110.000 (100% do saldo)
+        self.assertEqual(resumo.loc["FUNCIONAMENTO", "Empenhos"], 2)
+        self.assertEqual(resumo.loc["FUNCIONAMENTO", "Saldo"], 110_000.0)
+        self.assertAlmostEqual(resumo.loc["FUNCIONAMENTO", "% liquidado"], 40_000 / 150_000 * 100)
+        self.assertAlmostEqual(resumo.loc["FUNCIONAMENTO", "% do saldo do relatório"], 100.0)
+        # ASSISTENCIA: só nulos -> soma nula, não zero; % nulo
+        self.assertTrue(pd.isna(resumo.loc["ASSISTENCIA", "Saldo"]))
+        self.assertTrue(pd.isna(resumo.loc["ASSISTENCIA", "% liquidado"]))
+        self.assertEqual(resumo.loc["TOTAL", "Empenhos"], 3)
+        self.assertEqual(list(resumo.index), ["FUNCIONAMENTO", "ASSISTENCIA", "TOTAL"])
+        # sem agrupamento: só a linha TOTAL
+        self.assertEqual(resumo_por_grupo(_lista())["Grupo"].tolist(), ["TOTAL"])
+
+    def test_resumo_em_pdf_e_excel_e_aba_resumo_no_excel_agrupado(self) -> None:
+        self.assertTrue(gerar_pdf_resumo(self.lista, _contexto()).startswith(b"%PDF"))
+        livro = load_workbook(BytesIO(gerar_xlsx_resumo(self.lista, _contexto())))
+        self.assertEqual(livro.sheetnames, ["Resumo", "Parâmetros"])
+        self.assertIn("Resumo", load_workbook(BytesIO(gerar_xlsx(self.lista, _contexto()))).sheetnames)
+
+    def test_analise_de_anulacao(self) -> None:
+        conteudo = gerar_pdf_analise(self.lista, _contexto(indicacoes=[("Saldo residual", "regra")]))
+        self.assertIn(b"JUSTIFICATIVA", _texto_pdf(conteudo))
+        self.assertIn(b"Saldo residual", _texto_pdf(conteudo))
+        livro = load_workbook(BytesIO(gerar_xlsx_analise(self.lista, _contexto(indicacoes=[("Saldo residual", "regra")]))))
+        planilha = livro["Empenhos"]
+        cabecalho = [c.value for c in planilha[1]]
+        self.assertEqual(cabecalho[-2:], [COLUNA_DECISAO, COLUNA_JUSTIFICATIVA])
+        self.assertIn("Indicações para anulação", cabecalho)
+        decisao = cabecalho.index(COLUNA_DECISAO)
+        self.assertTrue(all(linha[decisao].value is None for linha in planilha.iter_rows(min_row=2)))
+        validacoes = planilha.data_validations.dataValidation
+        self.assertEqual(len(validacoes), 1)
+        self.assertIn("Manter,Anular,Reforçar", validacoes[0].formula1)
+        parametros = {linha[0].value: linha[1].value for linha in livro["Parâmetros"].iter_rows(min_row=2)}
+        self.assertEqual(parametros["Indicação: Saldo residual"], "regra")
 
 
 class GerarPdfTests(unittest.TestCase):
