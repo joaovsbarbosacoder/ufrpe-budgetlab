@@ -119,7 +119,7 @@ anteriores; o modo aparece no título, nos parâmetros e no nome do arquivo.
 ### Empenhos com Execução Retardada — agrupamentos, indicações de anulação e modelos de relatório (30/10/2026)
 
 **Agrupar por** ganhou, além de unidade orçamentária, credor e ação: exercício, fonte, GND,
-natureza e elemento de despesa, categoria econômica, PI, PTRES, UGR, UG executora, Iduso,
+natureza e elemento de despesa, categoria econômica, PI, PTRES, UGR, UG executora, UG responsável, Iduso,
 resultado primário (só dimensões com um valor por NE; Natureza Detalhada/Subitem ficam de fora
 porque uma NE pode ter várias) e agrupamentos calculados: faixas de idade do saldo (até 2, 3–5,
 6–8, 9+ meses), de valor do saldo (negativo, zero, até R$ 1 mil, 1–10 mil, 10–100 mil, acima)

@@ -103,6 +103,7 @@ OPCOES_AGRUPAMENTO: dict[str, str | None] = {
     "PTRES": "ptres",
     "UGR": "ugr_desc",
     "UG executora": "ug_executora_desc",
+    "UG responsável": "ug_responsavel_desc",
     "Iduso": "iduso_desc",
     "Resultado primário": "resultado_primario_desc",
     "Faixa de idade do saldo": COLUNA_FAIXA_IDADE,
