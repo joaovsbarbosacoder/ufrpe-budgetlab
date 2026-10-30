@@ -150,7 +150,7 @@ Ordem vertical de renderização. "N cols" indica quantas colunas a linha usa. B
   (meses de "nunca liquidada", meses "sem liquidação", residual em R$ e em %)
 - Barra da lista: "Empenhos" · Exibir (Em destaque / Todos no escopo) · Agrupar por (sem,
   unidade orçamentária, credor, ação de governo; desde 30/10/2026 também exercício, fonte, GND,
-  natureza, elemento, categoria econômica, PI, PTRES, UGR, UG executora, Iduso, resultado
+  natureza, elemento, categoria econômica, PI, PTRES, UGR, UG executora, UG responsável, Iduso, resultado
   primário, faixas de idade/valor/% do saldo, destaque pelo corte e indicação de anulação) ·
   paginação à direita (100 por página)
 - Tabela (`<table>` com cabeçalho fixo e rolagem própria, máx. 680px): NE (+ ação abaixo),
