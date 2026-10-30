@@ -7,6 +7,10 @@ TODAS as células do RP2, marcadas ou não (a seleção de células do Resultado
 `src/ui_resultado_planos.py` desenha os quadros. As leituras com cache e a montagem da necessidade de Contratos e Bolsas são as da
 página do Resultado, em `src/ui_resultado_dados.py`. Só lê: nada é gravado aqui (despesas previstas e receitas próprias são cadastradas
 no Resultado Orçamentário).
+
+Filtros (pedido do usuário, 30/10/2026): Ação, Plano Orçamentário (só os das Ações escolhidas), Fonte (o quadro passa a somar só as
+fontes escolhidas) e Situação do saldo — `filtrar_planos`, só exibição. Com filtro, os totais somam o que está visível e saem as
+linhas avulsas e a conferência com o resultado, que só valem para o total.
 """
 
 from __future__ import annotations
@@ -27,7 +31,13 @@ from src.importacao_execucao_mensal import NOME_PONTEIRO as PONTEIRO_EXECUCAO_ME
 from src.relatorio_necessidade_empenho import mes_referencia_do_exercicio
 from src.resultado_orcamentario import ORIGEM_BOLSAS, ORIGEM_CONTRATOS, calcular_resultado, separar_ativos_sem_ne
 from src.resultado_orcamentario_cadastro import ArquivoCorrompido
-from src.resultado_orcamentario_planos import planos_discricionarios, selecao_discricionaria
+from src.resultado_orcamentario_planos import (
+    SITUACOES,
+    filtrar_planos,
+    opcoes_filtros,
+    planos_discricionarios,
+    selecao_discricionaria,
+)
 from src.ui_resultado_dados import (
     CAMINHO_LIQUIDACAO_COMPETENCIA,
     cached_celulas_por_exercicio,
@@ -157,7 +167,30 @@ resultado_rp2 = calcular_resultado(
 )
 planos = planos_discricionarios(resultado_rp2, celulas, empenhado, despesas, ativos_sem_ne)
 
-st.html(html_planos_discricionarios(planos))
+
+def _multiselect(coluna, rotulo: str, chave: str, opcoes: dict[str, str]) -> list[str]:
+    # seleção que deixou de existir (outro exercício, Ação desmarcada) sai antes do widget, que recusaria valor fora das opções
+    if chave in st.session_state:
+        st.session_state[chave] = [v for v in st.session_state[chave] if v in opcoes]
+    with coluna:
+        return st.multiselect(rotulo, list(opcoes), format_func=opcoes.get, key=chave, placeholder="Todos")
+
+
+# Filtros (30/10/2026): só escolhem o que aparece; a conta acima é sempre sobre todo o discricionário.
+col_acao, col_plano, col_fonte, col_situacao = st.columns([3, 3, 2, 2])
+opcoes_acao, _, _ = opcoes_filtros(planos)
+acoes_escolhidas = _multiselect(col_acao, "Ação", "rd_f_acao", opcoes_acao)
+_, opcoes_plano, _ = opcoes_filtros(planos, acoes_escolhidas)
+planos_escolhidos = _multiselect(col_plano, "Plano Orçamentário", "rd_f_plano", opcoes_plano)
+_, _, opcoes_fonte = opcoes_filtros(planos, acoes_escolhidas, planos_escolhidos)
+fontes_escolhidas = _multiselect(col_fonte, "Fonte", "rd_f_fonte", opcoes_fonte)
+situacoes_escolhidas = _multiselect(col_situacao, "Situação", "rd_f_situacao", {s: s for s in SITUACOES})
+
+st.html(html_planos_discricionarios(filtrar_planos(
+    planos, acoes=acoes_escolhidas, planos=planos_escolhidos, fontes=fontes_escolhidas, situacoes=situacoes_escolhidas,
+)))
+if fontes_escolhidas:
+    st.caption("Com o filtro de Fonte, cada quadro mostra só as fontes escolhidas: dotação, executado, projetado e saldo delas.")
 
 avisos = [*avisos_extras, *resultado_rp2.avisos, *planos.avisos]
 if avisos:

@@ -158,3 +158,106 @@ def test_receita_na_celula_1050_da_20rk_limita_e_leva_o_excedente_na_fonte():
 def test_ordem_acoes_por_dotacao_e_planos_por_dotacao_dentro_da_acao():
     _, r = _gerar()
     assert [(p.acao, p.po) for p in r.planos] == [("20Y0", "0001"), ("20Y0", "0002"), ("21AA", "0000")]
+
+
+# ------------------------------------------------------------------ filtros da página (30/10/2026)
+from src.resultado_orcamentario_planos import (  # noqa: E402
+    SITUACAO_DEFICIT,
+    SITUACAO_FOLGA,
+    SITUACAO_INTEGRAL,
+    SITUACAO_SEM_SALDO,
+    LinhaAvulsa,
+    PlanosDiscricionarios,
+    QuadroPlano,
+    SaldoFonte,
+    filtrar_planos,
+    opcoes_filtros,
+    situacao,
+)
+
+
+def _sf(fonte, dotacao, executado, projetado):
+    saldo = None if None in (dotacao, executado, projetado) else dotacao - executado - projetado
+    return SaldoFonte(fonte, f"DESC {fonte}", dotacao, executado, projetado, saldo)
+
+
+def _qp(acao, po, *fontes):
+    def soma(i):
+        valores = [getattr(f, i) for f in fontes]
+        return None if any(v is None for v in valores) else sum(valores)
+
+    dot, exe, prj = soma("dotacao"), soma("executado"), soma("projetado")
+    saldo = None if None in (dot, exe, prj) else dot - exe - prj
+    return QuadroPlano(acao, f"ACAO {acao}", po, f"PLANO {po}", dot, exe, prj, saldo, tuple(fontes))
+
+
+def _base_filtros():
+    # 20RK/0000: duas fontes — 1000 folga 100, 1050 déficit 50 -> plano folga 50
+    # 20RK/0002: fonte 1000, déficit 30
+    # 4002/0000: fonte 1000, executado nulo -> sem saldo
+    planos = [
+        _qp("20RK", "0000", _sf("1000000000", 500.0, 300.0, 100.0), _sf("1050000000", 200.0, 150.0, 100.0)),
+        _qp("20RK", "0002", _sf("1000000000", 100.0, 80.0, 50.0)),
+        _qp("4002", "0000", _sf("1000000000", 300.0, None, 10.0)),
+    ]
+    return PlanosDiscricionarios(planos, LinhaAvulsa(5.0, 1.0), LinhaAvulsa(0.0, 0.0), 1100.0, None, 260.0, None, 0.0, ["aviso"])
+
+
+def test_situacao_pela_mesma_tolerancia_da_pilula():
+    assert situacao(None) == SITUACAO_SEM_SALDO
+    assert situacao(-0.01) == SITUACAO_DEFICIT
+    assert situacao(0.003) == situacao(-0.003) == SITUACAO_INTEGRAL
+    assert situacao(0.01) == SITUACAO_FOLGA
+
+
+def test_sem_filtro_devolve_o_resultado_como_esta():
+    base = _base_filtros()
+    assert filtrar_planos(base) is base
+    assert filtrar_planos(base, acoes=[], planos=None) is base
+
+
+def test_filtro_por_acao_e_plano_soma_so_os_visiveis_sem_avulsas():
+    r = filtrar_planos(_base_filtros(), acoes=["20RK"])
+    assert [(p.acao, p.po) for p in r.planos] == [("20RK", "0000"), ("20RK", "0002")]
+    assert (r.dotacao, r.executado, r.projetado, r.saldo) == (800.0, 530.0, 250.0, 20.0)
+    assert r.filtrado and r.planos_no_total == 3 and r.avisos == ["aviso"]
+    assert r.fora == LinhaAvulsa(0.0, 0.0)
+    so_um = filtrar_planos(_base_filtros(), planos=["4002|0000"])  # PO 0000 existe nas duas Ações: a chave leva a Ação
+    assert [(p.acao, p.po) for p in so_um.planos] == [("4002", "0000")]
+    assert so_um.executado is None and so_um.saldo is None  # nulo continua nulo, nunca zero
+
+
+def test_filtro_por_fonte_refaz_o_plano_so_com_as_fontes_escolhidas():
+    r = filtrar_planos(_base_filtros(), fontes=["1050000000"])
+    assert len(r.planos) == 1  # só 20RK/0000 tem a 1050
+    p = r.planos[0]
+    assert (p.dotacao, p.executado, p.projetado, p.saldo) == (200.0, 150.0, 100.0, -50.0)
+    assert [f.fonte for f in p.fontes] == ["1050000000"]
+    assert (r.dotacao, r.saldo) == (200.0, -50.0)
+    base = _base_filtros()
+    filtrar_planos(base, fontes=["1050000000"])
+    assert base.planos[0].dotacao == 700.0  # não altera o resultado recebido
+
+
+def test_situacao_vale_sobre_o_saldo_ja_recortado_pela_fonte():
+    # sem fonte, 20RK/0000 tem folga (50); só com a 1050, déficit (−50)
+    assert [p.po for p in filtrar_planos(_base_filtros(), situacoes=[SITUACAO_DEFICIT]).planos] == ["0002"]
+    r = filtrar_planos(_base_filtros(), fontes=["1050000000"], situacoes=[SITUACAO_DEFICIT])
+    assert [(p.acao, p.po) for p in r.planos] == [("20RK", "0000")]
+    assert [p.acao for p in filtrar_planos(_base_filtros(), situacoes=[SITUACAO_SEM_SALDO]).planos] == ["4002"]
+
+
+def test_filtro_sem_nenhum_plano_tem_totais_zerados_e_marca_o_recorte():
+    r = filtrar_planos(_base_filtros(), acoes=["4002"], situacoes=[SITUACAO_FOLGA])
+    assert r.planos == [] and r.filtrado and (r.dotacao, r.saldo) == (0.0, 0.0)
+
+
+def test_opcoes_dos_filtros_em_cascata():
+    acoes, planos, fontes = opcoes_filtros(_base_filtros())
+    assert acoes == {"20RK": "20RK — ACAO 20RK", "4002": "4002 — ACAO 4002"}
+    assert list(planos) == ["20RK|0000", "20RK|0002", "4002|0000"]
+    assert list(fontes) == ["1000000000", "1050000000"]
+    _, planos, fontes = opcoes_filtros(_base_filtros(), ["4002"])
+    assert list(planos) == ["4002|0000"] and list(fontes) == ["1000000000"]
+    _, _, fontes = opcoes_filtros(_base_filtros(), None, ["20RK|0002"])
+    assert list(fontes) == ["1000000000"]

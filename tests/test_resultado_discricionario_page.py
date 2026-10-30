@@ -74,3 +74,21 @@ def test_pagina_oferece_a_escolha_do_exercicio(diretorio: Path) -> None:
 def test_menu_tem_a_pagina() -> None:
     texto = (PROJECT_ROOT / "app.py").read_text(encoding="utf-8")
     assert '"app_pages/resultado_discricionario.py"' in texto and 'title="Discricionário por Plano"' in texto
+
+
+def test_filtros_por_acao_e_situacao_recortam_os_quadros(diretorio: Path) -> None:
+    # 30/10/2026: filtros só de exibição — com recorte, aviso "Filtrado" e sem a conferência com o resultado
+    app = _abrir()
+    cartoes = _html(app).count('<article class="card"')
+    acao = app.multiselect(key="rd_f_acao")
+    assert len(acao.options) >= 1 and app.multiselect(key="rd_f_situacao").options
+    acao.set_value([acao.options[0].split(" — ")[0]]).run()  # options traz o rótulo; o valor é o código da Ação
+    assert not app.exception
+    html = _html(app)
+    assert "Filtrado:" in html and f"de {cartoes} Planos" in html
+    assert "A soma dos quadros confere" not in html
+    assert html.count('<article class="card"') <= cartoes
+    # Planos oferecidos passam a ser só os da Ação escolhida
+    assert len(app.multiselect(key="rd_f_plano").options) == html.count('<article class="card"')
+    acao.set_value([]).run()
+    assert "A soma dos quadros confere" in _html(app)

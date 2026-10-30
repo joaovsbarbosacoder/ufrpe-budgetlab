@@ -13,13 +13,15 @@ realizar e o saldo, na mesma conta do Resultado Orçamentário:
     NE com empenho em célula que não é RP2, que entra inteira na conta) e "Sem célula" (despesas previstas sem célula e
     contratos ativos sem NE).
 
+Filtros da página (30/10/2026): `filtrar_planos` recorta os quadros já calculados por Ação, Plano, Fonte e Situação; só exibição.
+
 Nulo continua nulo: um valor indisponível deixa nulo o plano que ele alimenta (e o total), nunca vira zero. "Faixa histórica" e
 "pior caso" (existem em Despesas de Pessoal) não se aplicam: não há série definida para o discricionário.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import pandas as pd
 
@@ -85,6 +87,10 @@ class PlanosDiscricionarios:
     #: maior diferença absoluta entre estes totais e os do `ResultadoOrcamentario` (0,0 quando fecham)
     diferenca_conferencia: float
     avisos: list[str] = field(default_factory=list)
+    #: recorte de `filtrar_planos`: totais só dos planos visíveis, sem linhas avulsas nem conferência com o resultado
+    filtrado: bool = False
+    #: quantos planos o discricionário tem sem filtro (só preenchido quando `filtrado`)
+    planos_no_total: int | None = None
 
     @property
     def fecha(self) -> bool:
@@ -215,3 +221,104 @@ def planos_discricionarios(
             f"R$ {resultado.diferenca_conferencia:,.2f}."
         )
     return resultado
+
+
+# ---------------------------------------------------------------------------------------- filtros
+# Filtros da página (pedido do usuário, 30/10/2026). Só escolhem o que aparece: a conta acima não muda (sempre sobre todo o RP2).
+SITUACAO_DEFICIT = "Déficit"
+SITUACAO_FOLGA = "Folga"
+SITUACAO_INTEGRAL = "Dotação integral"
+SITUACAO_SEM_SALDO = "Sem saldo calculável"
+SITUACOES = (SITUACAO_DEFICIT, SITUACAO_FOLGA, SITUACAO_INTEGRAL, SITUACAO_SEM_SALDO)
+#: mesma tolerância da pílula do quadro (`ui_resultado_planos`): |saldo| até ela é "dotação integral"
+TOLERANCIA_SITUACAO = 0.004
+
+
+def situacao(saldo: float | None) -> str:
+    if saldo is None:
+        return SITUACAO_SEM_SALDO
+    if saldo < -TOLERANCIA_SITUACAO:
+        return SITUACAO_DEFICIT
+    if abs(saldo) <= TOLERANCIA_SITUACAO:
+        return SITUACAO_INTEGRAL
+    return SITUACAO_FOLGA
+
+
+def chave_plano(p: QuadroPlano) -> str:
+    """Identificador do plano para o filtro: o código do PO se repete entre Ações (0000, 0001...), então leva a Ação."""
+
+    return f"{p.acao}|{p.po}"
+
+
+def opcoes_filtros(
+    r: PlanosDiscricionarios, acoes: list[str] | None = None, planos: list[str] | None = None
+) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    """(Ações, Planos, Fontes) oferecidos nos filtros, como {valor: rótulo}, na ordem dos quadros. Planos só das Ações escolhidas;
+    fontes só dos planos que sobram depois de Ação e Plano (vazio = todos)."""
+
+    opcoes_acao: dict[str, str] = {}
+    for p in r.planos:
+        opcoes_acao.setdefault(str(p.acao), f"{p.acao} — {p.acao_descricao}" if p.acao_descricao else str(p.acao))
+    da_acao = [p for p in r.planos if not acoes or str(p.acao) in acoes]
+    opcoes_plano = {
+        chave_plano(p): f"{p.acao} · PO {p.po} — {p.po_descricao}" if p.po_descricao else f"{p.acao} · PO {p.po}"
+        for p in da_acao
+    }
+    visiveis = [p for p in da_acao if not planos or chave_plano(p) in planos]
+    opcoes_fonte: dict[str, str] = {}
+    for p in visiveis:
+        for f in p.fontes:
+            if f.fonte is not None:
+                opcoes_fonte.setdefault(str(f.fonte), f"{f.fonte} — {f.fonte_descricao}" if f.fonte_descricao else str(f.fonte))
+    return opcoes_acao, opcoes_plano, dict(sorted(opcoes_fonte.items()))
+
+
+def _so_das_fontes(p: QuadroPlano, fontes: set[str]) -> QuadroPlano | None:
+    """O plano refeito só com as fontes escolhidas (soma das linhas de fonte; nulo em qualquer uma deixa o total nulo). Sem
+    nenhuma das fontes, `None` (o plano sai)."""
+
+    escolhidas = tuple(f for f in p.fontes if f.fonte is not None and str(f.fonte) in fontes)
+    if not escolhidas:
+        return None
+
+    def soma(campo: str) -> float | None:
+        return soma_ou_nulo(pd.Series([getattr(f, campo) for f in escolhidas], dtype="float64"))
+
+    dotacao, executado, projetado = soma("dotacao"), soma("executado"), soma("projetado")
+    saldo = None if None in (dotacao, executado, projetado) else dotacao - executado - projetado
+    return replace(p, dotacao=dotacao, executado=executado, projetado=projetado, saldo=saldo, fontes=escolhidas)
+
+
+def filtrar_planos(
+    r: PlanosDiscricionarios,
+    *,
+    acoes: list[str] | None = None,
+    planos: list[str] | None = None,
+    fontes: list[str] | None = None,
+    situacoes: list[str] | None = None,
+) -> PlanosDiscricionarios:
+    """Recorte dos quadros para exibição. Lista vazia ou `None` = sem filtro naquele campo; sem nenhum filtro devolve `r` como está.
+
+    Ordem: Ação, Plano, Fonte (o plano passa a mostrar só as fontes escolhidas, com dotação, executado, projetado e saldo
+    somados delas) e, por último, Situação (sobre o saldo já recortado). Os totais passam a ser a soma dos planos visíveis, com
+    nulo propagando; as linhas avulsas ("Fora do discricionário", "Sem célula") e a conferência com o resultado não valem para
+    um recorte e ficam de fora (`filtrado=True`). Não altera `r`."""
+
+    if not (acoes or planos or fontes or situacoes):
+        return r
+    visiveis = [p for p in r.planos if (not acoes or str(p.acao) in acoes) and (not planos or chave_plano(p) in planos)]
+    if fontes:
+        visiveis = [q for q in (_so_das_fontes(p, set(fontes)) for p in visiveis) if q is not None]
+    if situacoes:
+        visiveis = [p for p in visiveis if situacao(p.saldo) in situacoes]
+
+    def total(campo: str) -> float | None:
+        return soma_ou_nulo(pd.Series([getattr(p, campo) for p in visiveis], dtype="float64"))
+
+    dotacao, executado, projetado = total("dotacao"), total("executado"), total("projetado")
+    saldo = None if None in (dotacao, executado, projetado) else dotacao - executado - projetado
+    return PlanosDiscricionarios(
+        planos=visiveis, fora=LinhaAvulsa(0.0, 0.0), sem_celula=LinhaAvulsa(0.0, 0.0), dotacao=dotacao, executado=executado,
+        projetado=projetado, saldo=saldo, diferenca_conferencia=0.0, avisos=list(r.avisos), filtrado=True,
+        planos_no_total=len(r.planos),
+    )

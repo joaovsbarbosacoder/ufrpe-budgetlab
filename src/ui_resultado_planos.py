@@ -64,6 +64,7 @@ ESTILO = f"""
 .rp .avulsa b{{color:{dt.TEXT};font-style:normal}}
 .rp .ok{{color:{dt.POSITIVE};font-size:12px;margin-top:10px}} .rp .erro{{color:{dt.NEGATIVE};font-size:12px;margin-top:10px}}
 .rp .vazio{{color:{dt.TEXT_FAINT};padding:10px 0}}
+.rp .filtro{{margin:8px 0 0;font-size:12px;color:{dt.ACCENT};background:{dt.ACCENT_SOFT};border-radius:10px;padding:7px 12px}}
 @media(max-width:900px){{.rp .cards{{grid-template-columns:1fr}}.rp .kpis{{grid-template-columns:repeat(2,minmax(0,1fr))}}}}
 @media(max-width:520px){{.rp .kpis{{grid-template-columns:1fr}}.rp .figs{{grid-template-columns:1fr 1fr}}}}
 </style>
@@ -153,11 +154,18 @@ def html_planos_discricionarios(r: PlanosDiscricionarios) -> str:
     resultado."""
 
     if not r.planos:
+        if r.filtrado:
+            return ESTILO + '<div class="rp"><p class="vazio">Nenhum Plano Orçamentário atende aos filtros escolhidos.</p></div>'
         return ESTILO + '<div class="rp"><p class="vazio">Nenhuma célula do discricionário (Resultado Primário 2) neste exercício.</p></div>'
 
     em_deficit = sum(1 for p in r.planos if p.saldo is not None and p.saldo < -_TOLERANCIA_EXCEDENTE)
     consumo = percentual(
         None if r.executado is None or r.projetado is None else r.executado + r.projetado, r.dotacao
+    )
+    nota_filtro = (
+        f'<p class="filtro">Filtrado: {len(r.planos)} de {r.planos_no_total} Planos. Os totais acima somam só os Planos '
+        "exibidos; a conferência com o resultado do discricionário vale para a página sem filtros.</p>"
+        if r.filtrado else ""
     )
     kpis = (
         '<div class="kpis">'
@@ -186,6 +194,8 @@ def html_planos_discricionarios(r: PlanosDiscricionarios) -> str:
             f'<div class="cards">{"".join(_cartao(p, cor) for p in planos)}</div>'
         )
 
+    if r.filtrado:  # recorte: linhas avulsas e conferência só valem para o total
+        return ESTILO + '<div class="rp">' + kpis + nota_filtro + "".join(blocos) + "</div>"
     avulsas = _avulsa("Fora do discricionário (parte de NE com empenho em célula que não é RP2)", r.fora) + _avulsa(
         "Sem célula (outras despesas previstas e contratos ativos sem NE)", r.sem_celula
     )
