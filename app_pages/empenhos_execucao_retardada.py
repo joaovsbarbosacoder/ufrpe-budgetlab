@@ -83,17 +83,25 @@ nativos — o componente não gera arquivo). Os filtros desta página deixaram d
 `src/ui_filtros_execucao.py` (Consulta de Empenhos continua usando), mas a regra é a mesma
 (`option_mapping`/`apply_filters` reaproveitados).
 
+AMPLIAÇÃO (30/10/2026, pedido explícito): mais opções em "Agrupar por" (dimensões com um valor por
+NE, faixas de idade/valor/% do saldo, destaque pelo corte, indicação de anulação); indicações para
+análise de anulação (`src/candidatos_anulacao.py`, informativas, limites ajustáveis no componente);
+e três modelos de relatório — lista com escolha das colunas do PDF, resumo por grupo e análise de
+anulação com "Decisão"/"Justificativa" em branco (widgets nativos acima dos downloads).
+
 Não altera `src/execucao_anual.py`, `src/tesouro_execucao_mensal.py`, os leitores de
 Contratos/Bolsas, nem a lógica de saldo já validada — só lê e reaproveita.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 import gc
 
 import streamlit as st
 
+from src.candidatos_anulacao import COLUNA_INDICACOES, descrever_parametros
 from src.empenhos_retardada_tela import (
     OPCOES_AGRUPAMENTO,
     ORDENACAO_PADRAO,
@@ -102,15 +110,31 @@ from src.empenhos_retardada_tela import (
     aplicar_acao,
     estado_inicial,
     montar_tela,
+    parametros_anulacao,
 )
 from src.importacao_execucao_mensal import DIRETORIO_MANIFESTOS_PADRAO, NOME_PONTEIRO, Manifesto, carregar_atual
-from src.relatorio_empenhos_retardada import ContextoRelatorio, gerar_pdf, gerar_xlsx
+from src.relatorio_empenhos_retardada import (
+    COLUNAS_PDF_PADRAO,
+    ROTULOS_COLUNAS_PDF,
+    ContextoRelatorio,
+    gerar_pdf,
+    gerar_pdf_analise,
+    gerar_pdf_resumo,
+    gerar_xlsx,
+    gerar_xlsx_analise,
+    gerar_xlsx_resumo,
+)
 from src.ui_empenhos_retardada_componente import renderizar
 from src.ui_filtros_execucao import CAMPOS_AVANCADOS_EXECUCAO, CAMPOS_RAPIDOS_EXECUCAO, CampoFiltro
 from src.ui_theme import render_page_header
 
 #: namespace de `st.session_state` desta página — distinto do de Consulta de Empenhos.
 _PREFIXO_FILTRO = "empenhos_retardada"
+
+MODELO_LISTA = "Lista de empenhos"
+MODELO_RESUMO = "Resumo por grupo"
+MODELO_ANALISE = "Análise de anulação"
+MODELOS_RELATORIO = [MODELO_LISTA, MODELO_RESUMO, MODELO_ANALISE]
 
 # Pedido explícito (22/09/2026): paridade de filtros com `app_pages/consulta_empenhos.py`,
 # que desde 21/09/2026 lê da Execução MENSAL (ver docstring do módulo) e acrescenta 2 dimensões
@@ -210,7 +234,8 @@ st.session_state[chave_estado(source_key)] = estado
 
 renderizar(dados, key=chave_componente(source_key), ao_agir=lambda: _ao_agir(source_key))
 
-# Relatório = a lista exibida (visão escolhida, todas as páginas, mesma ordem e agrupamento).
+# Relatório = a lista exibida (visão escolhida, todas as páginas, mesma ordem e agrupamento), em um
+# dos três modelos (30/10/2026); o de análise de anulação pode ficar só com as NEs com indicação.
 if lista is not None:
     todos = estado["visao"] == VISAO_TODOS
     ordem_padrao = estado["ordem"] == ORDENACAO_PADRAO and estado["sentido"] != SENTIDO_ASC
@@ -224,25 +249,65 @@ if lista is not None:
         filtros=_filtros_selecionados(estado),
         ordenacao="" if ordem_padrao else f"{estado['ordem']} ({'menor primeiro' if estado['sentido'] == SENTIDO_ASC else 'maior primeiro'})",
         agrupamento=estado["grupo"] if OPCOES_AGRUPAMENTO.get(estado["grupo"]) else "",
+        indicacoes=descrever_parametros(parametros_anulacao(estado)),
     )
     nome_arquivo = f"empenhos_execucao_retardada_{'todos' if todos else 'destaque'}_{manifesto.data_extracao[:10]}"
+
+    with st.container(key="er_relatorio_opcoes", horizontal=True, vertical_alignment="bottom"):
+        modelo = st.segmented_control(
+            "Modelo do relatório", MODELOS_RELATORIO, default=MODELO_LISTA, key=f"{_PREFIXO_FILTRO}_modelo_{source_key}",
+        ) or MODELO_LISTA
+        if modelo == MODELO_LISTA:
+            colunas_pdf = st.multiselect(
+                "Colunas do PDF",
+                list(ROTULOS_COLUNAS_PDF),
+                default=COLUNAS_PDF_PADRAO,
+                format_func=ROTULOS_COLUNAS_PDF.get,
+                key=f"{_PREFIXO_FILTRO}_colunas_pdf_{source_key}",
+                help="O Excel sempre traz todas as colunas.",
+            )
+        if modelo == MODELO_ANALISE:
+            so_indicadas = st.toggle(
+                "Só empenhos com indicação", value=True, key=f"{_PREFIXO_FILTRO}_so_indicadas_{source_key}",
+            )
+
+    relatorio = lista
+    if modelo == MODELO_ANALISE and so_indicadas:
+        relatorio = lista[lista[COLUNA_INDICACOES].notna()].reset_index(drop=True)
+        contexto_relatorio = replace(contexto_relatorio, visualizacao=f"{estado['visao']} — só empenhos com indicação")
+    if modelo == MODELO_RESUMO:
+        gerar_pdf_modelo, gerar_xlsx_modelo, sufixo = gerar_pdf_resumo, gerar_xlsx_resumo, "_resumo"
+        descricao = (
+            f"resumo de {len(lista)} empenhos por {estado['grupo'].lower()}"
+            if OPCOES_AGRUPAMENTO.get(estado["grupo"])
+            else f"resumo de {len(lista)} empenhos (escolha um agrupamento acima para ver os subtotais)"
+        )
+    elif modelo == MODELO_ANALISE:
+        gerar_pdf_modelo, gerar_xlsx_modelo, sufixo = gerar_pdf_analise, gerar_xlsx_analise, "_analise_anulacao"
+        descricao = f"{len(relatorio)} empenhos para análise de anulação, com Decisão e Justificativa em branco"
+    else:
+        gerar_pdf_modelo, gerar_xlsx_modelo, sufixo = (lambda l, c: gerar_pdf(l, c, colunas_pdf)), gerar_xlsx, ""
+        descricao = f"{len(lista)} empenhos — mesma lista exibida acima ({estado['visao'].lower()}), todas as páginas"
+
     with st.container(key="er_relatorio", horizontal=True, vertical_alignment="center"):
-        st.caption(f"Relatório: {len(lista)} empenhos — mesma lista exibida acima ({estado['visao'].lower()}), todas as páginas.")
+        st.caption(f"Relatório: {descricao}.")
         st.download_button(
             "Baixar PDF",
-            data=lambda: gerar_pdf(lista, contexto_relatorio),
-            file_name=f"{nome_arquivo}.pdf",
+            data=lambda: gerar_pdf_modelo(relatorio, contexto_relatorio),
+            file_name=f"{nome_arquivo}{sufixo}.pdf",
             mime="application/pdf",
             type="primary",
             on_click="ignore",
+            disabled=relatorio.empty,
             key=f"{_PREFIXO_FILTRO}_download_pdf_{source_key}",
         )
         st.download_button(
             "Baixar Excel",
-            data=lambda: gerar_xlsx(lista, contexto_relatorio),
-            file_name=f"{nome_arquivo}.xlsx",
+            data=lambda: gerar_xlsx_modelo(relatorio, contexto_relatorio),
+            file_name=f"{nome_arquivo}{sufixo}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             on_click="ignore",
+            disabled=relatorio.empty,
             key=f"{_PREFIXO_FILTRO}_download_xlsx_{source_key}",
         )
 

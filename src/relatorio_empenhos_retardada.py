@@ -22,12 +22,21 @@ Dois formatos (pedido explícito: "PDF e Excel"):
 Rastreabilidade: as duas saídas levam `ne_ccor` completo (Excel) ou a NE curta (PDF) e a
 procedência da extração — reconciliáveis com a base de Execução Mensal de origem.
 
+Modelos (30/10/2026, pedido explícito: relatórios mais personalizados), todos sobre a MESMA lista:
+  * "Lista de empenhos" — `gerar_pdf` com as colunas escolhidas na tela (padrão: as 10 de antes)
+    e `gerar_xlsx` completo (com aba "Resumo" quando agrupado);
+  * "Resumo por grupo" — `gerar_pdf_resumo`/`gerar_xlsx_resumo`: só os subtotais do agrupamento;
+  * "Análise de anulação" — `gerar_pdf_analise`/`gerar_xlsx_analise`: indicação de anulação e as
+    colunas "Decisão"/"Justificativa" em branco, para a unidade preencher.
+
 Contrato público:
     ContextoRelatorio (dataclass)
-    ordenar_lista(lista, ordenar_por, ascendente, agrupar_por) -> pd.DataFrame
-    montar_lista_relatorio(visivel, em_destaque, *, cortes_ligados, todos, ordenar_por, ascendente, agrupar_por) -> pd.DataFrame
-    gerar_pdf(lista, contexto) -> bytes
+    ordenar_lista(lista, ordenar_por, ascendente, agrupar_por, ordem_grupos) -> pd.DataFrame
+    montar_lista_relatorio(visivel, em_destaque, *, cortes_ligados, todos, ordenar_por, ascendente, agrupar_por, ordem_grupos) -> pd.DataFrame
+    resumo_por_grupo(lista) -> pd.DataFrame
+    gerar_pdf(lista, contexto, colunas=None) -> bytes
     gerar_xlsx(lista, contexto) -> bytes
+    gerar_pdf_resumo / gerar_xlsx_resumo / gerar_pdf_analise / gerar_xlsx_analise (lista, contexto) -> bytes
 """
 
 from __future__ import annotations
@@ -41,6 +50,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
+from openpyxl.worksheet.datavalidation import DataValidation
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from src.execucao_ne_utils import ne_curta
@@ -72,6 +82,8 @@ class ContextoRelatorio:
     #: texto da ordenação e do agrupamento escolhidos na tela (vazio = padrão / sem agrupamento).
     ordenacao: str = ""
     agrupamento: str = ""
+    #: (indicação, regra com os limites em uso) — `candidatos_anulacao.descrever_parametros`.
+    indicacoes: list[tuple[str, str]] = field(default_factory=list)
 
 
 #: (coluna da lista, cabeçalho na planilha) — códigos como texto, valores como número.
@@ -104,9 +116,12 @@ _COLUNAS_XLSX: list[tuple[str, str]] = [
     ("saldo", "Saldo"),
     ("percentual_saldo", "% Saldo"),
     ("idade_meses", "Idade do saldo (meses)"),  # só exercício da extração; vazio nos demais
+    ("meses_sem_liquidacao", "Meses sem liquidação"),  # idem
+    ("indicacoes_anulacao", "Indicações para anulação"),
+    ("indicacao_principal", "Indicação principal"),
     ("_passa_corte_texto", "Passa do corte"),
 ]
-_COLUNAS_INTEIRAS = {"ano", "idade_meses"}
+_COLUNAS_INTEIRAS = {"ano", "idade_meses", "meses_sem_liquidacao"}
 
 _COLUNAS_NUMERICAS = {"empenhada", "liquidada", "saldo", "percentual_saldo"}
 
@@ -116,6 +131,7 @@ def ordenar_lista(
     ordenar_por: str = "saldo",
     ascendente: bool = False,
     agrupar_por: str | None = None,
+    ordem_grupos: list[str] | None = None,
 ) -> pd.DataFrame:
     """Ordena a lista por `ordenar_por` (nulo SEMPRE por último, em qualquer direção — nulo não é
     zero nem negativo) e, se `agrupar_por` vier, deixa as linhas de cada grupo contíguas.
@@ -123,6 +139,7 @@ def ordenar_lista(
     Com agrupamento, acrescenta `COLUNA_GRUPO` (rótulo do grupo; valor nulo vira `ROTULO_SEM_GRUPO`)
     e ordena os grupos pelo saldo somado, do maior para o menor (grupo sem nenhum saldo e o
     grupo "sem valor" por último), desempatando pelo nome; dentro do grupo vale `ordenar_por`.
+    Com `ordem_grupos` (faixas), os grupos seguem essa ordem; rótulo fora dela vai depois, pelo saldo.
     Só reordena e rotula: nenhuma linha é descartada nem tem valor alterado. Não altera `lista`."""
 
     base = lista.copy()
@@ -133,8 +150,10 @@ def ordenar_lista(
         base[COLUNA_GRUPO] = grupo.astype(object)
         base["_grupo_sem_valor"] = base[COLUNA_GRUPO] == ROTULO_SEM_GRUPO
         base["_grupo_saldo"] = base.groupby(COLUNA_GRUPO)["saldo"].transform(lambda s: s.sum(min_count=1))
-        chaves += ["_grupo_sem_valor", "_grupo_saldo", COLUNA_GRUPO]
-        ascendentes += [True, False, True]
+        posicao = {rotulo: i for i, rotulo in enumerate(ordem_grupos or [])}
+        base["_grupo_posicao"] = base[COLUNA_GRUPO].map(posicao).fillna(len(posicao)).astype(int)
+        chaves += ["_grupo_sem_valor", "_grupo_posicao", "_grupo_saldo", COLUNA_GRUPO]
+        ascendentes += [True, True, False, True]
     chaves.append(ordenar_por)
     ascendentes.append(ascendente)
 
@@ -143,7 +162,7 @@ def ordenar_lista(
         return serie.str.lower() if serie.dtype == object or str(serie.dtype) == "string" else serie
 
     base = base.sort_values(chaves, ascending=ascendentes, na_position="last", kind="stable", key=_chave)
-    return base.drop(columns=["_grupo_sem_valor", "_grupo_saldo"], errors="ignore").reset_index(drop=True)
+    return base.drop(columns=["_grupo_sem_valor", "_grupo_posicao", "_grupo_saldo"], errors="ignore").reset_index(drop=True)
 
 
 def montar_lista_relatorio(
@@ -155,6 +174,7 @@ def montar_lista_relatorio(
     ordenar_por: str = "saldo",
     ascendente: bool = False,
     agrupar_por: str | None = None,
+    ordem_grupos: list[str] | None = None,
 ) -> pd.DataFrame:
     """Lista exibida na tela E enviada ao relatório — uma função só para as duas não divergirem
     (pedido explícito: o relatório é "o que está na tela").
@@ -172,6 +192,7 @@ def montar_lista_relatorio(
         ordenar_por=ordenar_por,
         ascendente=ascendente,
         agrupar_por=agrupar_por,
+        ordem_grupos=ordem_grupos,
     )
 
 
@@ -241,14 +262,21 @@ def _linhas_parametros(contexto: ContextoRelatorio) -> list[tuple[str, str]]:
             linhas.append((rotulo, "; ".join(valores)))
     else:
         linhas.append(("Filtros", "nenhum (todos os registros)"))
+    for nome, regra in contexto.indicacoes:
+        linhas.append((f"Indicação: {nome}", regra))
     linhas.append(("Procedência", f"extração de {contexto.data_extracao} · hash {contexto.hash_manifesto}"))
     linhas.append(("Emitido em", contexto.data_emissao))
     return linhas
 
 
 # ------------------------------------------------------------------------------ Excel
-def gerar_xlsx(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
-    base = _preparada(lista)
+#: modelo "Análise de anulação" (30/10/2026): colunas em branco para a unidade preencher.
+COLUNA_DECISAO = "Decisão"
+COLUNA_JUSTIFICATIVA = "Justificativa"
+OPCOES_DECISAO = ("Manter", "Anular", "Reforçar")
+
+
+def _dados_xlsx(base: pd.DataFrame) -> pd.DataFrame:
     dados = pd.DataFrame(index=base.index)
     for coluna, cabecalho in _COLUNAS_XLSX:
         if coluna not in base.columns:
@@ -261,67 +289,228 @@ def gerar_xlsx(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
         else:
             # identificadores/textos como string — preserva zeros à esquerda; nulo continua nulo.
             dados[cabecalho] = serie.map(lambda v: None if v is None or pd.isna(v) else str(v)).astype(object)
+    return dados
 
-    parametros = _linhas_parametros(contexto) + [
+
+def _totais(base: pd.DataFrame) -> list[tuple[str, str]]:
+    return [
         ("Empenhos listados", str(len(base))),
         ("Total empenhado", _formatar_brl(_soma(base["empenhada"]))),
         ("Total liquidado", _formatar_brl(_soma(base["liquidada"]))),
         ("Total saldo", _formatar_brl(_soma(base["saldo"]))),
     ]
 
+
+_CABECALHOS_INTEIROS = {"Exercício", "Idade do saldo (meses)", "Meses sem liquidação", "Empenhos"}
+_CABECALHOS_PCT = {"% Saldo", "% liquidado", "% do saldo do relatório"}
+
+
+def _formatar_planilha(planilha, cabecalhos: list[str]) -> None:
+    for indice, cabecalho in enumerate(cabecalhos, start=1):
+        letra = planilha.cell(row=1, column=indice).column_letter
+        if cabecalho in ("Empenhado", "Liquidado", "Saldo"):
+            formato = "#,##0.00"
+        elif cabecalho in _CABECALHOS_PCT:
+            formato = "0.0"
+        else:
+            formato = None if cabecalho in _CABECALHOS_INTEIROS else "@"
+        if formato:
+            for celula in planilha[letra][1:]:
+                celula.number_format = formato
+        planilha.column_dimensions[letra].width = min(max(len(cabecalho), 12) + 2, 45)
+    planilha.freeze_panes = "B2"
+
+
+def _gravar_xlsx(abas: list[tuple[str, pd.DataFrame]], parametros: list[tuple[str, str]], *, analise: bool = False) -> bytes:
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        dados.to_excel(writer, sheet_name="Empenhos", index=False)
-        pd.DataFrame(parametros, columns=["Parâmetro", "Valor"]).to_excel(
-            writer, sheet_name="Parâmetros", index=False
-        )
-        planilha = writer.sheets["Empenhos"]
-        for indice, cabecalho in enumerate(dados.columns, start=1):
-            letra = planilha.cell(row=1, column=indice).column_letter
-            if cabecalho in ("Empenhado", "Liquidado", "Saldo"):
-                formato = "#,##0.00"
-            elif cabecalho == "% Saldo":
-                formato = "0.0"
-            else:
-                formato = None if cabecalho in ("Exercício", "Idade do saldo (meses)") else "@"
-            if formato:
-                for celula in planilha[letra][1:]:
-                    celula.number_format = formato
-            planilha.column_dimensions[letra].width = min(max(len(cabecalho), 12) + 2, 45)
-        planilha.freeze_panes = "B2"
+        for nome, dados in abas:
+            dados.to_excel(writer, sheet_name=nome, index=False)
+            _formatar_planilha(writer.sheets[nome], list(dados.columns))
+        pd.DataFrame(parametros, columns=["Parâmetro", "Valor"]).to_excel(writer, sheet_name="Parâmetros", index=False)
         writer.sheets["Parâmetros"].column_dimensions["A"].width = 28
         writer.sheets["Parâmetros"].column_dimensions["B"].width = 90
+        if analise:
+            nome, dados = abas[0]
+            planilha = writer.sheets[nome]
+            cabecalhos = list(dados.columns)
+            letra = planilha.cell(row=1, column=cabecalhos.index(COLUNA_DECISAO) + 1).column_letter
+            validacao = DataValidation(type="list", formula1='"' + ",".join(OPCOES_DECISAO) + '"', allow_blank=True)
+            planilha.add_data_validation(validacao)
+            if len(dados):
+                validacao.add(f"{letra}2:{letra}{len(dados) + 1}")
+            for cabecalho, largura in ((COLUNA_DECISAO, 14), (COLUNA_JUSTIFICATIVA, 60)):
+                letra = planilha.cell(row=1, column=cabecalhos.index(cabecalho) + 1).column_letter
+                planilha.column_dimensions[letra].width = largura
     return buffer.getvalue()
 
 
-# -------------------------------------------------------------------------------- PDF
-#: landscape(A4) com 12mm de margem (~774pt úteis).
-_CABECALHO_PDF = ["NE", "EXERCÍCIO", "FAVORECIDO", "PROCESSO", "EMPENHADO (R$)", "LIQUIDADO (R$)", "SALDO (R$)", "% SALDO", "IDADE (MESES)", "CORTE"]
-_LARGURAS_PDF = [70, 45, 180, 95, 80, 80, 80, 48, 40, 42]
+def gerar_xlsx(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
+    """Modelo "Lista de empenhos": todas as colunas (para reprocessar) e, quando a lista está
+    agrupada, a aba "Resumo" com os subtotais de `resumo_por_grupo`."""
 
-
-def gerar_pdf(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
     base = _preparada(lista)
-    buffer = BytesIO()
-    documento = SimpleDocTemplate(
+    abas = [("Empenhos", _dados_xlsx(base))]
+    if COLUNA_GRUPO in base.columns:
+        abas.append(("Resumo", resumo_por_grupo(lista)))
+    return _gravar_xlsx(abas, _linhas_parametros(contexto) + _totais(base))
+
+
+def gerar_xlsx_analise(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
+    """Modelo "Análise de anulação": as mesmas colunas do Excel completo mais "Decisão" (lista
+    suspensa Manter/Anular/Reforçar) e "Justificativa", em branco, para a unidade preencher."""
+
+    base = _preparada(lista)
+    dados = _dados_xlsx(base)
+    dados[COLUNA_DECISAO] = pd.Series(None, index=dados.index, dtype=object)
+    dados[COLUNA_JUSTIFICATIVA] = pd.Series(None, index=dados.index, dtype=object)
+    return _gravar_xlsx([("Empenhos", dados)], _linhas_parametros(contexto) + _totais(base), analise=True)
+
+
+def resumo_por_grupo(lista: pd.DataFrame) -> pd.DataFrame:
+    """Uma linha por grupo (na ordem da lista) e a linha TOTAL: empenhos, empenhado, liquidado,
+    saldo, % liquidado e participação no saldo. Sem agrupamento, só a linha TOTAL. Somas com
+    `min_count=1` (grupo só com nulos soma nulo, não zero); % nulo quando o divisor é nulo ou zero."""
+
+    def linha(rotulo: str, parte: pd.DataFrame, saldo_total: float | None) -> dict[str, object]:
+        empenhado, liquidado, saldo = _soma(parte["empenhada"]), _soma(parte["liquidada"]), _soma(parte["saldo"])
+        return {
+            "Grupo": rotulo,
+            "Empenhos": int(len(parte)),
+            "Empenhado": empenhado,
+            "Liquidado": liquidado,
+            "Saldo": saldo,
+            "% liquidado": (liquidado or 0.0) / empenhado * 100 if empenhado else None,
+            "% do saldo do relatório": saldo / saldo_total * 100 if saldo is not None and saldo_total else None,
+        }
+
+    saldo_total = _soma(lista["saldo"])
+    linhas = []
+    if COLUNA_GRUPO in lista.columns:
+        for rotulo, parte in lista.groupby(COLUNA_GRUPO, sort=False):
+            linhas.append(linha(str(rotulo), parte, saldo_total))
+    linhas.append(linha("TOTAL", lista, saldo_total))
+    resumo = pd.DataFrame(linhas)
+    for coluna in ("Empenhado", "Liquidado", "Saldo", "% liquidado", "% do saldo do relatório"):
+        resumo[coluna] = pd.to_numeric(resumo[coluna], errors="coerce").astype("float64")
+    return resumo
+
+
+def gerar_xlsx_resumo(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
+    return _gravar_xlsx([("Resumo", resumo_por_grupo(lista))], _linhas_parametros(contexto) + _totais(lista))
+
+
+# -------------------------------------------------------------------------------- PDF
+#: catálogo de colunas do PDF (30/10/2026, pedido explícito: escolher as colunas). chave ->
+#: (cabeçalho, largura em pt, tipo). Tipos: "texto" (quebra linha), "curto" (sem quebra), "brl",
+#: "pct", "inteiro", "centro". As larguras são reduzidas na mesma proporção se passarem da página.
+_CATALOGO_PDF: dict[str, tuple[str, float, str]] = {
+    "ne": ("NE", 70, "curto"),
+    "exercicio": ("EXERCÍCIO", 45, "inteiro"),
+    "favorecido": ("FAVORECIDO", 180, "texto"),
+    "processo": ("PROCESSO", 95, "texto"),
+    "acao": ("AÇÃO", 150, "texto"),
+    "fonte": ("FONTE", 120, "texto"),
+    "natureza": ("NATUREZA DE DESPESA", 140, "texto"),
+    "pi": ("PI", 110, "texto"),
+    "ptres": ("PTRES", 45, "curto"),
+    "ugr": ("UGR", 120, "texto"),
+    "uo": ("UNIDADE ORÇAMENTÁRIA", 130, "texto"),
+    "empenhado": ("EMPENHADO (R$)", 80, "brl"),
+    "liquidado": ("LIQUIDADO (R$)", 80, "brl"),
+    "saldo": ("SALDO (R$)", 80, "brl"),
+    "pct": ("% SALDO", 48, "pct"),
+    "idade": ("IDADE (MESES)", 40, "inteiro"),
+    "sem_liq": ("SEM LIQ. (MESES)", 45, "inteiro"),
+    "indicacoes": ("INDICAÇÃO", 120, "texto"),
+    "corte": ("CORTE", 42, "centro"),
+    "decisao": ("DECISÃO", 60, "texto"),
+    "justificativa": ("JUSTIFICATIVA", 170, "texto"),
+}
+#: chave do catálogo -> coluna da lista preparada (as duas colunas em branco não têm origem)
+_ORIGEM_PDF: dict[str, str] = {
+    "ne": "_ne_curta", "exercicio": "ano", "favorecido": "ne_favorecido", "processo": "processo_ne",
+    "acao": "acao_desc", "fonte": "fonte_desc", "natureza": "natureza_despesa_desc", "pi": "pi_desc",
+    "ptres": "ptres", "ugr": "ugr_desc", "uo": "unidade_orcamentaria_desc", "empenhado": "empenhada",
+    "liquidado": "liquidada", "saldo": "saldo", "pct": "percentual_saldo", "idade": "idade_meses",
+    "sem_liq": "meses_sem_liquidacao", "indicacoes": "indicacoes_anulacao", "corte": "_passa_corte_texto",
+}
+#: rótulos para escolher as colunas na tela (sem as duas em branco do modelo de análise)
+ROTULOS_COLUNAS_PDF: dict[str, str] = {
+    "ne": "NE", "exercicio": "Exercício", "favorecido": "Favorecido", "processo": "Nº do processo",
+    "acao": "Ação de governo", "fonte": "Fonte de recursos", "natureza": "Natureza de despesa", "pi": "PI",
+    "ptres": "PTRES", "ugr": "UGR", "uo": "Unidade orçamentária", "empenhado": "Empenhado",
+    "liquidado": "Liquidado", "saldo": "Saldo", "pct": "% Saldo", "idade": "Idade do saldo",
+    "sem_liq": "Meses sem liquidação", "indicacoes": "Indicação de anulação", "corte": "Passa do corte",
+}
+#: colunas que o PDF tinha antes da escolha de colunas — continuam sendo o padrão
+COLUNAS_PDF_PADRAO = ["ne", "exercicio", "favorecido", "processo", "empenhado", "liquidado", "saldo", "pct", "idade", "corte"]
+COLUNAS_PDF_ANALISE = ["ne", "favorecido", "saldo", "idade", "sem_liq", "indicacoes", "decisao", "justificativa"]
+_LARGURA_UTIL_PDF = 774  # landscape(A4) com 12mm de margem
+
+
+def _documento(buffer: BytesIO, titulo: str) -> SimpleDocTemplate:
+    return SimpleDocTemplate(
         buffer, pagesize=landscape(A4),
         leftMargin=12 * mm, rightMargin=12 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
-        title=TITULO,
+        title=titulo,
     )
-    estilos = getSampleStyleSheet()
-    estilo_celula = estilos["Normal"].clone("celula_retardada")
-    estilo_celula.fontSize = 7
-    estilo_celula.leading = 8.5
-    estilo_parametro = estilos["Normal"].clone("parametro_retardada")
-    estilo_parametro.fontSize = 8
-    estilo_parametro.leading = 10
 
-    elementos: list = [Paragraph(TITULO, estilos["Heading3"])]
+
+def _estilos():
+    estilos = getSampleStyleSheet()
+    celula = estilos["Normal"].clone("celula_retardada")
+    celula.fontSize = 7
+    celula.leading = 8.5
+    parametro = estilos["Normal"].clone("parametro_retardada")
+    parametro.fontSize = 8
+    parametro.leading = 10
+    return estilos, celula, parametro
+
+
+def _cabecalho_pdf(titulo: str, contexto: ContextoRelatorio, estilos, estilo_parametro) -> list:
+    elementos: list = [Paragraph(escape(titulo), estilos["Heading3"])]
     for rotulo, valor in _linhas_parametros(contexto):
         elementos.append(Paragraph(f"<b>{escape(rotulo)}:</b> {escape(valor)}", estilo_parametro))
     elementos.append(Spacer(1, 8))
+    return elementos
 
-    tabela_dados: list[list[object]] = [_CABECALHO_PDF]
+
+def _celula(chave: str, linha: pd.Series, estilo_celula) -> object:
+    tipo = _CATALOGO_PDF[chave][2]
+    origem = _ORIGEM_PDF.get(chave)
+    if origem is None:  # coluna em branco, para preencher à mão
+        return ""
+    valor = linha.get(origem)
+    if tipo == "brl":
+        return _formatar_brl(valor)
+    if tipo == "pct":
+        return _formatar_pct(valor)
+    if tipo == "inteiro":
+        return _formatar_idade(valor)
+    texto = "—" if valor is None or pd.isna(valor) else str(valor)
+    return Paragraph(escape(texto), estilo_celula) if tipo == "texto" else texto
+
+
+def gerar_pdf(
+    lista: pd.DataFrame, contexto: ContextoRelatorio, colunas: list[str] | None = None, *, titulo: str = TITULO
+) -> bytes:
+    """Lista em PDF com as `colunas` escolhidas (chaves de `_CATALOGO_PDF`, na ordem recebida;
+    padrão `COLUNAS_PDF_PADRAO`). Chave desconhecida é ignorada; sem nenhuma válida, vale o padrão."""
+
+    chaves = [c for c in (colunas or COLUNAS_PDF_PADRAO) if c in _CATALOGO_PDF] or list(COLUNAS_PDF_PADRAO)
+    base = _preparada(lista)
+    buffer = BytesIO()
+    documento = _documento(buffer, titulo)
+    estilos, estilo_celula, estilo_parametro = _estilos()
+    elementos = _cabecalho_pdf(titulo, contexto, estilos, estilo_parametro)
+
+    larguras = [_CATALOGO_PDF[c][1] for c in chaves]
+    fator = min(1.0, _LARGURA_UTIL_PDF / sum(larguras))
+    larguras = [w * fator for w in larguras]
+    vazio = [""] * (len(chaves) - 1)
+
+    tabela_dados: list[list[object]] = [[_CATALOGO_PDF[c][0] for c in chaves]]
     linhas_grupo: list[int] = []
     grupo_atual: object = None
     for _, linha in base.iterrows():
@@ -329,63 +518,91 @@ def gerar_pdf(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
             grupo_atual = linha[COLUNA_GRUPO]
             do_grupo = base[base[COLUNA_GRUPO] == grupo_atual]
             linhas_grupo.append(len(tabela_dados))
-            tabela_dados.append(
-                [
-                    Paragraph(
-                        f"<b>{escape(str(grupo_atual))}</b> — {len(do_grupo)} empenhos · saldo R$ {escape(_formatar_brl(_soma(do_grupo['saldo'])))}",
-                        estilo_celula,
-                    ),
-                    "", "", "", "", "", "", "", "", "",
-                ]
-            )
-        tabela_dados.append(
-            [
-                linha["_ne_curta"] or "—",
-                "—" if pd.isna(linha["ano"]) else str(int(linha["ano"])),
-                Paragraph(escape("—" if pd.isna(linha["ne_favorecido"]) else str(linha["ne_favorecido"])), estilo_celula),
-                Paragraph(escape("—" if pd.isna(linha["processo_ne"]) else str(linha["processo_ne"])), estilo_celula),
-                _formatar_brl(linha["empenhada"]),
-                _formatar_brl(linha["liquidada"]),
-                _formatar_brl(linha["saldo"]),
-                _formatar_pct(linha["percentual_saldo"]),
-                _formatar_idade(linha.get("idade_meses")),
-                linha["_passa_corte_texto"] or "—",
-            ]
-        )
-    tabela_dados.append(
-        [
-            f"TOTAL ({len(base)})", "", "", "",
-            _formatar_brl(_soma(base["empenhada"])),
-            _formatar_brl(_soma(base["liquidada"])),
-            _formatar_brl(_soma(base["saldo"])),
-            "", "", "",
-        ]
-    )
+            tabela_dados.append([
+                Paragraph(
+                    f"<b>{escape(str(grupo_atual))}</b> — {len(do_grupo)} empenhos · saldo R$ {escape(_formatar_brl(_soma(do_grupo['saldo'])))}",
+                    estilo_celula,
+                ),
+                *vazio,
+            ])
+        tabela_dados.append([_celula(c, linha, estilo_celula) for c in chaves])
 
-    tabela = Table(tabela_dados, colWidths=_LARGURAS_PDF, repeatRows=1)
-    estilo_grupos = []
+    total: list[object] = []
+    for i, chave in enumerate(chaves):
+        if chave in ("empenhado", "liquidado", "saldo"):
+            total.append(_formatar_brl(_soma(base[_ORIGEM_PDF[chave]])))
+        else:
+            total.append(f"TOTAL ({len(base)})" if i == 0 else "")
+    tabela_dados.append(total)
+
+    estilo = [
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#DDDDDD")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F5F5F5")]),
+    ]
+    for i, chave in enumerate(chaves):
+        tipo = _CATALOGO_PDF[chave][2]
+        if tipo in ("brl", "pct", "inteiro"):
+            estilo.append(("ALIGN", (i, 0), (i, -1), "RIGHT"))
+        elif tipo == "centro":
+            estilo.append(("ALIGN", (i, 0), (i, -1), "CENTER"))
     for indice in linhas_grupo:
-        estilo_grupos += [
+        estilo += [
             ("SPAN", (0, indice), (-1, indice)),
             ("BACKGROUND", (0, indice), (-1, indice), colors.HexColor("#DCE8F5")),
             ("ALIGN", (0, indice), (0, indice), "LEFT"),
         ]
-    tabela.setStyle(
-        TableStyle(
-            [
-                ("FONTSIZE", (0, 0), (-1, -1), 7),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#DDDDDD")),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                ("ALIGN", (4, 0), (8, -1), "RIGHT"),
-                ("ALIGN", (9, 0), (9, -1), "CENTER"),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F5F5F5")]),
-                *estilo_grupos,
-            ]
-        )
-    )
+    tabela = Table(tabela_dados, colWidths=larguras, repeatRows=1)
+    tabela.setStyle(TableStyle(estilo))
+    elementos.append(tabela)
+    documento.build(elementos)
+    return buffer.getvalue()
+
+
+def gerar_pdf_analise(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
+    """Modelo "Análise de anulação": NE, favorecido, saldo, idade, meses sem liquidação, indicação
+    e as colunas "Decisão" e "Justificativa" em branco, para preencher à mão."""
+
+    return gerar_pdf(lista, contexto, COLUNAS_PDF_ANALISE, titulo=f"{TITULO} — ANÁLISE DE ANULAÇÃO")
+
+
+def gerar_pdf_resumo(lista: pd.DataFrame, contexto: ContextoRelatorio) -> bytes:
+    """Modelo "Resumo por grupo": só os subtotais de `resumo_por_grupo`, numa tabela."""
+
+    resumo = resumo_por_grupo(lista)
+    buffer = BytesIO()
+    titulo = f"{TITULO} — RESUMO POR GRUPO"
+    documento = _documento(buffer, titulo)
+    estilos, estilo_celula, estilo_parametro = _estilos()
+    elementos = _cabecalho_pdf(titulo, contexto, estilos, estilo_parametro)
+    tabela_dados: list[list[object]] = [
+        ["GRUPO", "EMPENHOS", "EMPENHADO (R$)", "LIQUIDADO (R$)", "SALDO (R$)", "% LIQUIDADO", "% DO SALDO"]
+    ]
+    for _, linha in resumo.iterrows():
+        tabela_dados.append([
+            Paragraph(escape(str(linha["Grupo"])), estilo_celula),
+            str(int(linha["Empenhos"])),
+            _formatar_brl(linha["Empenhado"]),
+            _formatar_brl(linha["Liquidado"]),
+            _formatar_brl(linha["Saldo"]),
+            _formatar_pct(linha["% liquidado"]),
+            _formatar_pct(linha["% do saldo do relatório"]),
+        ])
+    tabela = Table(tabela_dados, colWidths=[300, 60, 90, 90, 90, 60, 60], repeatRows=1)
+    tabela.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#DDDDDD")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, colors.HexColor("#F5F5F5")]),
+    ]))
     elementos.append(tabela)
     documento.build(elementos)
     return buffer.getvalue()
