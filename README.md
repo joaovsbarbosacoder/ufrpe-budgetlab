@@ -601,6 +601,13 @@ discricionário" e "Sem célula". Faixa histórica e pior caso, de Despesas de P
 relatório do Resultado continua trazendo os planos); protótipo em
 `docs/superpowers/specs/2026-10-29-resultado-orcamentario-acoes-discricionarias-mockup.html`. A regra fica em `src/resultado_orcamentario.py` (`RECEITA_ACAO`, `RECEITA_GND`, `RECEITA_FONTE`).
 
+**Filtros (30/10/2026).** A página tem filtros de **Ação**, **Plano Orçamentário** (só os das Ações escolhidas), **Fonte** (só as
+dos planos visíveis) e **Situação** do saldo (Déficit, Folga, Dotação integral, Sem saldo calculável). Só escolhem o que aparece: a
+conta continua sobre todo o RP2. Com Fonte, cada quadro passa a mostrar só as fontes escolhidas (dotação, executado, projetado e
+saldo somados delas) e a Situação vale sobre esse saldo. Com qualquer filtro, os cartões do topo somam só os Planos exibidos (nulo
+continua nulo), aparece "Filtrado: N de M Planos", e as linhas "Fora do discricionário"/"Sem célula" e a conferência com o resultado
+saem, pois só valem para o total (`filtrar_planos` e `opcoes_filtros` em `src/resultado_orcamentario_planos.py`).
+
 O sinal dá o rótulo: positivo é **Superávit**, negativo é **Déficit**.
 
 **Célula orçamentária.** Mesma granularidade do Limite de Empenho, com a Fonte de Recursos Detalhada

@@ -79,3 +79,16 @@ def test_texto_de_cadastro_e_escapado_e_vazio_avisa():
     html = html_planos_discricionarios(_resultado([_plano(po_descricao="<script>x</script>", acao_descricao="A & B")]))
     assert "<script>" not in html and "&lt;script&gt;" in html and "A &amp; B" in html
     assert "Nenhuma célula do discricionário" in html_planos_discricionarios(_resultado([]))
+
+
+def test_recorte_filtrado_avisa_e_tira_avulsas_e_conferencia():
+    from src.resultado_orcamentario_planos import filtrar_planos
+
+    base = _resultado([_plano("0001"), _plano("0002", acao="4002")], fora=LinhaAvulsa(50.0, 10.0))
+    html = html_planos_discricionarios(filtrar_planos(base, acoes=["20RK"]))
+    assert "Filtrado: 1 de 2 Planos" in html and html.count('<article class="card"') == 1
+    assert "Fora do discricionário" not in html and "confere com o resultado" not in html
+    vazio = html_planos_discricionarios(filtrar_planos(base, acoes=["XXXX"]))
+    assert "Nenhum Plano Orçamentário atende aos filtros" in vazio
+    sem_filtro = html_planos_discricionarios(base)
+    assert "Filtrado" not in sem_filtro and "Fora do discricionário" in sem_filtro
