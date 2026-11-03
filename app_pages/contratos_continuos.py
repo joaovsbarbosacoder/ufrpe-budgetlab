@@ -224,8 +224,10 @@ from src.importacao_dotacao import carregar_atual as carregar_dotacao_atual
 from src.importacao_execucao_mensal import Manifesto as ManifestoExecucaoMensal
 from src.importacao_execucao_mensal import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO_MENSAL
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
+from src.divergencia_competencia import avisos_divergencia, divergencias_por_ne
 from src.liquidacao_competencia import (
     dimensoes_por_ne,
+    documentos_repetidos,
     ler_liquidacao_competencia,
     liquidado_por_ne,
     liquidado_por_ne_e_mes,
@@ -367,6 +369,14 @@ def _cached_liquidacao_competencia_por_mes(caminho: str, mtime: float) -> pd.Dat
     if dimensoes.notna().any().any():
         tempo = tempo.merge(dimensoes, left_on="ne_ccor", right_index=True, how="left")
     return tempo
+
+
+@st.cache_data(show_spinner=False)
+def _cached_documentos_repetidos(caminho: str, mtime: float) -> pd.DataFrame:
+    """Documentos Hábeis com a mesma apropriação em mais de um Doc. Contábil (`documentos_repetidos`, 03/11/2026), para
+    o aviso de divergência competência × SIAFI. `mtime` só participa da chave de cache."""
+
+    return documentos_repetidos(ler_liquidacao_competencia(caminho))
 
 
 @st.cache_data(show_spinner="Lendo a planilha de Pagamentos de Contratos...")
@@ -2265,6 +2275,20 @@ _render_resumo_consolidado(
 # neste bloco — em modo execução não se repete o mesmo relatório logo abaixo.
 for _aviso_consumo in (competencia_consumo.avisos() if competencia_consumo is not None else []):
     st.caption(_aviso_consumo.replace("$", r"\$"))
+# Competência × SIAFI (03/11/2026): NE do exercício cuja competência passa do empenhado ou do liquidado no SIAFI — só aviso,
+# nenhum valor muda (`src/divergencia_competencia.py`). Todas as NEs do exercício, independentemente da busca.
+if indice_liquidado_competencia is not None:
+    try:
+        _repetidos = _cached_documentos_repetidos(
+            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime
+        )
+    except Exception:
+        _repetidos = None
+    for _aviso_divergencia in avisos_divergencia(
+        divergencias_por_ne(dataframe["ne_curta"], indice_liquidado_competencia, por_ne_execucao, _repetidos),
+        "Contratos Contínuos",
+    ):
+        st.warning(_aviso_divergencia.replace("$", r"\$"))
 relatorio_projecao = None  # só existe na base "projeção pela execução"
 if _modo_execucao:
     st.caption(

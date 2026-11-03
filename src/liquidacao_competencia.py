@@ -33,6 +33,7 @@ Contrato público:
     ler_liquidacao_competencia(caminho) -> pd.DataFrame
     liquidado_por_ne_e_mes(df) -> pd.DataFrame
     dimensoes_por_ne(df) -> pd.DataFrame
+    documentos_repetidos(df) -> pd.DataFrame
     reconciliar(df) -> dict
     validar(df, esperado=None) -> RelatorioValidacao
 """
@@ -250,6 +251,39 @@ def dimensoes_por_ne(df: pd.DataFrame) -> pd.DataFrame:
         .agg(_juntar)
         .rename(columns={"acao_cod": "acoes"})
     )
+
+
+def documentos_repetidos(df: pd.DataFrame) -> pd.DataFrame:
+    """Documentos Hábeis cuja apropriação aparece em mais de um Doc. Contábil com a MESMA série (mês de referência →
+    valor) — indício de duplicidade no relatório (03/11/2026, caso 2026NE000551: NP001010 com NS010241 e NS011049, cada
+    um com as mesmas 12 parcelas). Só sinaliza: nenhuma linha é descartada e nenhum valor muda (qual documento vale é
+    conferência no SIAFI). A chave de `validar` inclui o Doc. Contábil, por isso esses pares passam na validação.
+
+    Uma linha por (NE, Documento Hábil, série repetida): `ne_ccor`, `documento_habil`, `docs_contabeis` (ordenados,
+    separados por ", "), `meses` (quantos meses de referência a série tem) e `valor_por_documento` (soma da série de UM
+    documento). Sem repetição: DataFrame vazio com essas colunas."""
+
+    colunas = ["ne_ccor", "documento_habil", "docs_contabeis", "meses", "valor_por_documento"]
+    if df.empty:
+        return pd.DataFrame(columns=colunas)
+    series = (
+        df.groupby(["ne_ccor", "documento_habil", "doc_contabil", "ano_mes_referencia"])["valor"].sum().round(2)
+        .reset_index()
+        .sort_values("ano_mes_referencia")
+        .groupby(["ne_ccor", "documento_habil", "doc_contabil"])[["ano_mes_referencia", "valor"]]
+        .apply(lambda g: tuple(zip(g["ano_mes_referencia"], g["valor"])))
+        .rename("serie")
+        .reset_index()
+    )
+    linhas = []
+    for (ne, dh, serie), grupo in series.groupby(["ne_ccor", "documento_habil", "serie"], sort=True):
+        if len(grupo) > 1:
+            linhas.append({
+                "ne_ccor": ne, "documento_habil": dh,
+                "docs_contabeis": ", ".join(sorted(str(d) for d in grupo["doc_contabil"])),
+                "meses": len(serie), "valor_por_documento": round(float(sum(v for _, v in serie)), 2),
+            })
+    return pd.DataFrame(linhas, columns=colunas)
 
 
 # --------------------------------------------------------------------------------------

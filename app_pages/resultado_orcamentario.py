@@ -42,6 +42,7 @@ from src import bolsas_auxilios_cadastro as cadastro_bolsas
 from src import contratos_continuos_cadastro as cadastro_contratos
 from src import design_tokens as dt
 from src import resultado_orcamentario_cadastro as cadastro
+from src.divergencia_competencia import avisos_divergencia, divergencias_por_ne
 from src.execucao_ne_utils import ne_curta as _ne_curta_execucao, saldo_por_ne
 from src.importacao_dotacao import DIRETORIO_MANIFESTOS_PADRAO as DIR_MANIFESTOS_DOTACAO
 from src.importacao_dotacao import Manifesto as ManifestoDotacao
@@ -88,6 +89,7 @@ from src.ui_cadastro import formatar_brl
 from src.ui_resultado_dados import (
     CAMINHO_LIQUIDACAO_COMPETENCIA,
     cached_celulas_por_exercicio as _cached_celulas_por_exercicio,
+    cached_documentos_repetidos as _cached_documentos_repetidos,
     cached_execucao as _cached_execucao,
     cached_lancamento as _cached_lancamento,
     cached_liquidacao_competencia as _cached_liquidacao_competencia,
@@ -1072,7 +1074,24 @@ avisos_projecao = [
     for origem, lista in ((ORIGEM_CONTRATOS, avisos_projecao_contratos), (ORIGEM_BOLSAS, avisos_projecao_bolsas))
     for aviso in lista
 ]
-_avisos_com_ok([*resultado.avisos, *avisos_extras, *avisos_projecao], "geral", exercicio)
+# Competência × SIAFI (03/11/2026): NE contada cuja competência passa do empenhado ou do liquidado no SIAFI é avisada com os
+# valores das duas bases; nenhum valor da conta muda (`src/divergencia_competencia.py`).
+avisos_divergencia_competencia: list[str] = []
+if indice_competencia is not None:
+    try:
+        _repetidos = _cached_documentos_repetidos(
+            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime
+        )
+    except Exception:
+        _repetidos = None
+    for _origem in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS):
+        _nes = resultado.consumo_por_ne.loc[resultado.consumo_por_ne["origem"] == _origem, "ne_curta"]
+        avisos_divergencia_competencia += avisos_divergencia(
+            divergencias_por_ne(_nes, indice_competencia, por_ne_execucao, _repetidos), _origem
+        )
+_avisos_com_ok(
+    [*resultado.avisos, *avisos_extras, *avisos_divergencia_competencia, *avisos_projecao], "geral", exercicio
+)
 for origem, sem_ne in ((ORIGEM_CONTRATOS, sem_ne_contratos), (ORIGEM_BOLSAS, sem_ne_bolsas)):
     if sem_ne is not None and len(sem_ne):
         colunas = [
