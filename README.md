@@ -161,6 +161,17 @@ no DataFrame (`acao_cod`, `acao_desc`, `ptres`, `credor_cod`, `credor_desc`; nul
 regra existente as usa ainda. Qualquer outro cabeçalho continua sendo rejeitado (`ErroLayoutBase`). O envio é feito
 pela página Atualizar planilhas, que valida com este leitor e guarda backup do arquivo substituído.
 
+**Competência × SIAFI por NE (03/11/2026).** O saldo e o executado de Contratos e Bolsas vêm da competência
+(empenhado − liquidado por competência). `src/divergencia_competencia.py` compara, por NE, o total por competência com
+o empenhado e o liquidado da Execução Mensal e só avisa; nenhum valor da conta muda, porque não está definida qual base
+prevalece. São dois avisos: "acima do empenhado" (saldo negativo; o executado passa do empenho) e "acima do liquidado
+no SIAFI" (competência apurada antes do lançamento ou documento em duplicidade). Só diferenças para mais, acima de
+R$ 0,01; valor nulo em qualquer das bases não vira zero e a comparação correspondente não é feita. O aviso cita os
+Documentos Hábeis da NE com a mesma série (mês → valor) em mais de um Doc. Contábil
+(`liquidacao_competencia.documentos_repetidos`), que passam na validação porque a chave inclui o Doc. Contábil. Aparece
+no Resultado Orçamentário (seção Avisos, só NEs contadas) e nas páginas de Contratos Contínuos e Bolsas e Auxílios
+(todas as NEs do exercício). Caso de origem: 2026NE000551, NP001010 em NS010241 e NS011049.
+
 **Campos de período (sempre do cadastro).** Status (`ATIVO`, `VENCIDO` ou `SUSPENSO`), Vigência
 (fim), Início da Execução (por data ou pelo botão de mês), Data da Suspensão e Meses no Ano. A regra comum (`src/necessidade_empenho.py::meses_vigentes_no_exercicio`):
 
@@ -719,8 +730,9 @@ soma e o resultado é marcado como **incompleto**. O mesmo vale para empenhado n
 Dotação zero ou negativa e empenhado negativo (estorno líquido) entram como estão.
 
 **Avisos e datas.** A página lista contratos e bolsas sem NE, NE compartilhada, NE nos dois cadastros,
-célula ausente, célula sem dotação, diferença na conferência e as datas de extração da Dotação e da
-Execução Mensal, que são independentes.
+célula ausente, célula sem dotação, diferença na conferência, NE contada com competência acima do empenhado
+ou do SIAFI (ver "Competência × SIAFI por NE") e as datas de extração da Dotação e da Execução Mensal, que são
+independentes.
 
 **Código.** A regra pura está em `src/resultado_orcamentario.py`; a persistência em
 `src/resultado_orcamentario_cadastro.py`; a página em `app_pages/resultado_orcamentario.py`. A montagem

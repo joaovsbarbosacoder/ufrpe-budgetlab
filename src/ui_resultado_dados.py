@@ -18,7 +18,12 @@ from src import projecao_ajustes
 from src.execucao_ne_utils import ne_curta as _ne_curta_execucao, saldo_por_ne
 from src.importacao_dotacao import carregar_atual as carregar_dotacao_atual
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
-from src.liquidacao_competencia import ler_liquidacao_competencia, liquidado_por_ne, liquidado_por_ne_e_mes
+from src.liquidacao_competencia import (
+    documentos_repetidos,
+    ler_liquidacao_competencia,
+    liquidado_por_ne,
+    liquidado_por_ne_e_mes,
+)
 from src.liquidacao_consumo import competencia_pelo_consumo
 from src.projecao_ajustes import ErroAjuste, ajustes_vigentes
 from src.relatorio_projecao_execucao import RelatorioProjecaoExecucao
@@ -83,6 +88,14 @@ def cached_liquidacao_competencia(caminho: str, mtime: float) -> tuple[pd.Series
     por_mes = liquidado_por_ne_e_mes(base)
     por_mes["ne_curta"] = por_mes["ne_ccor"].apply(_ne_curta_execucao)
     return indice, por_mes
+
+
+@st.cache_data(show_spinner=False)
+def cached_documentos_repetidos(caminho: str, mtime: float) -> pd.DataFrame:
+    """Documentos Hábeis com a mesma apropriação em mais de um Doc. Contábil (`documentos_repetidos`, 03/11/2026) — só
+    para o aviso de divergência competência × SIAFI. `mtime` só participa da chave."""
+
+    return documentos_repetidos(ler_liquidacao_competencia(caminho))
 
 
 # ------------------------------------------------------------------- necessidade
