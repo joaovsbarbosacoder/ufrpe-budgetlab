@@ -123,7 +123,7 @@ lancamento: pd.DataFrame | None = None
 if CAMINHO_LIQUIDACAO_COMPETENCIA.exists():
     try:
         indice_competencia, competencia = cached_liquidacao_competencia(
-            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime
+            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime, por_ne_execucao
         )
         lancamento = cached_lancamento(str(ponteiro_execucao), ponteiro_execucao.stat().st_mtime)
     except Exception as erro:

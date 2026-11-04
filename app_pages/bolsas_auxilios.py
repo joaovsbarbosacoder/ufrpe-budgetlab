@@ -180,7 +180,12 @@ from src.importacao_execucao_mensal import DIRETORIO_MANIFESTOS_PADRAO as DIRETO
 from src.importacao_execucao_mensal import Manifesto as ManifestoExecucaoMensal
 from src.importacao_execucao_mensal import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO_MENSAL
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
-from src.divergencia_competencia import avisos_divergencia, divergencias_por_ne
+from src.divergencia_competencia import (
+    avisos_desconsiderados,
+    avisos_divergencia,
+    divergencias_por_ne,
+    sem_documentos_repetidos,
+)
 from src.liquidacao_competencia import documentos_repetidos, ler_liquidacao_competencia, liquidado_por_ne_e_mes
 from src.necessidade_empenho import calcular_necessidade_empenho, necessidade_ate_dezembro
 from src.relatorio_necessidade_empenho import mes_referencia_do_exercicio
@@ -239,12 +244,12 @@ def _cached_linha_do_tempo(caminho_ponteiro: str, sha_manifesto: str) -> pd.Data
 
 
 @st.cache_data(show_spinner="Lendo a Liquidação por Competência...")
-def _cached_liquidacao_competencia_por_mes(caminho: str, mtime: float) -> pd.DataFrame:
+def _cached_liquidacao_competencia_por_mes(caminho: str, mtime: float, por_ne_execucao: pd.DataFrame) -> pd.DataFrame:
     """Liquidado por (NE, mês de competência), com `ne_curta` — entrada do relatório "Projeção pela
-    execução" (mesma leitura de `app_pages/contratos_continuos.py`). `mtime` só participa da chave de
-    cache."""
+    execução" (mesma leitura de `app_pages/contratos_continuos.py`), sem o documento repetido comprovado
+    (`sem_documentos_repetidos`, 04/11/2026). `mtime` só participa da chave de cache."""
 
-    tempo = liquidado_por_ne_e_mes(ler_liquidacao_competencia(caminho))
+    tempo = liquidado_por_ne_e_mes(sem_documentos_repetidos(ler_liquidacao_competencia(caminho), por_ne_execucao)[0])
     tempo["ne_curta"] = tempo["ne_ccor"].apply(_ne_curta_execucao)
     return tempo
 
@@ -257,20 +262,37 @@ def _cached_documentos_repetidos(caminho: str, mtime: float) -> pd.DataFrame:
     return documentos_repetidos(ler_liquidacao_competencia(caminho))
 
 
+@st.cache_data(show_spinner=False)
+def _cached_documentos_desconsiderados(caminho: str, mtime: float, por_ne_execucao: pd.DataFrame) -> pd.DataFrame:
+    """Documentos repetidos desconsiderados na conta (`sem_documentos_repetidos`, 04/11/2026), para o aviso. `mtime` só
+    participa da chave de cache."""
+
+    return sem_documentos_repetidos(ler_liquidacao_competencia(caminho), por_ne_execucao)[1]
+
+
 def _avisar_divergencia_competencia(nes: pd.Series, por_ne_execucao: pd.DataFrame) -> None:
     """Competência × SIAFI (03/11/2026): NE do exercício cuja competência passa do empenhado ou do liquidado no SIAFI —
-    só aviso, nenhum valor muda (`src/divergencia_competencia.py`). Sem a Liquidação por Competência, nada a comparar."""
+    aviso (`src/divergencia_competencia.py`); o documento repetido comprovado já está fora da conta (04/11/2026) e é
+    listado. Sem a Liquidação por Competência, nada a comparar."""
 
     if not CAMINHO_LIQUIDACAO_COMPETENCIA.exists():
         return
     modificado_em = CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime
     try:
-        por_mes = _cached_liquidacao_competencia_por_mes(str(CAMINHO_LIQUIDACAO_COMPETENCIA), modificado_em)
+        por_mes = _cached_liquidacao_competencia_por_mes(
+            str(CAMINHO_LIQUIDACAO_COMPETENCIA), modificado_em, por_ne_execucao
+        )
         repetidos = _cached_documentos_repetidos(str(CAMINHO_LIQUIDACAO_COMPETENCIA), modificado_em)
+        desconsiderados = _cached_documentos_desconsiderados(
+            str(CAMINHO_LIQUIDACAO_COMPETENCIA), modificado_em, por_ne_execucao
+        )
     except Exception:
         return  # a seção "Projeção pela execução" já mostra o erro de leitura
     indice = por_mes.groupby("ne_curta")["valor"].sum()
-    for aviso in avisos_divergencia(divergencias_por_ne(nes, indice, por_ne_execucao, repetidos), "Bolsas e Auxílios"):
+    for aviso in [
+        *avisos_desconsiderados(desconsiderados, "Bolsas e Auxílios", nes),
+        *avisos_divergencia(divergencias_por_ne(nes, indice, por_ne_execucao, repetidos), "Bolsas e Auxílios"),
+    ]:
         st.warning(aviso.replace("$", r"\$"))
 
 
@@ -842,7 +864,7 @@ def _render_resumo_consolidado(
 
 
 def _sugestao_anulacao_bolsas(
-    tabela: pd.DataFrame, ano_exercicio: int, manifesto: ManifestoExecucaoMensal,
+    tabela: pd.DataFrame, ano_exercicio: int, manifesto: ManifestoExecucaoMensal, por_ne_execucao: pd.DataFrame,
 ) -> pd.DataFrame | None:
     """Sobra prevista por NE (`sobra_empenho.sobra_por_ne`) de Bolsas e Auxílios, para o relatório de Anulação (15/10/2026):
     a projeção pela execução COM os ajustes manuais vigentes (pasta própria de Bolsas), sobre a tabela inteira. Devolve `None`
@@ -853,7 +875,7 @@ def _sugestao_anulacao_bolsas(
         return None
     try:
         competencia = _cached_liquidacao_competencia_por_mes(
-            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime
+            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime, por_ne_execucao
         )
         try:
             ajustes = ajustes_vigentes(ano_exercicio, ajustes_projecao.DIRETORIO_AJUSTES_BOLSAS)
@@ -870,6 +892,7 @@ def _sugestao_anulacao_bolsas(
 
 def _render_relatorio_projecao_execucao(
     filtrado: pd.DataFrame, source_key: str, ano_exercicio: int, manifesto: ManifestoExecucaoMensal,
+    por_ne_execucao: pd.DataFrame,
 ) -> RelatorioProjecaoExecucao | None:
     """Botões PDF/Excel do relatório "Projeção pela execução" (pedido de 07/10/2026: o mesmo de Contratos
     Contínuos, `src/relatorio_projecao_execucao.py`). O custo de cada mês da bolsa vem de
@@ -886,7 +909,9 @@ def _render_relatorio_projecao_execucao(
         return
     modificado_em = CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime
     try:
-        competencia = _cached_liquidacao_competencia_por_mes(str(CAMINHO_LIQUIDACAO_COMPETENCIA), modificado_em)
+        competencia = _cached_liquidacao_competencia_por_mes(
+            str(CAMINHO_LIQUIDACAO_COMPETENCIA), modificado_em, por_ne_execucao
+        )
     except Exception as erro:
         st.caption(f"Indisponível: não foi possível ler a Liquidação por Competência ({erro}).")
         return
@@ -1141,7 +1166,9 @@ with col_relatorio:
     st.write("")
     render_botao_relatorio(
         dataframe, RELATORIO_BOLSAS_AUXILIOS, f"bolsas_{ano_selecionado}", ano_selecionado,
-        sugestao_anulacao=lambda: _sugestao_anulacao_bolsas(dataframe, ano_selecionado, manifesto_execucao_mensal),
+        sugestao_anulacao=lambda: _sugestao_anulacao_bolsas(
+            dataframe, ano_selecionado, manifesto_execucao_mensal, por_ne_execucao
+        ),
     )
 
 busca = st.text_input(
@@ -1191,7 +1218,9 @@ st.markdown(
 
 _render_resumo_consolidado(filtrado, tempo_por_ne_curta, source_key)
 _avisar_divergencia_competencia(dataframe["ne_curta"], por_ne_execucao)
-relatorio_projecao = _render_relatorio_projecao_execucao(filtrado, source_key, ano_selecionado, manifesto_execucao_mensal)
+relatorio_projecao = _render_relatorio_projecao_execucao(
+    filtrado, source_key, ano_selecionado, manifesto_execucao_mensal, por_ne_execucao
+)
 # Edição do esperado de cada mês por NE, com valor (R$) e quantidade de bolsas vinculados (15/10/2026).
 if relatorio_projecao is not None:
     render_edicao_projecao(

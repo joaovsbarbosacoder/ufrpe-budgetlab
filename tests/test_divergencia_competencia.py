@@ -12,8 +12,15 @@ import unittest
 
 import pandas as pd
 
-from src.divergencia_competencia import COLUNAS, avisos_divergencia, divergencias_por_ne
-from src.liquidacao_competencia import documentos_repetidos
+from src.divergencia_competencia import (
+    COLUNAS,
+    COLUNAS_DESCONSIDERADOS,
+    avisos_desconsiderados,
+    avisos_divergencia,
+    divergencias_por_ne,
+    sem_documentos_repetidos,
+)
+from src.liquidacao_competencia import documentos_repetidos, liquidado_por_ne
 
 PREFIXO = "15316515239"
 
@@ -176,6 +183,79 @@ class TestAvisos(unittest.TestCase):
 
     def test_sem_divergencia_sem_aviso(self):
         self.assertEqual(avisos_divergencia(pd.DataFrame(columns=COLUNAS), "Bolsas e Auxílios"), [])
+
+
+class TestSemDocumentosRepetidos(unittest.TestCase):
+    """Regra de 04/11/2026 ("ignorar NS repetido"): a cópia sai da conta só com a duplicidade comprovada pela Execução
+    Mensal — competência acima do empenhado e, sem a cópia, não abaixo do liquidado no SIAFI."""
+
+    OUTRA_NE = [("2026NE000183", "2026NP000500", "2026NS000600", 202610, 50.0)]
+
+    def _rodar(self, execucao, linhas=None):
+        return sem_documentos_repetidos(_competencia(linhas or DUPLICADA + self.OUTRA_NE), _execucao(execucao))
+
+    def test_duplicidade_comprovada_sai_da_conta(self):
+        base, fora = self._rodar([("2026NE000551", 300.0, 300.0), ("2026NE000183", 100.0, 50.0)])
+        totais = liquidado_por_ne(base)
+        self.assertAlmostEqual(totais[_ccor("2026NE000551")], 300.0)
+        self.assertAlmostEqual(totais[_ccor("2026NE000183")], 50.0)  # outra NE intacta
+        self.assertEqual(set(base["doc_contabil"]), {_ccor("2026NS010241"), _ccor("2026NS000600")})  # mantém o menor
+        self.assertEqual(len(base), 4)
+        self.assertEqual(list(fora.columns), COLUNAS_DESCONSIDERADOS)
+        l = fora.iloc[0]
+        self.assertEqual((l["ne_curta"], l["doc_mantido"], l["docs_desconsiderados"]),
+                         ("2026NE000551", _ccor("2026NS010241"), _ccor("2026NS011049")))
+        self.assertAlmostEqual(l["valor_desconsiderado"], 300.0)
+        self.assertAlmostEqual(l["competencia_antes"], 600.0)
+        self.assertAlmostEqual(l["competencia_depois"], 300.0)
+
+    def test_dentro_do_empenhado_nada_sai(self):
+        # empenho 700 cobre os 600: pode ser pagamento real com a mesma série
+        base, fora = self._rodar([("2026NE000551", 700.0, 600.0)])
+        self.assertEqual(len(base), 7)
+        self.assertTrue(fora.empty)
+
+    def test_sem_empenhado_na_execucao_nada_sai(self):
+        base, fora = self._rodar([("2026NE000183", 100.0, 50.0)])
+        self.assertEqual(len(base), 7)
+        self.assertTrue(fora.empty)
+
+    def test_sem_a_copia_ficaria_abaixo_do_siafi_nada_sai(self):
+        # empenhado 500 < 600, mas o SIAFI já liquidou 450: tirar 300 deixaria a competência em 300 < 450
+        base, fora = self._rodar([("2026NE000551", 500.0, 450.0)])
+        self.assertEqual(len(base), 7)
+        self.assertTrue(fora.empty)
+
+    def test_siafi_nulo_nao_impede(self):
+        base, fora = self._rodar([("2026NE000551", 300.0, None)])
+        self.assertAlmostEqual(liquidado_por_ne(base)[_ccor("2026NE000551")], 300.0)
+        self.assertEqual(len(fora), 1)
+
+    def test_sem_repeticao_devolve_a_base(self):
+        base = _competencia(DUPLICADA[:3])
+        saida, fora = sem_documentos_repetidos(base, _execucao([("2026NE000551", 100.0, 100.0)]))
+        self.assertIs(saida, base)
+        self.assertTrue(fora.empty)
+
+    def test_nao_altera_as_entradas(self):
+        base, execucao = _competencia(DUPLICADA), _execucao([("2026NE000551", 300.0, 300.0)])
+        copia_base, copia_execucao = base.copy(), execucao.copy()
+        sem_documentos_repetidos(base, execucao)
+        pd.testing.assert_frame_equal(base, copia_base)
+        pd.testing.assert_frame_equal(execucao, copia_execucao)
+
+    def test_aviso_lista_o_que_saiu(self):
+        _, fora = self._rodar([("2026NE000551", 300.0, 300.0)])
+        avisos = avisos_desconsiderados(fora, "Contratos Contínuos", ["2026NE000551"])
+        self.assertEqual(len(avisos), 1)
+        self.assertTrue(avisos[0].startswith("Contratos Contínuos: documento repetido na Liquidação por Competência "
+                                             "desconsiderado na conta"))
+        self.assertIn(
+            "2026NE000551 — 2026NP001010: contado 2026NS010241, desconsiderado 2026NS011049 (−R$ 300,00 em 3 mês(es)); "
+            "competência R$ 600,00 → R$ 300,00, empenhado R$ 300,00, liquidado no SIAFI R$ 300,00", avisos[0],
+        )
+        self.assertEqual(avisos_desconsiderados(fora, "Bolsas e Auxílios", ["2026NE000057"]), [])
+        self.assertEqual(avisos_desconsiderados(pd.DataFrame(columns=COLUNAS_DESCONSIDERADOS), "X"), [])
 
 
 if __name__ == "__main__":

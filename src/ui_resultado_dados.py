@@ -15,6 +15,7 @@ import streamlit as st
 from src import bolsas_auxilios_cadastro as cadastro_bolsas
 from src import contratos_continuos_cadastro as cadastro_contratos
 from src import projecao_ajustes
+from src.divergencia_competencia import sem_documentos_repetidos
 from src.execucao_ne_utils import ne_curta as _ne_curta_execucao, saldo_por_ne
 from src.importacao_dotacao import carregar_atual as carregar_dotacao_atual
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
@@ -78,11 +79,14 @@ def cached_lancamento(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.DataFr
 
 
 @st.cache_data(show_spinner="Lendo a Liquidação por Competência...")
-def cached_liquidacao_competencia(caminho: str, mtime: float) -> tuple[pd.Series, pd.DataFrame]:
+def cached_liquidacao_competencia(
+    caminho: str, mtime: float, por_ne_execucao: pd.DataFrame,
+) -> tuple[pd.Series, pd.DataFrame]:
     """`(total liquidado por NE curta, liquidado por NE e mês com ne_curta)` — as duas leituras que
-    `app_pages/contratos_continuos.py` faz em separado, aqui numa só. `mtime` só participa da chave."""
+    `app_pages/contratos_continuos.py` faz em separado, aqui numa só, já sem o documento repetido comprovado
+    (`sem_documentos_repetidos`, 04/11/2026). `mtime` só participa da chave."""
 
-    base = ler_liquidacao_competencia(caminho)
+    base, _ = sem_documentos_repetidos(ler_liquidacao_competencia(caminho), por_ne_execucao)
     totais = liquidado_por_ne(base)
     indice = pd.Series(totais.to_numpy(), index=[_ne_curta_execucao(ne) for ne in totais.index])
     por_mes = liquidado_por_ne_e_mes(base)
@@ -96,6 +100,14 @@ def cached_documentos_repetidos(caminho: str, mtime: float) -> pd.DataFrame:
     para o aviso de divergência competência × SIAFI. `mtime` só participa da chave."""
 
     return documentos_repetidos(ler_liquidacao_competencia(caminho))
+
+
+@st.cache_data(show_spinner=False)
+def cached_documentos_desconsiderados(caminho: str, mtime: float, por_ne_execucao: pd.DataFrame) -> pd.DataFrame:
+    """Documentos repetidos desconsiderados na conta (`sem_documentos_repetidos`, 04/11/2026) — para o aviso. `mtime` só
+    participa da chave."""
+
+    return sem_documentos_repetidos(ler_liquidacao_competencia(caminho), por_ne_execucao)[1]
 
 
 # ------------------------------------------------------------------- necessidade
