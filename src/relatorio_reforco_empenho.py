@@ -627,15 +627,20 @@ def linhas_para_processo(
     return resultado.drop(columns=_COLUNAS_CALENDARIO, errors="ignore").reset_index(drop=True)
 
 
-def excluir_linhas_zeradas(linhas: pd.DataFrame) -> pd.DataFrame:
-    """Remove linhas com `meses` OU `empenhar` igual a zero (pedido explícito) — zero não é
-    "sem dado" (`NaN`, que continua na saída — ver `_formatar_valor`), é "não há o que
-    reforçar/anular aqui" (mesmo critério para os dois tipos de relatório — em Anulação, toda
-    linha começa zerada por padrão, ver `TIPO_ANULACAO`, então só entra no PDF quem foi
-    editado), então não deve entrar no PDF final. A tela de edição continua mostrando essas
-    linhas (a exclusão é só para gerar o relatório, ver `render_botao_relatorio`)."""
+def excluir_linhas_zeradas(linhas: pd.DataFrame, considerar_meses: bool = True) -> pd.DataFrame:
+    """Remove linhas zeradas (pedido explícito) — zero não é "sem dado" (`NaN`, que continua na saída — ver
+    `_formatar_valor`), é "não há o que reforçar/anular aqui", então não entra no PDF final. A tela de edição continua
+    mostrando essas linhas (a exclusão é só para gerar o relatório, ver `render_botao_relatorio`).
 
-    return linhas[(linhas["meses"] != 0) & (linhas["empenhar"] != 0)]
+    `considerar_meses=True` (Reforço, padrão): sai a linha com `meses` OU `empenhar` igual a zero.
+    `considerar_meses=False` (Anulação, 04/11/2026): só o VALOR (`empenhar`) decide. Na Anulação toda linha abre zerada e
+    quem emite pode digitar o valor direto em "ANULAR (R$)" sem tocar em "Meses a Anular" (que é só apoio ao cálculo);
+    com o filtro por meses, os itens com valor digitado e meses em 0 sumiam do PDF (caso real: itens da Oi, empenho 148,
+    só o item com meses preenchido saía)."""
+
+    if considerar_meses:
+        return linhas[(linhas["meses"] != 0) & (linhas["empenhar"] != 0)]
+    return linhas[linhas["empenhar"] != 0]
 
 
 def _formatar_valor(valor: float) -> str:

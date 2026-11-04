@@ -246,6 +246,26 @@ class TestExcluirLinhasZeradas(unittest.TestCase):
         resultado = excluir_linhas_zeradas(self._linhas([0.0, 0.0], [0.0, 0.0]))
         self.assertTrue(resultado.empty)
 
+    def test_anulacao_so_o_valor_decide_valor_digitado_direto_sem_meses_entra_no_pdf(self):
+        # Caso real (Oi, empenho 148): o usuário digita o valor a anular direto em "ANULAR (R$)" nos itens, sem mexer em
+        # "Meses a Anular" (que fica 0). Só o item com meses preenchido saía no PDF; os demais sumiam.
+        linhas = self._linhas([0.0, 0.0, 1.0, 0.0], [720.0, 95.7, 2396.0, 0.0])
+        resultado = excluir_linhas_zeradas(linhas, considerar_meses=False)
+        self.assertEqual(list(resultado["item_despesa"]), ["item0", "item1", "item2"])  # todos os com valor; o zero fica de fora
+
+    def test_anulacao_valor_zero_continua_fora_mesmo_com_meses(self):
+        resultado = excluir_linhas_zeradas(self._linhas([2.0, 1.0], [0.0, 1500.0]), considerar_meses=False)
+        self.assertEqual(list(resultado["item_despesa"]), ["item1"])
+
+    def test_anulacao_valor_nulo_nao_e_removido_nulo_diferente_de_zero(self):
+        resultado = excluir_linhas_zeradas(self._linhas([0.0, 0.0], [float("nan"), 0.0]), considerar_meses=False)
+        self.assertEqual(list(resultado["item_despesa"]), ["item0"])
+
+    def test_reforco_continua_exigindo_meses_e_valor(self):
+        # comportamento por padrão (Reforço) inalterado: meses 0 tira a linha mesmo com valor digitado
+        resultado = excluir_linhas_zeradas(self._linhas([0.0, 1.5], [720.0, 3000.0]))
+        self.assertEqual(list(resultado["item_despesa"]), ["item1"])
+
 
 class TestCabecalhoDetalhado(unittest.TestCase):
     def test_cabecalho_segue_o_modelo_com_item_lic_e_sem_unidade(self):
