@@ -42,7 +42,7 @@ from src import bolsas_auxilios_cadastro as cadastro_bolsas
 from src import contratos_continuos_cadastro as cadastro_contratos
 from src import design_tokens as dt
 from src import resultado_orcamentario_cadastro as cadastro
-from src.divergencia_competencia import avisos_divergencia, divergencias_por_ne
+from src.divergencia_competencia import avisos_desconsiderados, avisos_divergencia, divergencias_por_ne
 from src.execucao_ne_utils import ne_curta as _ne_curta_execucao, saldo_por_ne
 from src.importacao_dotacao import DIRETORIO_MANIFESTOS_PADRAO as DIR_MANIFESTOS_DOTACAO
 from src.importacao_dotacao import Manifesto as ManifestoDotacao
@@ -89,6 +89,7 @@ from src.ui_cadastro import formatar_brl
 from src.ui_resultado_dados import (
     CAMINHO_LIQUIDACAO_COMPETENCIA,
     cached_celulas_por_exercicio as _cached_celulas_por_exercicio,
+    cached_documentos_desconsiderados as _cached_documentos_desconsiderados,
     cached_documentos_repetidos as _cached_documentos_repetidos,
     cached_execucao as _cached_execucao,
     cached_lancamento as _cached_lancamento,
@@ -572,7 +573,7 @@ lancamento: pd.DataFrame | None = None
 if CAMINHO_LIQUIDACAO_COMPETENCIA.exists():
     try:
         indice_competencia, competencia = _cached_liquidacao_competencia(
-            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime
+            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime, por_ne_execucao
         )
         lancamento = _cached_lancamento(str(ponteiro_execucao), ponteiro_execucao.stat().st_mtime)
     except Exception as erro:
@@ -1084,8 +1085,16 @@ if indice_competencia is not None:
         )
     except Exception:
         _repetidos = None
+    # Documento repetido comprovado (04/11/2026): já está fora de `indice_competencia`; aqui só o aviso do que saiu.
+    try:
+        _desconsiderados = _cached_documentos_desconsiderados(
+            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime, por_ne_execucao
+        )
+    except Exception:
+        _desconsiderados = None
     for _origem in (ORIGEM_CONTRATOS, ORIGEM_BOLSAS):
         _nes = resultado.consumo_por_ne.loc[resultado.consumo_por_ne["origem"] == _origem, "ne_curta"]
+        avisos_divergencia_competencia += avisos_desconsiderados(_desconsiderados, _origem, _nes)
         avisos_divergencia_competencia += avisos_divergencia(
             divergencias_por_ne(_nes, indice_competencia, por_ne_execucao, _repetidos), _origem
         )

@@ -2,8 +2,8 @@
 
 Pedido do usuário (03/11/2026, caso 2026NE000551 — Minha Biblioteca): o executado e o saldo de Contratos Contínuos e de
 Bolsas e Auxílios vêm da competência (empenhado − liquidado por competência). O relatório de competência de 03/11 trouxe
-a mesma apropriação em dois NS e o executado da NE passou do empenho sem nenhum aviso. Este módulo só AVISA: nenhum
-valor da conta muda, porque a regra de qual base prevalece quando as duas divergem não está definida.
+a mesma apropriação em dois NS e o executado da NE passou do empenho sem nenhum aviso. Os avisos de divergência não mudam
+valor nenhum; a única exceção é o documento repetido comprovado (abaixo).
 
   * Acima do empenhado: liquidado por competência − empenhado (Execução Mensal) > R$ 0,01 — saldo negativo, o executado
     passa do empenho.
@@ -14,6 +14,15 @@ valor da conta muda, porque a regra de qual base prevalece quando as duas diverg
     comparação correspondente não é feita.
   * Documentos repetidos (`liquidacao_competencia.documentos_repetidos`) da NE avisada entram no texto, para conferência.
 
+Documento repetido desconsiderado (04/11/2026, regra escolhida pelo usuário: "ignorar NS repetido"): `sem_documentos_repetidos`
+tira da conta as cópias de um Documento Hábil que repete a mesma série em mais de um Doc. Contábil — conta o primeiro Doc.
+Contábil (menor código) e desconsidera os demais —, mas só quando a duplicidade está comprovada pela Execução Mensal:
+  * a competência da NE passa do empenhado (impossível liquidar mais do que o empenho); e
+  * sem as cópias, a competência não fica abaixo do liquidado no SIAFI (as cópias não são pagamentos reais).
+Fora disso nada sai da conta (ex.: NEs de 2023–2025 com dezenas de NS de mesma série, sem Execução Mensal para comparar —
+podem ser pagamentos mensais apropriados na mesma série). O resultado é uma base derivada; o arquivo importado não muda e
+cada linha desconsiderada é listada (`avisos_desconsiderados`).
+
 Camada analítica: não importa Streamlit.
 """
 
@@ -22,6 +31,7 @@ from __future__ import annotations
 import pandas as pd
 
 from src.execucao_ne_utils import indice_liquidado_por_ne_curta, indice_valor_empenhado_por_ne_curta, ne_curta
+from src.liquidacao_competencia import documentos_repetidos, liquidado_por_ne
 
 #: diferença mínima (R$) para avisar — a mesma tolerância de centavo das demais divergências de saldo do projeto
 TOLERANCIA = 0.01
@@ -29,6 +39,11 @@ TOLERANCIA = 0.01
 COLUNAS = [
     "ne_curta", "empenhado", "liquidado_siafi", "liquidado_competencia", "diferenca_siafi", "acima_do_empenho",
     "documentos_repetidos",
+]
+
+COLUNAS_DESCONSIDERADOS = [
+    "ne_ccor", "ne_curta", "documento_habil", "doc_mantido", "docs_desconsiderados", "meses", "valor_desconsiderado",
+    "competencia_antes", "competencia_depois", "empenhado", "liquidado_siafi",
 ]
 
 
@@ -49,6 +64,85 @@ def _documento_curto(codigo: str) -> str:
 def _numero(valor: object) -> float | None:
     numero = pd.to_numeric(valor, errors="coerce")
     return None if pd.isna(numero) else float(numero)
+
+
+def sem_documentos_repetidos(
+    base: pd.DataFrame, por_ne_execucao: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """`(base derivada sem as cópias desconsideradas, uma linha por Documento Hábil desconsiderado)` — regra no docstring
+    do módulo. `base`: `ler_liquidacao_competencia`; `por_ne_execucao`: `saldo_por_ne(agregar_por_ne(...))`. Sem nada a
+    desconsiderar, devolve a própria `base` e um DataFrame vazio com `COLUNAS_DESCONSIDERADOS`. Não altera as entradas."""
+
+    vazio = pd.DataFrame(columns=COLUNAS_DESCONSIDERADOS)
+    repetidos = documentos_repetidos(base)
+    if repetidos.empty:
+        return base, vazio
+    empenhado = indice_valor_empenhado_por_ne_curta(por_ne_execucao).groupby(level=0).sum(min_count=1)
+    liquidado = indice_liquidado_por_ne_curta(por_ne_execucao).groupby(level=0).sum(min_count=1)
+    totais = liquidado_por_ne(base)
+
+    repetidos = repetidos.assign(
+        docs=repetidos["docs_contabeis"].str.split(", "),
+        excesso=lambda d: (d["docs_contabeis"].str.count(", ")) * d["valor_por_documento"],
+    )
+    linhas = []
+    for ne, grupo in repetidos.groupby("ne_ccor", sort=True):
+        curta = ne_curta(str(ne))
+        antes = _numero(totais.get(ne))
+        emp = _numero(empenhado.get(curta))
+        liq = _numero(liquidado.get(curta))
+        if antes is None or emp is None or antes - emp <= TOLERANCIA:
+            continue  # sem empenhado para comparar, ou competência dentro do empenho: duplicidade não comprovada
+        depois = round(antes - float(grupo["excesso"].sum()), 2)
+        if liq is not None and liq - depois > TOLERANCIA:
+            continue  # sem as cópias ficaria abaixo do SIAFI: podem ser pagamentos reais
+        for _, r in grupo.iterrows():
+            linhas.append({
+                "ne_ccor": ne, "ne_curta": curta, "documento_habil": r["documento_habil"], "doc_mantido": r["docs"][0],
+                "docs_desconsiderados": ", ".join(r["docs"][1:]), "meses": int(r["meses"]),
+                "valor_desconsiderado": round(float(r["excesso"]), 2), "competencia_antes": antes,
+                "competencia_depois": depois, "empenhado": emp, "liquidado_siafi": liq,
+            })
+    if not linhas:
+        return base, vazio
+    desconsiderados = pd.DataFrame(linhas, columns=COLUNAS_DESCONSIDERADOS)
+    fora = {
+        (r["ne_ccor"], r["documento_habil"], doc)
+        for _, r in desconsiderados.iterrows()
+        for doc in r["docs_desconsiderados"].split(", ")
+    }
+    chave = list(zip(base["ne_ccor"], base["documento_habil"], base["doc_contabil"]))
+    manter = [c not in fora for c in chave]
+    return base.loc[manter].reset_index(drop=True), desconsiderados
+
+
+def avisos_desconsiderados(desconsiderados: pd.DataFrame, origem: str, nes: list[str] | pd.Series | None = None) -> list[str]:
+    """Um aviso com cada Documento Hábil desconsiderado na conta (`sem_documentos_repetidos`), só das NEs de `nes` (forma
+    curta; `None` = todas)."""
+
+    if desconsiderados is None or desconsiderados.empty:
+        return []
+    if nes is not None:
+        desconsiderados = desconsiderados[desconsiderados["ne_curta"].isin({str(n) for n in nes if pd.notna(n)})]
+        if desconsiderados.empty:
+            return []
+    detalhes = []
+    for ne, grupo in desconsiderados.groupby("ne_curta", sort=True):
+        documentos = "; ".join(
+            f"{_documento_curto(r['documento_habil'])}: contado {_documento_curto(r['doc_mantido'])}, desconsiderado "
+            + " e ".join(_documento_curto(d) for d in r["docs_desconsiderados"].split(", "))
+            + f" (−{_brl(r['valor_desconsiderado'])} em {r['meses']} mês(es))"
+            for _, r in grupo.iterrows()
+        )
+        l = grupo.iloc[0]
+        detalhes.append(
+            f"{ne} — {documentos}; competência {_brl(l['competencia_antes'])} → {_brl(l['competencia_depois'])}, "
+            f"empenhado {_brl(l['empenhado'])}, liquidado no SIAFI {_brl(l['liquidado_siafi'])}"
+        )
+    return [
+        f"{origem}: documento repetido na Liquidação por Competência desconsiderado na conta (a competência passava do "
+        "empenhado; o arquivo importado não foi alterado — conferir no SIAFI): " + "; ".join(detalhes) + "."
+    ]
 
 
 def divergencias_por_ne(

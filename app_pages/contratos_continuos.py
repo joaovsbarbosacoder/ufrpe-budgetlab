@@ -224,7 +224,12 @@ from src.importacao_dotacao import carregar_atual as carregar_dotacao_atual
 from src.importacao_execucao_mensal import Manifesto as ManifestoExecucaoMensal
 from src.importacao_execucao_mensal import NOME_PONTEIRO as NOME_PONTEIRO_EXECUCAO_MENSAL
 from src.importacao_execucao_mensal import carregar_atual as carregar_execucao_mensal_atual
-from src.divergencia_competencia import avisos_divergencia, divergencias_por_ne
+from src.divergencia_competencia import (
+    avisos_desconsiderados,
+    avisos_divergencia,
+    divergencias_por_ne,
+    sem_documentos_repetidos,
+)
 from src.liquidacao_competencia import (
     dimensoes_por_ne,
     documentos_repetidos,
@@ -340,28 +345,28 @@ def _cached_linha_do_tempo(caminho_ponteiro: str, mtime_ponteiro: float) -> pd.D
 
 
 @st.cache_data(show_spinner="Lendo a Liquidação por Competência...")
-def _cached_indice_liquidado_competencia(caminho: str, mtime: float) -> pd.Series:
+def _cached_indice_liquidado_competencia(caminho: str, mtime: float, por_ne_execucao: pd.DataFrame) -> pd.Series:
     """Total liquidado por competência (todos os meses somados, ver
     `src.liquidacao_competencia.liquidado_por_ne`), indexado pela forma curta da NE — pronto
-    pra `com_saldo_execucao(..., indice_liquidado_competencia=...)`. `mtime` só participa da
-    chave de cache."""
+    pra `com_saldo_execucao(..., indice_liquidado_competencia=...)`. Sem o documento repetido
+    comprovado (`sem_documentos_repetidos`, 04/11/2026). `mtime` só participa da chave de cache."""
 
-    totais = liquidado_por_ne(ler_liquidacao_competencia(caminho))
+    totais = liquidado_por_ne(sem_documentos_repetidos(ler_liquidacao_competencia(caminho), por_ne_execucao)[0])
     return pd.Series(totais.to_numpy(), index=[_ne_curta_execucao(ne) for ne in totais.index])
 
 
 @st.cache_data(show_spinner="Lendo a Liquidação por Competência (mensal)...")
-def _cached_liquidacao_competencia_por_mes(caminho: str, mtime: float) -> pd.DataFrame:
+def _cached_liquidacao_competencia_por_mes(caminho: str, mtime: float, por_ne_execucao: pd.DataFrame) -> pd.DataFrame:
     """Liquidado por (NE, mês de referência/competência), com `ne_curta` acrescentada — para
     o pop-up "Linha do tempo mensal" do Resumo Consolidado (mesma troca de
     `app_pages/consulta_empenhos.py`: Liquidado por mês de competência em vez de por mês de
     lançamento — ver `_tempo_com_liquidacao_por_competencia`). Lido separado de
     `_cached_indice_liquidado_competencia` (mesmo arquivo, granularidade diferente): cada
     `st.cache_data` guarda seu próprio resultado, mesmo padrão de `_cached_itens_por_ne`/
-    `_cached_linha_do_tempo` em `app_pages/consulta_empenhos.py`. `mtime` só participa da
-    chave de cache."""
+    `_cached_linha_do_tempo` em `app_pages/consulta_empenhos.py`. Sem o documento repetido
+    comprovado (`sem_documentos_repetidos`, 04/11/2026). `mtime` só participa da chave de cache."""
 
-    lido = ler_liquidacao_competencia(caminho)
+    lido = sem_documentos_repetidos(ler_liquidacao_competencia(caminho), por_ne_execucao)[0]
     tempo = liquidado_por_ne_e_mes(lido)
     tempo["ne_curta"] = tempo["ne_ccor"].apply(_ne_curta_execucao)
     # Ação/PTRES do relatório (só no layout com dimensões), exibidos na conciliação por competência.
@@ -377,6 +382,14 @@ def _cached_documentos_repetidos(caminho: str, mtime: float) -> pd.DataFrame:
     o aviso de divergência competência × SIAFI. `mtime` só participa da chave de cache."""
 
     return documentos_repetidos(ler_liquidacao_competencia(caminho))
+
+
+@st.cache_data(show_spinner=False)
+def _cached_documentos_desconsiderados(caminho: str, mtime: float, por_ne_execucao: pd.DataFrame) -> pd.DataFrame:
+    """Documentos repetidos desconsiderados na conta (`sem_documentos_repetidos`, 04/11/2026), para o aviso. `mtime` só
+    participa da chave de cache."""
+
+    return sem_documentos_repetidos(ler_liquidacao_competencia(caminho), por_ne_execucao)[1]
 
 
 @st.cache_data(show_spinner="Lendo a planilha de Pagamentos de Contratos...")
@@ -2079,10 +2092,10 @@ liquidacao_competencia_por_mes: pd.DataFrame | None = None
 if CAMINHO_LIQUIDACAO_COMPETENCIA.exists():
     try:
         indice_liquidado_competencia = _cached_indice_liquidado_competencia(
-            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime
+            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime, por_ne_execucao
         )
         liquidacao_competencia_por_mes = _cached_liquidacao_competencia_por_mes(
-            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime
+            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime, por_ne_execucao
         )
     except Exception:
         indice_liquidado_competencia = None
@@ -2282,12 +2295,18 @@ if indice_liquidado_competencia is not None:
         _repetidos = _cached_documentos_repetidos(
             str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime
         )
+        _desconsiderados = _cached_documentos_desconsiderados(
+            str(CAMINHO_LIQUIDACAO_COMPETENCIA), CAMINHO_LIQUIDACAO_COMPETENCIA.stat().st_mtime, por_ne_execucao
+        )
     except Exception:
-        _repetidos = None
-    for _aviso_divergencia in avisos_divergencia(
-        divergencias_por_ne(dataframe["ne_curta"], indice_liquidado_competencia, por_ne_execucao, _repetidos),
-        "Contratos Contínuos",
-    ):
+        _repetidos = _desconsiderados = None
+    for _aviso_divergencia in [
+        *avisos_desconsiderados(_desconsiderados, "Contratos Contínuos", dataframe["ne_curta"]),
+        *avisos_divergencia(
+            divergencias_por_ne(dataframe["ne_curta"], indice_liquidado_competencia, por_ne_execucao, _repetidos),
+            "Contratos Contínuos",
+        ),
+    ]:
         st.warning(_aviso_divergencia.replace("$", r"\$"))
 relatorio_projecao = None  # só existe na base "projeção pela execução"
 if _modo_execucao:

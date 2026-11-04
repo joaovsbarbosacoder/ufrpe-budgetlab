@@ -172,6 +172,16 @@ Documentos Hábeis da NE com a mesma série (mês → valor) em mais de um Doc. 
 no Resultado Orçamentário (seção Avisos, só NEs contadas) e nas páginas de Contratos Contínuos e Bolsas e Auxílios
 (todas as NEs do exercício). Caso de origem: 2026NE000551, NP001010 em NS010241 e NS011049.
 
+**Documento repetido fora da conta (04/11/2026).** Regra escolhida pelo usuário ("ignorar NS repetido"):
+`divergencia_competencia.sem_documentos_repetidos` tira da conta as cópias de um Documento Hábil repetido — conta o
+primeiro Doc. Contábil (menor código) e desconsidera os demais — só quando a duplicidade está comprovada pela Execução
+Mensal: a competência da NE passa do empenhado **e**, sem as cópias, não fica abaixo do liquidado no SIAFI. Fora disso
+nada sai (NEs de 2023–2025 com dezenas de NS de mesma série, sem Execução Mensal para comparar, ficam como estão e só são
+listadas). Vale para o saldo, o executado e a projeção do Resultado Orçamentário, do Discricionário e das páginas de
+Contratos Contínuos e Bolsas e Auxílios; o arquivo importado não muda, e um aviso lista cada documento desconsiderado,
+com a competência antes e depois. Consulta de Empenhos, Reajuste Estimado e a conciliação de pendências continuam lendo
+a base inteira. Com os dados de 03/11, só a 2026NE000551 muda: competência R$ 779.126,40 → R$ 389.563,20.
+
 **Campos de período (sempre do cadastro).** Status (`ATIVO`, `VENCIDO` ou `SUSPENSO`), Vigência
 (fim), Início da Execução (por data ou pelo botão de mês), Data da Suspensão e Meses no Ano. A regra comum (`src/necessidade_empenho.py::meses_vigentes_no_exercicio`):
 
@@ -731,7 +741,8 @@ Dotação zero ou negativa e empenhado negativo (estorno líquido) entram como e
 
 **Avisos e datas.** A página lista contratos e bolsas sem NE, NE compartilhada, NE nos dois cadastros,
 célula ausente, célula sem dotação, diferença na conferência, NE contada com competência acima do empenhado
-ou do SIAFI (ver "Competência × SIAFI por NE") e as datas de extração da Dotação e da Execução Mensal, que são
+ou do SIAFI (ver "Competência × SIAFI por NE"), documento repetido desconsiderado na conta (ver "Documento
+repetido fora da conta") e as datas de extração da Dotação e da Execução Mensal, que são
 independentes.
 
 **Código.** A regra pura está em `src/resultado_orcamentario.py`; a persistência em
