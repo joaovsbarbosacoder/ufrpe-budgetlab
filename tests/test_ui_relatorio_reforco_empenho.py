@@ -368,6 +368,30 @@ class TestGradeFeitaAMao(unittest.TestCase):
         # valor_mensal da linha 1 no fixture sintético é 2500.0
         self.assertEqual(valores3[1].value, "2.500,00")
 
+    def test_anulacao_valor_digitado_direto_em_varios_itens_vai_todo_para_o_pdf(self) -> None:
+        """Caso real (Oi, empenho 148): valores digitados direto em "ANULAR (R$)" em vários itens (meses em 0) — todos
+        devem entrar no PDF, não só o item que teve "Meses a Anular" preenchido."""
+
+        from unittest import mock
+
+        import src.ui_relatorio_reforco_empenho as ui
+
+        capturados = []
+
+        def falso(spec, tipo, processo, linhas):
+            capturados.append(linhas.copy())
+            return b"%PDF"
+
+        with mock.patch.object(ui, "gerar_pdf_detalhado", falso):
+            app = _renderiza_conteudo("anulacao")
+            [ti for ti in app.text_input if ti.label == "ANULAR (R$)"][0].set_value("100").run()
+            [ti for ti in app.text_input if ti.label == "ANULAR (R$)"][1].set_value("200").run()
+
+        self.assertEqual(len(app.exception), 0)
+        meses = [ti.value for ti in app.text_input if ti.label == "Meses a Anular"]
+        self.assertEqual(meses[:2], ["0,00", "0,00"])  # meses intocados
+        self.assertEqual(sorted(capturados[-1]["empenhar"]), [100.0, 200.0])  # os dois itens saem no PDF
+
     def test_editar_valor_direto_aplica_pontuacao_de_milhar(self) -> None:
         """Pedido explícito: pontuação correta também quando o valor é digitado direto (não só
         quando vem do recálculo por "Meses") — "123456,7" (sem separador de milhar, como

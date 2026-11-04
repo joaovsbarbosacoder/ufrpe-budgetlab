@@ -35,9 +35,10 @@ meses (`_recalcular_valor_por_meses`) — roda ANTES do script recomeçar do top
 de valor já nasce com o número recalculado na mesma execução (sem o atraso de um rerun que um
 recálculo feito só depois de desenhar os dois widgets teria).
 
-Linha com meses OU valor igual a zero fica de fora do PDF (pedido explícito — não há o que
-lançar), mas continua visível/editável na tela (não é escondida da edição, só do relatório
-final).
+Linha zerada fica de fora do PDF (pedido explícito — não há o que lançar), mas continua
+visível/editável na tela (não é escondida da edição, só do relatório final). Reforço: meses OU
+valor zero; Anulação (04/11/2026): só o VALOR decide — o valor digitado direto vale mesmo com
+meses em zero (ver `excluir_linhas_zeradas`).
 
 VALOR INICIAL DIFERE ENTRE OS DOIS TIPOS (pedido explícito): Reforço sugere a partir de
 `meses_sugeridos` (necessidade calculada — execução ou "por calendário", ver
@@ -333,8 +334,13 @@ def _render_conteudo_relatorio(
     st.caption(
         f'Edite "{tipo.rotulo_coluna_meses}" (recalcula "{rotulo_valor_escapado}" automaticamente) OU digite '
         f'direto em "{rotulo_valor_escapado}" para um valor personalizado — editar "{tipo.rotulo_coluna_meses}" '
-        "de novo sempre sobrescreve o valor digitado direto. Linha com meses ou valor igual a "
-        "zero não entra no PDF."
+        "de novo sempre sobrescreve o valor digitado direto. "
+        + (
+            f'Linha com "{rotulo_valor_escapado}" igual a zero não entra no PDF (o valor digitado direto vale, mesmo com '
+            f'"{tipo.rotulo_coluna_meses}" em zero).'
+            if tipo.id == "anulacao"
+            else "Linha com meses ou valor igual a zero não entra no PDF."
+        )
     )
 
     # Grade feita à mão (`st.columns` + `st.text_input` por linha, ver docstring do módulo pra
@@ -413,7 +419,8 @@ def _render_conteudo_relatorio(
     total = float(linhas_finais["empenhar"].sum())
     st.metric(tipo.rotulo_total, format_brl_full(total))
 
-    linhas_para_pdf = excluir_linhas_zeradas(linhas_finais)
+    # Anulação: só o valor decide (o valor digitado direto vale sem meses); Reforço: meses E valor (ver a função)
+    linhas_para_pdf = excluir_linhas_zeradas(linhas_finais, considerar_meses=tipo.id != "anulacao")
 
     # dois modelos em uso pela PROPLAD (ver docstring de src/relatorio_reforco_empenho.py) —
     # os dois precisam ser emitidos, não é escolha de um ou outro.
